@@ -61,6 +61,14 @@ fn sample_order() -> [(u8, bool); 6] {
     ]
 }
 
+fn experiment_order(link_times: bool) -> Vec<(u8, bool)> {
+    if link_times {
+        vec![(3, false), (3, true)]
+    } else {
+        sample_order().to_vec()
+    }
+}
+
 fn cargo_arguments(args: &[OsString], config: &Path) -> Vec<OsString> {
     if args.first().is_some_and(|a| a == "build") && args.iter().any(|a| a == "--release") {
         [
@@ -74,6 +82,17 @@ fn cargo_arguments(args: &[OsString], config: &Path) -> Vec<OsString> {
     } else {
         args.to_vec()
     }
+}
+
+fn traced_cargo_arguments(args: &[OsString], config: &Path, link_times: bool) -> Vec<OsString> {
+    let mut forwarded = cargo_arguments(args, config);
+    if link_times
+        && args.first().is_some_and(|a| a == "build")
+        && args.iter().any(|a| a == "--release")
+    {
+        forwarded.push("--message-format=json".into());
+    }
+    forwarded
 }
 
 fn validate_compilation(units: &serde_json::Value, packages: &[String]) -> Result<(), String> {
@@ -319,13 +338,15 @@ fn checkpoint(stage: &Path, report: &Value) -> AnyResult<()> {
         stage.join("report.json"),
         serde_json::to_vec_pretty(report)?,
     )?;
+    let purpose = if report["link_times"] == true {
+        "Unchanged release level 3 with MSVC /TIME diagnostics. One warmup is excluded; one rebuilt-workspace bundle provides per-target link-pass data. This is a diagnostic trace, not an optimization A/B comparison."
+    } else {
+        "Baseline uses the existing release profile. Candidate overrides only the listed workspace packages to level 2. Third-party profile settings are unchanged."
+    };
     let mut summary = format!(
-        "# Windows bundle profile experiment\n\nSource: {}\n\n\
-         Baseline uses the existing release profile. Candidate overrides only the listed workspace packages to level 2. \
-         Third-party profile settings are unchanged.\n\n\
+        "# Windows bundle investigation\n\nSource: {}\n\n{purpose}\n\n\
          The SDK-enabled dev assembler was built once in {:.2}s, outside sample timing. \
-         Each sample rebuilds release workspace artifacts, then measures the complete bundle command \
-         (release compilation, schema/manifest generation and assembly). This is not whole-workflow elapsed time.\n\n\
+         Samples time the complete bundle command (release compilation, schema/manifest generation and assembly), not whole-CI elapsed time.\n\n\
          | Sample | Level | Measured | Bundle seconds | Fresh units | Dirty units | Bundle bytes |\n\
          |---|---:|---|---:|---:|---:|---:|\n",
         report["source_sha"].as_str().unwrap_or("unknown"),
@@ -348,10 +369,82 @@ fn checkpoint(stage: &Path, report: &Value) -> AnyResult<()> {
             writeln!(summary, "\nSample rejected: {problem}\n")?;
         }
     }
-    summary.push_str("\nWarmups are excluded from measurements. Two samples per level are not a stable performance guarantee. \
+    summary.push_str("\nWarmups are excluded from measurements. Small samples and individual unit/link times are not a stable performance guarantee; concurrent intervals must not be summed. \
         Native validation XML is collected separately; its elapsed time is not a CPU-throughput benchmark. \
         A production profile change needs further runtime/size evaluation.\n");
     fs::write(stage.join("summary.md"), &summary)?;
+    Ok(())
+}
+
+fn linker_diagnostics(text: &str) -> Vec<Value> {
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter_map(|value| {
+            let diagnostic = if value["reason"] == "compiler-message" {
+                &value["message"]
+            } else if value["$message_type"] == "diagnostic" {
+                &value
+            } else {
+                return None;
+            };
+            (diagnostic["code"]["code"] == "linker_messages").then(|| {
+                serde_json::json!({
+                    "target": value["target"]["name"].as_str().unwrap_or("probe"),
+                    "message": diagnostic["message"],
+                    "rendered": diagnostic["rendered"]
+                })
+            })
+        })
+        .collect()
+}
+
+fn time_link_options(existing: Option<OsString>) -> OsString {
+    let mut options = existing.unwrap_or_default();
+    if !options.is_empty() {
+        options.push(" ");
+    }
+    options.push("/TIME");
+    options
+}
+
+fn linker_probe(stage: &Path) -> AnyResult<()> {
+    let source = stage.join("linker-probe.rs");
+    fs::write(
+        &source,
+        "// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n// SPDX-License-Identifier: Apache-2.0\nfn main() {}\n",
+    )?;
+    logged(
+        Command::new("rustc")
+            .args([
+                "--crate-name",
+                "linker_probe",
+                "--edition",
+                "2024",
+                "--target",
+                TARGET,
+                "--error-format=json",
+                "--json=artifacts",
+                "-C",
+                "opt-level=3",
+            ])
+            .arg(&source)
+            .arg("-o")
+            .arg(stage.join("linker-probe.exe"))
+            .env("LINK", time_link_options(env::var_os("LINK"))),
+        &stage.join("linker-probe.log"),
+    )?;
+    let messages = linker_diagnostics(&fs::read_to_string(stage.join("linker-probe.log"))?);
+    fs::write(
+        stage.join("linker-probe.json"),
+        serde_json::to_vec_pretty(&messages)?,
+    )?;
+    if !messages.iter().any(|m| {
+        m["message"]
+            .as_str()
+            .is_some_and(|t| t.to_ascii_lowercase().contains("time"))
+    }) {
+        return Err("MSVC /TIME output was not observable through this pinned rustc; refusing a long diagnostic build".into());
+    }
     Ok(())
 }
 
@@ -426,7 +519,12 @@ fn restore(root: &Path, level: u8) -> AnyResult<()> {
     Ok(())
 }
 
-fn experiment(root: &Path, packages: &[String], real_cargo: &OsString) -> AnyResult<()> {
+fn experiment(
+    root: &Path,
+    packages: &[String],
+    real_cargo: &OsString,
+    link_times: bool,
+) -> AnyResult<()> {
     let sha = source_sha(root)?;
     let target = root.join("target");
     fs::create_dir_all(&target)?;
@@ -438,11 +536,16 @@ fn experiment(root: &Path, packages: &[String], real_cargo: &OsString) -> AnyRes
     fs::create_dir(&stage)?; // Never overwrite another run's evidence.
     fs::create_dir(stage.join("profiles"))?;
     fs::create_dir(stage.join("samples"))?;
-    for level in [3, 2] {
+    let order = experiment_order(link_times);
+    let levels: std::collections::BTreeSet<_> = order.iter().map(|(level, _)| *level).collect();
+    for level in levels {
         fs::write(
             stage.join("profiles").join(format!("level-{level}.toml")),
             profile_override(packages, level)?,
         )?;
+    }
+    if link_times {
+        linker_probe(&stage)?;
     }
     let tool_seconds = logged(
         Command::new(real_cargo).current_dir(root).args([
@@ -456,7 +559,7 @@ fn experiment(root: &Path, packages: &[String], real_cargo: &OsString) -> AnyRes
     let tool = root.join("target/debug/nemoclaw-build.exe");
     let shim = env::current_exe()?;
     let mut report = serde_json::json!({
-        "source_sha":sha, "platform":PLATFORM,
+        "source_sha":sha, "platform":PLATFORM, "link_times":link_times,
         "rustc":output(Command::new("rustc").arg("-vV"))?,
         "cargo":output(Command::new(real_cargo).arg("--version"))?,
         "github_run":env::var("GITHUB_RUN_ID").ok(),
@@ -465,7 +568,7 @@ fn experiment(root: &Path, packages: &[String], real_cargo: &OsString) -> AnyRes
     });
     checkpoint(&stage, &report)?;
     let mut baseline: Option<Value> = None;
-    for (index, (level, measured)) in sample_order().into_iter().enumerate() {
+    for (index, (level, measured)) in order.into_iter().enumerate() {
         if source_sha(root)? != sha {
             return Err("source revision changed during experiment".into());
         }
@@ -489,18 +592,24 @@ fn experiment(root: &Path, packages: &[String], real_cargo: &OsString) -> AnyRes
             &sample_dir.join("clean.log"),
         )?;
         let begun = std::time::SystemTime::now();
-        let seconds = logged(
-            Command::new(&tool)
-                .current_dir(root)
-                .args(["bundle", "--platform", PLATFORM])
-                .env("CARGO", &shim)
-                .env("WINDOWS_BUNDLE_REAL_CARGO", real_cargo)
-                .env(
-                    "WINDOWS_BUNDLE_PROFILE_CONFIG",
-                    stage.join("profiles").join(format!("level-{level}.toml")),
-                ),
-            &sample_dir.join("build.log"),
-        )?;
+        let mut command = Command::new(&tool);
+        command
+            .current_dir(root)
+            .args(["bundle", "--platform", PLATFORM])
+            .env("CARGO", &shim)
+            .env("WINDOWS_BUNDLE_REAL_CARGO", real_cargo)
+            .env(
+                "WINDOWS_BUNDLE_LINK_TIMES",
+                if link_times { "1" } else { "0" },
+            )
+            .env(
+                "WINDOWS_BUNDLE_PROFILE_CONFIG",
+                stage.join("profiles").join(format!("level-{level}.toml")),
+            );
+        if link_times {
+            command.env("LINK", time_link_options(env::var_os("LINK")));
+        }
+        let seconds = logged(&mut command, &sample_dir.join("build.log"))?;
         let html = root.join("target/cargo-timings/cargo-timing.html");
         if fs::metadata(&html)?.modified()? < begun {
             return Err("Cargo timing report predates this sample".into());
@@ -522,6 +631,34 @@ fn experiment(root: &Path, packages: &[String], real_cargo: &OsString) -> AnyRes
         if measured && let Err(error) = validate_compilation(&units, packages) {
             problem = Some(error);
         }
+        let messages = if link_times {
+            linker_diagnostics(&log)
+        } else {
+            Vec::new()
+        };
+        if link_times {
+            fs::write(
+                sample_dir.join("linker-messages.json"),
+                serde_json::to_vec_pretty(&messages)?,
+            )?;
+            for target in [
+                "nemoclaw",
+                "terraform-provider-fabric",
+                "terraform-provider-host",
+                "terraform-provider-ollama",
+                "terraform-provider-openshell",
+                "terraform-provider-vllm",
+            ] {
+                if !messages.iter().any(|m| {
+                    m["target"] == target
+                        && m["message"]
+                            .as_str()
+                            .is_some_and(|t| t.to_ascii_lowercase().contains("time"))
+                }) {
+                    problem = Some(format!("missing MSVC /TIME diagnostics for {target}"));
+                }
+            }
+        }
         let bundle = root.join("dist").join(PLATFORM);
         let manifest: Value = serde_json::from_slice(&fs::read(bundle.join("manifest.json"))?)?;
         fs::write(
@@ -541,7 +678,7 @@ fn experiment(root: &Path, packages: &[String], real_cargo: &OsString) -> AnyRes
             "dirty":timing_count(&timing,"Dirty units")?,
             "bundle_bytes":sizes.values().sum::<u64>(), "file_bytes":sizes,
             "rebuilt_units":units.as_array().unwrap().iter().filter(|u| u["duration"].as_f64().is_some_and(|d| d>0.0)).collect::<Vec<_>>(),
-            "problem":problem
+            "problem":problem, "linker_messages":messages
         }));
         checkpoint(&stage, &report)?;
         if let Some(problem) = &problem {
@@ -567,13 +704,17 @@ fn entry() -> AnyResult<()> {
             return Err("Cargo shim cannot invoke itself".into());
         }
         let status = Command::new(real)
-            .args(cargo_arguments(&args, Path::new(&config)))
+            .args(traced_cargo_arguments(
+                &args,
+                Path::new(&config),
+                env::var("WINDOWS_BUNDLE_LINK_TIMES").as_deref() == Ok("1"),
+            ))
             .status()?;
         std::process::exit(status.code().unwrap_or(1));
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
-            "bundle_profile_experiment [--plan | --run | --restore 2|3]\n\
+            "bundle_profile_experiment [--plan | --run | --link-times | --restore 2|3]\n\
             --run rebuilds only release workspace artifacts and requires Windows GitHub Actions.\n\
             Production profiles are never edited; reports go under {STAGE}."
         );
@@ -581,7 +722,7 @@ fn entry() -> AnyResult<()> {
     }
     if args
         .first()
-        .is_some_and(|a| a == "--run" || a == "--restore")
+        .is_some_and(|a| a == "--run" || a == "--link-times" || a == "--restore")
     {
         windows_only()?; // Refuse before metadata, writes or artifact cleanup.
     }
@@ -600,11 +741,12 @@ fn entry() -> AnyResult<()> {
             );
             Ok(())
         }
-        Some("--run") if args.len() == 1 => experiment(&root, &packages, &real),
+        Some("--run") if args.len() == 1 => experiment(&root, &packages, &real, false),
+        Some("--link-times") if args.len() == 1 => experiment(&root, &packages, &real, true),
         Some("--restore") if args.len() == 2 => {
             restore(&root, args[1].to_str().ok_or("invalid level")?.parse()?)
         }
-        _ => Err("expected --plan, --run, or --restore 2|3".into()),
+        _ => Err("expected --plan, --run, --link-times, or --restore 2|3".into()),
     }
 }
 
@@ -618,6 +760,58 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_timing_preserves_existing_msvc_options() {
+        assert_eq!(time_link_options(None), OsString::from("/TIME"));
+        assert_eq!(
+            time_link_options(Some("/NOLOGO".into())),
+            OsString::from("/NOLOGO /TIME")
+        );
+    }
+
+    #[test]
+    fn linker_capture_requests_structured_diagnostics_only_for_traced_release_builds() {
+        let release = ["build", "--release"].map(OsString::from);
+        let config = Path::new("baseline.toml");
+        assert!(
+            traced_cargo_arguments(&release, config, true)
+                .contains(&OsString::from("--message-format=json"))
+        );
+        assert_eq!(
+            traced_cargo_arguments(&release, config, false),
+            cargo_arguments(&release, config)
+        );
+        let version = [OsString::from("--version")];
+        assert_eq!(traced_cargo_arguments(&version, config, true), version);
+    }
+
+    #[test]
+    fn linker_messages_keep_raw_pass_data_and_cargo_target_identity() {
+        let cargo = serde_json::json!({
+            "reason":"compiler-message", "target":{"name":"nemoclaw","kind":["bin"]},
+            "message":{"code":{"code":"linker_messages"},"message":"raw MSVC pass data","rendered":"rendered"}
+        });
+        let direct = serde_json::json!({
+            "$message_type":"diagnostic","code":{"code":"linker_messages"},"message":"probe pass data"
+        });
+        let unrelated = serde_json::json!({
+            "reason":"compiler-message","message":{"code":{"code":"unused_variables"},"message":"not timing"}
+        });
+        let input = format!("Cargo progress\n{cargo}\n{direct}\n{unrelated}\n");
+        let messages = linker_diagnostics(&input);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["target"], "nemoclaw");
+        assert_eq!(messages[0]["message"], "raw MSVC pass data");
+        assert_eq!(messages[1]["target"], "probe");
+        assert_eq!(messages[1]["message"], "probe pass data");
+    }
+
+    #[test]
+    fn linker_diagnostics_warm_and_measure_only_the_unchanged_release_profile() {
+        assert_eq!(experiment_order(true), [(3, false), (3, true)]);
+        assert_eq!(experiment_order(false), sample_order());
+    }
 
     #[test]
     fn baseline_keeps_defaults_and_invalid_overrides_are_refused() {

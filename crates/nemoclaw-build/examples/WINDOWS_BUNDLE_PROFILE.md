@@ -3,6 +3,34 @@
 
 # Windows bundle profile investigation
 
+## Linker diagnostic mode
+
+The current workflow uses --link-times at unchanged release level 3. It first
+compiles a small Rust probe with MSVC's LINK=/TIME and verifies that the pinned
+rustc forwards the linker diagnostics. It then warms dependencies and records
+one rebuilt-workspace bundle command with structured Cargo diagnostics.
+
+Raw linker-pass messages retain their Cargo target identity. They are diagnostic
+observations, not an optimization comparison; overlapping linker/unit intervals
+must not be added. The linker, optimization settings, and codegen flags are not
+replaced. Only the diagnostic /TIME option is appended to existing LINK options.
+
+After timing, cargo ci build prepares all native validation executables,
+including target/debug/nemoclaw-fixture-ssh.exe. Windows lifecycle setup needs
+that fixture before invoking nextest. The job then validates the saved level-3
+bundle. This prerequisite was missing from the earlier profile experiment.
+
+References:
+- [MSVC /TIME](https://learn.microsoft.com/en-us/cpp/build/reference/time-linker-time-information?view=msvc-170)
+- [LINK environment options](https://learn.microsoft.com/en-us/cpp/build/reference/linking?view=msvc-170)
+- [Pinned rustc linker-output handling](https://github.com/rust-lang/rust/blob/1.98.1/compiler/rustc_codegen_ssa/src/back/link.rs)
+
+## Earlier optimization-level experiment
+
+The --run mode retains the dependency-warmed ABBA protocol below. It found no
+meaningful build-time gain for workspace optimization level 2, so the current
+workflow does not repeat it.
+
 This experiment does not change the repository's release profile or normal CI.
 It compares the existing release configuration with optimization level 2 for
 named repository-owned workspace packages. Third-party settings remain unchanged.
@@ -20,7 +48,7 @@ The optional Windows workflow runs only for the perf/windows-bundle-profile PR.
 It restores, but does not save, the native bundle dependency cache. The driver
 rejects --run and --restore outside Windows GitHub Actions.
 
-The job:
+The earlier --run protocol:
 1. Builds the SDK-enabled assembler once, outside sample timing.
 2. Warms baseline and candidate, rebuilding release workspace artifacts each time.
 3. Measures baseline/candidate/candidate/baseline, again rebuilding workspace
