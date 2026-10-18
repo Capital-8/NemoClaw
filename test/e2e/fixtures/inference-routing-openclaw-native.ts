@@ -52,7 +52,9 @@ export async function captureNativeRestart503Diagnostic(
 ): Promise<void> {
   if (
     start.exitCode === 0 ||
-    !start.stderr.includes("sandbox inference invocation probe returned HTTP 503") ||
+    !(start.stdout + "\n" + start.stderr).includes(
+      "sandbox inference invocation probe returned HTTP 503",
+    ) ||
     !attachment
   )
     return;

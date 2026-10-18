@@ -615,8 +615,9 @@ describe("OpenClaw native restart diagnostics", () => {
     const diagnostic = captureNativeRestart503Diagnostic(
       {
         exitCode: 1,
-        stderr:
+        stdout:
           "The sandbox started but inference is not usable: sandbox inference invocation probe returned HTTP 503",
+        stderr: "",
       } as never,
       {
         owner: "owner",

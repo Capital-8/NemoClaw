@@ -41,7 +41,11 @@ import {
   parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
-import { runSandboxInferenceInvocationProbe } from "../inference-route-health";
+import {
+  isNativeLocalOpenClawInferenceSettlement,
+  OPENCLAW_NATIVE_LOCAL_INFERENCE_SETTLEMENT_DELAYS_MS,
+  runSandboxInferenceInvocationProbe,
+} from "../inference-route-health";
 import {
   isSandboxGatewayHttpReachableForStatus,
   isSandboxGatewayRunningForStatus,
@@ -263,19 +267,20 @@ export async function requireNativeInferenceHealth(input: {
       (input.deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe)(probeInput);
     // A health request cannot mutate the route. A new native-local OpenClaw
     // process can briefly return 503 even after its previous request succeeded.
-    const result =
-      expected.agent === "openclaw" &&
-      (input.agentName === undefined || input.agentName === "openclaw")
-        ? await retryUntilAsync(probe, {
-            accept: (value) => value.ok || value.httpStatus !== 503,
-            retryDelaysMs: [8_000, 32_000],
-            onRetry: (_value, delayMs, attempt) =>
-              console.error(
-                `  Native local inference returned HTTP 503; checking again in ${delayMs / 1_000} seconds (attempt ${attempt + 1}/3)…`,
-              ),
-            sleep: input.deps.nativeLocalInferenceRetrySleep ?? sleep,
-          })
-        : await probe();
+    const result = isNativeLocalOpenClawInferenceSettlement(
+      input.agentName ?? input.entry.agent,
+      expected,
+    )
+      ? await retryUntilAsync(probe, {
+          accept: (value) => value.ok || value.httpStatus !== 503,
+          retryDelaysMs: OPENCLAW_NATIVE_LOCAL_INFERENCE_SETTLEMENT_DELAYS_MS,
+          onRetry: (_value, delayMs, attempt) =>
+            console.error(
+              `  Native local inference returned HTTP 503; checking again in ${delayMs / 1_000} seconds (attempt ${attempt + 1}/${OPENCLAW_NATIVE_LOCAL_INFERENCE_SETTLEMENT_DELAYS_MS.length + 1})…`,
+            ),
+          sleep: input.deps.nativeLocalInferenceRetrySleep ?? sleep,
+        })
+      : await probe();
     if (!result.ok)
       throw new LaunchReadinessObservationError("health", "inference request", result.detail);
     return true;

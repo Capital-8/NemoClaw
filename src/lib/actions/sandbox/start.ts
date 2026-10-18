@@ -30,7 +30,11 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
-import { isTransientInferenceInvocationFailure } from "./inference-route-health";
+import {
+  isNativeLocalOpenClawInferenceSettlement,
+  isTransientInferenceInvocationFailure,
+  OPENCLAW_NATIVE_LOCAL_INFERENCE_SETTLEMENT_DELAYS_MS,
+} from "./inference-route-health";
 import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
@@ -98,7 +102,6 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
 
 const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
-const OPENCLAW_NATIVE_LOCAL_INFERENCE_SETTLEMENT_DELAYS_MS = [8_000, 32_000] as const;
 
 /** Observe native startup only after an intentional stop; never relaunch the agent here. */
 async function waitForStartedNativeGatewayProcess(
@@ -159,9 +162,10 @@ async function checkStartedSandboxInference(
   if (!model || !provider) return null;
   let nativeProvider: boolean;
   let nativeEndpointUrl: string | undefined;
-  const nativeLocalOpenClaw =
-    (sandbox.agent === null || sandbox.agent === undefined || sandbox.agent === "openclaw") &&
-    sandbox.nativeLocalProviderAttachment?.agent === "openclaw";
+  const nativeLocalOpenClaw = isNativeLocalOpenClawInferenceSettlement(
+    sandbox.agent,
+    sandbox.nativeLocalProviderAttachment,
+  );
   try {
     const receipt = recordedNativeProviderAttachment(sandbox);
     nativeProvider = Boolean(receipt);

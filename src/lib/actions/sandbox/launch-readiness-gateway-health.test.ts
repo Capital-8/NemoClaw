@@ -300,6 +300,16 @@ it.each([
     succeeds: false,
   },
   {
+    name: "does not retry an implicit conflicting Pi entry",
+    agent: "openclaw",
+    entryAgent: "pi",
+    selectedAgent: undefined,
+    statuses: [503],
+    attempts: 1,
+    delays: 0,
+    succeeds: false,
+  },
+  {
     name: "checks Pi once",
     agent: "pi",
     selectedAgent: "pi",
@@ -334,7 +344,7 @@ it.each([
     agentName: testCase.selectedAgent,
     entry: {
       name: SANDBOX,
-      agent: testCase.agent,
+      agent: "entryAgent" in testCase ? testCase.entryAgent : testCase.agent,
       provider: binding.provider,
       model: "local-model",
       nativeLocalProviderAttachment: {

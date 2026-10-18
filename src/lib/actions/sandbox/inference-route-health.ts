@@ -51,6 +51,17 @@ import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 export type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 export type ProbeSandboxInferenceInvocation = typeof probeSandboxInferenceInvocation;
 
+/** One bounded settlement policy for native-local OpenClaw inference after startup. */
+export const OPENCLAW_NATIVE_LOCAL_INFERENCE_SETTLEMENT_DELAYS_MS = [8_000, 32_000] as const;
+
+export function isNativeLocalOpenClawInferenceSettlement(
+  agentName: string | null | undefined,
+  attachment: unknown,
+): boolean {
+  const expected = normalizeNativeLocalProviderAttachment(attachment);
+  return expected?.agent === "openclaw" && (agentName == null || agentName === "openclaw");
+}
+
 export type VerifyNativeNvidiaStatusAttachment = (input: {
   gatewayName: string;
   sandboxName: string;
