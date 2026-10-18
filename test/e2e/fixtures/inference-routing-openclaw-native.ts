@@ -4,7 +4,12 @@
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import type { NativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/contract.ts";
 import { probeSandboxInferenceInvocation } from "../../../src/lib/actions/sandbox/inference-invocation-probe.ts";
+import { executeSandboxExecCommand } from "../../../src/lib/adapters/sandbox/command-transport.ts";
 import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
+import {
+  resolveMaxTokensField,
+  resolveProbeReplyTokens,
+} from "../../../src/lib/inference/max-tokens-field.ts";
 import { shellQuote } from "../../../src/lib/runner.ts";
 import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
@@ -28,13 +33,14 @@ type NativeOpenClawContext = Pick<
   "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "sandbox"
 >;
 
-type RestartDiagnosticContext = Pick<NativeOpenClawContext, "artifacts" | "host" | "sandbox"> & {
+type RestartDiagnosticContext = Pick<NativeOpenClawContext, "artifacts" | "host"> & {
   owner: string;
   model: string;
   apiKey: string;
   fake: Awaited<ReturnType<typeof startFakeOpenAiCompatibleServer>>;
   attachment: NativeLocalProviderAttachment | null | undefined;
   referenceProbe?: typeof probeSandboxInferenceInvocation;
+  classificationExec?: typeof executeSandboxExecCommand;
 };
 
 /** Preserve the original restart failure while collecting bounded route evidence for HTTP 503. */
@@ -47,9 +53,9 @@ export async function captureNativeRestart503Diagnostic(
     fake,
     attachment,
     referenceProbe,
+    classificationExec,
     artifacts,
     host,
-    sandbox,
   }: RestartDiagnosticContext,
 ): Promise<void> {
   if (
@@ -69,52 +75,6 @@ export async function captureNativeRestart503Diagnostic(
     }
   };
   try {
-    const inspectDirectRoute = async (phase: string, request: "models" | "chat") => {
-      const before = fake.requests().length;
-      const probe = await sandbox.exec(
-        owner,
-        [
-          "curl",
-          "-q",
-          "--silent",
-          "--output",
-          "/dev/null",
-          "--write-out",
-          "%{http_code}",
-          "--connect-timeout",
-          "3",
-          "--max-time",
-          "10",
-          "--header",
-          `Authorization: Bearer ${apiKey}`,
-          ...(request === "chat"
-            ? [
-                "--header",
-                "Content-Type: application/json",
-                "--data-binary",
-                JSON.stringify({
-                  model,
-                  messages: [{ role: "user", content: "Reply with OK" }],
-                  max_tokens: 1,
-                  stream: false,
-                }),
-              ]
-            : []),
-          `${attachment.endpointUrl}/${request === "chat" ? "chat/completions" : "models"}`,
-        ],
-        {
-          artifactName: `${owner}-restart-direct-${phase}-${request}`,
-          env: sandboxAccessEnv(),
-          timeoutMs: OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_PROBE_TIMEOUT_MS,
-          redactionValues: [apiKey],
-        },
-      );
-      return {
-        exitCode: probe.exitCode,
-        httpStatus: /^[1-5]\d\d$/u.test(probe.stdout.trim()) ? probe.stdout.trim() : "unknown",
-        reachedEndpoint: fake.requests().length > before,
-      };
-    };
     const inspectReferenceRoute = async () => {
       const before = fake.requests().length;
       const probe = await (referenceProbe ?? probeSandboxInferenceInvocation)(
@@ -139,15 +99,16 @@ export async function captureNativeRestart503Diagnostic(
     const inspectReferenceFailureClass = async () => {
       const body = JSON.stringify({
         model,
+        [resolveMaxTokensField(model)]: resolveProbeReplyTokens(attachment.provider, model),
         messages: [{ role: "user", content: "Reply with OK" }],
-        max_tokens: 1,
         stream: false,
       });
       const script = [
+        "umask 077",
         NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
         "response=$(mktemp /tmp/nemoclaw-native-diagnostic.XXXXXX) || exit 1",
         "trap 'rm -f \"$response\"' EXIT HUP INT TERM",
-        `status=$(curl -q -sS --connect-timeout 3 --max-time 10 -o "$response" -w '%{http_code}' -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data-binary ${shellQuote(body)} ${shellQuote(`${attachment.endpointUrl}/chat/completions`)}) || exit 1`,
+        `status=$(curl -q -sS --connect-timeout 5 --max-time 10 --max-filesize 65536 -o "$response" -w '%{http_code}' -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-binary ${shellQuote(body)} ${shellQuote(`${attachment.endpointUrl}/chat/completions`)}) || exit 1`,
         'printf "%s\\n" "$status"',
         'if [ "$status" != 503 ]; then printf "not-503\\n"; exit 0; fi',
         `if grep -Fq '"error":"middleware_failed"' "$response"; then printf "middleware-admission\\n"`,
@@ -156,15 +117,15 @@ export async function captureNativeRestart503Diagnostic(
         `elif grep -Fq '"error":"tls_termination_unavailable"' "$response"; then printf "tls-unavailable\\n"`,
         'else printf "other-503\\n"; fi',
       ].join("; ");
-      const result = await sandbox.exec(owner, ["sh", "-c", script], {
-        artifactName: `${owner}-restart-reference-503-class`,
-        env: sandboxAccessEnv(),
-        timeoutMs: OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_PROBE_TIMEOUT_MS,
-        redactionValues: [apiKey],
-      });
+      const result = await (classificationExec ?? executeSandboxExecCommand)(
+        owner,
+        script,
+        OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_PROBE_TIMEOUT_MS,
+        { gatewayName: attachment.gatewayName },
+      );
       const [status, category] = result.stdout.trim().split(/\r?\n/u);
       return {
-        exitCode: result.exitCode,
+        exitCode: result.status,
         httpStatus: /^[1-5]\d\d$/u.test(status ?? "") ? status : "unknown",
         category: [
           "not-503",
@@ -178,8 +139,6 @@ export async function captureNativeRestart503Diagnostic(
           : "unavailable",
       };
     };
-    await observe("immediate", () => inspectDirectRoute("immediate", "models"));
-    await observe("immediateChat", () => inspectDirectRoute("immediate", "chat"));
     await observe("immediateReference", inspectReferenceRoute);
     if (
       typeof evidence.immediateReference === "object" &&
@@ -190,8 +149,6 @@ export async function captureNativeRestart503Diagnostic(
       await observe("immediateReferenceClass", inspectReferenceFailureClass);
     }
     await new Promise((resolve) => setTimeout(resolve, OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_DELAY_MS));
-    await observe("delayed", () => inspectDirectRoute("delayed", "models"));
-    await observe("delayedChat", () => inspectDirectRoute("delayed", "chat"));
     await observe("delayedReference", inspectReferenceRoute);
     await observe("doctorExitCode", async () => {
       const doctor = await host.nemoclaw([owner, "doctor"], {

@@ -1267,7 +1267,6 @@ test(
       attachment,
       artifacts,
       host,
-      sandbox,
     });
     expect(start.exitCode, resultText(start)).toBe(0);
     progress.phase("onboard shared-route sibling");
