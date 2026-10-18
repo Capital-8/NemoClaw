@@ -641,6 +641,12 @@ describe("OpenClaw native restart diagnostics", () => {
     vi.useFakeTimers();
     const apiKey = "sk-native-test-not-real";
     const writeJson = vi.fn(async () => "artifact");
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "200" })
+      .mockRejectedValueOnce(new Error("test probe failure"))
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "503\nmiddleware-admission" })
+      .mockResolvedValue({ exitCode: 0, stdout: "200" });
     const diagnostic = captureNativeRestart503Diagnostic(
       {
         exitCode: 1,
@@ -658,24 +664,48 @@ describe("OpenClaw native restart diagnostics", () => {
           detail: "HTTP 503",
         })),
         fake: { requests: vi.fn(() => []) } as never,
-        sandbox: {
-          exec: vi
-            .fn()
-            .mockResolvedValueOnce({ exitCode: 0, stdout: "200" })
-            .mockRejectedValueOnce(new Error("test probe failure"))
-            .mockResolvedValue({ exitCode: 0, stdout: "200" }),
-        } as never,
+        sandbox: { exec } as never,
         host: { nemoclaw: vi.fn(async () => ({ exitCode: 0 })) } as never,
         artifacts: { writeJson } as never,
       },
     );
     await vi.advanceTimersByTimeAsync(8_000);
     await diagnostic;
+    const classCommand = exec.mock.calls[2]?.[1] as string[];
+    expect(classCommand.slice(0, 2)).toEqual(["sh", "-c"]);
+    expect(() => execFileSync("sh", ["-n"], { input: classCommand[2] })).not.toThrow();
+    expect(classCommand[2]).not.toContain(apiKey);
+    const diagnosticBin = fs.mkdtempSync(path.join(os.tmpdir(), "native-503-class-"));
+    try {
+      const curlStub = path.join(diagnosticBin, "curl");
+      fs.writeFileSync(
+        curlStub,
+        '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; output=$1; fi; shift; done\nprintf \'{"error":"middleware_failed","secret":"must-stay-inside"}\' > "$output"\nprintf 503\n',
+        { mode: 0o700 },
+      );
+      const classified = execFileSync("sh", ["-c", classCommand[2]!], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${diagnosticBin}:${process.env.PATH ?? ""}`,
+          NEMOCLAW_LOCAL_INFERENCE_TOKEN: "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        },
+      });
+      expect(classified).toBe("503\nmiddleware-admission\n");
+      expect(classified).not.toContain("must-stay-inside");
+    } finally {
+      fs.rmSync(diagnosticBin, { recursive: true, force: true });
+    }
     expect(writeJson).toHaveBeenCalledWith(
       "owner-restart-503-diagnostic.json",
       expect.objectContaining({
         immediate: { exitCode: 0, httpStatus: "200", reachedEndpoint: false },
         immediateChat: { error: "probe unavailable" },
+        immediateReferenceClass: {
+          exitCode: 0,
+          httpStatus: "503",
+          category: "middleware-admission",
+        },
         delayedReference: { ok: false, httpStatus: 503, reachedEndpoint: false },
         doctorExitCode: 0,
       }),

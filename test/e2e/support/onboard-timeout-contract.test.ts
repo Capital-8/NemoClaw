@@ -149,7 +149,7 @@ describe("onboard final-handoff timeout contract", () => {
 
   it("contains both serial OpenClaw native-local scenarios and their finalization", () => {
     expect(OPENCLAW_NATIVE_LOCAL_RESTART_DIAGNOSTIC_TIMEOUT_MS).toBe(
-      6 * OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_PROBE_TIMEOUT_MS +
+      7 * OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_PROBE_TIMEOUT_MS +
         OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_DELAY_MS +
         OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_DOCTOR_TIMEOUT_MS,
     );
@@ -197,7 +197,7 @@ describe("onboard final-handoff timeout contract", () => {
       singleFinalHandoffTargetMinutes: 75,
       dcodeNativeLocalTestMinutes: 117.5,
       inferenceRoutingTargetMinutes: 243,
-      openClawNativeLocalTestMinutes: 146 + 38 / 60,
+      openClawNativeLocalTestMinutes: 146 + 58 / 60,
       openClawNativeLocalTargetMinutes: 217,
       noRecreateCommandMinutes: 15,
       configExportCommandMinutes: 2,
