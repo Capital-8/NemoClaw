@@ -71,8 +71,9 @@ The bundle pins these providers:
 | Host | `registry.opentofu.org/nvidia/host` | Source-derived, matching the bundle |
 | Docker | `registry.opentofu.org/kreuzwerker/docker` | 4.6.0 |
 | Helm | `registry.opentofu.org/hashicorp/helm` | 3.3.0 |
+| Kubernetes | `registry.opentofu.org/hashicorp/kubernetes` | 3.3.0 |
 
-None of them exposes ephemeral resources or provider functions.
+Only the Kubernetes provider exposes ephemeral resources or provider functions, and generated graphs use none of them.
 
 ### OpenShell Resources and Data Sources
 
@@ -910,7 +911,7 @@ The namespace, encryption key, and persistent volumes remain.
 
 Follow [bundle building](build.md) for matched CLI, SDK contract, provider, schema, and OpenTofu versions.
 The NemoClaw, OpenShell, and Fabric providers use the same source-derived version to prevent stale reuse.
-The Docker and Helm providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
+The Docker, Helm, and Kubernetes providers have fixed release versions and checksum-pinned native archives, with their upstream licenses retained in the bundle.
 
 [Schema snapshots](contributing/testing.md#provider-schema-snapshots) of the NemoClaw, OpenShell, and Fabric providers, [planning tests](../crates/nemoclaw-provider/tests/planning.rs), and [refresh tests](../crates/nemoclaw-provider/tests/refresh.rs) cover provider contracts.
 [Fixture qualification](contributing/integration-tests.md) covers real OpenTofu protocol/lifecycle execution with explicit bundle inputs.

@@ -4,46 +4,52 @@
 use super::*;
 
 #[test]
-fn bundle_rejects_a_missing_or_tampered_helm_provider() {
-    let directory = tempfile::tempdir().unwrap();
-    let helm = format!(
-        "providers/registry.opentofu.org/hashicorp/helm/3.3.0/{}/{}",
-        platform().unwrap(),
-        executable("terraform-provider-helm_v3.3.0_x5")
-    );
-    let mut manifest = Manifest {
-        version: "0.1.0".into(),
-        rust: "1.98.1".into(),
-        opentofu: crate::compile::OPENTOFU_VERSION.into(),
-        files: Default::default(),
-    };
-    for name in required_files(&manifest.version).unwrap() {
-        if name == helm {
-            continue;
+fn bundle_rejects_a_missing_or_tampered_hashicorp_provider() {
+    for provider in [
+        helm_provider_path(&platform().unwrap()).unwrap(),
+        kubernetes_provider_path(&platform().unwrap()).unwrap(),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut manifest = Manifest {
+            version: "0.1.0".into(),
+            rust: "1.98.1".into(),
+            opentofu: crate::compile::OPENTOFU_VERSION.into(),
+            files: Default::default(),
+        };
+        for name in required_files(&manifest.version).unwrap() {
+            if name == provider {
+                continue;
+            }
+            let path = directory.path().join(&name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"fixture binary").unwrap();
+            manifest.files.insert(name, hash_file(&path).unwrap());
         }
-        let path = directory.path().join(&name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, b"fixture binary").unwrap();
-        manifest.files.insert(name, hash_file(&path).unwrap());
+        let manifest_path = directory.path().join("manifest.json");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(
+            Bundle::open(directory.path()).is_err(),
+            "a bundle without its pinned {provider} must be rejected"
+        );
+
+        let provider_path = directory.path().join(&provider);
+        fs::create_dir_all(provider_path.parent().unwrap()).unwrap();
+        fs::write(&provider_path, b"provider binary").unwrap();
+        manifest
+            .files
+            .insert(provider.clone(), hash_file(&provider_path).unwrap());
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        Bundle::open(directory.path()).unwrap();
+
+        fs::write(&provider_path, b"tampered provider").unwrap();
+        assert!(Bundle::open(directory.path()).is_err());
+        fs::remove_file(&provider_path).unwrap();
+        assert!(Bundle::open(directory.path()).is_err());
     }
-    let manifest_path = directory.path().join("manifest.json");
-    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    assert!(
-        Bundle::open(directory.path()).is_err(),
-        "a bundle without its pinned Helm provider must be rejected"
+    assert_eq!(
+        kubernetes_provider_path("linux_arm64").unwrap(),
+        "providers/registry.opentofu.org/hashicorp/kubernetes/3.3.0/linux_arm64/terraform-provider-kubernetes_v3.3.0_x5"
     );
-
-    let helm_path = directory.path().join(&helm);
-    fs::create_dir_all(helm_path.parent().unwrap()).unwrap();
-    fs::write(&helm_path, b"provider binary").unwrap();
-    manifest.files.insert(helm, hash_file(&helm_path).unwrap());
-    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    Bundle::open(directory.path()).unwrap();
-
-    fs::write(&helm_path, b"tampered provider").unwrap();
-    assert!(Bundle::open(directory.path()).is_err());
-    fs::remove_file(&helm_path).unwrap();
-    assert!(Bundle::open(directory.path()).is_err());
 }
 
 #[test]

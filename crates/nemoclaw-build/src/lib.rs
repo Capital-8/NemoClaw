@@ -10,8 +10,12 @@ pub mod docs;
 #[cfg(feature = "sdk")]
 pub mod fern;
 #[cfg(feature = "sdk")]
+mod hashicorp_provider;
+#[cfg(feature = "sdk")]
 pub mod helm_provider;
 pub mod images;
+#[cfg(feature = "sdk")]
+pub mod kubernetes_provider;
 #[cfg(feature = "sdk")]
 pub mod schema;
 mod source;

@@ -12,6 +12,7 @@ pub mod cluster;
 pub mod connection;
 pub mod gateway;
 pub mod issuer;
+pub mod models;
 pub mod operations;
 pub mod receipt;
 pub mod storage;

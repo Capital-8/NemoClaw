@@ -436,6 +436,12 @@ fn kubernetes_connection_environment_requires_explicit_operation_overrides() {
         "HELM_REGISTRY_CONFIG",
         "KUBE_HOST",
         "KUBE_TOKEN",
+        // The Kubernetes provider's own settings.
+        "KUBE_CONFIG_PATH",
+        "KUBE_CONFIG_PATHS",
+        "KUBE_CTX",
+        "KUBE_CTX_CLUSTER",
+        "KUBE_INSECURE",
         "KUBECONFIG",
     ] {
         assert!(!inherited_variable(name));

@@ -43,29 +43,32 @@ fn pinned_archive_extracts_only_the_exact_native_binary() {
 }
 
 #[test]
-fn every_bundle_platform_pins_the_official_helm_provider_archive() {
+fn every_bundle_platform_pins_the_official_hashicorp_provider_archives() {
     let pins: serde_json::Value =
         serde_json::from_str(include_str!("../../../versions.json")).unwrap();
-    let version = pins["helmProvider"]
-        .as_str()
-        .expect("pinned Helm provider version");
-    for platform in [
-        "linux_arm64",
-        "linux_amd64",
-        "darwin_arm64",
-        "darwin_amd64",
-        "windows_amd64",
+    for (pin, name) in [
+        ("helmProvider", "helm"),
+        ("kubernetesProvider", "kubernetes"),
     ] {
-        let artifact = &pins["platforms"][platform]["helmProvider"];
-        assert_eq!(
-            artifact["url"],
-            format!(
-                "https://releases.hashicorp.com/terraform-provider-helm/{version}/terraform-provider-helm_{version}_{platform}.zip"
-            )
-        );
-        let checksum = artifact["sha256"].as_str().unwrap();
-        assert_eq!(checksum.len(), 64);
-        assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        let version = pins[pin].as_str().expect("pinned provider version");
+        for platform in [
+            "linux_arm64",
+            "linux_amd64",
+            "darwin_arm64",
+            "darwin_amd64",
+            "windows_amd64",
+        ] {
+            let artifact = &pins["platforms"][platform][pin];
+            assert_eq!(
+                artifact["url"],
+                format!(
+                    "https://releases.hashicorp.com/terraform-provider-{name}/{version}/terraform-provider-{name}_{version}_{platform}.zip"
+                )
+            );
+            let checksum = artifact["sha256"].as_str().unwrap();
+            assert_eq!(checksum.len(), 64);
+            assert!(checksum.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        }
     }
 }
 
@@ -360,102 +363,116 @@ fn docker_provider_bundle_retains_the_verified_binary_and_license() {
     );
 }
 
+/// A bundled HashiCorp provider: its name and installer.
+#[cfg(feature = "sdk")]
+type Installer =
+    fn(
+        &std::path::Path,
+        &[u8],
+        &str,
+        &str,
+    ) -> Result<std::collections::BTreeMap<String, String>, Box<dyn std::error::Error>>;
+#[cfg(feature = "sdk")]
+const HASHICORP_PROVIDERS: [(&str, Installer); 2] = [
+    ("helm", nemoclaw_build::helm_provider::install),
+    ("kubernetes", nemoclaw_build::kubernetes_provider::install),
+];
+
 #[cfg(feature = "sdk")]
 #[test]
-fn helm_provider_bundle_retains_the_native_binary_and_upstream_license() {
-    for platform in [
-        "linux_arm64",
-        "linux_amd64",
-        "darwin_arm64",
-        "darwin_amd64",
-        "windows_amd64",
-    ] {
-        let extension = if platform == "windows_amd64" {
-            ".exe"
-        } else {
-            ""
-        };
-        let name = format!("terraform-provider-helm_v3.3.0_x5{extension}");
-        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        for (entry, bytes) in [
-            (name.as_str(), "native provider"),
-            ("LICENSE.txt", "unchanged upstream MPL license"),
+fn hashicorp_provider_bundles_retain_the_native_binary_and_upstream_license() {
+    for (provider, install) in HASHICORP_PROVIDERS {
+        for platform in [
+            "linux_arm64",
+            "linux_amd64",
+            "darwin_arm64",
+            "darwin_amd64",
+            "windows_amd64",
         ] {
-            zip.start_file(entry, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(bytes.as_bytes()).unwrap();
-        }
-        let archive = zip.finish().unwrap().into_inner();
-        let root = tempfile::tempdir().unwrap();
-        let files =
-            nemoclaw_build::helm_provider::install(root.path(), &archive, "3.3.0", platform)
-                .unwrap();
-        let binary =
-            format!("providers/registry.opentofu.org/hashicorp/helm/3.3.0/{platform}/{name}");
-        assert_eq!(
-            std::fs::read(root.path().join(&binary)).unwrap(),
-            b"native provider"
-        );
-        assert_eq!(
-            std::fs::read(root.path().join("licenses/helm-provider-LICENSE")).unwrap(),
-            b"unchanged upstream MPL license"
-        );
-        assert_eq!(files.len(), 2);
-        for (path, hash) in files {
-            assert_eq!(
-                hash,
-                nemoclaw_sdk::bundle::hash_file(&root.path().join(path)).unwrap()
+            let extension = if platform == "windows_amd64" {
+                ".exe"
+            } else {
+                ""
+            };
+            let name = format!("terraform-provider-{provider}_v3.3.0_x5{extension}");
+            let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            for (entry, bytes) in [
+                (name.as_str(), "native provider"),
+                ("LICENSE.txt", "unchanged upstream MPL license"),
+            ] {
+                zip.start_file(entry, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                zip.write_all(bytes.as_bytes()).unwrap();
+            }
+            let archive = zip.finish().unwrap().into_inner();
+            let root = tempfile::tempdir().unwrap();
+            let files = install(root.path(), &archive, "3.3.0", platform).unwrap();
+            let binary = format!(
+                "providers/registry.opentofu.org/hashicorp/{provider}/3.3.0/{platform}/{name}"
             );
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
             assert_eq!(
-                std::fs::metadata(root.path().join(binary))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o755
+                std::fs::read(root.path().join(&binary)).unwrap(),
+                b"native provider"
             );
+            assert_eq!(
+                std::fs::read(
+                    root.path()
+                        .join(format!("licenses/{provider}-provider-LICENSE"))
+                )
+                .unwrap(),
+                b"unchanged upstream MPL license"
+            );
+            assert_eq!(files.len(), 2);
+            for (path, hash) in files {
+                assert_eq!(
+                    hash,
+                    nemoclaw_sdk::bundle::hash_file(&root.path().join(path)).unwrap()
+                );
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    std::fs::metadata(root.path().join(binary))
+                        .unwrap()
+                        .permissions()
+                        .mode()
+                        & 0o777,
+                    0o755
+                );
+            }
         }
     }
 }
 
 #[cfg(feature = "sdk")]
 #[test]
-fn helm_provider_rejects_incomplete_or_substituted_inputs_before_writing() {
-    for (name, version, platform) in [
-        ("terraform-provider-helm_v3.3.0_x5", "3.3.0", "linux_amd64"),
-        ("LICENSE.txt", "3.3.0", "linux_amd64"),
-        ("terraform-provider-helm_v3.3.0_x5", "3.2.0", "linux_amd64"),
-        (
-            "terraform-provider-helm_v3.3.0_x5",
-            "3.3.0",
-            "../../outside",
-        ),
-        (
-            "terraform-provider-helm_v3.3.0_x5",
-            "3.3.0",
-            "windows_amd64",
-        ),
-        (
-            "nested/terraform-provider-helm_v3.3.0_x5",
-            "3.3.0",
-            "linux_amd64",
-        ),
-    ] {
-        let root = tempfile::tempdir().unwrap();
-        assert!(
-            nemoclaw_build::helm_provider::install(
-                root.path(),
-                &archive(name, b"fixture"),
-                version,
-                platform
-            )
-            .is_err()
-        );
-        assert!(std::fs::read_dir(root.path()).unwrap().next().is_none());
+fn hashicorp_providers_reject_incomplete_or_substituted_inputs_before_writing() {
+    for (provider, install) in HASHICORP_PROVIDERS {
+        let binary = format!("terraform-provider-{provider}_v3.3.0_x5");
+        let other = if provider == "helm" {
+            "kubernetes"
+        } else {
+            "helm"
+        };
+        let substituted = format!("terraform-provider-{other}_v3.3.0_x5");
+        let nested = format!("nested/{binary}");
+        for (name, version, platform) in [
+            (binary.as_str(), "3.3.0", "linux_amd64"),
+            ("LICENSE.txt", "3.3.0", "linux_amd64"),
+            (substituted.as_str(), "3.3.0", "linux_amd64"),
+            (binary.as_str(), "3.2.0", "linux_amd64"),
+            (binary.as_str(), "3.3.0", "../../outside"),
+            (binary.as_str(), "3.3.0", "windows_amd64"),
+            (nested.as_str(), "3.3.0", "linux_amd64"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            assert!(
+                install(root.path(), &archive(name, b"fixture"), version, platform).is_err(),
+                "{provider}: {name} {version} {platform}"
+            );
+            assert!(std::fs::read_dir(root.path()).unwrap().next().is_none());
+        }
     }
 }
 
