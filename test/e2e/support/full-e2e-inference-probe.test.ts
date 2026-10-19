@@ -114,6 +114,7 @@ it.each([
       model: "selected-model",
       env: {},
       redactionValues: ["synthetic-key"],
+      timeoutMs: 30_000,
       entry: {
         name: "alpha",
         gatewayName: "recorded-gateway",
@@ -141,32 +142,46 @@ it.each([
     expect(openshell).toHaveBeenNthCalledWith(
       1,
       expect.any(Array),
-      expect.objectContaining({ redactionValues: ["synthetic-key"], captureLimitBytes: 16 * 1024 }),
+      expect.objectContaining({
+        redactionValues: ["synthetic-key"],
+        captureLimitBytes: 16 * 1024,
+        timeoutMs: 30_000,
+      }),
     );
   },
 );
 
 describe("full E2E sandbox inference probe", () => {
   it.each([
-    ["nvidia-prod", "NVIDIA_INFERENCE_API_KEY", "https://integrate.api.nvidia.com/v1"],
-    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1"],
-  ])(
+    ["nvidia-prod", "NVIDIA_INFERENCE_API_KEY", "https://integrate.api.nvidia.com/v1", undefined],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1", undefined],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1", 60],
+  ] as const)(
     "uses the sandbox native %s handle and preserves the request as data",
-    (provider, credentialEnv, endpointUrl) => {
+    (provider, credentialEnv, endpointUrl, maxTimeSeconds) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "full-e2e-native-probe-"));
       try {
         fs.writeFileSync(path.join(directory, "curl"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', {
           mode: 0o700,
         });
         const body = JSON.stringify({ prompt: 'literal $(exit 99) "quote"' });
-        const [command, ...args] = buildSandboxInferenceChatCommand(body, provider, endpointUrl);
+        const [command, ...args] = buildSandboxInferenceChatCommand(
+          body,
+          provider,
+          endpointUrl,
+          maxTimeSeconds,
+        );
         const handle = `openshell:resolve:env:v3_${credentialEnv}`;
-        const env = { PATH: `${directory}:/usr/bin:/bin`, [credentialEnv]: handle };
+        const env = {
+          HOME: directory,
+          PATH: `${directory}:/usr/bin:/bin`,
+          [credentialEnv]: handle,
+        };
         const result = execFileSync(command, args, { env, encoding: "utf8" });
         expect(result.split("\n")).toEqual([
           "-fsS",
           "--max-time",
-          "90",
+          String(maxTimeSeconds ?? 90),
           `${endpointUrl}/chat/completions`,
           "-H",
           "Content-Type: application/json",
@@ -198,6 +213,7 @@ describe("full E2E sandbox inference probe", () => {
         const [, ...args] = buildSandboxInferenceChatCommand("{}", "nvidia-prod");
         const denied = spawnSync("/bin/bash", args, {
           env: {
+            HOME: directory,
             PATH: `${directory}:/usr/bin:/bin`,
             NVIDIA_INFERENCE_API_KEY: invalid,
             CURL_MARKER: marker,

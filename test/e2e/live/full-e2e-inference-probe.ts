@@ -328,6 +328,7 @@ export async function readFullE2eInferenceRoute(input: {
   entry: SandboxEntry | null;
   logicalProvider: string;
   model: string;
+  timeoutMs?: number;
   env: NodeJS.ProcessEnv;
   redactionValues: string[];
 }): Promise<{ ok: boolean; detail: string }> {
@@ -338,7 +339,7 @@ export async function readFullE2eInferenceRoute(input: {
     const options = {
       env: input.env,
       redactionValues: input.redactionValues,
-      timeoutMs: 60_000,
+      timeoutMs: input.timeoutMs ?? 60_000,
       captureLimitBytes: 16 * 1024,
     };
     const gateway = input.entry?.gatewayName || input.env.OPENSHELL_GATEWAY || "nemoclaw";
@@ -419,7 +420,7 @@ export async function readFullE2eInferenceRoute(input: {
   const route = await input.sandbox.openshell(["inference", "get"], {
     artifactName: "phase-3-openshell-inference-get",
     env: input.env,
-    timeoutMs: 60_000,
+    timeoutMs: input.timeoutMs ?? 60_000,
   });
   return { ok: route.exitCode === 0 && route.stdout.includes(input.model), detail: route.stdout };
 }
