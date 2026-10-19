@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-FROM ollama/ollama@sha256:0ff452f6a4c3c5bb4ab063a1db190b261d5834741a519189ed5301d50e4434d1
+FROM ollama/ollama@sha256:292ee7945dfc3d5840a181f3ab86fedb1e66703e02c8af98b50f4da56b7e278c
 COPY nemoclaw-runtime /usr/local/bin/nemoclaw-runtime
 COPY supervisor-source.tar.gz supervisor.json LICENSE /opt/nemoclaw/source/
 COPY NOTICE.md /opt/nemoclaw/source/NOTICE.md

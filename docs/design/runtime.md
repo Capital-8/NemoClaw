@@ -87,8 +87,8 @@ Its [download API](https://github.com/huggingface/huggingface_hub/blob/v1.28.0/s
 Verification after that download would not preserve NemoClaw's bounded writes and cache-path checks.
 The retained implementation also bounds metadata reads, verifies checksums, preserves partial transfers, and treats authentication failures as errors.
 
-The [Ollama 0.34.0 pull implementation](https://github.com/ollama/ollama/blob/d8ab4b4f0ca24b51d3a46b3bf4f462e58ce66b1f/server/images.go) fetches a tag without accepting an expected manifest digest.
-The retained downloader targets the private cache layout of the [pinned Ollama 0.34.0 image](../../runtimes/ollama/Dockerfile).
+The [Ollama 0.35.1 pull implementation](https://github.com/ollama/ollama/blob/b0c1ca4f7549d7acdfa52a7dcffc934bc63a43ce/server/images.go) fetches a tag without accepting an expected manifest digest.
+The retained downloader targets the private cache layout of the [pinned Ollama 0.35.1 image](../../runtimes/ollama/Dockerfile).
 Before loading, its [inventory check](../../crates/nemoclaw-runtime/src/ollama/runtime/observation.rs) requires the running Ollama to report the authored model name and digest.
 A missing model or mismatched digest stops startup; the runtime does not repair the cache by pulling a mutable tag.
 Custom images must satisfy this same behavioral contract; a version string alone does not establish compatibility.
