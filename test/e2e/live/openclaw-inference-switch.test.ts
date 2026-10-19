@@ -3,6 +3,7 @@
 
 // Hosted switching and native local routing share the OpenClaw live contract.
 
+import { readRegisteredLocalRoute } from "../fixtures/registered-inference.ts";
 import fs from "node:fs";
 import http, { type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -1214,10 +1215,10 @@ test(
         "onboard native OpenClaw owner",
         "rebuild native OpenClaw owner",
         "restart native OpenClaw owner",
-        "onboard shared-route sibling",
-        "record shared route before model switch",
+        "onboard native-route sibling",
+        "record sibling route before model switch",
         "switch native OpenClaw model",
-        "verify shared route unchanged",
+        "verify sibling route unchanged",
         "request inference through OpenClaw",
         "check credential isolation",
         "verify owner reachability",
@@ -1258,7 +1259,7 @@ test(
       timeoutMs: 120_000,
     });
     expect(start.exitCode, resultText(start)).toBe(0);
-    progress.phase("onboard shared-route sibling");
+    progress.phase("onboard native-route sibling");
     const sibling = inferenceSandboxName("e2e-oc-peer");
     const peerEndpoint = await startFakeOpenAiCompatibleServer({
       apiKey,
@@ -1290,12 +1291,12 @@ test(
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     );
     expectOnboardSuccess(peer, `${sibling} onboard`);
-    progress.phase("record shared route before model switch");
-    const sharedBefore = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-      artifactName: `${owner}-shared-route-before-switch`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
+    progress.phase("record sibling route before model switch");
+    const sharedBefore = await readRegisteredLocalRoute(
+      sandbox,
+      sibling,
+      `${owner}-sibling-route-before-switch`,
+    );
     expect(sharedBefore.exitCode, resultText(sharedBefore)).toBe(0);
     progress.phase("switch native OpenClaw model");
     const switched = await host.nemoclaw(
@@ -1308,12 +1309,12 @@ test(
       },
     );
     expect(switched.exitCode, resultText(switched)).toBe(0);
-    progress.phase("verify shared route unchanged");
-    const sharedAfter = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-      artifactName: `${owner}-shared-route-after-switch`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
+    progress.phase("verify sibling route unchanged");
+    const sharedAfter = await readRegisteredLocalRoute(
+      sandbox,
+      sibling,
+      `${owner}-sibling-route-after-switch`,
+    );
     expect(sharedAfter.exitCode).toBe(sharedBefore.exitCode);
     expect(sharedAfter.stdout).toBe(sharedBefore.stdout);
     progress.phase("request inference through OpenClaw");

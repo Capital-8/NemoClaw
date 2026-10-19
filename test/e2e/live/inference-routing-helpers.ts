@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredCompatibleChatCommand } from "../fixtures/registered-inference.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -355,17 +356,7 @@ async function expectOpenAiChatThroughSandbox(
   });
   const response = await sandbox.exec(
     sandboxName,
-    [
-      "curl",
-      "-sS",
-      "--max-time",
-      "60",
-      "https://inference.local/v1/chat/completions",
-      "-H",
-      "Content-Type: application/json",
-      "--data-raw",
-      payload,
-    ],
+    registeredCompatibleChatCommand(sandboxName, model, payload),
     {
       artifactName,
       env: buildAvailabilityProbeEnv(),

@@ -6,6 +6,7 @@ import {
   withPodmanOwnerDiagnostic,
   captureBoundedPodmanOwnerDiagnostic,
 } from "../fixtures/podman-owner-diagnostic";
+import { registeredCompatibleChatCommand } from "../fixtures/registered-inference.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +25,7 @@ import { prepareOnboardSandboxes } from "../fixtures/onboard-precleanup.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
@@ -401,16 +402,16 @@ test(
     // must inject the stored compatible-endpoint credential upstream; this POST
     // is the positive auth proof and is deliberately newer than fixture startup
     // and the direct readiness fetch excluded by onboardingRequestOffset.
-    const inferenceAfterInterrupt = await sandbox.execShell(
+    const inferenceAfterInterrupt = await sandbox.exec(
       SANDBOX_NAME,
-      trustedSandboxShellScript(
-        `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
-          {
-            model: FAKE_COMPATIBLE_MODEL,
-            messages: [{ role: "user", content: "reply with OK" }],
-            max_tokens: 8,
-          },
-        )}'`,
+      registeredCompatibleChatCommand(
+        SANDBOX_NAME,
+        FAKE_COMPATIBLE_MODEL,
+        JSON.stringify({
+          model: FAKE_COMPATIBLE_MODEL,
+          messages: [{ role: "user", content: "reply with OK" }],
+          max_tokens: 8,
+        }),
       ),
       {
         artifactName: "phase-2-authenticated-inference-post",
@@ -422,9 +423,6 @@ test(
       inferenceAfterInterrupt.exitCode,
       `${inferenceAfterInterrupt.stdout}\n${inferenceAfterInterrupt.stderr}`,
     ).toBe(0);
-
-    // Assertion: session-file-present.
-    expect(fs.existsSync(SESSION_FILE)).toBe(true);
 
     // Assertion: session-file-interrupted-state.
     const interrupted = readSession<SessionStateInterrupted>(SESSION_FILE);
@@ -578,7 +576,6 @@ test(
     ).toBe(true);
 
     // Assertion: registry-has-sandbox.
-    expect(fs.existsSync(REGISTRY_FILE)).toBe(true);
     const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as unknown;
     expect(containsExactJsonToken(registry, SANDBOX_NAME)).toBe(true);
 
@@ -635,9 +632,9 @@ test(
     ).toBe("true:true:true:true");
     expect(
       hasHermesApi ||
-        unavailableResumeText.includes("Compatible endpoint sandbox smoke check failed"),
+        unavailableResumeText.includes("Provider-neutral sandbox inference smoke check failed"),
     ).toBe(true);
-    expect(unavailableResumeText).toContain("inference.local");
+    expect(unavailableResumeText).toContain("Native local inference");
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );
