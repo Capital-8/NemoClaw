@@ -227,12 +227,15 @@ export async function readOpenClawConfig(
             'const fs = require("node:fs");',
             'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
             `const provider = config.models?.providers?.${options.nativeCustomApi === "anthropic-messages" ? "anthropic" : "inference"};`,
-            // A fresh exec receives the newly attached provider handle. Keep
-            // both values inside the sandbox because ShellProbe redacts the
-            // credential-shaped config field before returning stdout.
+            // OpenShell retains scoped handles across same-provider revisions.
+            // Check their form here; the caller also proves provider attachment
+            // and authenticated inference through the actual OpenClaw gateway.
+            // Keep both values inside the sandbox before artifact redaction.
             `const credentialEnv = ${JSON.stringify(options.nativeCustomApi ? (options.nativeCustomApi === "anthropic-messages" ? "COMPATIBLE_ANTHROPIC_API_KEY" : "COMPATIBLE_API_KEY") : "NVIDIA_INFERENCE_API_KEY")};`,
             "const handle = process.env[credentialEnv];",
-            'require("node:assert/strict").ok(new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + credentialEnv + "$").test(handle ?? "") && provider?.apiKey === handle, "native credential reference mismatch");',
+            'const scoped = new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + credentialEnv + "$");',
+            'require("node:assert/strict").ok(typeof handle === "string" && scoped.test(handle), "native exec credential is not scoped");',
+            'require("node:assert/strict").ok(typeof provider?.apiKey === "string" && scoped.test(provider.apiKey), "native config credential is not scoped");',
             "delete provider.apiKey;",
             "process.stdout.write(JSON.stringify(config));",
           ].join(" "),

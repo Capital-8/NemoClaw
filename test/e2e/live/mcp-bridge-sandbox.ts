@@ -12,6 +12,11 @@ import { discoverHostAddress } from "../fixtures/host-address.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
+import {
+  buildMcpProviderRewriteAuthorization,
+  buildMcpCredentialHandleAuthorizationPattern,
+} from "./mcp-provider-rewrite-probe.ts";
+
 const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
 
 export type McpDnsRebindingAdapter = "openclaw-config" | "hermes-config" | "deepagents-config";
@@ -126,18 +131,38 @@ export {
 } from "./dns-rebinding-hosts-fixture.ts";
 
 /**
- * Accept the two fail-closed shapes OpenShell can expose for a denied HTTPS
- * request: an L7 HTTP 403, or curl's exit 56 for a CONNECT-level proxy 403.
+ * Require a policy response or curl's explicit connect permission error.
+ * Exit 7 alone also represents refused connections and is not denial evidence.
  */
 export function isExpectedMcpCurlPolicyDenial(
   result: Pick<ShellProbeResult, "exitCode" | "stderr" | "stdout" | "timedOut">,
+  httpCodeMarker = MCP_CURL_HTTP_CODE_MARKER,
 ): boolean {
   if (result.timedOut) return false;
 
-  const httpCode = result.stdout.match(
-    new RegExp(`^${MCP_CURL_HTTP_CODE_MARKER}([0-9]{3})$`, "m"),
-  )?.[1];
-  if (result.exitCode === 0) return httpCode === "403";
+  const records = result.stdout.split(/\r?\n/u).filter((line) => line.startsWith(httpCodeMarker));
+  if (records.length !== 1) return false;
+  const httpCode = records[0]?.slice(httpCodeMarker.length);
+  if (result.exitCode === 0) {
+    return httpCode === "403" && /policy[_ ]denied|not allowed by any policy/iu.test(result.stdout);
+  }
+  if (result.exitCode === 7 && httpCode === "000") {
+    // curl 8.14.1 cf-socket.c reports connect(2)'s errno here. Require every
+    // attempted address to fail with EACCES, not a mixed transport failure.
+    const failures = result.stderr
+      .split(/\r?\n/u)
+      .filter(
+        (line) =>
+          line.startsWith("* Immediate connect fail for ") ||
+          (line.startsWith("* connect to ") && line.includes(" failed: ")),
+      );
+    return (
+      failures.length > 0 &&
+      failures.every((line) =>
+        /^\* Immediate connect fail for [0-9a-f:.]+: Permission denied$/iu.test(line),
+      )
+    );
+  }
 
   return (
     result.exitCode === 56 &&
@@ -145,24 +170,15 @@ export function isExpectedMcpCurlPolicyDenial(
   );
 }
 
-/**
- * Build an MCP request whose curl child retains the selected adapter runtime
- * as an ancestor. OpenShell v0.0.106 attributes policy to /proc/<pid>/exe and
- * ancestors, so this exercises the same unavoidable Node/Python identity used
- * by the corresponding adapter instead of an unrelated curl-only identity.
- *
- * Pinned upstream source contract:
- * NVIDIA/OpenShell@c4b500a7de64d0b66e3ee8098f58d14299092162,
- * crates/openshell-supervisor-network/src/proxy.rs:3070-3096 resolves once,
- * proxy.rs:3121-3160 validates and retains that same address list, and
- * proxy.rs:3193-3251 dials those addresses on the direct path used here.
- */
+/** After removal, absent credentials cannot hide network denial: only policy denial evidence counts.
+ * A null adapter keeps curl alone; otherwise preserve the adapter's runtime ancestry. */
 export function buildMcpDnsRebindingProbeScript(
-  adapter: McpDnsRebindingAdapter,
+  adapter: McpDnsRebindingAdapter | null,
   targetUrl: string,
   credentialKey: string,
+  afterRemoval = false,
 ): string {
-  const fileStem = `/tmp/nemoclaw-mcp-rebinding-${adapter}`;
+  const fileStem = `/tmp/nemoclaw-mcp-rebinding-${adapter ?? "curl-only"}`;
   const responsePath = `${fileStem}.body`;
   const stdoutPath = `${fileStem}.stdout`;
   const stderrPath = `${fileStem}.stderr`;
@@ -170,6 +186,7 @@ export function buildMcpDnsRebindingProbeScript(
   const curlArgs = [
     "curl",
     "-sS",
+    "--verbose",
     "--max-time",
     "30",
     "-o",
@@ -182,26 +199,29 @@ export function buildMcpDnsRebindingProbeScript(
     "-H",
     "content-type: application/json",
     "-H",
-    `authorization: Bearer openshell:resolve:env:${credentialKey}`,
+    "mcp-protocol-version: 2025-11-25",
+    "-H",
+    adapter === null
+      ? `authorization: Bearer openshell:resolve:env:${credentialKey}`
+      : "NEMOCLAW_MCP_AUTHORIZATION",
     "--data-binary",
     body,
   ];
   const quotedCurl = curlArgs.map(shellQuote).join(" ");
   const runtimeCommand = (() => {
     switch (adapter) {
+      case null:
+        return `LC_ALL=C ${quotedCurl}`;
       case "openclaw-config": {
-        const runner =
-          'const { spawnSync } = require("node:child_process"); const result = spawnSync(process.argv[1], process.argv.slice(2), { stdio: "inherit" }); process.exit(result.status ?? 1);';
+        const runner = `const { spawnSync } = require("node:child_process"); const authorize = ${buildMcpProviderRewriteAuthorization.toString()}; const value = process.env[${JSON.stringify(credentialKey)}]; const header = value === undefined && ${afterRemoval} ? ${JSON.stringify(`Bearer openshell:resolve:env:${credentialKey}`)} : authorize(${JSON.stringify(credentialKey)}, value); if (!header) process.exit(2); const args = process.argv.slice(2).map(value => value === "NEMOCLAW_MCP_AUTHORIZATION" ? "authorization: " + header : value); const result = spawnSync(process.argv[1], args, { stdio: "inherit", env: { ...process.env, LC_ALL: "C" } }); process.exit(result.status ?? 1);`;
         return `nemoclaw-start node -e ${shellQuote(runner)} ${quotedCurl}`;
       }
       case "hermes-config": {
-        const runner =
-          "import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)";
+        const runner = `import os, re, subprocess, sys; key = ${JSON.stringify(credentialKey)}; value = os.environ.get(key); header = "Bearer " + (value or ""); (re.fullmatch(${JSON.stringify(buildMcpCredentialHandleAuthorizationPattern(credentialKey))}, header) or (value is None and ${afterRemoval ? "True" : "False"})) or sys.exit(2); header = "Bearer openshell:resolve:env:" + key if value is None else header; args = ["authorization: " + header if value == "NEMOCLAW_MCP_AUTHORIZATION" else value for value in sys.argv[1:]]; raise SystemExit(subprocess.run(args, check=False, env={**os.environ, "LC_ALL": "C"}).returncode)`;
         return `/opt/hermes/.venv/bin/python -c ${shellQuote(runner)} ${quotedCurl}`;
       }
       case "deepagents-config": {
-        const runner =
-          "import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)";
+        const runner = `import os, re, subprocess, sys; key = ${JSON.stringify(credentialKey)}; value = os.environ.get(key); header = "Bearer " + (value or ""); (re.fullmatch(${JSON.stringify(buildMcpCredentialHandleAuthorizationPattern(credentialKey))}, header) or (value is None and ${afterRemoval ? "True" : "False"})) or sys.exit(2); header = "Bearer openshell:resolve:env:" + key if value is None else header; args = ["authorization: " + header if value == "NEMOCLAW_MCP_AUTHORIZATION" else value for value in sys.argv[1:]]; raise SystemExit(subprocess.run(args, check=False, env={**os.environ, "LC_ALL": "C"}).returncode)`;
         return `/opt/venv/bin/python3 -c ${shellQuote(runner)} ${quotedCurl}`;
       }
     }
@@ -216,7 +236,7 @@ export function buildMcpDnsRebindingProbeScript(
     "set -e",
     `cat ${shellQuote(responsePath)} 2>/dev/null || true`,
     `cat ${shellQuote(stdoutPath)} 2>/dev/null || true`,
-    `cat ${shellQuote(stderrPath)} >&2 2>/dev/null || true`,
+    `sed '/^> /d' ${shellQuote(stderrPath)} >&2 2>/dev/null || true`,
     'exit "$probe_rc"',
   ].join("\n");
 }

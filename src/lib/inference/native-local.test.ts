@@ -73,6 +73,7 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
               type: identity.profileId,
               credentialKeys: [binding.credentialEnv],
               configKeys: [],
+              credentialExpiresAtMs: {},
               revision: { id: "owned-id", resourceVersion: 1 },
             },
           }
@@ -252,6 +253,7 @@ describe("native local inference", () => {
             credentialKeys: [expected.credentialEnv],
             configKeys: [],
             revision: { id: "different-instance", resourceVersion: 2 },
+            credentialExpiresAtMs: {},
           },
         });
       },

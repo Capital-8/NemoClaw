@@ -111,6 +111,11 @@ describe("Hermes GPU startup failure diagnostics", () => {
       "Docker GPU diagnostics saved: /tmp/docker",
       "/tmp/docker",
     ],
+    [
+      "recognizes generic startup diagnostics",
+      "  Diagnostics saved: /tmp/onboard-failure\n",
+      "/tmp/onboard-failure",
+    ],
     ["returns empty without a bundle", "GPU setup failed before diagnostics\n", ""],
   ])("extracts %s", (_name, output, expected) => {
     expect(extractHermesGpuDiagnosticsDirectory(output)).toBe(expected);

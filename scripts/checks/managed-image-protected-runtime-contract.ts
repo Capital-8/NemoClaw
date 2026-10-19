@@ -1,6 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createManagedProviderAdapter } from "../../src/lib/adapters/openshell/managed-provider-adapter.ts";
+import {
+  ensureNativeLocalProvider,
+  verifyNativeLocalProviderAttachment,
+  type NativeLocalProviderAttachment,
+} from "../../src/lib/inference/native-local/profile.ts";
+import {
+  NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "../../src/lib/inference/native-local/agent-config.ts";
 import { createCliOpenShellSandboxLifecycleFromRunner } from "../../src/lib/adapters/openshell/sandbox-lifecycle-cli.ts";
 import { createDockerGpuDiagnosticRedactor } from "../../src/lib/onboard/docker-gpu-diagnostic-redaction.ts";
 import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
@@ -145,8 +155,9 @@ export function withManagedImageLocalInferenceProfile(
       upstreamProvider: route.providerName,
       model,
       primaryModelRef,
-      routedBaseUrl: "https://inference.local/v1",
-      upstreamEndpointUrl: null,
+      routedBaseUrl: route.defaultBaseUrl,
+      upstreamEndpointUrl:
+        profile.agent === "langchain-deepagents-code" ? route.defaultBaseUrl : null,
       api: "openai-completions",
     },
   } as ManagedStartupProfile;
@@ -185,4 +196,130 @@ export function createManagedImageSandboxWithDiagnostics(
     }
     return result;
   };
+}
+
+export type ManagedImageOpenShellE2eInputs = {
+  agent: ShippedManagedImageAgent;
+  image: string;
+  sandbox: string;
+  gpu?: true;
+  localProvider?: ManagedImageLocalInferenceKind;
+  model?: string;
+  failureInjection?: "bootstrap-completion";
+};
+
+export function managedImageLocalInferenceBaseUrl(
+  localProvider: ManagedImageLocalInferenceKind,
+  configuredValue = process.env.NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL,
+): string {
+  const route = resolveManagedImageLocalInferenceRoute(localProvider);
+  const configured = String(configuredValue ?? "").trim();
+  const value = configured || route.defaultBaseUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("protected local inference base URL is invalid");
+  }
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.hostname !== "host.openshell.internal" ||
+    !/^[1-9][0-9]{0,4}$/u.test(parsed.port) ||
+    parsed.pathname.replace(/\/+$/u, "") !== "/v1" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error("protected local inference must use http://host.openshell.internal:<port>/v1");
+  }
+  return value.replace(/\/+$/u, "");
+}
+
+function localInferenceBaseUrl(input: ManagedImageOpenShellE2eInputs): string {
+  if (!input.localProvider) throw new Error("local provider is required");
+  return managedImageLocalInferenceBaseUrl(input.localProvider);
+}
+
+export async function configureLocalInferenceRoute(
+  onboard: {
+    runOpenshell(
+      args: string[],
+      options?: Record<string, unknown>,
+    ): ReturnType<NonNullable<Parameters<typeof createManagedProviderAdapter>[0]>>;
+  },
+  input: ManagedImageOpenShellE2eInputs,
+  env: NodeJS.ProcessEnv,
+  adapter: Parameters<
+    typeof ensureNativeLocalProvider
+  >[0]["adapter"] = createManagedProviderAdapter(onboard.runOpenshell),
+): Promise<NativeLocalProviderAttachment | undefined> {
+  if (!input.localProvider || !input.model) return;
+  const route = resolveManagedImageLocalInferenceRoute(input.localProvider);
+  const credential = String(env[route.credentialEnv] ?? "").trim();
+  if (!credential || /[\0\r\n]/u.test(credential)) {
+    throw new Error(`${route.credentialEnv} is required for protected local inference`);
+  }
+  let authority: NativeLocalProviderAttachment | undefined;
+  return ensureNativeLocalProvider({
+    binding: {
+      provider: route.providerName,
+      ...(input.agent === "langchain-deepagents-code" ? {} : { agent: input.agent }),
+      endpointUrl: localInferenceBaseUrl(input),
+      credentialEnv: NATIVE_LOCAL_CREDENTIAL_ENV,
+      authMode:
+        input.localProvider === "nim" || input.localProvider === "vllm"
+          ? "sentinel"
+          : "authenticated",
+      gatewayName: "nemoclaw",
+      sandboxName: input.sandbox,
+    },
+    adapter,
+    credentialValue: credential,
+    policyCommand: async (args) => onboard.runOpenshell(args, { ignoreError: true, env }),
+    // This invocation owns a fresh private gateway. Never adopt an existing provider.
+    readAuthority: () => authority,
+    writeAuthority: (receipt) => {
+      authority = receipt;
+    },
+  });
+}
+
+export function localInferenceProbe(input: ManagedImageOpenShellE2eInputs): string {
+  if (!input.model) throw new Error("local inference model is required");
+  const payload = JSON.stringify({
+    model: input.model,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    reasoning_effort: "none",
+    max_tokens: 32,
+  });
+  return [
+    "set -eu",
+    NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+    'response="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-managed-image-inference.XXXXXX")"',
+    "trap 'rm -f \"$response\"' EXIT",
+    `curl -fsS --max-time 180 ${JSON.stringify(`${localInferenceBaseUrl(input)}/chat/completions`)} -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data ${JSON.stringify(payload)} > "$response"`,
+    "node - \"$response\" <<'NODE'",
+    'const fs = require("node:fs");',
+    'const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));',
+    "const choice = Array.isArray(body.choices) ? body.choices[0] : null;",
+    'const text = choice && choice.message && typeof choice.message.content === "string"',
+    "  ? choice.message.content",
+    '  : choice && typeof choice.text === "string" ? choice.text : "";',
+    'if (!/pong/i.test(text)) throw new Error("local inference did not return PONG");',
+    "NODE",
+  ].join("\n");
+}
+
+export async function verifyManagedImageLocalInferenceRoute(
+  run: NonNullable<Parameters<typeof createManagedProviderAdapter>[0]>,
+  sandboxName: string,
+  expected: NativeLocalProviderAttachment,
+): Promise<void> {
+  await verifyNativeLocalProviderAttachment({
+    adapter: createManagedProviderAdapter(run),
+    sandboxName,
+    expected,
+    requireUnexpiredCredential: true,
+  });
 }

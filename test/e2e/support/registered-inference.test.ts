@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { expectOpenAiChatThroughSandbox } from "../live/inference-routing-helpers.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import {
   nativeLocalIdentity,
@@ -18,6 +19,8 @@ import {
   registeredCompatibleResponseCommand,
   readRegisteredLocalRoute,
 } from "../fixtures/registered-inference.ts";
+
+vi.mock("../fixtures/e2e-test.ts", async () => ({ expect: (await import("vitest")).expect }));
 
 vi.mock("../../../src/lib/state/registry.ts", () => ({ getSandbox: vi.fn() }));
 
@@ -212,4 +215,120 @@ it.each([
     exitCode: 1,
     stderr: "Sibling native provider identity or attachment mismatch",
   });
+});
+
+const gatewayResponse = {
+  ok: true,
+  capability: "model.run",
+  transport: "gateway",
+  provider: "inference",
+  model: "test-model",
+  outputs: [{ text: "PONG" }],
+};
+
+it("runs the real OpenClaw gateway consumer with no endpoint or credential override", async () => {
+  const exec = vi.fn(async () => ({
+    exitCode: 0,
+    stdout: JSON.stringify(gatewayResponse),
+    stderr: "",
+  }));
+  await expectOpenAiChatThroughSandbox(
+    { exec } as unknown as SandboxClient,
+    "test-sandbox",
+    "test-model",
+    ["test-host-secret"],
+    "gateway-consumer",
+    "openclaw-gateway",
+  );
+  expect(exec).toHaveBeenCalledWith(
+    "test-sandbox",
+    [
+      "openclaw",
+      "infer",
+      "model",
+      "run",
+      "--gateway",
+      "--json",
+      "--prompt",
+      "Reply with exactly one word: PONG",
+    ],
+    expect.objectContaining({
+      artifactName: "gateway-consumer",
+      redactionValues: ["test-host-secret"],
+      timeoutMs: 90000,
+    }),
+  );
+  expect(vi.mocked(getSandbox)).not.toHaveBeenCalled();
+});
+
+it.each([
+  { transport: "embedded" },
+  { provider: "other" },
+  { model: "other" },
+  { ok: false },
+  { capability: "other" },
+  { outputs: [] },
+  { outputs: [{ text: "wrong response" }] },
+])("refuses a mismatched OpenClaw gateway response %j", async (override) => {
+  const exec = vi.fn(async () => ({
+    exitCode: 0,
+    stdout: JSON.stringify({ ...gatewayResponse, ...override }),
+    stderr: "",
+  }));
+  await expect(
+    expectOpenAiChatThroughSandbox(
+      { exec } as unknown as SandboxClient,
+      "test-sandbox",
+      "test-model",
+      [],
+      "gateway-denial",
+      "openclaw-gateway",
+    ),
+  ).rejects.toThrow();
+});
+
+it("propagates a failed OpenClaw gateway command even with success-shaped output", async () => {
+  const exec = vi.fn(async () => ({
+    exitCode: 42,
+    stdout: JSON.stringify(gatewayResponse),
+    stderr: "command failed",
+  }));
+  await expect(
+    expectOpenAiChatThroughSandbox(
+      { exec } as unknown as SandboxClient,
+      "test-sandbox",
+      "test-model",
+      [],
+      "gateway-command-failure",
+      "openclaw-gateway",
+    ),
+  ).rejects.toThrow();
+});
+
+it("preserves the registered native curl caller used by DNS and runtime identity checks", async () => {
+  const exec = vi.fn(async () => ({
+    exitCode: 0,
+    stdout: JSON.stringify({ choices: [{ message: { content: "PONG" } }] }),
+    stderr: "",
+  }));
+  await expectOpenAiChatThroughSandbox(
+    { exec } as unknown as SandboxClient,
+    "test-sandbox",
+    "test-model",
+    [],
+    "native-curl",
+  );
+  expect(exec).toHaveBeenCalledWith(
+    "test-sandbox",
+    registeredCompatibleChatCommand(
+      "test-sandbox",
+      "test-model",
+      JSON.stringify({
+        model: "test-model",
+        messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+        max_tokens: 1024,
+      }),
+    ),
+    expect.objectContaining({ artifactName: "native-curl" }),
+  );
 });

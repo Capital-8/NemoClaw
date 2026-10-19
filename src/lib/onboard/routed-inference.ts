@@ -162,7 +162,9 @@ export function withRoutedInferencePortLock<T>(
 
 /** Caller holds the gateway and Model Router port locks through route publication. */
 export async function prepareNativeModelRouterSelection(
-  input: Parameters<typeof prepareNativeLocalSelection>[0],
+  input: Parameters<typeof prepareNativeLocalSelection>[0] & {
+    preserveProviderCredential?: boolean;
+  },
 ) {
   const endpoint = nativeModelRouterEndpoint(input.binding.provider, input.binding.endpointUrl);
   if (!endpoint || endpoint !== input.binding.endpointUrl || !input.credentialValue)
@@ -181,7 +183,7 @@ export async function prepareNativeModelRouterSelection(
   const attachment = await ensureNativeLocalProvider({
     adapter: input.adapter,
     binding,
-    credentialValue: input.credentialValue,
+    credentialValue: input.preserveProviderCredential ? null : input.credentialValue,
     expected: readAuthority(identity.providerName),
     readAuthority,
     writeAuthority,

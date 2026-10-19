@@ -10,7 +10,10 @@ import {
   normalizeNativeLocalProviderAttachment,
   type NativeLocalProviderAttachment,
 } from "../../inference/native-local/contract";
-import { verifyNativeLocalProviderAttachment } from "../../inference/native-local/profile";
+import {
+  verifyNativeLocalProviderAttachment,
+  verifyRecordedNativeLocalProviderAttachment,
+} from "../../inference/native-local/profile";
 import type { SandboxEntry } from "../../state/registry/types";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { hostedNativeProvider } from "../../inference/native-provider/hosted";
@@ -643,4 +646,76 @@ export function readNativeStatusSelection(entry: SandboxEntry | null | undefined
         ? (attachment?.endpointUrl ?? "")
         : (definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT),
   };
+}
+
+/** Verify an existing inference selection before attaching an independent runtime identity. */
+export async function verifyBlueprintNativeInferenceSelection(
+  entry: SandboxEntry,
+  requested: Readonly<{
+    gatewayName: string;
+    sandboxName: string;
+    provider: string;
+    model: string;
+    api: string;
+    endpointUrl?: string;
+  }>,
+): Promise<string> {
+  const selection = readNativeStatusSelection(entry);
+  const attachment = selection.registeredAttachment ?? selection.attachment;
+  const local =
+    entry.nativeLocalProviderAttachment === undefined
+      ? undefined
+      : normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+  if (
+    entry.name !== requested.sandboxName ||
+    entry.gatewayName !== requested.gatewayName ||
+    entry.provider !== requested.provider ||
+    entry.model !== requested.model ||
+    (entry.agent ?? "openclaw") !== "openclaw" ||
+    (entry.preferredInferenceApi ?? "openai-completions") !== requested.api ||
+    (requested.endpointUrl &&
+      entry.endpointUrl?.replace(/\/+$/, "") !== requested.endpointUrl.replace(/\/+$/, "")) ||
+    selection.failure ||
+    (local &&
+      ((local.api ?? "openai-completions") !== requested.api ||
+        local.endpointUrl !== entry.endpointUrl?.replace(/\/+$/, "") ||
+        local.credentialEnv !== entry.credentialEnv)) ||
+    !attachment ||
+    [
+      entry.nativeLocalProviderAttachment,
+      entry.nativeHostedProviderAttachment,
+      entry.nativeNvidiaProviderAttachment,
+      entry.registeredInferenceProviderAttachment,
+    ].filter((value) => value !== undefined).length !== 1
+  )
+    throw new Error(
+      "Runtime identity apply requires the matching registered native inference selection.",
+    );
+  const target = { gatewayName: requested.gatewayName, sandboxName: requested.sandboxName };
+  if (selection.registeredAttachment) {
+    await verifyRegisteredStatusAttachment({ ...target, expected: selection.registeredAttachment });
+  } else if (entry.nativeLocalProviderAttachment !== undefined) {
+    await verifyRecordedNativeLocalProviderAttachment({
+      adapter: createCliOpenShellProviderAdapter(),
+      ...target,
+      expected: entry.nativeLocalProviderAttachment,
+      agent: entry.agent ?? "openclaw",
+      provider: entry.provider,
+    });
+  } else {
+    await verifyNativeHostedStatusAttachment({ ...target, expected: attachment });
+  }
+  return JSON.stringify({
+    sandboxName: entry.name,
+    gatewayName: entry.gatewayName,
+    agent: entry.agent ?? "openclaw",
+    provider: entry.provider,
+    model: entry.model,
+    api: entry.preferredInferenceApi ?? "openai-completions",
+    endpointUrl: entry.endpointUrl,
+    credentialEnv: entry.credentialEnv,
+    lifecycleGeneration: entry.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
+    attachment,
+  });
 }

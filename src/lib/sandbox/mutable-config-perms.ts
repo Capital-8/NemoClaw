@@ -128,13 +128,18 @@ try:
 
     if private_root:
         require_private_topology()
-    current_directory = metadata(os.stat(config_dir, follow_symlinks=False))
+    current_directory_info = os.stat(config_dir, follow_symlinks=False)
+    current_directory = metadata(current_directory_info)
     initial_directory = metadata(directory)
     if current_directory != initial_directory:
         changed_fields = [name for name, before, after in
                           zip(metadata_fields, initial_directory, current_directory)
                           if before != after]
-        raise RuntimeError("Hermes config root changed during inspection: " + ", ".join(changed_fields))
+        # Report only the timestamp comparison, not paths or state contents. It does
+        # not identify the writer or permit retrying a changed integrity snapshot.
+        mtime_change = "changed" if current_directory_info.st_mtime_ns != directory.st_mtime_ns else "unchanged"
+        raise RuntimeError("Hermes config root changed during inspection: " + ", ".join(changed_fields)
+                           + "; directory mtime " + mtime_change)
     if startup is not None and startup["read_completion"]() != startup_receipt:
         raise RuntimeError("Hermes startup generation changed during config inspection")
 finally:

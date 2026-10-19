@@ -130,21 +130,47 @@ fi
 command -v ip >/dev/null 2>&1 || fail "host ip command is required"
 command -v curl >/dev/null 2>&1 || fail "host curl command is required"
 
-bind_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c "getent ahostsv4 ${COLLECTOR_HOST} | awk 'NR == 1 { print \"NEMOCLAW_OTLP_BIND_IP=\" \$1 }'" \
-  2>&1)" \
-  || fail "could not resolve $COLLECTOR_HOST from the sandbox: $bind_output"
-OTLP_BIND_IP="$(
-  printf '%s\n' "$bind_output" | tr -d '\r' | sed -n 's/^NEMOCLAW_OTLP_BIND_IP=//p' | tail -n 1
-)"
-case "$OTLP_BIND_IP" in
-  10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].* | 169.254.2.2) ;;
-  *) fail "sandbox resolved $COLLECTOR_HOST to an unsupported host address '$OTLP_BIND_IP'" ;;
-esac
-if ! ip -o -4 address show \
-  | awk '{ sub(/\/.*/, "", $4); print $4 }' \
-  | grep -Fxq "$OTLP_BIND_IP"; then
-  fail "sandbox bridge address $OTLP_BIND_IP is not assigned to a host interface"
+# Native DNS returns synthetic workload addresses. The selected runtime owns
+# the supervisor's host route; it is the collector's bind address.
+runtime_bind="$(
+  SANDBOX_NAME="$SANDBOX_NAME" node <<'NODE'
+const { getSandbox } = require("./dist/lib/state/registry.js");
+const { currentRuntimeProviderBundles, requireRuntimeProviderBundleForSandbox } = require("./dist/lib/onboard/runtime-provider/selection.js");
+const { resolvePrivilegedSandboxTarget } = require("./dist/lib/sandbox/privileged-exec.js");
+const entry = getSandbox(process.env.SANDBOX_NAME);
+if (!entry || entry.gatewayName !== process.env.OPENSHELL_GATEWAY) process.exit(1);
+const provider = requireRuntimeProviderBundleForSandbox(entry, currentRuntimeProviderBundles());
+const target = resolvePrivilegedSandboxTarget(process.env.SANDBOX_NAME);
+if (target.providerId !== provider.identity.id || !target.resourceHandle) process.exit(1);
+const runtime = provider.gateway.observeHostRuntime({ environment: process.env, platform: process.platform });
+if (provider.identity.id === "docker" && process.platform === "linux" &&
+    runtime.network.supervisorNetwork?.name === "host" &&
+    runtime.network.supervisorNetwork.hostAddress === "127.0.0.1") {
+  process.stdout.write("127.0.0.1");
+} else if (provider.identity.id === "podman") {
+  process.stdout.write("podman");
+} else process.exit(1);
+NODE
+)" || fail "could not establish the selected runtime's collector route"
+if [ "$runtime_bind" = 127.0.0.1 ]; then
+  OTLP_BIND_IP="$runtime_bind"
+else
+  bind_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    sh -c "getent ahostsv4 ${COLLECTOR_HOST} | awk 'NR == 1 { print \"NEMOCLAW_OTLP_BIND_IP=\" \$1 }'" \
+    2>&1)" \
+    || fail "could not resolve $COLLECTOR_HOST from the sandbox: $bind_output"
+  OTLP_BIND_IP="$(
+    printf '%s\n' "$bind_output" | tr -d '\r' | sed -n 's/^NEMOCLAW_OTLP_BIND_IP=//p' | tail -n 1
+  )"
+  case "$OTLP_BIND_IP" in
+    10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].* | 169.254.2.2) ;;
+    *) fail "sandbox resolved $COLLECTOR_HOST to an unsupported host address '$OTLP_BIND_IP'" ;;
+  esac
+  if ! ip -o -4 address show \
+    | awk '{ sub(/\/.*/, "", $4); print $4 }' \
+    | grep -Fxq "$OTLP_BIND_IP"; then
+    fail "sandbox bridge address $OTLP_BIND_IP is not assigned to a host interface"
+  fi
 fi
 
 "$TSX" "$CAPTURE_SERVER" "$CAPTURE_DIR" "$OTLP_BIND_IP" "$COLLECTOR_PORT" "$DECOY_PORT" \

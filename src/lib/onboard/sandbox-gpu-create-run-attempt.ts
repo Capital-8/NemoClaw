@@ -194,26 +194,6 @@ async function verifyCreatedSandboxBeforeEffects(
   );
 }
 
-function requireCompatibilityLifecycleCommand(
-  action: "start" | "stop",
-  sandboxName: string,
-  gatewayName: string,
-  deps: SandboxGpuCreateFlowDeps,
-): void {
-  const result = deps.runOpenshell(["sandbox", action, "-g", gatewayName, sandboxName], {
-    ignoreError: true,
-    killProcessTreeOnTimeout: true,
-    killSignal: "SIGKILL",
-    suppressOutput: true,
-    timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
-  });
-  if (Number(result.status ?? 1) !== 0 || result.error || ("signal" in result && result.signal)) {
-    throw new Error(
-      `OpenShell could not ${action} sandbox '${sandboxName}' for the exact compatibility cutover.`,
-    );
-  }
-}
-
 function resolveCreateAttemptNonce(
   input: SandboxGpuCreateFlowInput,
   deferPostCreateEffects: boolean,
@@ -683,7 +663,12 @@ export function createSandboxGpuCreateAttemptRunner(
     let compatibilityCreatePollError: unknown = null;
     const applyVerifiedCompatibilityCutover = async (): Promise<string | null> => {
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
-      requireCompatibilityLifecycleCommand("stop", input.sandboxName, input.gatewayName, deps);
+      sandboxGpuCreateAttempt.requireCompatibilityLifecycleCommand(
+        "stop",
+        input.sandboxName,
+        input.gatewayName,
+        deps,
+      );
       revalidatePostCreateEffect(`confirm stopped compatibility sandbox '${input.sandboxName}'`);
       await runtimePatch.ensureApplied();
       await runtimePatch.exitOnPatchError();
@@ -691,7 +676,12 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     const publishVerifiedCompatibilityCutover = async (): Promise<void> => {
       revalidatePostCreateEffect(`publish replacement runtime for sandbox '${input.sandboxName}'`);
-      requireCompatibilityLifecycleCommand("start", input.sandboxName, input.gatewayName, deps);
+      sandboxGpuCreateAttempt.requireCompatibilityLifecycleCommand(
+        "start",
+        input.sandboxName,
+        input.gatewayName,
+        deps,
+      );
     };
     const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
       if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;

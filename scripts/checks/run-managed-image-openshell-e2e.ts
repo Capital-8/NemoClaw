@@ -55,6 +55,10 @@ import {
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
+  configureLocalInferenceRoute,
+  localInferenceProbe,
+  verifyManagedImageLocalInferenceRoute,
+  type ManagedImageOpenShellE2eInputs,
   createManagedImageSandboxWithDiagnostics,
   isManagedImageHarnessWorkload,
   isManagedImageLocalInferenceKind,
@@ -66,8 +70,8 @@ import {
 
 // This executable owns one protected qualification transaction from sandbox
 // creation through exact cleanup. Keep its stateful orchestration and cleanup
-// together so no cross-module return path can bypass rollback. Stateless policy
-// and diagnostics remain in managed-image-protected-runtime-contract.ts.
+// together so no cross-module return path can bypass rollback. Native inference
+// preparation and diagnostics use managed-image-protected-runtime-contract.ts.
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -97,15 +101,7 @@ function compactText(value = ""): string {
   return String(value).replace(/\s+/gu, " ").trim();
 }
 
-export type ManagedImageOpenShellE2eInputs = {
-  agent: ShippedManagedImageAgent;
-  image: string;
-  sandbox: string;
-  gpu?: true;
-  localProvider?: ManagedImageLocalInferenceKind;
-  model?: string;
-  failureInjection?: "bootstrap-completion";
-};
+export type { ManagedImageOpenShellE2eInputs } from "./managed-image-protected-runtime-contract.ts";
 
 export type ManagedImageOpenShellRecoveryScope = {
   readonly owner: string;
@@ -1273,113 +1269,6 @@ async function waitForCommittedSandboxProbe(
   );
 }
 
-export function managedImageLocalInferenceBaseUrl(
-  localProvider: ManagedImageLocalInferenceKind,
-  configuredValue = process.env.NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL,
-): string {
-  const route = resolveManagedImageLocalInferenceRoute(localProvider);
-  const configured = String(configuredValue ?? "").trim();
-  const value = configured || route.defaultBaseUrl;
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("protected local inference base URL is invalid");
-  }
-  if (
-    parsed.protocol !== "http:" ||
-    parsed.hostname !== "host.openshell.internal" ||
-    !/^[1-9][0-9]{0,4}$/u.test(parsed.port) ||
-    parsed.pathname.replace(/\/+$/u, "") !== "/v1" ||
-    parsed.username ||
-    parsed.password ||
-    parsed.search ||
-    parsed.hash
-  ) {
-    throw new Error("protected local inference must use http://host.openshell.internal:<port>/v1");
-  }
-  return value.replace(/\/+$/u, "");
-}
-
-function localInferenceBaseUrl(input: Inputs): string {
-  if (!input.localProvider) throw new Error("local provider is required");
-  return managedImageLocalInferenceBaseUrl(input.localProvider);
-}
-
-function configureLocalInferenceRoute(
-  onboard: OnboardModule,
-  input: Inputs,
-  env: NodeJS.ProcessEnv,
-): void {
-  if (!input.localProvider || !input.model) return;
-  const route = resolveManagedImageLocalInferenceRoute(input.localProvider);
-  const credential = String(env[route.credentialEnv] ?? "").trim();
-  if (!credential || /[\0\r\n]/u.test(credential)) {
-    throw new Error(`${route.credentialEnv} is required for protected local inference`);
-  }
-  const commandEnv = { ...env, [route.credentialEnv]: credential };
-  const create = onboard.runOpenshell(
-    [
-      "provider",
-      "create",
-      "--name",
-      route.providerName,
-      "--type",
-      "openai",
-      "--credential",
-      route.credentialEnv,
-      "--config",
-      `OPENAI_BASE_URL=${localInferenceBaseUrl(input)}`,
-    ],
-    { ignoreError: true, env: commandEnv, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (create.status !== 0) {
-    throw new Error(`protected local inference provider creation failed: ${commandDetail(create)}`);
-  }
-  const setRoute = onboard.runOpenshell(
-    [
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      route.providerName,
-      "--model",
-      input.model,
-      "--timeout",
-      "120",
-    ],
-    { ignoreError: true, env: commandEnv, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (setRoute.status !== 0) {
-    throw new Error(`protected local inference route failed: ${commandDetail(setRoute)}`);
-  }
-}
-
-function localInferenceProbe(input: Inputs): string {
-  if (!input.model) throw new Error("local inference model is required");
-  const payload = JSON.stringify({
-    model: input.model,
-    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-    reasoning_effort: "none",
-    max_tokens: 32,
-  });
-  return [
-    "set -eu",
-    "response=/tmp/nemoclaw-managed-image-inference.json",
-    `curl -fsS --max-time 180 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${JSON.stringify(payload)} > "$response"`,
-    "node - \"$response\" <<'NODE'",
-    'const fs = require("node:fs");',
-    'const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));',
-    "const choice = Array.isArray(body.choices) ? body.choices[0] : null;",
-    'const text = choice && choice.message && typeof choice.message.content === "string"',
-    "  ? choice.message.content",
-    '  : choice && typeof choice.text === "string" ? choice.text : "";',
-    'if (!/pong/i.test(text)) throw new Error("local inference did not return PONG");',
-    "NODE",
-    'rm -f "$response"',
-  ].join("\n");
-}
-
 function assertProtectedLocalInference(
   onboard: OnboardModule,
   input: Inputs,
@@ -1401,7 +1290,7 @@ function assertProtectedLocalInference(
     210_000,
   );
   if (result.status !== 0) {
-    throw new Error(`sandbox inference.local completion failed: ${commandDetail(result)}`);
+    throw new Error(`sandbox native local completion failed: ${commandDetail(result)}`);
   }
 }
 
@@ -1632,7 +1521,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
     });
-    configureLocalInferenceRoute(onboard, input, process.env);
+    const localAttachment = await configureLocalInferenceRoute(onboard, input, process.env);
     if (input.agent === "hermes") {
       // Reserve the fixed API port used by this fixture's in-sandbox health probe.
       hermesApiPort = await reserveCreateSandboxHermesApiPort({
@@ -1647,7 +1536,10 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       input.localProvider && input.model
         ? withManagedImageLocalInferenceProfile(
             baseProfile,
-            resolveManagedImageLocalInferenceRoute(input.localProvider),
+            {
+              ...resolveManagedImageLocalInferenceRoute(input.localProvider),
+              defaultBaseUrl: localAttachment!.endpointUrl,
+            },
             input.model,
             maximumOutputTokens,
           )
@@ -1795,6 +1687,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             sandboxName: input.sandbox,
             target: { kind: "named", gatewayName: GATEWAY_NAME },
             source: { reference: input.image },
+            ...(localAttachment ? { providers: [localAttachment.providerName] } : {}),
             policyPath: initialSandboxPolicy.policyPath,
             ...(managedStateDriverConfig ? { driverConfigJson: managedStateDriverConfig } : {}),
             ...(input.gpu ? { gpu: {} } : {}),
@@ -1848,6 +1741,13 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       }
 
       ownedContainerId = assertExactSandboxImage(input, gatewayStateDir, launch.sandboxEnv);
+      if (localAttachment) {
+        await verifyManagedImageLocalInferenceRoute(
+          onboard.runOpenshell,
+          input.sandbox,
+          localAttachment,
+        );
+      }
       const sandbox = onboard.runOpenshell(["sandbox", "get", input.sandbox], {
         ignoreError: true,
         env: launch.sandboxEnv,
@@ -1916,7 +1816,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         }
       }
       process.stdout.write(
-        `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${input.localProvider ? ` with ${gpuEnabled ? "real NVIDIA GPU access and " : ""}${input.localProvider} inference.local completion` : ""}.\n`,
+        `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${input.localProvider ? ` with ${gpuEnabled ? "real NVIDIA GPU access and " : ""}${input.localProvider} native local completion` : ""}.\n`,
       );
     }
   } catch (error) {

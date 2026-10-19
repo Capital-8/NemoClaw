@@ -298,7 +298,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
   }
 
-  function observeOrdinarySettlement(approvalPolicy = POLICY) {
+  function observeOrdinarySettlement(approvalPolicy = POLICY, spawn = localScriptSpawn) {
     return observeOrdinaryOpenClawPairingSettlement(
       "alpha",
       "nemoclaw-8080",
@@ -307,7 +307,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       {
         getOpenshellBinary: () => "openshell",
         readApprovalPolicy: () => approvalPolicy,
-        spawnSync: localScriptSpawn as typeof spawnSync,
+        spawnSync: spawn as typeof spawnSync,
       },
     );
   }
@@ -817,7 +817,9 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         paired[deviceId]!.clientMode = "probe";
         paired[deviceId]!.scopes.push(scope);
         writeJson(pairedPath, paired);
+        const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
         expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingIncompatibleError);
+        expect(diagnostic).toHaveBeenCalledWith("OpenClaw CLI pairing incompatible: scope-set.");
       },
     );
 
@@ -826,7 +828,31 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
       paired[deviceId]!.clientMode = clientMode;
       writeJson(pairedPath, paired);
-      expect(() => observeOrdinarySettlement()).toThrow(OpenClawPairingQualificationError);
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+      const spawn = vi.fn(localScriptSpawn);
+      expect(() => observeOrdinarySettlement(POLICY, spawn)).toThrow(
+        OpenClawPairingIncompatibleError,
+      );
+      expect(spawn.mock.results[0]?.value.status).toBe(4);
+      expect(spawn.mock.results[0]?.value.stdout).toBe(
+        "__NEMOCLAW_PAIRING_INCOMPATIBLE__=paired-metadata\n",
+      );
+      expect(diagnostic.mock.calls).toEqual([
+        ["OpenClaw CLI pairing incompatible: paired-metadata."],
+      ]);
+    });
+
+    it.each([
+      TOKEN,
+      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=" + TOKEN,
+      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token\n" + TOKEN,
+    ])("does not log unrecognized pairing output %j", (stdout) => {
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+      const spawn = vi.fn(() => ({ status: 4, stdout })) as unknown as typeof localScriptSpawn;
+      expect(() => observeOrdinarySettlement(POLICY, spawn)).toThrow(
+        OpenClawPairingIncompatibleError,
+      );
+      expect(diagnostic.mock.calls).toEqual([["OpenClaw CLI pairing incompatible: unclassified."]]);
     });
 
     it.each(

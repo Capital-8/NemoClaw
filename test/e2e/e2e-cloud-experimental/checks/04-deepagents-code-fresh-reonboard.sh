@@ -263,9 +263,20 @@ for login_profile in "$PERSONAL_LOGIN_PROFILE" "$HOSTILE_LOGIN_FALLBACK"; do
       /bin/bash -lc '/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/printf %s MANAGED_EXEC_OK' 2>&1
   )" || fail "managed exec failed with personal startup files present: $managed_output"
   [ "$managed_output" = MANAGED_EXEC_OK ] || fail "managed exec output contains personal startup output: $managed_output"
-  privileged_exec "$resource_handle" /bin/sh -c \
-    "/usr/bin/env HOME=/sandbox BASH_ENV='$HOSTILE_SHELL_ENV' ENV='$HOSTILE_SHELL_ENV' /usr/local/bin/nemoclaw-start /usr/bin/true && test ! -e '$HOSTILE_PROFILE_MARKER'" \
-    || fail "managed exec or root entrypoint failed or read personal startup code"
+  # Native workloads drop all capabilities. Root cannot change UID here;
+  # the runtime starts the entrypoint as the sandbox user instead.
+  if root_output="$(privileged_exec "$resource_handle" /usr/bin/env \
+    HOME=/sandbox BASH_ENV="$HOSTILE_SHELL_ENV" ENV="$HOSTILE_SHELL_ENV" \
+    /usr/local/bin/nemoclaw-start /usr/bin/true 2>&1)"; then
+    fail "native workload unexpectedly allowed the root entrypoint to change UID"
+  fi
+  printf '%s\n' "$root_output" | grep -Fq 'setpriv: setresuid failed: Operation not permitted' \
+    || fail "root entrypoint failed without the expected UID-transition denial"
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    /usr/bin/env HOME=/sandbox BASH_ENV="$HOSTILE_SHELL_ENV" ENV="$HOSTILE_SHELL_ENV" \
+    /usr/local/bin/nemoclaw-start /bin/sh -c \
+    "test \"\$(id -un)\" = sandbox && test ! -e \"\$1\"" sh "$HOSTILE_PROFILE_MARKER" \
+    || fail "sandbox-user entrypoint failed or read personal startup code"
 
   # shellcheck disable=SC2016 # Read the variable set by the sandbox's personal profile.
   ordinary_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- /usr/bin/env -u NEMOCLAW_E2E_PERSONAL_PROFILE /bin/bash -lc 'printf %s "$NEMOCLAW_E2E_PERSONAL_PROFILE"' 2>&1)" \

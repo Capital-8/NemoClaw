@@ -515,3 +515,68 @@ it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"])(
     expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
   },
 );
+
+describe("published native route backup boundary", () => {
+  it.each([
+    { model: "old-model", staged: false },
+    { model: "new-model", staged: true },
+  ])(
+    "preserves the source and provider credential when selecting $model",
+    async ({ model, staged }) => {
+      const attachment = nativeLocalSetupReceipt({
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        sandboxName: "test-box",
+        gatewayName: "nemoclaw",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        authMode: "authenticated",
+      });
+      const row = {
+        name: "test-box",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "old-model",
+        gatewayName: "nemoclaw",
+        endpointUrl: "http://127.0.0.1:8000/v1",
+        credentialEnv: "HOST_COMPATIBLE_KEY",
+        preferredInferenceApi: "openai-completions",
+        nativeLocalProviderAttachment: attachment,
+      };
+      const before = structuredClone(row);
+      const harness = createDirectSetupInferenceHarness({
+        overrides: {
+          getSandbox: () => row,
+          hydrateCredentialEnv: () => "fixture-only-host-key",
+          isNonInteractive: () => true,
+        },
+      });
+      harness.native.seed(attachment);
+      const providers = structuredClone(harness.native.providers);
+      const result = await harness.setupInference(
+        "test-box",
+        model,
+        "compatible-endpoint",
+        row.endpointUrl,
+        row.credentialEnv,
+        null,
+        [],
+        {
+          agentName: "openclaw",
+          preferredInferenceApi: "openai-completions",
+          deferPublishedRouteReservation: true,
+          reservationSessionId: "session",
+        },
+      );
+      expect(result).toEqual(
+        staged
+          ? { ok: true, stagedNativeLocalRecreation: { source: before, attachment } }
+          : { ok: true },
+      );
+      expect(row).toEqual(before);
+      expect(harness.updateSandbox).not.toHaveBeenCalled();
+      expect(harness.native.adapter.updateProvider).not.toHaveBeenCalled();
+      expect(harness.native.adapter.createProvider).not.toHaveBeenCalled();
+      expect(harness.native.providers).toEqual(providers);
+    },
+  );
+});

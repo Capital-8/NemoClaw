@@ -228,13 +228,19 @@ describe("mutable Hermes config permissions", () => {
       0o700,
       "directory-race",
       false,
-      "Hermes config root changed during inspection: st_mode, st_ctime_ns",
+      "Hermes config root changed during inspection: st_mode, st_ctime_ns; directory mtime unchanged",
     ],
     [
       0o700,
       "directory-timestamp",
       false,
-      "Hermes config root changed during inspection: st_ctime_ns",
+      "Hermes config root changed during inspection: st_ctime_ns; directory mtime unchanged",
+    ],
+    [
+      0o700,
+      "directory-entry",
+      false,
+      "Hermes config root changed during inspection: st_ctime_ns; directory mtime changed",
     ],
     [0o3770, "access-denied", false, "Hermes config root is not writable by the sandbox identity"],
     [0o3770, "append-only-root", false, "Hermes config has immutable or append-only inode flags"],
@@ -319,6 +325,13 @@ def topology_response(args, **kwargs):
     if topology == "directory-timestamp" and calls == 2:
         info = os.stat(config_dir)
         os.utime(config_dir, ns=(info.st_atime_ns, info.st_mtime_ns))
+    if topology == "directory-entry" and calls == 2:
+        info = os.stat(config_dir)
+        transient = os.path.join(config_dir, ".private-entry-canary")
+        with open(transient, "x", encoding="utf-8") as output:
+            output.write("private-state-canary")
+        os.unlink(transient)
+        os.utime(config_dir, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000))
     success = topology != "unavailable" and not (topology == "changed" and calls == 2)
     return types.SimpleNamespace(returncode=0 if success else 1, stdout=b"same-uid-nonroot\\n")
 subprocess.run = topology_response
@@ -339,8 +352,12 @@ os.mkdir = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("probe m
         expect(result.error).toBeUndefined();
         expect(result.status === 0, result.stderr).toBe(expected);
         expect(result.stderr).toContain(diagnostic);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).not.toContain(configDir);
+        expect(result.stderr).not.toContain("private-entry-canary");
+        expect(result.stderr).not.toContain("private-state-canary");
         expect(fs.readdirSync(configDir).sort()).toEqual([...names].sort());
-        expect(fs.statSync(configDir).mtimeMs).toBe(before);
+        expect(fs.statSync(configDir).mtimeMs === before).toBe(topology !== "directory-entry");
         expect(names.map((name) => fs.readFileSync(path.join(configDir, name), "utf8"))).toEqual([
           "fixture\n",
           "fixture\n",

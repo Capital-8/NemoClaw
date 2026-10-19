@@ -483,7 +483,7 @@ async function runRuntimeIdentityE2EScenario(
       tsxPath,
       "--input-type=module",
       "--eval",
-      `const { main } = await import(${JSON.stringify(runnerPath)}); await main(["apply"], { runtimeIdentityProfilePolicy: ${JSON.stringify(runtimeIdentityProfilePolicy)} });`,
+      `const { main } = await import(${JSON.stringify(runnerPath)}); const { observeBlueprintNativeInference } = await import(${JSON.stringify(path.join(REPO_ROOT, "src/lib/blueprint-runner.ts"))}); await main(["apply"], { runtimeIdentityProfilePolicy: ${JSON.stringify(runtimeIdentityProfilePolicy)}, nativeInferenceObserver: observeBlueprintNativeInference });`,
     ],
     {
       artifactName: `${artifactPrefix}-runtime-identity-apply`,
@@ -691,7 +691,7 @@ test(
         "confirm compatible-endpoint prerequisites",
         "start the local compatible endpoint",
         "onboard to the compatible endpoint",
-        "request sandbox chat through its attached provider",
+        "request OpenClaw chat through its attached provider",
       ],
     },
   },
@@ -731,7 +731,8 @@ test(
       id: "inference-routing-compatible-endpoint",
       contract: [
         "a custom OpenAI-compatible endpoint onboards",
-        "sandbox attached provider routes chat to compatible endpoint",
+        "OpenClaw gateway uses the selected native model and returns chat content",
+        "the compatible endpoint receives an authenticated chat POST",
       ],
       endpointUrl: fake.baseUrl,
       model,
@@ -753,14 +754,23 @@ test(
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     );
     expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
-    progress.phase("request sandbox chat through its attached provider");
+    progress.phase("request OpenClaw chat through its attached provider");
+    await approveOpenClawAdminScope(
+      host,
+      sandbox,
+      sandboxName,
+      sandboxAccessEnv(),
+      [apiKey],
+      false,
+    );
     const sandboxRequestOffset = fake.requests().length;
     await expectOpenAiChatThroughSandbox(
       sandbox,
       sandboxName,
       model,
       [apiKey],
-      "compatible-endpoint-native-chat",
+      "compatible-endpoint-openclaw-chat",
+      "openclaw-gateway",
     );
     expect(
       fake
@@ -770,7 +780,8 @@ test(
           (request) =>
             request.auth === "ok" &&
             request.method === "POST" &&
-            request.path === "/v1/chat/completions",
+            request.path === "/v1/chat/completions" &&
+            request.model === model,
         ),
     ).toBe(true);
   },

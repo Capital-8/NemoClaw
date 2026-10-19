@@ -242,7 +242,7 @@ async function cleanupDoubleOnboardResources(
 
 async function gatewayRuntimeId(gateway: GatewayClient): Promise<string> {
   const runtime = await gateway.resolveHostRuntime();
-  return runtime?.kind === "container" ? `${runtime.kind}:${runtime.id}` : (runtime?.kind ?? "");
+  return runtime ? `${runtime.kind}:${runtime.id}` : "";
 }
 
 async function prerequisiteOrSkip(

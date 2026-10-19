@@ -223,7 +223,8 @@
         "test/onboarding/onboard-inference-gateway-scope.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/e2e/support/hosted-provider-smoke-selection.test.ts",
-        "test/security/admin-approval-helper.test.ts"
+        "test/security/admin-approval-helper.test.ts",
+        "test/e2e/support/registered-inference.test.ts"
       ]
     },
     {

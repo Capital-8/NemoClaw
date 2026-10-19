@@ -7,7 +7,8 @@ import {
   type DockerSandboxIdentityObservation,
 } from "../adapters/docker/inspect";
 import { captureDockerContainerFailureEvidence } from "./compute/docker-container-failure-evidence";
-import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
+import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
+import type { DockerContainerInspect, DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
@@ -92,9 +93,9 @@ type SandboxFailureOutputDeps = Pick<
 > & { readonly now?: () => number };
 
 /**
- * Capture redacted recent output from one sandbox container before rollback
+ * Capture redacted recent output from the sandbox runtime before rollback
  * can remove or replace it. Use the exact replacement container when the
- * caller owns one; otherwise require exactly one OpenShell-labeled container.
+ * caller owns one; otherwise require one legacy container or one exact native role pair.
  *
  * SOURCE_OF_TRUTH_REVIEW
  * invalidState: sandbox create fails before its status provides the startup
@@ -116,28 +117,93 @@ export function captureOpenShellDockerSandboxFailureOutput(
   try {
     const now = deps.now ?? Date.now;
     const deadlineMs = now() + SANDBOX_FAILURE_OUTPUT_BUDGET_MS;
-    let containerId = expectedContainerId;
-    if (!containerId) {
-      const containers = queryOpenShellDockerSandboxContainers(
+    let containers = [{ id: expectedContainerId ?? "", role: "" }];
+    if (!expectedContainerId) {
+      const observation = inspectDockerSandboxNameLabeledContainers(
         sandboxName,
-        { dockerRun: deps.dockerRun ?? dockerRun },
-        Math.min(2_000, deadlineMs - now()),
+        (args, options) => {
+          const remaining = Math.min(2_000, deadlineMs - now());
+          if (remaining <= 0) return { status: 1 };
+          const result = (deps.dockerRun ?? dockerRun)(args, { ...options, timeout: remaining });
+          return {
+            status: result.status,
+            stdout: result.stdout ?? undefined,
+            stderr: result.stderr ?? undefined,
+            error: result.error ?? undefined,
+          };
+        },
       );
-      if (!containers.ok || containers.ids.length !== 1) return null;
-      containerId = containers.ids[0];
+      if (observation.status !== "observed" || observation.malformedRows !== 0) return null;
+      const rows = observation.rows;
+      const first = rows[0];
+      if (
+        !first ||
+        rows.some(
+          (row) =>
+            !/^[0-9a-f]{64}$/u.test(row.id) ||
+            row.managedBy !== OPENSHELL_MANAGED_BY_VALUE ||
+            !row.sandboxId ||
+            row.sandboxId !== first.sandboxId ||
+            row.namespace !== first.namespace,
+        )
+      )
+        return null;
+      const legacy =
+        rows.length === 1 && first.isolationRole === undefined && Boolean(first.workspace);
+      const native =
+        rows.length === 2 &&
+        Boolean(first.namespace) &&
+        new Set(rows.map((row) => row.id)).size === 2 &&
+        rows.some((row) => row.isolationRole === "sandbox" && Boolean(row.workspace)) &&
+        rows.some((row) => row.isolationRole === "supervisor" && row.workspace === "");
+      if (!legacy && !native) return null;
+      containers = rows.map((row) => ({ id: row.id, role: row.isolationRole ?? "" }));
     }
-    const evidence = captureDockerContainerFailureEvidence(
-      containerId,
-      {
-        dockerCapture: deps.dockerCapture ?? dockerCapture,
-        dockerLogs: deps.dockerLogs ?? dockerLogs,
-      },
-      { deadlineMs, now },
-    );
-    // Opaque credentials are redacted only after inspect identifies them;
-    // without that, pattern redaction alone could print an opaque value.
-    if (!evidence.inspectRedactionApplied) return null;
-    return evidence.redactedLogTail || null;
+    const outputs: string[] = [];
+    const redactor = createDockerGpuDiagnosticRedactor();
+    const inspections = new Map<string, DockerContainerInspect>();
+    if (containers.length > 1) {
+      const remaining = Math.min(2_000, deadlineMs - now());
+      if (remaining <= 0) return null;
+      const inventory = JSON.parse(
+        (deps.dockerCapture ?? dockerCapture)(["inspect", ...containers.map(({ id }) => id)], {
+          ignoreError: true,
+          timeout: remaining,
+        }),
+      ) as DockerContainerInspect[];
+      if (!Array.isArray(inventory) || inventory.length !== containers.length) return null;
+      for (const inspect of inventory) {
+        if (
+          !inspect.Id ||
+          !containers.some(({ id }) => id === inspect.Id) ||
+          inspections.has(inspect.Id) ||
+          !Array.isArray(inspect.Config?.Env)
+        )
+          return null;
+        inspections.set(inspect.Id, inspect);
+        redactor.rememberInspect(inspect);
+      }
+    }
+    for (const container of containers) {
+      const evidence = captureDockerContainerFailureEvidence(
+        container.id,
+        {
+          dockerCapture: deps.dockerCapture ?? dockerCapture,
+          dockerLogs: deps.dockerLogs ?? dockerLogs,
+        },
+        { deadlineMs, now, redactor, inspect: inspections.get(container.id) },
+      );
+      // Inspect must identify opaque environment values before any output is retained.
+      if (!evidence.inspectRedactionApplied) return null;
+      if (evidence.redactedLogTail) {
+        outputs.push(
+          container.role
+            ? `== ${container.role} ${container.id} ==\n${evidence.redactedLogTail}`
+            : evidence.redactedLogTail,
+        );
+      }
+    }
+    return outputs.join("\n") || null;
   } catch {
     return null;
   }

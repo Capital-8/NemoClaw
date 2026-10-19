@@ -546,6 +546,15 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
   return publishCreatedSandboxRegistration(input, prepareCreatedSandboxRegistration(input));
 }
 
+/** Compare staged authority with the validated attachment in its source registry entry. */
+export function retainsNativeLocalProviderAttachment(
+  entry: SandboxEntry,
+  attachment: unknown,
+): boolean {
+  const recorded = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+  return recorded !== undefined && isDeepStrictEqual(recorded, attachment);
+}
+
 /** The sandbox phase may bypass a shared route only for its exact native local reservation. */
 export function nativeLocalReservationStatus(input: {
   entry: SandboxEntry;

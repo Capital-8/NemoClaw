@@ -191,7 +191,11 @@ describe("sandbox create failure diagnostics", () => {
     const containerId = "f".repeat(64);
     const keyedSecret = "nvapi-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6";
     const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
-    docker.dockerRun.mockReturnValue({ status: 0, stdout: `${containerId}\n`, stderr: "" });
+    docker.dockerRun.mockReturnValue({
+      status: 0,
+      stdout: `${containerId}\topenshell\tdefault\tsandbox-id\tnamespace\t\n`,
+      stderr: "",
+    });
     docker.dockerCapture.mockImplementation((args: readonly string[]) =>
       args.includes("--format")
         ? ""

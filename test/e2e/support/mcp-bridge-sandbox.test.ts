@@ -223,7 +223,9 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
 
   it("accepts an L7 HTTP 403 denial", () => {
     expect(
-      isExpectedMcpCurlPolicyDenial(denialResult({ stdout: "NEMOCLAW_MCP_CURL_HTTP_CODE=403\n" })),
+      isExpectedMcpCurlPolicyDenial(
+        denialResult({ stdout: '{"error":"policy_denied"}\nNEMOCLAW_MCP_CURL_HTTP_CODE=403\n' }),
+      ),
     ).toBe(true);
   });
 
@@ -265,6 +267,80 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["* Immediate connect fail for 198.18.0.1: Permission denied", true],
+    ["* Immediate connect fail for fd00::1: Permission denied", true],
+    ["* Immediate connect fail for 198.18.0.1: Connection refused", false],
+    [
+      "* Immediate connect fail for 198.18.0.1: Permission denied\n* Immediate connect fail for fd00::1: Connection refused",
+      false,
+    ],
+    ["curl: (7) Permission denied", false],
+    ["* Failed to open file: Permission denied", false],
+    ["curl: (6) Could not resolve host", false],
+    [
+      "* Immediate connect fail for 198.18.0.1: Permission denied\n* connect to 10.0.0.1 port 443 from 10.0.0.2 port 5000 failed: Connection refused",
+      false,
+    ],
+  ])("classifies curl connect diagnostic %s", (stderr, expected) => {
+    expect(
+      isExpectedMcpCurlPolicyDenial(
+        denialResult({ exitCode: 7, stdout: "NEMOCLAW_MCP_CURL_HTTP_CODE=000\n", stderr }),
+      ),
+    ).toBe(expected);
+  });
+
+  it.each([
+    "NEMOCLAW_MCP_CURL_HTTP_CODE=403\nNEMOCLAW_MCP_CURL_HTTP_CODE=200\npolicy_denied",
+    "NEMOCLAW_MCP_CURL_HTTP_CODE=403\nNEMOCLAW_MCP_CURL_HTTP_CODE=403\npolicy_denied",
+    "NEMOCLAW_MCP_CURL_HTTP_CODE=403\ncredential_endpoint_mismatch",
+  ])("rejects ambiguous or nonpolicy HTTP evidence [case %#]", (stdout) => {
+    expect(isExpectedMcpCurlPolicyDenial(denialResult({ stdout }))).toBe(false);
+  });
+
+  it.each(["openclaw-config", "hermes-config", "deepagents-config", null] as const)(
+    "executes curl with adapter %s and removes outgoing header diagnostics",
+    (adapter) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-curl-command-"));
+      tempDirs.push(directory);
+      const capture = path.join(directory, "argv");
+      fs.writeFileSync(path.join(directory, "nemoclaw-start"), '#!/bin/sh\nexec "$@"\n', {
+        mode: 0o755,
+      });
+      fs.writeFileSync(
+        path.join(directory, "curl"),
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$CURL_ARGV_CAPTURE"\nprintf "NEMOCLAW_MCP_CURL_HTTP_CODE=200\\n"\nprintf "> authorization: Bearer runtime-handle\\n* Immediate connect fail for 198.18.0.1: Permission denied\\n" >&2\n',
+        { mode: 0o755 },
+      );
+      const script = buildMcpDnsRebindingProbeScript(
+        adapter,
+        "https://mcp.example.test/mcp",
+        "REBIND_MCP_SECRET",
+      )
+        .replaceAll("/tmp/nemoclaw-mcp-rebinding", path.join(directory, "probe"))
+        .replace("/opt/hermes/.venv/bin/python", "python3")
+        .replace("/opt/venv/bin/python3", "python3");
+      const result = spawnSync("/bin/bash", ["-c", script], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          CURL_ARGV_CAPTURE: capture,
+          REBIND_MCP_SECRET: "openshell:resolve:env:v1_REBIND_MCP_SECRET",
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(capture, "utf8")).toContain(
+        adapter === null
+          ? "authorization: Bearer openshell:resolve:env:REBIND_MCP_SECRET"
+          : "authorization: Bearer openshell:resolve:env:v1_REBIND_MCP_SECRET",
+      );
+      expect(fs.readFileSync(capture, "utf8")).toContain("mcp-protocol-version: 2025-11-25");
+      expect(result.stderr).not.toContain("authorization:");
+      expect(result.stderr).toContain("Immediate connect fail");
+    },
+  );
+
   it("runs the rebinding request beneath each adapter runtime identity", () => {
     const runtimes = {
       "openclaw-config": "nemoclaw-start node -e",
@@ -282,9 +358,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
       expect(script, adapter).toMatch(/spawnSync|subprocess\.run/);
       expect(script, adapter).toContain("'curl'");
       expect(script, adapter).toContain("NEMOCLAW_MCP_CURL_HTTP_CODE=%{http_code}");
-      expect(script, adapter).toContain(
-        "authorization: Bearer openshell:resolve:env:REBIND_MCP_SECRET",
-      );
+      expect(script, adapter).toContain("NEMOCLAW_MCP_AUTHORIZATION");
       expect(script, adapter).not.toContain("fake-rebind-mcp-secret-value");
       const syntax = spawnSync("/bin/bash", ["-n"], { input: script, encoding: "utf8" });
       expect(syntax.status, `${adapter}: ${syntax.stderr}`).toBe(0);
@@ -371,7 +445,7 @@ network_policies:
     });
   });
 
-  it("passes only an exact HTTP 403 and rejects an allowed response", () => {
+  it("preserves raw HTTP and transport outcomes for the strict caller", () => {
     const binDir = fakeCurlPath();
     const script = buildRawOpenShellAllowedIpsRebindingProbeScript(
       `http://${RAW_OPENSHELL_REBIND_HOSTNAME}:31337/mcp`,
@@ -393,7 +467,7 @@ network_policies:
     expect(denied.stdout).toContain(`${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}403`);
 
     const allowed = run("200");
-    expect(allowed.status).toBe(1);
+    expect(allowed.status).toBe(0);
     expect(allowed.stdout).toContain(`${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}200`);
 
     const transportFailure = run("000", "7");
@@ -437,10 +511,32 @@ network_policies:
           stdout: args.includes("--full") ? currentPolicy : basePolicy,
         };
       },
-      execShell: async () => ({
-        ...denialResult(),
-        stdout: `${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}403\n`,
-      }),
+      execShell: async (
+        _name: string,
+        _script: unknown,
+        options: {
+          artifactName:
+            | "raw-openshell-rebinding-allowed-control"
+            | "raw-openshell-rebinding-policy-denial";
+        },
+      ) =>
+        ({
+          "raw-openshell-rebinding-allowed-control": async () => {
+            const port =
+              YAML.parse(currentPolicy).network_policies[RAW_OPENSHELL_REBIND_POLICY_KEY]
+                .endpoints[0].port;
+            const response = await fetch(`http://127.0.0.1:${port}/mcp`);
+            await response.text();
+            return {
+              ...denialResult(),
+              stdout: `${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}${response.status}\n`,
+            };
+          },
+          "raw-openshell-rebinding-policy-denial": async () => ({
+            ...denialResult(),
+            stdout: `{"error":"policy_denied"}\n${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}403\n`,
+          }),
+        })[options.artifactName]!(),
     } as never;
 
     try {
@@ -456,11 +552,12 @@ network_policies:
       setPolicy.mockRestore();
     }
 
-    expect(policyMutations).toHaveLength(2);
+    expect(policyMutations).toHaveLength(3);
     expect(policyMutations[0]?.document).toContain(RAW_OPENSHELL_REBIND_POLICY_KEY);
-    expect(policyMutations[0]?.operation).toBe("run the raw OpenShell allowed_ips rebinding proof");
-    expect(policyMutations[1]?.document).toBe(basePolicy.trim());
-    expect(policyMutations[1]?.operation).toBe(
+    expect(policyMutations[0]?.operation).toBe("allow the raw OpenShell rebinding control");
+    expect(policyMutations[1]?.operation).toBe("run the raw OpenShell allowed_ips rebinding proof");
+    expect(policyMutations[2]?.document).toBe(basePolicy.trim());
+    expect(policyMutations[2]?.operation).toBe(
       "restore the raw OpenShell allowed_ips rebinding proof policy",
     );
     expect(openshellCalls.some((args) => args[0] === "policy" && args[1] === "set")).toBe(false);

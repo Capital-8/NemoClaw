@@ -220,14 +220,25 @@ describe("SDK policy document conversion", () => {
     });
   });
 
-  it("preserves provider-composed rules and ignores the deprecated binary harness flag", () => {
+  it("preserves provider restrictions without runtime ownership markers", () => {
     expect(
       sdkPolicyDocument({
         version: 1,
         network_policies: {
           "provider:nvidia": {
             name: "provider:nvidia",
-            endpoints: [{ host: "api.example", port: 443 }],
+            endpoints: [
+              {
+                host: "api.example",
+                port: 443,
+                advisor_proposed: true,
+                provider_credentialed: true,
+                token_grant_owner: "provider-owned-endpoint",
+                credential_binding: { provider: "nvidia" },
+                request_body_credential_rewrite: true,
+                allow_uninspected_credentials: false,
+              },
+            ],
             binaries: [{ path: "/usr/bin/curl", harness: true }],
           },
         },
@@ -237,7 +248,15 @@ describe("SDK policy document conversion", () => {
       network_policies: {
         "provider:nvidia": {
           name: "provider:nvidia",
-          endpoints: [{ host: "api.example", port: 443 }],
+          endpoints: [
+            {
+              host: "api.example",
+              port: 443,
+              credential_binding: { provider: "nvidia" },
+              request_body_credential_rewrite: true,
+              allow_uninspected_credentials: false,
+            },
+          ],
           binaries: [{ path: "/usr/bin/curl" }],
         },
       },

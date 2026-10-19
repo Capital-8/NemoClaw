@@ -356,21 +356,43 @@ describe("rebuildSandbox flow: credential preflight", () => {
     );
   });
 
-  it("stops before deletion when native OpenClaw authority is detached during backup", async () => {
-    const { harness } = createNativeLocalRebuildHarness("openclaw", () => {
-      vi.mocked(nativeLocalProfile.verifyRecordedNativeLocalProviderAttachment).mockRejectedValue(
-        new Error("detached during backup"),
-      );
-    });
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], {
-        throwOnError: true,
-      }),
-    ).rejects.toThrow("Native local provider authority changed before sandbox deletion");
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-  });
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "retains native %s before backup when its selected credential expires",
+    async (agent) => {
+      const { harness, verify } = createNativeLocalRebuildHarness(agent);
+      verify.mockRejectedValue(new nativeLocalProfile.NativeProviderCredentialExpiredError());
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--force"], {
+          throwOnError: true,
+        }),
+      ).rejects.toThrow("Native provider credential is expired; sandbox is untouched");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { label: "detaches", error: new Error("detached during backup") },
+    { label: "expires", error: new nativeLocalProfile.NativeProviderCredentialExpiredError() },
+  ])(
+    "stops before deletion when native OpenClaw authority $label during backup",
+    async ({ error }) => {
+      const { harness } = createNativeLocalRebuildHarness("openclaw", () => {
+        vi.mocked(nativeLocalProfile.verifyRecordedNativeLocalProviderAttachment).mockRejectedValue(
+          error,
+        );
+      });
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], {
+          throwOnError: true,
+        }),
+      ).rejects.toThrow("Native local provider authority changed before sandbox deletion");
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("aborts before backup when the target provider and credential are missing", async () => {
     const harness = createRebuildFlowHarness({

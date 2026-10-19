@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  buildNetworkPolicyRequest,
+  isNetworkPolicyDenial,
+} from "../support/network-policy-probe.ts";
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -432,17 +437,15 @@ test(
 
     const deniedEgress = await sandbox.exec(
       SANDBOX_NAME,
-      ["curl", "-fsS", "--connect-timeout", "5", "--max-time", "15", "https://example.com/"],
+      buildNetworkPolicyRequest("https://example.com/"),
       {
         artifactName: "phase-3-unintended-egress-denied",
         env: commandEnv(),
         timeoutMs: 30_000,
       },
     );
-    expect(deniedEgress.exitCode, resultText(deniedEgress)).not.toBe(0);
-    expect(resultText(deniedEgress)).toMatch(
-      /CONNECT tunnel failed, response 403|The requested URL returned error: 403|policy[_ ]denied|not allowed by any policy/i,
-    );
+    expect(deniedEgress.exitCode, resultText(deniedEgress)).toBe(0);
+    expect(isNetworkPolicyDenial(deniedEgress), resultText(deniedEgress)).toBe(true);
 
     // Continue Phase 3 with Hermes health and sandbox state.
     let health: ShellProbeResult | undefined;

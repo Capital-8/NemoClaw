@@ -223,6 +223,19 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     [REBIND_HOST_SECRET],
     `${options.artifactPrefix}-dns-rebinding-secret-absent-from-sandbox`,
   );
+  const requestsBeforeControl = rebindMcp.requests.length;
+  const curlControl = await sandbox.execShell(
+    options.sandboxName,
+    trustedSandboxShellScript(
+      buildMcpDnsRebindingProbeScript(options.adapter, rebindMcpUrl, REBIND_CREDENTIAL_KEY),
+    ),
+    {
+      artifactName: `${options.artifactPrefix}-mcp-adapter-curl-control`,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [REBIND_HOST_SECRET],
+      timeoutMs: 90_000,
+    },
+  );
   const requestsBeforeRebindingDenial = rebindMcp.requests.length;
 
   // OpenShell must retain the exact private address admitted at add time. A
@@ -267,7 +280,12 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     },
   );
   expect(
-    isExpectedMcpCurlPolicyDenial(denial),
+    isExpectedMcpCurlPolicyDenial(denial) &&
+      curlControl.exitCode === 0 &&
+      !curlControl.timedOut &&
+      curlControl.stdout.includes("NEMOCLAW_MCP_CURL_HTTP_CODE=200") &&
+      requestsBeforeRebindingDenial === requestsBeforeControl + 1 &&
+      rebindMcp.requests.at(-1)?.auth === `Bearer ${REBIND_HOST_SECRET}`,
     `${options.artifactPrefix} adapter identity must receive an OpenShell policy denial after rebinding\nstdout:\n${denial.stdout}\nstderr:\n${denial.stderr}`,
   ).toBe(true);
   expect(

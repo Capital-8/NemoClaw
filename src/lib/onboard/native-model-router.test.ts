@@ -54,6 +54,25 @@ beforeEach(() => {
 });
 
 describe("native Model Router ownership", () => {
+  it("checks Router ownership while preserving the credential before sandbox backup", async () => {
+    await prepareNativeModelRouterSelection({ ...input, preserveProviderCredential: true });
+    expect(doesModelRouterProcessOwnPort).toHaveBeenCalledTimes(2);
+    expect(ensureNativeLocalProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ credentialValue: null }),
+    );
+  });
+
+  it("rejects a changed Router credential even when provider mutation is deferred", async () => {
+    await expect(
+      prepareNativeModelRouterSelection({
+        ...input,
+        credentialValue: "changed-key",
+        preserveProviderCredential: true,
+      }),
+    ).rejects.toThrow();
+    expect(ensureNativeLocalProvider).not.toHaveBeenCalled();
+  });
+
   it("preserves the configured provider name and endpoint without admitting another host or service", () => {
     expect(nativeModelRouterEndpoint("custom-router", "http://127.0.0.1:4000/v1", profile)).toBe(
       "http://host.openshell.internal:4000/v1",

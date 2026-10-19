@@ -16,7 +16,7 @@ import { prepareExactMainDriverConfigProof } from "./openshell-exact-main-driver
 import { assertExactMainOpenShellContracts } from "./openshell-exact-main-exec.ts";
 import {
   assertExactMainMcpLogPrivacy,
-  assertExactMainPolicyNftAndIdentityContracts,
+  assertExactMainPolicyAndIdentityContracts,
 } from "./openshell-exact-main-runtime-contracts.ts";
 
 const DCODE_MCP_SNAPSHOT_TMPFS = "/run/nemoclaw-dcode-mcp";
@@ -139,7 +139,7 @@ export function prepareExactMainMcpProof(
         await assertDcodeMcpSnapshotPlatformContract(sandbox, sandboxName, "after-onboard");
       }
       await assertExactMainOpenShellContracts(host, sandboxName);
-      await assertExactMainPolicyNftAndIdentityContracts({
+      await assertExactMainPolicyAndIdentityContracts({
         artifacts,
         cleanup,
         host,

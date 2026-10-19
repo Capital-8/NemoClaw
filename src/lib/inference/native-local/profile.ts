@@ -25,6 +25,7 @@ import {
 } from "./contract";
 
 export { normalizeNativeLocalProviderAttachment };
+export { NativeProviderCredentialExpiredError } from "../native-provider/lifecycle";
 export type { NativeLocalProviderAttachment };
 
 export function prepareNativeLocalProfile(input: NativeLocalBinding) {
@@ -164,7 +165,9 @@ async function checkedAttachment(input: AttachmentInput, requirePolicy = true) {
   return { expected, target, profile: { ...prepared, profilePath: "", label: "host-local" } };
 }
 
-export async function verifyNativeLocalProviderAttachment(input: AttachmentInput) {
+export async function verifyNativeLocalProviderAttachment(
+  input: AttachmentInput & { requireUnexpiredCredential?: boolean },
+) {
   const checked = await checkedAttachment(input);
   await verifyNativeProviderAttachment({ ...input, ...checked });
   return checked.expected;
@@ -188,7 +191,11 @@ export async function verifyRecordedNativeLocalProviderAttachment(input: {
     (input.gatewayName !== undefined && expected.gatewayName !== input.gatewayName)
   )
     throw new Error("Native local provider authority does not match the rebuild target.");
-  return verifyNativeLocalProviderAttachment({ ...input, expected });
+  return verifyNativeLocalProviderAttachment({
+    ...input,
+    expected,
+    requireUnexpiredCredential: true,
+  });
 }
 
 export async function ensureNativeLocalProviderAttached(input: AttachmentInput) {

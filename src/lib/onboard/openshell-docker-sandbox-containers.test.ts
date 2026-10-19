@@ -152,6 +152,10 @@ function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
 // and rollback removes the container (#13178).
 describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
   const CONTAINER_ID = "f".repeat(64);
+  const identity = (id: string, role = "") =>
+    [id, "openshell", role === "supervisor" ? "" : "default", "sandbox-id", "namespace", role].join(
+      "\t",
+    );
   const STARTUP_FAILURE =
     "Error:   × Failed to prepare sandbox: Landlock path unavailable in hard_requirement mode";
   const dockerResult = (stdout: string, status = 0, stderr = "") =>
@@ -161,7 +165,7 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
   it("reads redacted output from the one OpenShell container labeled with the sandbox name", () => {
     const opaqueSecret = "opaque-value-9f8e7d6c5b4a";
     const dockerRun = vi.fn((_args: readonly string[], _options?: { timeout?: number }) =>
-      dockerResult(`${CONTAINER_ID}\n`),
+      dockerResult(`${identity(CONTAINER_ID)}\n`),
     );
     const dockerCapture = vi.fn((args: readonly string[]) =>
       args.includes("--format") ? "" : inspectWithEnv([`PROVIDER_TOKEN=${opaqueSecret}`]),
@@ -175,10 +179,7 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     });
 
     expect(dockerRun.mock.calls[0][0]).toEqual(
-      expect.arrayContaining([
-        "label=openshell.ai/managed-by=openshell",
-        "label=openshell.ai/sandbox-name=my-assistant",
-      ]),
+      expect.arrayContaining(["label=openshell.ai/sandbox-name=my-assistant"]),
     );
     expect(dockerLogs).toHaveBeenCalledWith(CONTAINER_ID, expect.anything());
     // A stalled lookup must not hold the failed sandbox before rollback.
@@ -191,7 +192,7 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     let clock = 1_000;
     const dockerRun = vi.fn((_args: readonly string[], options?: { timeout?: number }) => {
       clock += options?.timeout ?? 0;
-      return dockerResult(`${CONTAINER_ID}\n`);
+      return dockerResult(`${identity(CONTAINER_ID)}\n`);
     });
     const dockerCapture = vi.fn((_args: readonly string[], options?: { timeout?: number }) => {
       clock += options?.timeout ?? 0;
@@ -212,6 +213,104 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     expect(dockerCapture.mock.calls[0][1]).toMatchObject({ timeout: 2_000 });
     expect(dockerLogs).not.toHaveBeenCalled();
     expect(clock - 1_000).toBeLessThanOrEqual(4_000);
+  });
+
+  it.each(["opaque-private-token", "opaque-" + "z".repeat(1600) + "-secret"])(
+    "learns both role inventories before truncating any log",
+    (secret) => {
+      const supervisor = "e".repeat(64);
+      const dockerLogs = vi.fn((id: string) => `${id}: ${secret}\n${STARTUP_FAILURE}`);
+      const output = captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun: vi.fn(() =>
+          dockerResult(
+            [identity(CONTAINER_ID, "sandbox"), identity(supervisor, "supervisor")].join("\n"),
+          ),
+        ),
+        dockerCapture: () =>
+          JSON.stringify([
+            { Id: CONTAINER_ID, Config: { Env: [] }, State: {} },
+            { Id: supervisor, Config: { Env: [`TOKEN=${secret}`] }, State: {} },
+          ]),
+        dockerLogs,
+      });
+      expect(dockerLogs.mock.calls.map(([id]) => id)).toEqual([CONTAINER_ID, supervisor]);
+      expect(output).toContain("== supervisor");
+      expect(output).toContain("== sandbox");
+      expect(output).toContain(STARTUP_FAILURE);
+      expect(output).not.toContain(secret);
+      expect(output).not.toContain("z".repeat(20));
+    },
+  );
+
+  it.each([
+    ["incomplete inventory", []],
+    ["foreign ID", [{ Id: "b".repeat(64), Config: { Env: [] } }]],
+    ["missing environment", [{ Id: "e".repeat(64), Config: {} }]],
+    ["duplicate ID", [{ Id: CONTAINER_ID, Config: { Env: [] } }]],
+  ])("reads no role logs with %s", (_reason, remainder) => {
+    const dockerLogs = vi.fn();
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun: () =>
+          dockerResult(
+            [identity(CONTAINER_ID, "sandbox"), identity("e".repeat(64), "supervisor")].join("\n"),
+          ),
+        dockerCapture: () =>
+          JSON.stringify([{ Id: CONTAINER_ID, Config: { Env: [] } }, ...remainder]),
+        dockerLogs,
+      }),
+    ).toBeNull();
+    expect(dockerLogs).not.toHaveBeenCalled();
+  });
+
+  it("reads no role logs when the complete inspect inventory exceeds the shared deadline", () => {
+    let clock = 0;
+    const dockerLogs = vi.fn();
+    const output = captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+      now: () => clock,
+      dockerRun: vi.fn((_args, options) => {
+        clock += options?.timeout ?? 0;
+        return dockerResult(
+          [identity(CONTAINER_ID, "sandbox"), identity("e".repeat(64), "supervisor")].join("\n"),
+        );
+      }),
+      dockerCapture: vi.fn((_args, options) => {
+        clock += options?.timeout ?? 0;
+        return JSON.stringify([
+          { Id: CONTAINER_ID, Config: { Env: [] } },
+          { Id: "e".repeat(64), Config: { Env: [] } },
+        ]);
+      }),
+      dockerLogs,
+    });
+    expect(output).toBeNull();
+    expect(dockerLogs).not.toHaveBeenCalled();
+    expect(clock).toBe(4000);
+  });
+
+  it.each([
+    ["different sandbox", identity("e".repeat(64), "supervisor").replace("sandbox-id", "other")],
+    ["different namespace", identity("e".repeat(64), "supervisor").replace("namespace", "other")],
+    [
+      "different workspace",
+      identity("e".repeat(64), "supervisor").replace("\t\tsandbox-id", "\tother\tsandbox-id"),
+    ],
+    ["foreign owner", identity("e".repeat(64), "supervisor").replace("openshell", "foreign")],
+    ["duplicate role", identity("e".repeat(64), "sandbox")],
+    ["duplicate identity", identity(CONTAINER_ID, "supervisor")],
+    ["missing namespace", identity("e".repeat(64), "supervisor").replace("namespace", "")],
+    ["malformed identity", "malformed"],
+  ])("refuses native diagnostics with %s", (_name, second) => {
+    const dockerLogs = vi.fn();
+    expect(
+      captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+        dockerRun: vi.fn(() =>
+          dockerResult([identity(CONTAINER_ID, "sandbox"), second].join("\n")),
+        ),
+        dockerLogs,
+      }),
+    ).toBeNull();
+    expect(dockerLogs).not.toHaveBeenCalled();
   });
 
   it("reads the exact failed replacement without a label lookup", () => {

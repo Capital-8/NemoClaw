@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseOpenClawGatewayModelRun } from "./openclaw-inference-switch-helpers.ts";
 import { registeredCompatibleChatCommand } from "../fixtures/registered-inference.ts";
 import fs from "node:fs";
 import os from "node:os";
@@ -348,6 +349,7 @@ async function expectOpenAiChatThroughSandbox(
   model: string,
   redactionValues: readonly string[],
   artifactName: string,
+  consumer: "curl" | "openclaw-gateway" = "curl",
 ): Promise<void> {
   const payload = JSON.stringify({
     model,
@@ -356,7 +358,18 @@ async function expectOpenAiChatThroughSandbox(
   });
   const response = await sandbox.exec(
     sandboxName,
-    registeredCompatibleChatCommand(sandboxName, model, payload),
+    consumer === "openclaw-gateway"
+      ? [
+          "openclaw",
+          "infer",
+          "model",
+          "run",
+          "--gateway",
+          "--json",
+          "--prompt",
+          "Reply with exactly one word: PONG",
+        ]
+      : registeredCompatibleChatCommand(sandboxName, model, payload),
     {
       artifactName,
       env: buildAvailabilityProbeEnv(),
@@ -365,8 +378,17 @@ async function expectOpenAiChatThroughSandbox(
     },
   );
   expect(response.exitCode, resultText(response)).toBe(0);
-  const content = openAiContent(parseJsonBody(response.stdout, artifactName));
-  expect(content, `no chat content in response: ${response.stdout.slice(0, 500)}`).not.toBe("");
+  const gatewayRun =
+    consumer === "openclaw-gateway" ? parseOpenClawGatewayModelRun(response.stdout) : null;
+  const content =
+    consumer === "openclaw-gateway"
+      ? gatewayRun?.provider === "inference" && gatewayRun.model === model
+        ? gatewayRun.text
+        : ""
+      : openAiContent(parseJsonBody(response.stdout, artifactName));
+  expect(content, `unexpected chat content in response: ${response.stdout.slice(0, 500)}`).toBe(
+    "PONG",
+  );
 }
 
 export function requireProviderSmokeSelected(provider: "openrouter", skip: SkipFn): void {

@@ -20,7 +20,10 @@ import {
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
 import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
-import { verifyRecordedNativeLocalProviderAttachment } from "../../inference/native-local/profile";
+import {
+  NativeProviderCredentialExpiredError,
+  verifyRecordedNativeLocalProviderAttachment,
+} from "../../inference/native-local/profile";
 
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
@@ -209,7 +212,9 @@ export async function preflightRebuildCredentials(
         agent: sb.agent,
         provider: rebuildProvider,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof NativeProviderCredentialExpiredError)
+        bail("Native provider credential is expired; sandbox is untouched");
       bail("Could not verify native local provider credentials; sandbox is untouched");
       return false;
     }

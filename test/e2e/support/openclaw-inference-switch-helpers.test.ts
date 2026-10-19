@@ -401,18 +401,25 @@ function sandboxForOpenClawConfig(config: object, handle = scopedNativeHandle) {
   };
 }
 
-it("checks the actual switched native model budget with a materialized handle", async () => {
-  const model = "nvidia/nemotron-3-super-120b-a12b";
-  const config: any = {};
-  patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
-  config.models.providers.inference.apiKey = scopedNativeHandle;
-  await probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
-    model,
-    inferenceApi: "openai-completions",
-    artifactName: "switched-native-config",
-    nativeNvidia: true,
-  });
-});
+it.each([
+  scopedNativeHandle,
+  "openshell:resolve:env:v2_NVIDIA_INFERENCE_API_KEY",
+  `openshell:resolve:env:s${"a".repeat(64)}_NVIDIA_INFERENCE_API_KEY`,
+])(
+  "checks the native model budget with a scoped handle from any retained revision: %s",
+  async (handle) => {
+    const model = "nvidia/nemotron-3-super-120b-a12b";
+    const config: any = {};
+    patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
+    config.models.providers.inference.apiKey = handle;
+    await probeOpenClawConfig(sandboxForOpenClawConfig(config) as never, "/tmp/switch-home", {
+      model,
+      inferenceApi: "openai-completions",
+      artifactName: "switched-native-config",
+      nativeNvidia: true,
+    });
+  },
+);
 
 it("checks the actual switched Anthropic model budget", async () => {
   const model = "mock-anthropic-model";
@@ -485,7 +492,7 @@ it.each([
   "native",
   "${OTHER_API_KEY}",
   "${NVIDIA_INFERENCE_API_KEY}",
-  "openshell:resolve:env:v2_NVIDIA_INFERENCE_API_KEY",
+  "openshell:resolve:env:v2_OTHER_API_KEY",
   "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
   null,
 ])("rejects an incorrect native OpenClaw credential value after redaction: %s", async (value) => {

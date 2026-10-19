@@ -65,6 +65,7 @@ export function extractHermesGpuDiagnosticsDirectory(output: string): string {
     output.match(/Pre-rollback diagnostics saved:\s*(\S+)/u)?.[1] ??
     output.match(/Docker GPU diagnostics saved:\s*(\S+)/u)?.[1] ??
     output.match(/Native GPU diagnostics saved:\s*(\S+)/u)?.[1] ??
+    output.match(/(?:^|\n)\s*Diagnostics saved:\s*(\S+)/u)?.[1] ??
     ""
   );
 }

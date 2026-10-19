@@ -106,7 +106,7 @@ done
 printf '%s\n' "${CONNECT_CHILD_OK} CapBnd=$cap_bnd"
 exit 0`;
 
-function exactMainDockerContainerId(output: string, sandboxName: string): string {
+export function exactMainDockerContainerId(output: string, sandboxName: string): string {
   const rows = output
     .split(/\r?\n/u)
     .map((line) => line.trim())
@@ -188,6 +188,8 @@ export async function assertExactMainChildProcessContracts(
       "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
       "--format",
       `{{.ID}}\t{{.Names}}\t{{.Label "${OPENSHELL_SANDBOX_ID_LABEL}"}}\t{{.Label "${OPENSHELL_SANDBOX_WORKSPACE_LABEL}"}}`,
     ],

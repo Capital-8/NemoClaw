@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -142,11 +143,129 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).not.toContain('spawnSync(\n  "docker"');
   });
 
-  it("accepts only the provider-owned Podman host address outside RFC1918", () => {
-    const script = fs.readFileSync(dcodeObservabilityCheck, "utf8");
+  it.each([
+    ["docker", "linux", "nemoclaw", "docker", "host", "127.0.0.1", "127.0.0.1"],
+    ["podman", "linux", "nemoclaw", "podman", "", "", "podman"],
+    ["docker", "darwin", "nemoclaw", "docker", "host", "127.0.0.1", null],
+    ["docker", "linux", "other", "docker", "host", "127.0.0.1", null],
+    ["docker", "linux", "nemoclaw", "podman", "host", "127.0.0.1", null],
+    ["docker", "linux", "nemoclaw", "docker", "bridge", "127.0.0.1", null],
+    ["docker", "linux", "nemoclaw", "docker", "host", "0.0.0.0", null],
+  ])(
+    "binds OTLP to its selected runtime (%s/%s/%s/%s/%s/%s)",
+    (providerId, platform, gatewayName, targetProvider, networkName, address, expected) => {
+      const script = fs.readFileSync(dcodeObservabilityCheck, "utf8");
+      const source = script.split("node <<'NODE'\n")[1].split("\nNODE")[0];
+      let output = "";
+      const provider = {
+        identity: { id: providerId },
+        gateway: {
+          observeHostRuntime: () => ({
+            network: { supervisorNetwork: { name: networkName, hostAddress: address } },
+          }),
+        },
+      };
+      const run = () =>
+        vm.runInNewContext(source, {
+          process: {
+            platform,
+            env: { SANDBOX_NAME: "fixture", OPENSHELL_GATEWAY: "nemoclaw" },
+            stdout: {
+              write: (value: string) => {
+                output += value;
+              },
+            },
+            exit: () => {
+              throw new Error("refused");
+            },
+          },
+          require: () => ({
+            getSandbox: () => ({ gatewayName }),
+            currentRuntimeProviderBundles: () => [],
+            requireRuntimeProviderBundleForSandbox: () => provider,
+            resolvePrivilegedSandboxTarget: () => ({
+              providerId: targetProvider,
+              resourceHandle: "owned",
+            }),
+          }),
+        });
+      const outcomes = expected === null ? [() => expect(run).toThrow("refused")] : [run];
+      outcomes.forEach((check) => check());
+      expect(output).toBe(expected ?? "");
+      expect(script).toContain("169.254.2.2");
+      expect(script).not.toContain("169.254.*");
+    },
+  );
 
-    expect(script).toContain("169.254.2.2");
-    expect(script).not.toContain("169.254.*");
+  it.each([
+    [1, "setpriv: setresuid failed: Operation not permitted", 0, 0],
+    [0, "", 0, 1],
+    [1, "missing entrypoint", 0, 1],
+    [1, "setpriv: setresuid failed: Operation not permitted", 1, 1],
+  ])(
+    "requires root denial and sandbox-user startup (%s/%s/%s)",
+    (rootStatus, rootOutput, userStatus, expected) => {
+      const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
+      const block = script.slice(
+        script.indexOf("  # Native workloads"),
+        script.indexOf("  # shellcheck disable=SC2016 # Read"),
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -eu",
+            "resource_handle=owned",
+            "SANDBOX_NAME=fixture",
+            "HOSTILE_SHELL_ENV=/fixture-env",
+            "HOSTILE_PROFILE_MARKER=/fixture-marker",
+            "fail() { exit 1; }",
+            'privileged_exec() { printf "%s\\n" "$ROOT_OUTPUT"; return "$ROOT_STATUS"; }',
+            'openshell() { return "$USER_STATUS"; }',
+            block,
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: DEFAULT_TEST_PATH,
+            ROOT_OUTPUT: rootOutput,
+            ROOT_STATUS: String(rootStatus),
+            USER_STATUS: String(userStatus),
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(expected);
+    },
+  );
+
+  it("prepares a writable sentinel exclusively and refuses cleanup of another inode", () => {
+    const script = fs.readFileSync(dcodeLandlockCheck, "utf8");
+    const source = script
+      .split("const source = String.raw`")[1]
+      .split("`;")[0]
+      .replaceAll("observed.st_uid == 0", `observed.st_uid == ${process.getuid?.()}`);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-sentinel-"));
+    const probe = path.join(dir, "probe");
+    const run = (operation: string, identity = "") =>
+      spawnSync("python3", ["-I", "-c", source, operation, probe, identity], { encoding: "utf8" });
+    try {
+      const created = run("prepare");
+      expect(created.status, created.stderr).toBe(0);
+      expect(fs.statSync(probe).mode & 0o777).toBe(0o666);
+      expect(run("prepare").status).not.toBe(0);
+      expect(run("cleanup", "0:0").status).not.toBe(0);
+      expect(fs.existsSync(probe)).toBe(true);
+      expect(run("cleanup", created.stdout.trim()).status).toBe(0);
+      expect(fs.existsSync(probe)).toBe(false);
+      fs.symlinkSync(path.join(dir, "other"), probe);
+      expect(run("prepare").status).not.toBe(0);
+      expect(run("cleanup", created.stdout.trim()).status).not.toBe(0);
+      expect(fs.lstatSync(probe).isSymbolicLink()).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {

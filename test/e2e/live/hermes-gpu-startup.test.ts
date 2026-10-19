@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { getNemoclawStateRoot } from "../../../src/lib/state/state-root.ts";
 import { resolveSandboxLaunchForwardPorts } from "../../../src/lib/actions/sandbox/process-recovery";
 import { createCliOpenShellForwardAdapter } from "../../../src/lib/adapters/openshell/forward-cli";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
@@ -272,22 +273,34 @@ async function captureFailedGpuContainer(
   const script = String.raw`set -eu
 sandbox_filter="$1"
 diagnostics_dir="$2"
-shift 2
+diagnostics_root="$3"
+shift 3
 runtime_command=("$@")
-if [ -n "$diagnostics_dir" ] && [ -d "$diagnostics_dir" ]; then
-  printf '%s\n' "== pre-rollback diagnostics $diagnostics_dir =="
-  for name in summary.txt patched-container-state.json docker-inspect.json docker-network-summary.txt docker-top.txt docker-logs.txt openshell-sandbox-get.txt openshell-sandbox-list.txt openshell-logs.txt; do
-    file="$diagnostics_dir/$name"
-    if [ -f "$file" ]; then
-      printf '%s\n' "available: $name"
-      printf '%s\n' "== redacted $name =="
-      tail -c 8000 "$file" || true
-      printf '\n'
-    fi
-  done
-else
-  printf '%s\n' "pre-rollback diagnostics directory unavailable: $diagnostics_dir"
-fi
+python3 -I - "$diagnostics_dir" "$diagnostics_root" <<'PYDIAGNOSTICS'
+import os, pathlib, stat, sys
+directory = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]).resolve()
+names = "summary.txt patched-container-state.json docker-inspect.json docker-network-summary.txt docker-top.txt docker-logs.txt openshell-sandbox-get.txt openshell-sandbox-list.txt openshell-logs.txt openshell-gateway-relevant.log openshell-gateway-tail.log sandbox-container.log".split()
+try:
+    info = directory.lstat()
+    if directory.parent.resolve() != root or stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError("untrusted diagnostics directory")
+    for name in names:
+        file = directory / name
+        try:
+            fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except OSError:
+            continue
+        with os.fdopen(fd, "rb") as stream:
+            meta = os.fstat(stream.fileno())
+            if not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.getuid() or meta.st_nlink != 1 or meta.st_mode & 0o077:
+                continue
+            stream.seek(max(0, meta.st_size - 8000))
+            print("== redacted " + name + " ==")
+            print(stream.read(8000).decode("utf-8", "replace"))
+except (OSError, ValueError):
+    print("pre-rollback diagnostics directory unavailable or untrusted")
+PYDIAGNOSTICS
 ids="$("${"${runtime_command[@]}"}" container ps --all --quiet --no-trunc --filter "$sandbox_filter")"
 if [ -z "$ids" ]; then
   printf '%s\n' "no runtime container found for $sandbox_filter"
@@ -310,6 +323,7 @@ done`;
         "hermes-gpu-failure-diagnostics",
         sandboxFilter,
         preRollbackDiagnosticsDir,
+        path.join(getNemoclawStateRoot(), "onboard-failures"),
         runtimeInvocation.command,
         ...runtimeInvocation.args,
       ],

@@ -33,7 +33,7 @@ describe("released OpenShell SDK export reads", () => {
     [0, 2, 2, { enforcement: "audit", access: "read-write" }],
     [0, 1, 3, { enforcement: "enforce", access: "full" }],
   ] as const)(
-    "exports SDK policy modes %i/%i/%i as authored policy values",
+    "exports SDK policy modes %i/%i/%i without runtime ownership markers",
     async (tls, enforcement, access, expected) => {
       const sdkPackage = "@nvidia/openshell-sdk/raw";
       const protobufPackage = "@bufbuild/protobuf";
@@ -42,7 +42,18 @@ describe("released OpenShell SDK export reads", () => {
         version: 1,
         networkPolicies: {
           api: {
-            endpoints: [{ host: "api.example", port: 443, tls, enforcement, access }],
+            endpoints: [
+              {
+                host: "api.example",
+                port: 443,
+                tls,
+                enforcement,
+                access,
+                advisorProposed: true,
+                providerCredentialed: true,
+                tokenGrantOwner: "provider-owned-endpoint",
+              },
+            ],
           },
         },
       });

@@ -1309,6 +1309,9 @@ export function createSetupInference(
               throw new Error("Native local inference requires a provider adapter.");
             const [name, , sourceCredentialEnv, selectedEndpoint, env] = args;
             const recorded = deps.getSandbox?.(sandboxName);
+            const recordedAttachment = normalizeNativeLocalProviderAttachment(
+              recorded?.nativeLocalProviderAttachment,
+            );
             if (
               recorded &&
               recorded.pendingRouteReservation !== true &&
@@ -1318,7 +1321,7 @@ export function createSetupInference(
                   recorded.provider,
                   recorded.endpointUrl,
                 )) &&
-              !normalizeNativeLocalProviderAttachment(recorded.nativeLocalProviderAttachment)
+              !recordedAttachment
             ) {
               if (
                 !options.recreatePublishedSandbox ||
@@ -1339,6 +1342,40 @@ export function createSetupInference(
               gatewayReachableCompatibleEndpointUrl(name, selectedEndpoint);
             if (typeof hostReachableEndpoint !== "string")
               throw new Error("Native local inference endpoint is missing.");
+            const authMode =
+              (name === "ollama-local" && value === "ollama") ||
+              (name === "vllm-local" && value === "dummy")
+                ? "sentinel"
+                : "authenticated";
+            if (
+              recorded &&
+              recorded.pendingRouteReservation !== true &&
+              recordedAttachment &&
+              options.deferPublishedRouteReservation
+            ) {
+              if (
+                recorded.name !== sandboxName ||
+                recorded.provider !== name ||
+                recorded.gatewayName !== gatewayName ||
+                (recorded.credentialEnv ?? null) !== credentialEnv ||
+                recordedAttachment.sandboxName !== sandboxName ||
+                recordedAttachment.gatewayName !== gatewayName ||
+                recordedAttachment.provider !== name ||
+                recordedAttachment.authMode !== authMode ||
+                deps.getNativeLocalProviderAuthority?.(recordedAttachment.providerName)
+                  ?.providerId !== recordedAttachment.providerId ||
+                (recordedAttachment.agent ?? "langchain-deepagents-code") !== nativeLocalAgent ||
+                recordedAttachment.endpointUrl !== hostReachableEndpoint ||
+                (recordedAttachment.api ?? "openai-completions") !==
+                  (selectedInferenceApi ?? "openai-completions")
+              )
+                throw new Error(
+                  "Cannot change the published native provider binding before sandbox backup. Re-run the model change with the recorded provider configuration.",
+                );
+              // Keep the source row and gateway credential usable if backup fails.
+              // The sandbox phase reserves the replacement after backup succeeds.
+              nativeLocalRecreationSource = structuredClone(recorded);
+            }
             nativeLocalProviderAttachment = await (
               routedProvider ? prepareNativeModelRouterSelection : prepareNativeLocalSelection
             )({
@@ -1356,15 +1393,15 @@ export function createSetupInference(
                 selectedInferenceApi === "openai-responses"
                   ? { api: "openai-responses" as const }
                   : {}),
-                authMode:
-                  (name === "ollama-local" && value === "ollama") ||
-                  (name === "vllm-local" && value === "dummy")
-                    ? "sentinel"
-                    : "authenticated",
+                authMode,
                 gatewayName,
                 sandboxName,
               },
-              credentialValue: value,
+              credentialValue:
+                recordedAttachment && nativeLocalRecreationSource && !routedProvider ? null : value,
+              ...(recordedAttachment && nativeLocalRecreationSource && routedProvider
+                ? { preserveProviderCredential: true }
+                : {}),
               ownedProxy:
                 (name === "ollama-local" && !hostLocalRoute && deps.shouldFrontOllamaWithProxy()) ||
                 (name === "compatible-endpoint" &&
@@ -1372,6 +1409,13 @@ export function createSetupInference(
               readAuthority: deps.getNativeLocalProviderAuthority,
               writeAuthority: deps.setNativeLocalProviderAuthority,
             });
+            if (
+              recordedAttachment &&
+              nativeLocalRecreationSource &&
+              (nativeLocalProviderAttachment.providerId !== recordedAttachment.providerId ||
+                nativeLocalProviderAttachment.providerName !== recordedAttachment.providerName)
+            )
+              throw new Error("Published native provider ownership changed before sandbox backup.");
             return { ok: true };
           }
           const reused = routeStager.reusePublishedProvider(args[0]);
@@ -1933,7 +1977,13 @@ export function createSetupInference(
           }
           revalidateSandboxIdentity?.("report successful inference provider setup");
           shouldLogSuccessfulRoute = true;
-          if (nativeLocalRecreationSource && nativeLocalProviderAttachment) {
+          if (
+            nativeLocalRecreationSource &&
+            nativeLocalProviderAttachment &&
+            (!nativeLocalRecreationSource.nativeLocalProviderAttachment ||
+              nativeLocalRecreationSource.model !== model ||
+              options.recreatePublishedSandbox)
+          ) {
             return {
               ok: true,
               stagedNativeLocalRecreation: {

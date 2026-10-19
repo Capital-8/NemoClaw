@@ -136,6 +136,8 @@ describe("OpenShell exact-main child contracts", () => {
       "label=openshell.ai/managed-by=openshell",
       "--filter",
       `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
       "--format",
       '{{.ID}}\t{{.Names}}\t{{.Label "openshell.ai/sandbox-id"}}\t{{.Label "openshell.ai/sandbox-workspace"}}',
     ]);

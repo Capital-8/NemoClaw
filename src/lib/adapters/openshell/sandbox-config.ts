@@ -192,6 +192,10 @@ function convertEndpointModes(endpoint: PolicyDocument): void {
 
 function convertEndpoint(value: PolicyEndpointJson): PolicyDocument {
   const endpoint: PolicyDocument = { ...value };
+  // Match OpenShell's authored policy projection; the gateway owns these markers.
+  delete endpoint.advisor_proposed;
+  delete endpoint.provider_credentialed;
+  delete endpoint.token_grant_owner;
   convertEndpointModes(endpoint);
   const mcp = value.protocol?.toLowerCase() === "mcp";
   const options: NonNullable<PolicyEndpointJson["mcp"]> & { max_body_bytes?: number } = {
