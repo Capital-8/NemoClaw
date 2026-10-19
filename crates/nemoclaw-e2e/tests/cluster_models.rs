@@ -29,6 +29,23 @@ async fn tofu(bundle: &Bundle, directory: &Path, arguments: &[&str]) -> std::pro
         .env("CHECKPOINT_DISABLE", "1")
         .env("TF_CLI_CONFIG_FILE", directory.join("providers.tfrc"))
         .kill_on_drop(true);
+    // Go plugins on Windows need the system's own settings to start, as the
+    // SDK passes them to its providers.
+    for name in [
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
     tokio::time::timeout(Duration::from_secs(180), command.output())
         .await
         .expect("OpenTofu timed out")
