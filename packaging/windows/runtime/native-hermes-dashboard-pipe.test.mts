@@ -129,6 +129,7 @@ test("prebuilt workers compile the dashboard adapter only in dashboard variants 
       content.includes("def _install_native_dashboard_pipe"),
       name.includes("dashboard"),
     );
+    assert.equal(content.includes("def _install_native_dashboard_pty"), name.includes("dashboard"));
     execFileSync(
       process.platform === "win32" ? "python" : "python3",
       ["-I", "-B", "-c", "import sys; compile(sys.stdin.read(), '<prebuilt-worker>', 'exec')"],
@@ -297,5 +298,139 @@ async def interrupt(): raise KeyboardInterrupt()
 web._run_serve(interrupt, None, '127.0.0.1', 0)
 async def failure(): raise RuntimeError('real failure')
 rejects(lambda: web._run_serve(failure, None, '127.0.0.1', 0), 'real failure')
+`);
+});
+
+function checkPty(python: string) {
+  const script = String.raw`
+import sys
+import types
+from types import SimpleNamespace as NS
+
+events = []
+class Pty:
+    pid = 717
+    alive = True
+    eof = False
+    data = ''
+    def read(self, size, *, blocking):
+        events.append(('read', size, blocking))
+        return self.data
+    def iseof(self): return self.eof
+    def isalive(self): return self.alive
+
+class Process:
+    def __init__(self, pty): raise AssertionError('TCP reader must not be constructed')
+    @classmethod
+    def spawn(cls, argv, **kwargs):
+        events.append(('spawn', argv, kwargs))
+        return cls(Pty())
+    def write(self, text):
+        events.append(('write', text))
+        return len(text)
+    def setwinsize(self, rows, cols): events.append(('resize', rows, cols))
+    def terminate(self, force=False):
+        events.append(('terminate', force))
+        return not self.isalive() or force
+
+bridge = types.ModuleType('hermes_cli.win_pty_bridge')
+bridge.PtyProcess = Process
+package = types.ModuleType('hermes_cli')
+package.win_pty_bridge = bridge
+sys.modules['hermes_cli'] = package
+sys.modules['hermes_cli.win_pty_bridge'] = bridge
+winpty = types.ModuleType('winpty')
+winpty.PtyProcess = Process
+sys.modules['winpty'] = winpty
+namespace = {'sys': NS(platform='win32')}
+`;
+  const result = execFileSync(
+    process.platform === "win32" ? "python" : "python3",
+    [
+      "-I",
+      "-B",
+      "-c",
+      script + `\nexec(${JSON.stringify(hermesDashboardPythonSource()[1])}, namespace)\n` + python,
+    ],
+    { encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024 },
+  );
+  assert.equal(result, "");
+}
+
+test("dashboard terminal keeps upstream spawning, input and resize without constructing a socket reader", () => {
+  checkPty(String.raw`
+native = bridge.PtyProcess
+assert native.spawn.__func__ is Process.spawn.__func__
+assert native.write is Process.write and native.setwinsize is Process.setwinsize
+assert winpty.PtyProcess is Process
+argv = ['C:/Program Files/Node/node.exe', 'entry.js', 'quoted argument']
+options = {'cwd': 'C:/state', 'env': {'TERM': 'xterm-256color'}, 'dimensions': (24, 80)}
+proc = native.spawn(argv, **options)
+assert events == [('spawn', argv, options)]
+assert proc.pid == 717 and proc.isalive()
+assert proc.write('hello\r') == 6
+proc.setwinsize(30, 120)
+proc.pty.data = 'terminal \u2713'
+assert proc.read(65536) == 'terminal \u2713'
+assert events[1:] == [('write', 'hello\r'), ('resize', 30, 120), ('read', 65536, False)]
+`);
+});
+
+test("dashboard terminal distinguishes idle output from EOF and drains output after child exit", () => {
+  checkPty(String.raw`
+proc = bridge.PtyProcess.spawn(['node'])
+assert proc.read() == '' and not proc.flag_eof
+proc.pty.alive = False
+proc.pty.eof = True
+proc.pty.data = 'last output'
+assert not proc.isalive() and not proc.closed
+assert proc.read() == 'last output'
+proc.pty.data = ''
+try: proc.read()
+except EOFError: pass
+else: raise AssertionError('EOF was not reported')
+assert proc.flag_eof
+proc.close()
+assert proc.closed and proc.pty is None
+`);
+});
+
+test("dashboard terminal releases its ConPTY only after confirmed termination and closes idempotently", () => {
+  checkPty(String.raw`
+proc = bridge.PtyProcess.spawn(['node'])
+pty = proc.pty
+try: proc.close()
+except OSError: pass
+else: raise AssertionError('A live child was declared closed')
+assert not proc.closed and proc.pty is pty
+assert proc.terminate(force=True)
+assert proc.closed and proc.pty is None and not proc.isalive()
+count = len(events)
+proc.close()
+assert len(events) == count
+try: proc.read()
+except EOFError: pass
+else: raise AssertionError('A closed terminal was read')
+`);
+});
+
+test("dashboard terminal retains ownership after native read or termination failures", () => {
+  checkPty(String.raw`
+proc = bridge.PtyProcess.spawn(['node'])
+pty = proc.pty
+def denied(*args, **kwargs): raise OSError('native failure')
+pty.read = denied
+Process.terminate = denied
+for operation in (proc.read, lambda: proc.close(force=True)):
+    try: operation()
+    except OSError as error: assert str(error) == 'native failure'
+    else: raise AssertionError('Native failure swallowed')
+assert proc.pty is pty and not proc.closed
+namespace['sys'].platform = 'linux'
+before = bridge.PtyProcess
+try: namespace['_install_native_dashboard_pty']()
+except RuntimeError as error: assert 'native Windows' in str(error)
+else: raise AssertionError('Unsupported platform accepted')
+assert bridge.PtyProcess is before
 `);
 });

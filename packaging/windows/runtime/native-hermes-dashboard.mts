@@ -122,6 +122,50 @@ export function hermesDashboardPythonSource(): string[] {
 
 if 'NEMOCLAW_HERMES_DASHBOARD_PIPE_PORT' in os.environ:
     _install_native_dashboard_pipe(os.environ['NEMOCLAW_HERMES_DASHBOARD_PIPE_PORT'])`,
+    String.raw`def _install_native_dashboard_pty():
+    from hermes_cli import win_pty_bridge
+    from winpty import PtyProcess
+    if sys.platform != 'win32':
+        raise RuntimeError('Hermes dashboard terminals require native Windows')
+
+    class NativePtyProcess(PtyProcess):
+        def __init__(self, pty):
+            # PtyProcess.__init__ uses a TCP reader thread, which native MXC denies.
+            # WinPtyBridge already reads off-loop; use the underlying ConPTY directly.
+            self.pty = pty
+            self.pid = pty.pid
+            self.closed = False
+            self.flag_eof = False
+            self.delayafterterminate = 0.1
+
+        def read(self, size=1024):
+            if self.closed:
+                raise EOFError('Pty is closed')
+            data = self.pty.read(size, blocking=False)
+            if not data and self.pty.iseof():
+                self.flag_eof = True
+                raise EOFError('Pty is closed')
+            return data
+
+        def isalive(self):
+            return not self.closed and self.pty.isalive()
+
+        def terminate(self, force=False):
+            stopped = super().terminate(force)
+            if stopped:
+                self.closed = True
+                self.pty = None
+            return stopped
+
+        def close(self, force=False):
+            if not self.closed and not self.terminate(force):
+                raise OSError('Could not terminate the Hermes terminal child')
+
+    # Keep upstream spawn quoting, environment, writes, resize and termination.
+    # Replace only this dashboard's adapter; other pywinpty consumers are unchanged.
+    win_pty_bridge.PtyProcess = NativePtyProcess
+
+_install_native_dashboard_pty()`,
     "from pathlib import Path",
     "from hermes_cli.win_pty_bridge import WinPtyBridge",
     "if not WinPtyBridge.is_available(): raise RuntimeError('Hermes native ConPTY is unavailable')",
