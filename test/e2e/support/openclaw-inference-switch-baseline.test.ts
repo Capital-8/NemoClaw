@@ -91,12 +91,8 @@ it.each([false, true])(
     const options = nemoclaw.mock.calls[0]![1];
     const environment = options.env;
     expect(environment.NEMOCLAW_PROVIDER).toBe("custom");
-    expect(new URL(environment.NEMOCLAW_ENDPOINT_URL!).hostname).toBe(
-      nativeCustom ? "10.20.30.40" : "host.openshell.internal",
-    );
-    expect(environment.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS).toBe(
-      nativeCustom ? "10.20.30.40" : undefined,
-    );
+    expect(new URL(environment.NEMOCLAW_ENDPOINT_URL!).hostname).toBe("10.20.30.40");
+    expect(environment.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS).toBe("10.20.30.40");
     expect(environment.NEMOCLAW_MODEL).toBe("openclaw-switch-baseline-model");
     expect(environment.COMPATIBLE_API_KEY).toBe("openclaw-switch-baseline-credential");
     expect(environment.NVIDIA_INFERENCE_API_KEY).toBeUndefined();

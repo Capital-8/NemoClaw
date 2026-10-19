@@ -930,7 +930,7 @@ test(
       (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
     // OpenShell reaches this fixture from its gateway network namespace, where
     // the runner's loopback address is not routable.
-    const nativeBaselineHost = SWITCH_NATIVE_CUSTOM
+    const nativeBaselineHost = useMockBaseline
       ? (await discoverHostAddress(host, "native-baseline-endpoint-address")).address
       : undefined;
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
