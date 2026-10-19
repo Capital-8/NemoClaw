@@ -633,7 +633,7 @@
             },
             "kubernetes": {
               "$ref": "#/$defs/ManagedKubernetes",
-              "description": "Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services."
+              "description": "Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes. Managed vLLM and Ollama services run in this namespace."
             },
             "management": {
               "const": "managed",
@@ -994,7 +994,7 @@
         },
         "credential": {
           "$ref": "#/$defs/Credential",
-          "description": "Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef."
+          "description": "Optional API credential reference for an external endpoint, or, with serviceRef, the key of an authenticated cluster vLLM service, the same key as its kubernetes.keySecret."
         },
         "endpoint": {
           "description": "Inference HTTP(S) URL owned outside the deployment. Required without serviceRef and excluded with serviceRef.",
@@ -1015,7 +1015,7 @@
           "type": "string"
         },
         "serviceRef": {
-          "description": "Name of a managed service in spec.services. Excludes endpoint and credential.",
+          "description": "Name of a managed service in spec.services. Excludes endpoint, and credential except for an authenticated cluster vLLM service.",
           "pattern": "^[a-z][a-z0-9-]{0,39}$",
           "type": "string"
         }
@@ -1025,19 +1025,6 @@
         "provider"
       ],
       "then": {
-        "allOf": [
-          {
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "credential"
-                  ]
-                }
-              ]
-            }
-          }
-        ],
         "properties": {
           "endpoint": {
             "const": ""
@@ -1185,6 +1172,29 @@
           "type": "object"
         }
       ]
+    },
+    "KeySecret": {
+      "additionalProperties": false,
+      "description": "A key of an existing Secret in the gateway namespace.",
+      "properties": {
+        "key": {
+          "description": "Key within the Secret's data.",
+          "maxLength": 253,
+          "pattern": "^[-._a-zA-Z0-9]+$(?![\\s\\S])",
+          "type": "string"
+        },
+        "name": {
+          "description": "Secret name.",
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\\s\\S])",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "key"
+      ],
+      "type": "object"
     },
     "KubernetesAuthentication": {
       "additionalProperties": false,
@@ -1385,6 +1395,72 @@
       },
       "required": [
         "profile"
+      ],
+      "type": "object"
+    },
+    "KubernetesService": {
+      "additionalProperties": false,
+      "description": "One GPU model service in the managed gateway's namespace. Its model volume survives destroy.",
+      "properties": {
+        "cpuRequestMillis": {
+          "description": "Requested CPU capacity in millicores. Must not exceed container.cpuLimitMillis.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "keySecret": {
+          "$ref": "#/$defs/KeySecret",
+          "description": "The Secret in the gateway namespace whose key holds the API key of an authenticated vLLM service. The platform owns the Secret; NemoClaw never reads or writes it. Required with authentication and rejected without."
+        },
+        "memoryRequestGiB": {
+          "description": "Requested container memory in GiB. Must not exceed container.memoryLimitGiB.",
+          "format": "uint64",
+          "maximum": 8589934591,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "nodeSelector": {
+          "additionalProperties": {
+            "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\\s\\S])",
+            "type": "string"
+          },
+          "description": "Required node labels in addition to Linux and the model's declared CPU architecture.",
+          "propertyNames": {
+            "pattern": "^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\\s\\S])"
+          },
+          "type": "object"
+        },
+        "runtimeClassName": {
+          "description": "Existing RuntimeClass to use for the model Pod.",
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\\s\\S])",
+          "type": "string"
+        },
+        "storageClass": {
+          "description": "StorageClass for the retained model volume. Omission selects the cluster default.",
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$(?![\\s\\S])",
+          "type": "string"
+        },
+        "storageGiB": {
+          "description": "Retained model-volume capacity in GiB. Must cover prepared data plus a 16 GiB working reserve; allow additional space for model downloads and retained snapshots.",
+          "format": "uint64",
+          "maximum": 8589934591,
+          "minimum": 16,
+          "type": "integer"
+        },
+        "tolerations": {
+          "description": "Node taints the model Pod may tolerate.",
+          "items": {
+            "$ref": "#/$defs/ServiceToleration"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "cpuRequestMillis",
+        "memoryRequestGiB",
+        "storageGiB"
       ],
       "type": "object"
     },
@@ -2844,6 +2920,69 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "required": [
+                  "kubernetes"
+                ]
+              },
+              "then": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "container": {
+                        "properties": {
+                          "cpuLimitMillis": {}
+                        },
+                        "required": [
+                          "cpuLimitMillis"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "container"
+                    ],
+                    "x-nemoclaw-error": "cluster model services require container.cpuLimitMillis"
+                  },
+                  {
+                    "properties": {
+                      "container": {
+                        "properties": {
+                          "memoryLimitGiB": {}
+                        },
+                        "required": [
+                          "memoryLimitGiB"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "container"
+                    ],
+                    "x-nemoclaw-error": "cluster model services require container.memoryLimitGiB"
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "port": {
+                            "not": {
+                              "enum": [
+                                2379,
+                                2380,
+                                6443,
+                                10250,
+                                10255
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "x-nemoclaw-error": "a cluster model service's serving.port must not be 2379, 2380, 6443, 10250, or 10255, which OpenShell refuses as destinations"
+                  }
+                ]
+              }
             }
           ],
           "dependentRequired": {
@@ -2858,7 +2997,7 @@
           "properties": {
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, IPC, and shared memory for Docker, Kubernetes, and OpenShift. Kubernetes and OpenShift require both limits. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -2883,6 +3022,11 @@
               "description": "Supported installer selected by this service definition.",
               "type": "string"
             },
+            "kubernetes": {
+              "$ref": "#/$defs/KubernetesService",
+              "description": "Scheduling requests, retained-volume settings and the key Secret for a managed Kubernetes or OpenShift gateway only. Rejected for Docker and Podman.",
+              "x-nemoclaw-required": "With a managed Kubernetes or OpenShift gateway"
+            },
             "memory": {
               "$ref": "#/$defs/OllamaMemory",
               "description": "GPU budget and resident memory-protection thresholds."
@@ -2906,7 +3050,7 @@
             "updatePolicy": {
               "$ref": "#/$defs/ServiceUpdatePolicy",
               "default": "Preserve",
-              "description": "Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed."
+              "description": "Preserve refuses replacement of a running Docker model container or a cluster model Pod. Recreate permits sequential replacement and possible downtime until removed or changed."
             }
           },
           "required": [
@@ -3133,6 +3277,69 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "required": [
+                  "kubernetes"
+                ]
+              },
+              "then": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "container": {
+                        "properties": {
+                          "cpuLimitMillis": {}
+                        },
+                        "required": [
+                          "cpuLimitMillis"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "container"
+                    ],
+                    "x-nemoclaw-error": "cluster model services require container.cpuLimitMillis"
+                  },
+                  {
+                    "properties": {
+                      "container": {
+                        "properties": {
+                          "memoryLimitGiB": {}
+                        },
+                        "required": [
+                          "memoryLimitGiB"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "container"
+                    ],
+                    "x-nemoclaw-error": "cluster model services require container.memoryLimitGiB"
+                  },
+                  {
+                    "properties": {
+                      "serving": {
+                        "properties": {
+                          "port": {
+                            "not": {
+                              "enum": [
+                                2379,
+                                2380,
+                                6443,
+                                10250,
+                                10255
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "x-nemoclaw-error": "a cluster model service's serving.port must not be 2379, 2380, 6443, 10250, or 10255, which OpenShell refuses as destinations"
+                  }
+                ]
+              }
             }
           ],
           "dependentRequired": {
@@ -3167,7 +3374,7 @@
             },
             "container": {
               "$ref": "#/$defs/ServiceContainer",
-              "description": "Container CPU and memory limits, IPC, and shared memory for Docker. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
+              "description": "Container CPU and memory limits, IPC, and shared memory for Docker, Kubernetes, and OpenShift. Kubernetes and OpenShift require both limits. Native managed Podman inference is unsupported. Omission uses private IPC and 8 GiB of shared memory."
             },
             "hardware": {
               "$ref": "#/$defs/ServiceHardware",
@@ -3192,6 +3399,11 @@
               "const": "vllm",
               "description": "Supported installer selected by this service definition.",
               "type": "string"
+            },
+            "kubernetes": {
+              "$ref": "#/$defs/KubernetesService",
+              "description": "Scheduling requests, retained-volume settings and the key Secret for a managed Kubernetes or OpenShift gateway only. Rejected for Docker and Podman.",
+              "x-nemoclaw-required": "With a managed Kubernetes or OpenShift gateway"
             },
             "memory": {
               "$ref": "#/$defs/Memory",
@@ -3223,7 +3435,7 @@
             "updatePolicy": {
               "$ref": "#/$defs/ServiceUpdatePolicy",
               "default": "Preserve",
-              "description": "Preserve refuses replacement of a running Docker model container. Recreate permits sequential replacement and possible downtime until removed or changed."
+              "description": "Preserve refuses replacement of a running Docker model container or a cluster model Pod. Recreate permits sequential replacement and possible downtime until removed or changed."
             }
           },
           "required": [
@@ -3467,6 +3679,96 @@
       "required": [
         "endpoint",
         "bindAddress"
+      ],
+      "type": "object"
+    },
+    "ServiceToleration": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "key": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "key"
+            ]
+          },
+          "if": {
+            "properties": {
+              "operator": {
+                "const": "Exists"
+              }
+            },
+            "required": [
+              "operator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "const": ""
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "tolerationSeconds"
+            ]
+          },
+          "then": {
+            "properties": {
+              "effect": {
+                "const": "NoExecute"
+              }
+            },
+            "required": [
+              "effect"
+            ]
+          }
+        }
+      ],
+      "description": "One explicit Kubernetes node-taint toleration.",
+      "properties": {
+        "effect": {
+          "$ref": "#/$defs/TolerationEffect",
+          "description": "Omission matches all taint effects."
+        },
+        "key": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^(?:(?=[^/]{1,253}/)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*/)?[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$(?![\\s\\S])"
+            }
+          ],
+          "description": "Taint key. An empty key requires Exists and matches every key.",
+          "type": "string"
+        },
+        "operator": {
+          "$ref": "#/$defs/TolerationOperator",
+          "description": "Match the taint's value with Equal, or its presence with Exists."
+        },
+        "tolerationSeconds": {
+          "description": "Optional eviction delay, valid only for NoExecute tolerations.",
+          "format": "uint64",
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value": {
+          "description": "Value matched by Equal; Exists requires an empty value.",
+          "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)?$(?![\\s\\S])",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operator"
       ],
       "type": "object"
     },
@@ -3855,6 +4157,23 @@
       ],
       "type": "object"
     },
+    "TolerationEffect": {
+      "description": "Node-taint effect matched by a toleration.",
+      "enum": [
+        "NoSchedule",
+        "PreferNoSchedule",
+        "NoExecute"
+      ],
+      "type": "string"
+    },
+    "TolerationOperator": {
+      "description": "How a toleration matches a node taint.",
+      "enum": [
+        "Equal",
+        "Exists"
+      ],
+      "type": "string"
+    },
     "Tool": {
       "additionalProperties": false,
       "description": "Executable identity inside the runtime image; this is not a shell command.",
@@ -4222,20 +4541,369 @@
                 ]
               }
             ]
-          },
+          }
+        ],
+        "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target"
+      }
+    },
+    {
+      "else": {
+        "allOf": [
           {
             "properties": {
               "spec": {
                 "properties": {
                   "services": {
-                    "maxProperties": 0
+                    "additionalProperties": {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "kubernetes"
+                            ]
+                          }
+                        ]
+                      }
+                    }
                   }
                 }
               }
             }
           }
         ],
-        "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
+        "x-nemoclaw-error": "service kubernetes settings require a managed Kubernetes or OpenShift gateway and are not supported with Docker or Podman"
+      },
+      "if": {
+        "properties": {
+          "spec": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "runtime": {
+                    "properties": {
+                      "provider": {
+                        "enum": [
+                          "kubernetes",
+                          "openshift"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "provider"
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime"
+                ]
+              }
+            },
+            "required": [
+              "gateway"
+            ]
+          }
+        },
+        "required": [
+          "spec"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "gateway": {
+                      "properties": {
+                        "management": {
+                          "const": "external"
+                        }
+                      },
+                      "required": [
+                        "management"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "gateway"
+                  ]
+                }
+              },
+              "required": [
+                "spec"
+              ]
+            },
+            "then": {
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "services": {
+                      "maxProperties": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "services": {
+                    "additionalProperties": {
+                      "properties": {
+                        "kind": {
+                          "enum": [
+                            "vllm",
+                            "ollama"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kubernetes"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "x-nemoclaw-error": "Kubernetes and OpenShift services require a managed gateway, kind vllm or ollama, and kubernetes settings"
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "spec": {
+              "properties": {
+                "gateway": {
+                  "properties": {
+                    "runtime": {
+                      "properties": {
+                        "provider": {
+                          "enum": [
+                            "kubernetes",
+                            "openshift"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "provider"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "runtime"
+                  ]
+                }
+              },
+              "required": [
+                "gateway"
+              ]
+            }
+          },
+          "required": [
+            "spec"
+          ]
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "inferenceProviders": {
+                    "items": {
+                      "if": {
+                        "required": [
+                          "serviceRef"
+                        ]
+                      },
+                      "then": {
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "credential"
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "sandboxes": {
+                    "items": {
+                      "properties": {
+                        "inferenceProviders": {
+                          "items": {
+                            "if": {
+                              "required": [
+                                "serviceRef"
+                              ]
+                            },
+                            "then": {
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "credential"
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "inferences": {
+                    "additionalProperties": {
+                      "properties": {
+                        "routes": {
+                          "items": {
+                            "properties": {
+                              "provider": {
+                                "if": {
+                                  "required": [
+                                    "serviceRef"
+                                  ]
+                                },
+                                "then": {
+                                  "not": {
+                                    "anyOf": [
+                                      {
+                                        "required": [
+                                          "credential"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "sandboxes": {
+                    "items": {
+                      "properties": {
+                        "inferences": {
+                          "additionalProperties": {
+                            "properties": {
+                              "routes": {
+                                "items": {
+                                  "properties": {
+                                    "provider": {
+                                      "if": {
+                                        "required": [
+                                          "serviceRef"
+                                        ]
+                                      },
+                                      "then": {
+                                        "not": {
+                                          "anyOf": [
+                                            {
+                                              "required": [
+                                                "credential"
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "spec": {
+                "properties": {
+                  "sandboxes": {
+                    "items": {
+                      "properties": {
+                        "agent": {
+                          "properties": {
+                            "inference": {
+                              "properties": {
+                                "routes": {
+                                  "items": {
+                                    "properties": {
+                                      "provider": {
+                                        "if": {
+                                          "required": [
+                                            "serviceRef"
+                                          ]
+                                        },
+                                        "then": {
+                                          "not": {
+                                            "anyOf": [
+                                              {
+                                                "required": [
+                                                  "credential"
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "x-nemoclaw-error": "credential with serviceRef is the key of an authenticated cluster vLLM service and requires a managed Kubernetes or OpenShift gateway"
       }
     }
   ],
@@ -4271,7 +4939,7 @@
   "x-nemoclaw-parser-checks": [
     "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
     "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+    "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields are excluded; gateway.runtime.provider is kubernetes or openshift. Managed vLLM and Ollama services require kubernetes settings and explicit container limits, and exclude Docker placement, publication, and host IPC; Kubernetes runs them from the bundled Kubernetes provider's objects. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
     "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
     "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
     "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",

@@ -19,6 +19,8 @@ pub(super) struct ResourceChange {
     pub mode: Option<String>,
     pub address: String,
     pub deposed: Option<String>,
+    /// Why OpenTofu plans the action, such as `replace_because_tainted`.
+    pub action_reason: Option<String>,
     pub change: PlannedChange,
 }
 #[derive(Deserialize)]
@@ -28,6 +30,8 @@ struct PlannedResourceChange {
     address: String,
     #[serde(default)]
     deposed: Option<String>,
+    #[serde(default)]
+    action_reason: Option<String>,
     change: PlannedChange,
 }
 impl From<PlannedResourceChange> for ResourceChange {
@@ -45,6 +49,7 @@ impl From<PlannedResourceChange> for ResourceChange {
             mode: planned.mode,
             address: planned.address,
             deposed: planned.deposed,
+            action_reason: planned.action_reason,
             change,
         }
     }
@@ -82,6 +87,9 @@ pub(super) struct PlannedChange {
     pub before: Value,
     #[serde(default)]
     pub after: Value,
+    /// The parts of `after` known only after apply, marked `true`.
+    #[serde(default)]
+    pub after_unknown: Value,
 }
 /// Sandboxes to replace so each newly created agent gets a new sandbox.
 ///
@@ -206,7 +214,7 @@ pub(super) fn check_plan(
                 return Err(Error::Conflict("plan contains an undeclared resource"));
             }
             let resource = if let Some(key) = &change.deposed {
-                if change.address.starts_with("docker_volume.")
+                if crate::docker_compute::is_retained_storage(&change.address)
                     || !cleanup_seen.insert((change.address.clone(), key.clone()))
                 {
                     return Err(Error::Conflict("plan contains invalid replacement cleanup"));
@@ -355,7 +363,7 @@ pub(super) fn check_destroy_plan(
         ))?;
         if delegated(&change.address) {
             let resource = if let Some(key) = &change.deposed {
-                if change.address.starts_with("docker_volume.")
+                if crate::docker_compute::is_retained_storage(&change.address)
                     || !cleanup_seen.insert((change.address.clone(), key.clone()))
                 {
                     return Err(Error::Conflict("plan contains invalid replacement cleanup"));

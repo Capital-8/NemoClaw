@@ -8,6 +8,11 @@
 
 #[doc(hidden)]
 pub mod authentication;
+pub mod cluster;
+pub(crate) mod cluster_config;
+pub use cluster_config::{
+    KeySecret, KubernetesService, ServiceToleration, TolerationEffect, TolerationOperator,
+};
 mod contract;
 pub mod installers;
 pub mod placement;

@@ -29,7 +29,7 @@ pub(super) fn context_warnings(document: &Document) -> Result<Vec<String>, Confi
         let inference = document.scoped_inference(sandbox)?;
         for route in &inference.inference.routes {
             let provider = document.route_provider(route, &inference)?;
-            let InferenceTarget::Service { name } = provider.definition.target()? else {
+            let InferenceTarget::Service { name, .. } = provider.definition.target()? else {
                 continue;
             };
             let Some(context) = document

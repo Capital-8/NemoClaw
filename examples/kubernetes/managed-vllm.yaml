@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../../schemas/nemoclaw-v1alpha1.schema.json
+# An agent on a managed Kubernetes gateway uses a vLLM server that NemoClaw
+# runs in the gateway's namespace with the bundled Kubernetes provider.
+# Kubernetes schedules, starts and restarts it; see "Run a Managed Model
+# Service" in docs/kubernetes.md for the cluster prerequisites.
+# The server requires a key: create the Secret qwen-inference-key with the key
+# under "key" in the namespace, and set QWEN_INFERENCE_KEY to the same key
+# where you run nemoclaw.
+# Replace the deployment UID, the context, and both image digests before
+# applying. The runtime image must come from this revision's runtimes/vllm.
+# Write the agent image's metadata bundle with `cargo images export-metadata`
+# and set NEMOCLAW_AGENT_IMAGE_METADATA to its path; see docs/build.md.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: kubernetes-managed-vllm
+  uid: 5f0a3c2e-8d41-4b7a-9e16-2c7b4a9d8e31
+spec:
+  gateway:
+    management: managed
+    runtime:
+      provider: kubernetes
+    endpoint: https://127.0.0.1:17671
+    kubernetes:
+      kubeconfig: {env: NEMOCLAW_CLUSTER_KUBECONFIG}
+      context: replace-with-explicit-context
+      namespace: nemoclaw-managed-vllm
+      authentication:
+        profile: development
+  services:
+    qwen:
+      kind: vllm
+      image: registry.example.com/nemoclaw/vllm-amd64@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      authentication: bearer
+      hardware:
+        profile: rtx-4090
+        architecture: amd64
+      model:
+        repository: Qwen/Qwen3-4B
+        revision: 1cfa9a7208912126459214e8b04321603b3df60c
+      serving:
+        toolParser: hermes
+        reasoningParser: qwen3
+        contextTokens: 32768
+        maxSequences: 1
+        batchTokens: 1024
+        startupTimeoutSeconds: 1800
+      memory:
+        gpuMemoryGiB: 20
+        kvCacheGiB: 6
+      container:
+        cpuLimitMillis: 4000
+        memoryLimitGiB: 64
+      kubernetes:
+        cpuRequestMillis: 1000
+        memoryRequestGiB: 32
+        storageGiB: 100
+        # Uses the default StorageClass; set storageClass to select another.
+        # Set runtimeClassName if the GPU runtime requires it.
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+        keySecret: {name: qwen-inference-key, key: key}
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      api: openai-completions
+      serviceRef: qwen
+      credential: {env: QWEN_INFERENCE_KEY}
+  sandboxes:
+    - name: assistant
+      harness:
+        kind: nvidia.fabric.openclaw
+      image:
+        metadata: {env: NEMOCLAW_AGENT_IMAGE_METADATA}
+        ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      network:
+        tier: isolated
+      agent:
+        name: assistant
+        inference:
+          routes:
+            - name: primary
+              providerRef: qwen
+              overrides:
+                model: Qwen/Qwen3-4B
+                maxTokens: 2048

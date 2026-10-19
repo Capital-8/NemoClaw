@@ -391,11 +391,18 @@ fn export_provider(document: &mut Document, expected: &Row, observed: &Row) -> R
         provider.target()?,
         crate::config::InferenceTarget::Service { .. }
     );
-    if managed
-        && (observed["endpoint"] != document.provider_connection(provider)?.endpoint
-            || !observed["credential_env"].is_empty())
-    {
-        return Err(Error::Conflict("managed inference registration drifted"));
+    if managed {
+        // Only an authenticated cluster service names a credential variable.
+        let connection = document.provider_connection(provider)?;
+        let credential_env = connection
+            .credential
+            .as_ref()
+            .map_or("", |credential| credential.env.as_str());
+        if observed["endpoint"] != connection.endpoint
+            || observed["credential_env"] != credential_env
+        {
+            return Err(Error::Conflict("managed inference registration drifted"));
+        }
     }
     let provider = document.selected_provider_mut(&expected["name"])?;
     provider.credential = (!observed["credential_env"].is_empty()).then(|| Credential {

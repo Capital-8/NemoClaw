@@ -25,6 +25,8 @@ mod fabric_deployment;
 #[path = "fabric_live.rs"]
 mod fabric_live;
 // Unix only, as before it moved here from nemoclaw-sdk.
+#[path = "cluster_models.rs"]
+mod cluster_models;
 #[cfg(target_os = "linux")]
 mod docker_registry;
 #[cfg(unix)]

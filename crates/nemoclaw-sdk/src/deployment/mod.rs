@@ -193,6 +193,32 @@ impl Deployment {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
+        for (name, service) in &document.spec.services {
+            let authentication_boundary = match service {
+                crate::services::ServiceDefinition::Ollama(service)
+                    if service.kubernetes.is_some() =>
+                {
+                    Some("has no bearer authentication")
+                }
+                crate::services::ServiceDefinition::Vllm(service)
+                    if service.kubernetes.is_some() =>
+                {
+                    Some(if service.authentication.is_some() {
+                        "requires an image that restricts inference to authenticated /v1 routes"
+                    } else {
+                        "has no bearer authentication"
+                    })
+                }
+                _ => None,
+            };
+            if let Some(authentication_boundary) = authentication_boundary {
+                (self.progress)(Progress::Warning {
+                    message: format!(
+                        "Cluster service {name} {authentication_boundary}. Network isolation depends on NetworkPolicy enforcement, which the Kubernetes API cannot verify. Verify that the network plugin enforces the supervisor-only policy."
+                    ),
+                });
+            }
+        }
         for message in context_advisory::context_warnings(&document)? {
             (self.progress)(Progress::Warning { message });
         }
@@ -242,12 +268,24 @@ impl Deployment {
         self.initialize(&bundle, &store, &compiled.graph, cancel)
             .await?;
         let bindings = store.bindings(&bundle.tofu(), cancel).await?;
+        // A model volume kept by an earlier destroy is reused, not recreated.
+        let imports = crate::kubernetes::models::retained_claim_imports(
+            &document,
+            self.secrets.as_ref(),
+            &bindings.keys().cloned().collect(),
+        )
+        .await?;
+        if !imports.is_empty() {
+            let mut graph = compiled.graph.clone();
+            graph["import"] = json!(imports);
+            self.prepare(&bundle, &store, &graph)?;
+        }
         let expected = expected_bindings(&compiled, &bindings)?;
         (self.progress)(Progress::Planning);
         let plan = self
             .saved_plan(&bundle, &store, &document, "apply.plan", cancel)
             .await?;
-        runtime::preserve_docker_models(&document, &plan)?;
+        runtime::preserve_models(&document, &plan)?;
         let changes = check_plan(
             &plan,
             &with_observations(&expected, &compile::observations(&compiled.graph)),

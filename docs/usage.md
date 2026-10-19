@@ -527,7 +527,7 @@ It has been run against a managed rootless Podman 5.8.8 gateway.
 
 #### On Kubernetes or OpenShift
 
-Destroy keeps the deployment's namespace, the gateway's key Secret and its persistent volume claims ([retained Kubernetes objects](state.md#find-retained-kubernetes-objects)).
+Destroy keeps the deployment's namespace, the gateway's key Secret, its persistent volume claims and managed model services' volume claims ([retained Kubernetes objects](state.md#find-retained-kubernetes-objects)).
 Deleting the namespace removes them all.
 Use the kubeconfig and context the deployment uses, and set `deployment_namespace` to its `gateway.kubernetes.namespace`:
 

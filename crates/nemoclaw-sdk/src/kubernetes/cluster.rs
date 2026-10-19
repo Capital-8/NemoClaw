@@ -65,7 +65,7 @@ fn resource(api_version: &str, kind: &str) -> ApiResource {
     ApiResource::from_gvk(&GroupVersionKind::gvk(group, version, kind))
 }
 
-fn failure(error: kube::Error) -> ObservationError {
+pub(crate) fn failure(error: kube::Error) -> ObservationError {
     match error {
         kube::Error::Api(status) => match status.code {
             401 => ObservationError::Authentication,

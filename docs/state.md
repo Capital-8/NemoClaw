@@ -205,6 +205,7 @@ To retire a deployment whose retained resources are on Docker engines, follow [R
 | External gateway, inference service, external Ollama daemon/model, and externally owned engine/network | Remain under their operators' control |
 | OpenShell workspace | Deleted; re-applying the configuration recreates it |
 | Managed vLLM/Ollama process containers and service-owned networks | Removed; model storage remains tracked |
+| Managed cluster vLLM/Ollama Deployments, Services and NetworkPolicies | Removed; the model volume claim remains tracked |
 | Managed model downloads and prepared data | Native Docker volumes retained by default; missing caches may be reconstructed separately from credentials |
 | Managed vLLM credentials | Separate tracked credential volume retained |
 | Managed Ollama proxy | Container removed; tracked credential volume retained |
@@ -239,6 +240,7 @@ On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all i
 | The namespace itself | Everything below; NemoClaw creates it and never adopts an existing one |
 | Secret `GATEWAY-kek`, where `GATEWAY` is the gateway's release name | The gateway's key-encryption key |
 | The gateway's PersistentVolumeClaims, and the volumes bound to them | The gateway's database |
+| PersistentVolumeClaim `NAME-data` of each [managed model service](kubernetes.md#run-a-managed-model-service), and its volume | The model and its prepared data; a later apply of the same configuration reuses it |
 
 The state directory keeps the cluster ownership receipt and, for the `development` authentication profile, the development issuer's keys.
 

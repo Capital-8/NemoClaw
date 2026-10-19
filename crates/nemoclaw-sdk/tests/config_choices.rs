@@ -75,21 +75,32 @@ fn service_inference_target_preserves_the_service_name() {
     };
     assert!(matches!(
         provider.target().unwrap(),
-        InferenceTarget::Service { name: "model" }
+        InferenceTarget::Service {
+            name: "model",
+            credential: None
+        }
     ));
 }
 
+/// The key of an authenticated cluster service; document validation checks
+/// it against the service the provider references.
 #[test]
-fn service_inference_target_rejects_credentials_without_exposing_the_reference() {
+fn service_inference_target_carries_the_key_of_a_cluster_service() {
+    let credential = Credential {
+        env: "SECRET_REF".into(),
+    };
     let provider = InferenceProvider {
         service_ref: Some("model".into()),
-        credential: Some(Credential {
-            env: "SECRET_REF".into(),
-        }),
+        credential: Some(credential.clone()),
         ..provider()
     };
-    let error = provider.target().unwrap_err().to_string();
-    assert!(!error.contains("SECRET_REF"));
+    assert!(matches!(
+        provider.target().unwrap(),
+        InferenceTarget::Service {
+            name: "model",
+            credential: Some(found)
+        } if *found == credential
+    ));
 }
 
 #[test]

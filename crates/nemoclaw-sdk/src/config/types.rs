@@ -166,7 +166,7 @@ pub struct ManagedGateway {
     pub network_cidr: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "super::ManagedKubernetes")]
-    /// Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes without managed inference services.
+    /// Explicit Kubernetes provisioning target. Excludes local engine, imagePullPolicy, and networkCIDR settings and requires Kubernetes sandboxes. Managed vLLM and Ollama services run in this namespace.
     pub kubernetes: Option<Box<super::ManagedKubernetes>>,
     #[serde(
         rename = "sandboxDriverConfig",
@@ -253,7 +253,7 @@ pub struct InferenceProvider {
     pub endpoint: String,
     #[serde(rename = "credential", skip_serializing_if = "Option::is_none")]
     #[schemars(default, with = "Credential")]
-    /// Optional API credential reference for an external HTTPS endpoint. Excluded by serviceRef.
+    /// Optional API credential reference for an external endpoint, or, with serviceRef, the key of an authenticated cluster vLLM service, the same key as its kubernetes.keySecret.
     pub credential: Option<Credential>,
     #[serde(
         rename = "serviceRef",
@@ -261,7 +261,7 @@ pub struct InferenceProvider {
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(default, with = "String")]
-    /// Name of a managed service in spec.services. Excludes endpoint and credential.
+    /// Name of a managed service in spec.services. Excludes endpoint, and credential except for an authenticated cluster vLLM service.
     pub service_ref: Option<String>,
 }
 

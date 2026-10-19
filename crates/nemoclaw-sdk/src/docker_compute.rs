@@ -45,15 +45,27 @@ pub(crate) fn address(logical: &str) -> String {
     }
     logical.into()
 }
+/// Objects whose identity OpenTofu and their platform own: Docker's, and the
+/// Kubernetes objects of cluster model services.
 pub(crate) fn is_disposable(address: &str) -> bool {
     [
         "docker_container.",
         "docker_image.",
         "docker_network.",
         "docker_volume.",
+        "kubernetes_persistent_volume_claim_v1.",
+        "kubernetes_deployment_v1.",
+        "kubernetes_service_v1.",
+        "kubernetes_network_policy_v1.",
     ]
     .iter()
     .any(|prefix| address.starts_with(prefix))
+}
+/// Model data that only teardown or the user removes: Docker volumes and
+/// cluster model volumes. No plan may replace one or drop its declaration.
+pub(crate) fn is_retained_storage(address: &str) -> bool {
+    address.starts_with("docker_volume.")
+        || address.starts_with("kubernetes_persistent_volume_claim_v1.")
 }
 fn digest(engine: &str, name: &str) -> String {
     Sha256::digest(format!("{engine}\0{name}").as_bytes())[..16]

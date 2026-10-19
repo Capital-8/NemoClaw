@@ -77,7 +77,8 @@ pub(super) fn runtime_bindings(
 ) -> Result<BTreeMap<String, Row>, Error> {
     let mut expected = allowed(targets);
     if bindings.keys().any(|key| {
-        !expected.contains_key(key) && (!plan::disposable(key) || key.starts_with("docker_volume."))
+        !expected.contains_key(key)
+            && (!plan::disposable(key) || crate::docker_compute::is_retained_storage(key))
     }) {
         return Err(Error::Conflict("apply cannot remove a managed runtime"));
     }
@@ -132,7 +133,9 @@ pub(super) fn runtime_saved(
         .collect())
 }
 
-pub(super) fn preserve_docker_models(document: &Document, plan: &Plan) -> Result<(), Error> {
+/// Refuse a plan that would disrupt a serving model under the default
+/// `updatePolicy: Preserve`.
+pub(super) fn preserve_models(document: &Document, plan: &Plan) -> Result<(), Error> {
     use crate::services::ServiceUpdatePolicy;
 
     for (name, service) in &document.spec.services {
@@ -141,6 +144,10 @@ pub(super) fn preserve_docker_models(document: &Document, plan: &Plan) -> Result
             continue;
         };
         if policy == ServiceUpdatePolicy::Recreate {
+            continue;
+        }
+        if service.kubernetes().is_some() {
+            preserve_cluster_model(name, plan)?;
             continue;
         }
         let address = crate::docker_compute::address(&logical);
@@ -171,6 +178,44 @@ pub(super) fn preserve_docker_models(document: &Document, plan: &Plan) -> Result
                 service: name.clone(),
             });
         }
+    }
+    Ok(())
+}
+
+/// Kubernetes replaces the model Pod whenever its Deployment's Pod template
+/// changes, and deleting the Deployment stops it. Replacing a tainted
+/// Deployment, whose rollout never completed, has no serving Pod to keep.
+fn preserve_cluster_model(name: &str, plan: &Plan) -> Result<(), Error> {
+    use crate::services::cluster::{DEPLOYMENT, address};
+    let deployment = address(DEPLOYMENT, name);
+    let disrupts = plan.resource_changes.iter().any(|change| {
+        let detail = &change.change;
+        let template = |value: &Value| value["spec"][0]["template"].clone();
+        // OpenTofu mirrors `after` with empty lists and objects, marking only
+        // the values known after apply `true`.
+        fn unknown(value: &Value) -> bool {
+            match value {
+                Value::Bool(known_after_apply) => *known_after_apply,
+                Value::Array(values) => values.iter().any(unknown),
+                Value::Object(values) => values.values().any(unknown),
+                _ => false,
+            }
+        }
+        change.address == deployment
+            && change.deposed.is_none()
+            && !detail.before.is_null()
+            && (if detail.actions.iter().any(|action| action == "delete") {
+                change.action_reason.as_deref() != Some("replace_because_tainted")
+            } else {
+                detail.actions == ["update"]
+                    && (template(&detail.before) != template(&detail.after)
+                        || unknown(&template(&detail.after_unknown)))
+            })
+    });
+    if disrupts {
+        return Err(Error::ClusterModelUpdateRefused {
+            service: name.into(),
+        });
     }
     Ok(())
 }

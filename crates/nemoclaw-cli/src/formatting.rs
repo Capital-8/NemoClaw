@@ -584,6 +584,9 @@ pub(crate) fn render_error(
         Some(Error::DockerModelUpdateRefused { service }) => Some(Cow::Owned(format!(
             "To replace the running model container, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement starts. See docs/inference.md#set-container-limits-and-update-policy."
         ))),
+        Some(Error::ClusterModelUpdateRefused { service }) => Some(Cow::Owned(format!(
+            "To replace the model Pod, set spec.services.{service}.updatePolicy: Recreate and apply again; the model is unavailable until the replacement is ready. See docs/kubernetes.md#run-a-managed-model-service."
+        ))),
         _ => None,
     };
     if let Some(help) = &help {

@@ -400,7 +400,10 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
     let provider = &mut defs["InferenceProvider"];
     property(provider, "serviceRef", json!({"pattern": c::SLUG}));
     provider["if"] = json!({"required": ["serviceRef"]});
-    provider["then"] = json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}, "allOf": [forbid(&["credential"])]});
+    // A credential with serviceRef names the key of an authenticated cluster
+    // service; Rust checks that against the service it references.
+    provider["then"] =
+        json!({"properties": {"provider":{"const":"openai"},"endpoint": {"const": ""}}});
     provider["else"] =
         json!({"required": ["endpoint"], "properties": {"endpoint": {"pattern": "^https?://"}}});
     provider["allOf"] = json!([
@@ -440,15 +443,61 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                     at("spec/gateway/management", json!({"const":"external"}), true),
                     at("spec/gateway", json!({"required":["management","kubernetes"], "properties":{"management":{"const":"managed"}}}), true)
                 ]},
-                at("spec/services", json!({"maxProperties":0}), false)
             ],
-            "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
+            "x-nemoclaw-error": "Kubernetes requires an external gateway or an explicit managed Kubernetes target"
+        }
+    }));
+    // On a cluster, Kubernetes runs managed vLLM and Ollama from the service's
+    // kubernetes settings, beside a managed gateway only; elsewhere those
+    // settings have no meaning.
+    let cluster_service = json!({
+        "required": ["kubernetes"],
+        "properties": {"kind": {"enum": ["vllm", "ollama"]}}
+    });
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true),
+        "then": {
+            "allOf": [
+                {"if": at("spec/gateway/management", json!({"const":"external"}), true),
+                 "then": at("spec/services", json!({"maxProperties":0}), false)},
+                at("spec/services", json!({"additionalProperties": cluster_service}), false)
+            ],
+            "x-nemoclaw-error": "Kubernetes and OpenShift services require a managed gateway, kind vllm or ollama, and kubernetes settings"
+        },
+        "else": {
+            "allOf": [at("spec/services", json!({"additionalProperties": forbid(&["kubernetes"])}), false)],
+            "x-nemoclaw-error": "service kubernetes settings require a managed Kubernetes or OpenShift gateway and are not supported with Docker or Podman"
+        }
+    }));
+    // A credential with serviceRef is the key of an authenticated cluster
+    // service, so it needs a cluster gateway wherever a provider is declared.
+    let service_key = json!({"if": {"required": ["serviceRef"]}, "then": forbid(&["credential"])});
+    let each = |path: &str| {
+        path.split('/')
+            .rev()
+            .fold(service_key.clone(), |child, segment| match segment {
+                "[]" => json!({"items": child}),
+                "*" => json!({"additionalProperties": child}),
+                _ => json!({"properties": {segment: child}}),
+            })
+    };
+    root["allOf"].as_array_mut().unwrap().push(json!({
+        "if": {"not": at("spec/gateway/runtime/provider", json!({"enum":["kubernetes", "openshift"]}), true)},
+        "then": {
+            "allOf": [
+                each("spec/inferenceProviders/[]"),
+                each("spec/sandboxes/[]/inferenceProviders/[]"),
+                each("spec/inferences/*/routes/[]/provider"),
+                each("spec/sandboxes/[]/inferences/*/routes/[]/provider"),
+                each("spec/sandboxes/[]/agent/inference/routes/[]/provider")
+            ],
+            "x-nemoclaw-error": "credential with serviceRef is the key of an authenticated cluster vLLM service and requires a managed Kubernetes or OpenShift gateway"
         }
     }));
     root["x-nemoclaw-parser-checks"] = json!([
         "Document::parse rejects YAML aliases, anchors, merge keys, all explicit tags (including core tags such as !!binary), duplicate keys, multiple documents, and input larger than 1 MiB. It applies the compiled input schema before defaulting; Document::validate applies the normalized schema and semantic checks, including for directly constructed Rust values.",
         "The parser checks the shape of every endpoint URL and the gateway endpoint's transport and address policy; OpenShell checks inference destinations when sandboxes connect. It also checks managed gateway port bounds, canonical private IPv4 /24 networks, local engine socket syntax, and publication address/port/network agreement.",
-        "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields and managed inference services are excluded; gateway.runtime.provider is kubernetes or openshift. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
+        "Managed Kubernetes requires explicit kubeconfig environment, context, namespace, and authentication profile; Agent Sandbox and one default StorageClass must already be installed. Its HTTPS endpoint is exactly 127.0.0.1 with an explicit port from 1 through 65535 and no path. Local engine fields are excluded; gateway.runtime.provider is kubernetes or openshift. Managed vLLM and Ollama services require kubernetes settings and explicit container limits, and exclude Docker placement, publication, and host IPC; Kubernetes runs them from the bundled Kubernetes provider's objects. OpenShift uses the upstream Kubernetes driver and requires platform-owned OpenShift security prerequisites. Cluster identity, ownership, prerequisite compatibility, and credential files are checked during operations.",
         "Explicit sandbox policies are also checked by the pinned OpenShell policy parser and validator, including protocol-specific rule semantics, process identities, filesystem paths, and destination address restrictions.",
         "Explicit filesystem grants must permit reads of the paths the selected image's runtime requires, such as Fabric's /opt/fabric; parent and read-write grants count. Planning checks them against the image's metadata; it does not resolve symlinks or establish runtime permissions.",
         "The schema requires an explicit default for multiple model choices. Rust checks unique route names, that the default names a route, and that native model and tool fields have valid structural shapes. Fabric validates adapter-specific combinations.",

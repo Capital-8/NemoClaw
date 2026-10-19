@@ -585,19 +585,24 @@ fn a_reserved_kubernetes_environment_name_states_the_naming_rule() {
 }
 
 #[test]
-fn managed_services_with_a_kubernetes_runtime_state_the_cluster_rule() {
+fn services_on_a_kubernetes_gateway_require_a_managed_gateway_and_cluster_settings() {
     let managed =
         Document::parse(include_bytes!("fixtures/config/managed-ollama.yaml").as_slice()).unwrap();
-    let mut input = external_document();
-    input["spec"]["services"] = serde_json::to_value(managed.spec.services).unwrap();
-    let error = schema_error(&input);
-    assert!(
-        error.contains("schema at spec.services (line")
-            && error.contains(
-                "Kubernetes requires an external gateway or an explicit managed Kubernetes target, and external inference endpoints; managed services are not supported"
-            ),
-        "{error}"
-    );
+    let services = serde_json::to_value(managed.spec.services).unwrap();
+    // An external gateway has no cluster for NemoClaw to place services on,
+    // and a managed one runs only services with kubernetes settings.
+    for mut input in [external_document(), managed_document()] {
+        input["spec"]["services"] = services.clone();
+        let error = schema_error(&input);
+        // The rule names the map, or the entry that breaks it.
+        assert!(
+            error.contains("schema at spec.services")
+                && error.contains(
+                    "Kubernetes and OpenShift services require a managed gateway, kind vllm or ollama, and kubernetes settings"
+                ),
+            "{error}"
+        );
+    }
 }
 
 #[test]

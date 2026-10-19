@@ -22,8 +22,7 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 0.5.0.
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
-- **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
-  Managed model services under `spec.services` are not supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
+- **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster), or a [managed model service](#run-a-managed-model-service) that NemoClaw declares beside a managed gateway.
 
 NemoClaw installs nothing cluster-wide and never selects a context for you.
 
@@ -206,6 +205,80 @@ spec:
 Start from [the in-cluster vLLM example](../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
 Both examples use OpenClaw, which can't start in an OpenShell sandbox with the pinned Fabric, so apply stops at the agent until [#13372](https://github.com/NVIDIA/NemoClaw/issues/13372) is fixed.
 
+## Run a Managed Model Service
+
+Beside a managed gateway, `spec.services` can declare managed vLLM and Ollama services.
+NemoClaw declares Kubernetes objects for each one with the bundled Kubernetes provider, and Kubernetes schedules, starts and restarts the server; NemoClaw runs no controller of its own.
+This has not run on a real cluster or GPU yet; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
+
+The service needs `kubernetes` settings and both container limits:
+
+```yaml
+spec:
+  services:
+    qwen:
+      kind: vllm
+      authentication: bearer
+      # image, hardware, model, serving and memory as on Docker
+      container:
+        cpuLimitMillis: 4000
+        memoryLimitGiB: 64
+      kubernetes:
+        cpuRequestMillis: 1000
+        memoryRequestGiB: 32
+        storageGiB: 100
+        tolerations:
+          - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+        keySecret: {name: qwen-inference-key, key: key}
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      api: openai-completions
+      serviceRef: qwen
+      credential: {env: QWEN_INFERENCE_KEY}
+```
+
+Start from [the managed vLLM example](../examples/kubernetes/managed-vllm.yaml) or [the managed Ollama example](../examples/kubernetes/managed-ollama.yaml).
+
+**What NemoClaw declares**, in the gateway's namespace and named after the deployment and the service:
+
+| Object | Purpose |
+|---|---|
+| PersistentVolumeClaim `<name>-data` | The model and its prepared data, sized by `storageGiB`, with `storageClass` or the default class; kept on destroy |
+| NetworkPolicy | Admits only OpenShell supervisors, which carry sandbox traffic, on the serving port |
+| Deployment, one replica, `Recreate` | The server Pod: the runtime image with `vllm_runtime`'s or `ollama_runtime`'s launch, the requests and limits, one `nvidia.com/gpu`, the volume, and `container.sharedMemoryGiB` of memory-backed `/dev/shm` |
+| Service, `ClusterIP` | The address sandboxes reach: `http://<name>.<namespace>.svc.cluster.local:<port>/v1` |
+
+The Pod runs as its image's user with every capability dropped and the runtime default seccomp profile; OpenShift assigns its user.
+It is scheduled only on Linux nodes of the model's architecture, plus any `nodeSelector`, `tolerations` and `runtimeClassName` you set.
+The gateway's `imagePullSecrets` apply to it too.
+
+**Cluster prerequisites**, besides those of the gateway:
+
+- A GPU device plugin that advertises `nvidia.com/gpu`, and the GPU runtime its nodes need.
+- A network plugin that enforces NetworkPolicy. Plan and apply warn that the Kubernetes API can't verify this.
+- Unlimited locked memory for containers on GPU nodes: Kubernetes can't set process limits, so the node's defaults apply.
+- For the kubeconfig identity: create, read, update and delete PersistentVolumeClaims, Deployments, Services and NetworkPolicies in the namespace.
+
+**Keys:** an authenticated vLLM service reads its key from `keySecret`, a Secret you create in the namespace; NemoClaw never reads or writes it.
+Set the provider's `credential` to a variable that holds the same key where you run `nemoclaw`, so OpenShell can add it to sandbox requests.
+Ollama takes no key, so the NetworkPolicy is its only access control.
+
+**Readiness:** apply waits for the Deployment's rollout, up to 9 hours, so the model download and preparation can finish.
+The Pod's readiness probe runs the runtime image's `nemoclaw-runtime-ready`, which succeeds only once the model is served; the runtime image must come from a revision that has it.
+A server that keeps failing restarts until the rollout deadline expires; read its reason with `kubectl -n <namespace> logs deploy/<name>` or `kubectl describe pod`.
+
+**Changes:** with the default `updatePolicy: Preserve`, plan and apply refuse a change that would replace a serving Pod, such as a new image, limits or serving settings.
+Set `updatePolicy: Recreate` to accept the replacement and its downtime.
+A Deployment whose rollout never completed is replaced without it.
+
+**Memory protection:** when the runtime's watchdog stops the server, the Pod stays up but unready instead of restarting under the same memory pressure.
+Correct the cause, then restart it with `kubectl -n <namespace> rollout restart deploy/<name>`.
+
+**Retention:** destroy removes everything but the volume claim.
+Applying the same configuration again finds the claim by its name and owner label and reuses it; a claim with the same name and another owner stops apply.
+Delete a claim you no longer need with `kubectl -n <namespace> delete pvc <name>-data`.
+
 ## Destroy a Deployment
 
 **Destroy deletes every sandbox's files and conversation history.**
@@ -217,6 +290,6 @@ nemoclaw destroy --state-dir .local/kubernetes
 ```
 
 Destroy removes the sandboxes, the gateway release and the development issuer.
-It keeps the namespace, the credential key Secret and the gateway's persistent volumes, as described in [deletion and retention](state.md#deletion-and-retention).
+It keeps the namespace, the credential key Secret, the gateway's persistent volumes and managed model services' volume claims, as described in [deletion and retention](state.md#deletion-and-retention).
 Removing them is not covered yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
 If destroy fails or is interrupted while removing the gateway release, follow [Recover an Interrupted Helm Removal](usage.md#recover-an-interrupted-helm-removal).

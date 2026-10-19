@@ -39,12 +39,12 @@ impl Document {
                 endpoint: endpoint.into(),
                 credential: credential.cloned(),
             }),
-            InferenceTarget::Service { .. } => {
+            InferenceTarget::Service { credential, .. } => {
                 let service = crate::services::resolve(self, provider)?
                     .ok_or(ConfigError::new("missing inference service"))?;
                 Ok(InferenceConnection {
                     endpoint: service.endpoint,
-                    credential: None,
+                    credential: credential.cloned(),
                 })
             }
         }
@@ -61,6 +61,8 @@ pub enum InferenceTarget<'a> {
     },
     Service {
         name: &'a str,
+        /// The key of an authenticated cluster service, where OpenTofu runs.
+        credential: Option<&'a Credential>,
     },
 }
 
@@ -68,17 +70,18 @@ impl InferenceProvider {
     /// Borrow the connection choice without changing the authored representation.
     pub fn target(&self) -> Result<InferenceTarget<'_>, ConfigError> {
         match self.service_ref.as_deref() {
-            Some(name)
-                if !name.is_empty() && self.endpoint.is_empty() && self.credential.is_none() =>
-            {
-                Ok(InferenceTarget::Service { name })
+            Some(name) if !name.is_empty() && self.endpoint.is_empty() => {
+                Ok(InferenceTarget::Service {
+                    name,
+                    credential: self.credential.as_ref(),
+                })
             }
             None if !self.endpoint.is_empty() => Ok(InferenceTarget::External {
                 endpoint: &self.endpoint,
                 credential: self.credential.as_ref(),
             }),
             _ => Err(ConfigError::new(
-                "declare an external endpoint or serviceRef without endpoint or credential",
+                "declare an external endpoint or serviceRef without endpoint",
             )),
         }
     }

@@ -197,6 +197,36 @@ fn native_helm_state_preserves_its_namespace_and_immutable_chart_binding() {
     assert!(other["docker_container.runtime"].chart.is_empty());
 }
 #[test]
+fn kubernetes_objects_bind_by_their_name_namespace_and_owner_label() {
+    // Their spec and metadata are nested lists, unlike NemoClaw's own rows.
+    for kind in [
+        "kubernetes_persistent_volume_claim_v1",
+        "kubernetes_deployment_v1",
+        "kubernetes_service_v1",
+        "kubernetes_network_policy_v1",
+    ] {
+        let address = format!("{kind}.qwen");
+        let resource = serde_json::json!({
+            "address": address, "mode": "managed",
+            "values": {
+                "id": "models/nc-model",
+                "metadata": [{"name": "nc-model", "namespace": "models",
+                    "labels": {crate::kubernetes::cluster::OWNER_LABEL: "uid-1"}}],
+                "spec": [{"replicas": "1"}],
+                "wait_for_rollout": true
+            }
+        });
+        let observed = read(&state(serde_json::json!([resource]))).unwrap();
+        let binding = &observed[&address];
+        assert_eq!(binding.id, "models/nc-model", "{kind}");
+        assert_eq!(binding.name, "nc-model", "{kind}");
+        assert_eq!(binding.namespace, "models", "{kind}");
+        assert_eq!(binding.owner, "uid-1", "{kind}");
+        assert!(binding.spec.is_empty(), "{kind}");
+    }
+}
+
+#[test]
 fn data_observations_do_not_become_managed_bindings() {
     let data = serde_json::json!({"address":"data.example.observed", "mode":"data", "values":{"id":"observation"}});
     let value = state(serde_json::json!([

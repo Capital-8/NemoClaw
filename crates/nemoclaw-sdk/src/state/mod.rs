@@ -542,6 +542,7 @@ fn parse_bindings(bytes: &[u8]) -> Result<BTreeMap<String, StateBinding>, Error>
             if let Some((kind, _)) = resource.address.split_once('.') {
                 nemoclaw_openshell::flatten(kind, &mut values);
                 nemoclaw_fabric::agent::flatten(kind, &mut values);
+                crate::kubernetes::models::flatten(kind, &mut values);
             }
             let attributes: StateBinding = serde_json::from_value(values).map_err(|_| {
                 Error::State("OpenTofu binding is unreadable; retain state for recovery")

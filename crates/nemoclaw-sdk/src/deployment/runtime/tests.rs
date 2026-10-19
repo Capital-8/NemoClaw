@@ -20,8 +20,120 @@ fn runtime_observations(
     plan: &Plan,
 ) -> Result<Checked, Error> {
     let expected = runtime_bindings(targets, bindings)?;
-    preserve_docker_models(document, plan)?;
+    preserve_models(document, plan)?;
     Ok(Checked { expected })
+}
+
+#[test]
+fn cluster_model_pod_changes_require_recreate_unless_its_rollout_never_completed() {
+    for source in [
+        include_str!("../../../../../crates/test-support/cluster-models/vllm.yaml"),
+        include_str!("../../../../../crates/test-support/cluster-models/ollama.yaml"),
+    ] {
+        let preserved = Document::parse(source.as_bytes()).unwrap();
+        let mut input = serde_json::to_value(&preserved).unwrap();
+        input["spec"]["services"]["qwen"]["updatePolicy"] = json!("Recreate");
+        let recreate = Document::parse(input.to_string().as_bytes()).unwrap();
+        let deployment = |image: &str, label: &str| {
+            json!({
+                "metadata": [{"labels": {"nemoclaw.nvidia.com/generation": label}}],
+                "spec": [{"template": [{"spec": [{"container": [{"image": image}]}]}]}]
+            })
+        };
+        let running = deployment("model@sha256:a", "one");
+        let plan = |actions: Value, after: Value, unknown: Value, reason: Option<&str>| -> Plan {
+            serde_json::from_value(json!({"resource_changes": [{
+                "address": "kubernetes_deployment_v1.qwen",
+                "action_reason": reason,
+                "change": {"actions": actions, "before": running, "after": after, "after_unknown": unknown}
+            }]}))
+            .unwrap()
+        };
+        let refused = |plan: &Plan| {
+            matches!(
+                preserve_models(&preserved, plan),
+                Err(Error::ClusterModelUpdateRefused { service }) if service == "qwen"
+            )
+        };
+        for (change, disrupts) in [
+            // A new image changes the Pod template, which replaces the Pod.
+            (
+                plan(
+                    json!(["update"]),
+                    deployment("model@sha256:b", "one"),
+                    Value::Null,
+                    None,
+                ),
+                true,
+            ),
+            // So does any template value known only during apply.
+            (
+                plan(
+                    json!(["update"]),
+                    running.clone(),
+                    json!({"spec": [{"template": [{"spec": [{"container": [{"image": true}]}]}]}]}),
+                    None,
+                ),
+                true,
+            ),
+            (
+                plan(
+                    json!(["delete", "create"]),
+                    deployment("model@sha256:b", "one"),
+                    Value::Null,
+                    Some("replace_because_cannot_update"),
+                ),
+                true,
+            ),
+            (
+                plan(json!(["delete"]), Value::Null, Value::Null, None),
+                true,
+            ),
+            // A label outside the template leaves the Pod running, even with
+            // OpenTofu's structure of known template values beside it.
+            (
+                plan(
+                    json!(["update"]),
+                    deployment("model@sha256:a", "two"),
+                    json!({"spec": [{"template": [{"spec": [{"container": [{"env": [{"value_from": []}]}]}]}]}]}),
+                    None,
+                ),
+                false,
+            ),
+            (
+                plan(json!(["no-op"]), running.clone(), Value::Null, None),
+                false,
+            ),
+            // A tainted Deployment never completed its rollout.
+            (
+                plan(
+                    json!(["delete", "create"]),
+                    deployment("model@sha256:b", "one"),
+                    Value::Null,
+                    Some("replace_because_tainted"),
+                ),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                refused(&change),
+                disrupts,
+                "{:?}",
+                change.resource_changes[0].change.actions
+            );
+            preserve_models(&recreate, &change).unwrap();
+        }
+        // The same service on Docker would be a container; a cluster service
+        // has none, so a Docker change at that address is not its update.
+        let docker: Plan = serde_json::from_value(json!({"resource_changes": [{
+            "address": crate::docker_compute::address(
+                &preserved.spec.services["qwen"].model_address("qwen").unwrap()
+            ),
+            "change": {"actions": ["delete"], "before": {"id": "x", "must_run": true}}
+        }]}))
+        .unwrap();
+        preserve_models(&preserved, &docker).unwrap();
+    }
 }
 
 #[test]
@@ -364,6 +476,131 @@ fn kubernetes_bindings(targets: &[Target]) -> BTreeMap<String, StateBinding> {
             )
         })
         .collect()
+}
+
+#[tokio::test]
+async fn plan_and_apply_warn_about_cluster_network_boundaries_even_with_bearer_authentication() {
+    for (source, remove_authentication, warning_detail) in [
+        (
+            include_bytes!("../../../../../crates/test-support/cluster-models/ollama.yaml")
+                .as_slice(),
+            false,
+            Some("no bearer authentication"),
+        ),
+        (
+            include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml")
+                .as_slice(),
+            false,
+            Some("requires an image that restricts inference to authenticated /v1 routes"),
+        ),
+        (
+            include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml")
+                .as_slice(),
+            true,
+            Some("no bearer authentication"),
+        ),
+        (
+            include_bytes!("../../../../../examples/managed-ollama-gpu.yaml").as_slice(),
+            false,
+            None,
+        ),
+    ] {
+        let mut document = Document::parse(source).unwrap();
+        if remove_authentication {
+            let crate::services::ServiceDefinition::Vllm(service) =
+                document.spec.services.get_mut("qwen").unwrap()
+            else {
+                unreachable!()
+            };
+            // Without authentication there is no key Secret or provider key.
+            service.authentication = None;
+            service.kubernetes.as_mut().unwrap().key_secret = None;
+            document.spec.inference_providers[0].credential = None;
+        }
+        for apply in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let saved = events.clone();
+            let deployment = Deployment::new(
+                &directory.path().join("state"),
+                &directory.path().join("missing-bundle"),
+            )
+            .with_progress(Arc::new(move |event| saved.lock().unwrap().push(event)));
+            let result = if apply {
+                deployment.apply(&document, &CancellationToken::new()).await
+            } else {
+                deployment.plan(&document, &CancellationToken::new()).await
+            };
+            assert!(result.is_err());
+            let events = events.lock().unwrap();
+            let warnings: Vec<_> = events
+                .iter()
+                .filter_map(|event| match event {
+                    Progress::Warning { message } if message.contains("NetworkPolicy") => {
+                        Some(message)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(warnings.len(), usize::from(warning_detail.is_some()));
+            if let Some(detail) = warning_detail {
+                for required in [
+                    "qwen",
+                    detail,
+                    "NetworkPolicy enforcement",
+                    "Kubernetes API cannot verify",
+                    "supervisor-only policy",
+                ] {
+                    assert!(warnings[0].contains(required), "{}", warnings[0]);
+                }
+            }
+            assert!(!events.contains(&Progress::MutationStarted));
+        }
+    }
+}
+
+#[test]
+fn apply_keeps_a_bound_cluster_model_volume_but_may_drop_its_server() {
+    let document = Document::parse(
+        include_bytes!("../../../../../crates/test-support/cluster-models/vllm.yaml").as_slice(),
+    )
+    .unwrap();
+    let record = Record::new(document.clone()).unwrap();
+    let targets = compile::runtime_targets(&document, &record.generations).unwrap();
+    let bindings = kubernetes_bindings(&targets);
+    runtime_bindings(&targets, &bindings).unwrap();
+    let without = |address: &str| -> Vec<Target> {
+        targets
+            .iter()
+            .filter(|target| target.address != address)
+            .cloned()
+            .collect()
+    };
+    assert!(matches!(
+        runtime_bindings(
+            &without("kubernetes_persistent_volume_claim_v1.qwen"),
+            &bindings
+        ),
+        Err(Error::Conflict("apply cannot remove a managed runtime"))
+    ));
+    for disposable in [
+        "kubernetes_deployment_v1.qwen",
+        "kubernetes_service_v1.qwen",
+        "kubernetes_network_policy_v1.qwen",
+    ] {
+        runtime_bindings(&without(disposable), &bindings).unwrap();
+    }
+    // OpenTofu never cleans up an old model volume as a replacement.
+    let plan: Plan = serde_json::from_value(json!({"resource_changes": [{
+        "address": "kubernetes_persistent_volume_claim_v1.qwen", "deposed": "old",
+        "change": {"actions": ["delete"], "before": {"id": "models/old"}}
+    }]}))
+    .unwrap();
+    let expected = runtime_bindings(&targets, &bindings).unwrap();
+    assert!(matches!(
+        check_runtime_plan(&plan, &expected, &bindings),
+        Err(Error::Conflict("plan contains invalid replacement cleanup"))
+    ));
 }
 
 #[test]

@@ -153,6 +153,7 @@ pub(crate) fn constrain_schema(
     installers::ollama::constrain_schema(defs, normalized);
     installers::vllm::schema::constrain(defs, normalized);
     installers::container::constrain_schema(defs);
+    super::cluster_config::constrain(defs);
     for service in defs["ServiceDefinition"]["oneOf"].as_array_mut().unwrap() {
         crate::config::schema::validation::property(
             service,
@@ -210,6 +211,15 @@ impl ServiceDefinition {
         }
     }
 
+    /// Settings of a managed model that runs on the gateway's cluster.
+    pub(crate) fn kubernetes(&self) -> Option<&super::KubernetesService> {
+        match self {
+            Self::Vllm(service) => service.kubernetes.as_ref(),
+            Self::Ollama(service) => service.kubernetes.as_ref(),
+            Self::OllamaProxy(_) | Self::Container(_) => None,
+        }
+    }
+
     fn stage(&self) -> InstallStage {
         match self {
             Self::Ollama(_) | Self::Vllm(_) => InstallStage::Runtime,
@@ -246,6 +256,37 @@ impl ServiceDefinition {
             container.validate_memory(preparation_memory)?;
         }
         let gateway = &document.spec.gateway;
+        if let Some(settings) = self.kubernetes() {
+            crate::config::validation::require(
+                gateway.as_kubernetes().is_some(),
+                "service kubernetes settings require a managed Kubernetes or OpenShift gateway and are not supported with Docker or Podman",
+            )?;
+            let (placement, container, runtime) = match self {
+                Self::Vllm(service) => (
+                    service.published_placement()?,
+                    service.container.as_ref(),
+                    nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(service.runtime_settings())),
+                ),
+                Self::Ollama(service) => (
+                    service.published_placement()?,
+                    service.container.as_ref(),
+                    nemoclaw_runtime::RuntimeSpec::Ollama(Box::new(service.runtime_settings())),
+                ),
+                Self::OllamaProxy(_) | Self::Container(_) => unreachable!(),
+            };
+            settings.validate_runtime(container, &runtime)?;
+            return crate::config::validation::require(
+                placement.is_none()
+                    && container.is_none_or(|container| {
+                        container.ipc != installers::vllm::ServiceIpc::Host
+                    }),
+                "cluster model services exclude Docker placement, publication, and host IPC",
+            );
+        }
+        crate::config::validation::require(
+            !gateway.runtime().provider.is_kubernetes(),
+            "managed vLLM and Ollama services on Kubernetes or OpenShift require kubernetes settings",
+        )?;
         let local_docker = gateway.as_managed().is_some_and(|gateway| {
             gateway.engine.starts_with("unix:///")
                 && crate::config::validate_engine_endpoint(&gateway.engine).is_ok()
@@ -273,6 +314,10 @@ impl ServiceDefinition {
     }
 
     fn allocation(&self, gateway: &Gateway) -> Result<Option<NetworkAllocation>, ConfigError> {
+        // Kubernetes chooses where a cluster service runs and its address.
+        if self.kubernetes().is_some() {
+            return Ok(None);
+        }
         if let Self::Container(service) = self {
             let gateway = gateway.managed()?;
             return Ok(Some(NetworkAllocation {
@@ -311,6 +356,9 @@ impl Installer for ServiceDefinition {
         name: &str,
         generations: &Generations,
     ) -> Result<InstallPlan, crate::Error> {
+        if self.kubernetes().is_some() {
+            return super::cluster::install(document, name, generations);
+        }
         match self {
             Self::Ollama(service) => service.install(document, name, generations),
             Self::OllamaProxy(service) => service.install(document, name, generations),
@@ -325,6 +373,9 @@ impl Installer for ServiceDefinition {
         name: &str,
         generations: &Generations,
     ) -> Result<RemovePlan, crate::Error> {
+        if self.kubernetes().is_some() {
+            return Ok(super::cluster::remove(name));
+        }
         match self {
             Self::Ollama(service) => service.remove(document, name, generations),
             Self::OllamaProxy(service) => service.remove(document, name, generations),
@@ -337,6 +388,20 @@ impl Installer for ServiceDefinition {
 impl ServiceDefinition {
     fn resolve(&self, document: &Document, name: &str) -> Result<ResolvedInference, ConfigError> {
         Ok(match self {
+            ServiceDefinition::Ollama(service) if service.kubernetes.is_some() => {
+                ResolvedInference {
+                    endpoint: super::cluster::endpoint(document, name, service.serving.port)?,
+                    served_model: service.model.name.clone(),
+                    requires_authentication: false,
+                    resource_dependencies: Vec::new(),
+                }
+            }
+            ServiceDefinition::Vllm(service) if service.kubernetes.is_some() => ResolvedInference {
+                endpoint: super::cluster::endpoint(document, name, service.serving.port)?,
+                served_model: service.served_model().into(),
+                requires_authentication: service.authentication.is_some(),
+                resource_dependencies: Vec::new(),
+            },
             ServiceDefinition::Container(service) => {
                 let publication = service.publication.as_ref().ok_or_else(|| {
                     ConfigError::new("a container inference service requires a private publication")
@@ -407,7 +472,11 @@ impl ServiceDefinition {
             ),
             ServiceDefinition::OllamaProxy(service) => service.validate(provider, model),
             ServiceDefinition::Vllm(service) => crate::config::validation::require(
-                sandbox_runtime == ComputeDriver::Docker || service.placement.is_some(),
+                if service.kubernetes.is_some() {
+                    sandbox_runtime.is_kubernetes()
+                } else {
+                    sandbox_runtime == ComputeDriver::Docker || service.placement.is_some()
+                },
                 "vLLM service requires compatible sandbox placement",
             ),
         }
@@ -425,6 +494,8 @@ impl ServiceDefinition {
             ServiceDefinition::OllamaProxy(service) => service
                 .credential_source(document, name, generations)
                 .map(Some),
+            // A cluster service's key comes from the provider's credential.
+            ServiceDefinition::Vllm(service) if service.kubernetes.is_some() => Ok(None),
             ServiceDefinition::Vllm(service) => {
                 service.credential_source(document, name, generations)
             }
@@ -445,6 +516,8 @@ pub(crate) fn discovery_engines(document: &Document) -> Result<BTreeSet<String>,
         .spec
         .services
         .values()
+        // Kubernetes, not a container engine, runs cluster services.
+        .filter(|service| service.kubernetes().is_none())
         .map(|service| {
             if let Some(allocation) = service.allocation(&document.spec.gateway)? {
                 return Ok(allocation.engine);
@@ -484,7 +557,7 @@ fn definition<'a>(
     document: &'a Document,
     provider: &InferenceProvider,
 ) -> Result<Option<(&'a str, &'a ServiceDefinition)>, ConfigError> {
-    let crate::config::InferenceTarget::Service { name } = provider.target()? else {
+    let crate::config::InferenceTarget::Service { name, .. } = provider.target()? else {
         return Ok(None);
     };
     document
@@ -606,6 +679,20 @@ pub(crate) fn validate_provider(
     let referenced = definition(document, provider)?;
     if let Some((name, definition @ ServiceDefinition::Container(_))) = referenced {
         definition.resolve(document, name)?;
+    }
+    if let Some((name, definition)) = referenced {
+        // OpenShell registers an authenticated cluster service with the key
+        // the provider names; every other service supplies its own or none.
+        let authenticated_cluster = definition.kubernetes().is_some()
+            && definition.resolve(document, name)?.requires_authentication;
+        crate::config::validation::require(
+            authenticated_cluster == provider.credential.is_some(),
+            if authenticated_cluster {
+                "an inference provider for an authenticated cluster vLLM service requires credential, the same key as the service's kubernetes.keySecret"
+            } else {
+                "credential with serviceRef applies only to an authenticated cluster vLLM service"
+            },
+        )?;
     }
     Ok(referenced.is_some())
 }

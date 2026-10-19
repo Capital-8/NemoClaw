@@ -46,6 +46,7 @@ The generated graphs manage these objects and observations:
 | Docker provider | Docker gateway, inference, proxy, and application containers; model-cache and application volumes, service-owned networks and acquired images |
 | Docker provider data source | Local images selected with `imagePullPolicy: Never` |
 | Helm provider | The managed Kubernetes gateway's OpenShell chart release (`helm_release.gateway`) |
+| Kubernetes provider | Managed cluster model services: the model volume claim, Deployment, Service and NetworkPolicy (`kubernetes_*_v1`) |
 
 Every provider type has a [lifecycle test](contributing/integration-tests.md) that plans hand-written HCL through pinned OpenTofu without SDK orchestration.
 These tests do not qualify a complete standalone deployment workflow.
@@ -436,7 +437,7 @@ The `host` provider observes container engines and changes nothing; it has no se
 | `host_image` | [An image's platform and labels](#runtime-image-compatibility) |
 | `host_container_health` | [Owned container readiness](#application-container-health): Docker HEALTHCHECK, HTTP, or managed-runtime status |
 
-### Docker and Helm Types
+### Docker, Helm, and Kubernetes Types
 
 The bundled upstream binaries expose every type below.
 Generated graphs declare only the types marked as used; NemoClaw does not qualify the others.
@@ -449,9 +450,12 @@ Generated graphs declare only the types marked as used; NemoClaw does not qualif
 | Docker | Resource | `docker_volume` | Model caches |
 | Docker | Data source | `docker_image` | Local images selected with `imagePullPolicy: Never` |
 | Helm | Resource | `helm_release` | The managed Kubernetes gateway chart |
+| Kubernetes | Resource | `kubernetes_persistent_volume_claim_v1` | [Managed cluster model services'](kubernetes.md#run-a-managed-model-service) retained model volumes |
+| Kubernetes | Resource | `kubernetes_deployment_v1`, `kubernetes_service_v1`, `kubernetes_network_policy_v1` | Managed cluster model services' servers, addresses and ingress rules |
 | Docker | Resource | `docker_buildx_builder`, `docker_compose`, `docker_config`, `docker_plugin`, `docker_registry_image`, `docker_secret`, `docker_service`, `docker_tag` | Unused |
 | Docker | Data source | `docker_containers`, `docker_logs`, `docker_network`, `docker_plugin`, `docker_registry_image`, `docker_registry_image_manifests`, `docker_registry_image_tags` | Unused |
 | Helm | Data source | `helm_template` | Unused |
+| Kubernetes | Resource, data source, ephemeral resource, function | Every other type the provider serves | Unused |
 
 
 ## OpenShell Resource Lifecycles
@@ -900,7 +904,7 @@ Changing any of these settings after creation fails planning and leaves the reso
 
 Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
 The SDK requires each earlier binding before it accepts a later one.
-The Helm provider receives only the authored kubeconfig path and context; ambient Helm and Kubernetes settings are excluded.
+The Helm and Kubernetes providers receive only the authored kubeconfig path and context; ambient Helm and Kubernetes settings are excluded.
 
 Teardown removes the release before the issuer.
 The authentication resource must confirm through `release_present` that the Helm release records are absent before it deletes the issuer.
