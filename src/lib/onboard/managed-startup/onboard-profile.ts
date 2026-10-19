@@ -93,7 +93,7 @@ export function resolveManagedStartupNativeLocalAttachment(input: {
 }): NativeLocalProviderAttachment | undefined {
   const attachment = input.nativeLocalProviderAttachment;
   if (
-    attachment?.agent === "openclaw" &&
+    (attachment?.agent === "openclaw" || attachment?.agent === "hermes") &&
     attachment.provider === "compatible-endpoint" &&
     (attachment.api ?? "openai-completions") !==
       (input.preferredInferenceApi ?? "openai-completions")

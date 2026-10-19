@@ -465,7 +465,7 @@ export function getSandboxInferenceConfig(
   ) {
     inferenceBaseUrl = nativeEndpointUrl;
     inferenceApi =
-      agentName === "openclaw" && provider === "compatible-endpoint"
+      (agentName === "openclaw" || agentName === "hermes") && provider === "compatible-endpoint"
         ? selectedApi || "openai-completions"
         : "openai-completions";
   }

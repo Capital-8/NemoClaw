@@ -30,11 +30,6 @@ const routes = [
     attachment: nativeAttachment,
     expected: nativeBinding.endpointUrl,
   },
-  {
-    name: "legacy ephemeral endpoint",
-    endpointUrl: "http://host.openshell.internal:42103/v1",
-    expected: "https://inference.local/v1",
-  },
 ] as const;
 
 type AgentName = "openclaw" | "hermes" | "langchain-deepagents-code" | "pi";
@@ -110,21 +105,27 @@ describe.each(["openclaw", "langchain-deepagents-code"] as const)(
   },
 );
 
-it.each(["openclaw", "hermes"] as const)(
-  "%s keeps an unattached native endpoint as its legacy route (#12558)",
-  (agentName) => {
-    const prepared = prepareProfile(agentName, {
-      endpointUrl: nativeBinding.endpointUrl,
-    });
+it.each([
+  { agentName: "openclaw" as const, endpointUrl: nativeBinding.endpointUrl },
+  { agentName: "hermes" as const, endpointUrl: nativeBinding.endpointUrl },
+  { agentName: "openclaw" as const, endpointUrl: "http://host.openshell.internal:42103/v1" },
+  { agentName: "hermes" as const, endpointUrl: "http://host.openshell.internal:42103/v1" },
+])(
+  "$agentName keeps unattached $endpointUrl as its legacy route (#12558)",
+  ({ agentName, endpointUrl }) => {
+    const prepared = prepareProfile(agentName, { endpointUrl });
     expect(prepared?.profile.inference?.routedBaseUrl).toBe("https://inference.local/v1");
   },
 );
 
-it("rejects unattached Deep Agents Code native inference (#13197)", () => {
-  expect(() =>
-    prepareProfile("langchain-deepagents-code", { endpointUrl: nativeBinding.endpointUrl }),
-  ).toThrow("requires its native provider attachment");
-});
+it.each([nativeBinding.endpointUrl, "http://host.openshell.internal:42103/v1"])(
+  "rejects unattached Deep Agents Code native inference at %s (#13197)",
+  (endpointUrl) => {
+    expect(() => prepareProfile("langchain-deepagents-code", { endpointUrl })).toThrow(
+      "requires its native provider attachment",
+    );
+  },
+);
 
 it.each(["openclaw", "langchain-deepagents-code"] as const)(
   "keeps owned Local NIM on the %s shared route without an attachment (#13116)",
@@ -229,41 +230,46 @@ it.each([
   });
 });
 
-it.each(["openai-completions", "openai-responses"] as const)(
-  "rebuilds compatible OpenClaw with its recorded native %s API",
-  (api) => {
-    const binding = {
-      ...nativeBinding,
-      agent: "openclaw" as const,
-      ...(api === "openai-responses" ? { api } : {}),
-    };
-    const attachment = { ...nativeAttachment, ...binding, ...nativeLocalIdentity(binding) };
-    const prepared = prepareProfile("openclaw", {
-      endpointUrl: binding.endpointUrl,
-      attachment,
-      api,
-    });
-    expect(prepared?.profile.inference).toMatchObject({
-      api,
-      upstreamProvider: "compatible-endpoint",
-      routedBaseUrl: binding.endpointUrl,
-      model: "fixture-model",
-    });
-  },
-);
-
-it("rejects a rebuilt compatible OpenClaw API that differs from its native provider", () => {
+it.each([
+  { agent: "openclaw" as const, api: "openai-completions" as const },
+  { agent: "openclaw" as const, api: "openai-responses" as const },
+  { agent: "hermes" as const, api: "openai-completions" as const },
+  { agent: "hermes" as const, api: "openai-responses" as const },
+])("rebuilds compatible $agent with its recorded native $api API", ({ agent, api }) => {
   const binding = {
     ...nativeBinding,
-    agent: "openclaw" as const,
-    api: "openai-responses" as const,
+    agent,
+    ...(api === "openai-responses" ? { api } : {}),
   };
   const attachment = { ...nativeAttachment, ...binding, ...nativeLocalIdentity(binding) };
-  expect(() =>
-    prepareProfile("openclaw", {
-      endpointUrl: binding.endpointUrl,
-      attachment,
-      api: "openai-completions",
-    }),
-  ).toThrow(/API does not match/);
+  const prepared = prepareProfile(agent, {
+    endpointUrl: binding.endpointUrl,
+    attachment,
+    api,
+  });
+  expect(prepared?.profile.inference).toMatchObject({
+    api,
+    upstreamProvider: "compatible-endpoint",
+    routedBaseUrl: binding.endpointUrl,
+    model: "fixture-model",
+  });
 });
+
+it.each(["openclaw", "hermes"] as const)(
+  "rejects a rebuilt compatible %s API that differs from its native provider",
+  (agent) => {
+    const binding = {
+      ...nativeBinding,
+      agent,
+      api: "openai-responses" as const,
+    };
+    const attachment = { ...nativeAttachment, ...binding, ...nativeLocalIdentity(binding) };
+    expect(() =>
+      prepareProfile(agent, {
+        endpointUrl: binding.endpointUrl,
+        attachment,
+        api: "openai-completions",
+      }),
+    ).toThrow(/API does not match/);
+  },
+);

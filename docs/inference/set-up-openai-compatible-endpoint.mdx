@@ -29,6 +29,7 @@ Remaining custom shared selections retain `inference.local` on OpenShell `0.0.x`
 </AgentOnly>
 Refer to [How Inference Routing Works](../about-inference-routing) for qualification and existing-sandbox boundaries.
 <AgentOnly variant="hermes">
+The native attachment preserves the selected Chat Completions or Responses API through model changes and rebuilds.
 Live qualification of the Hermes native local lifecycle is pending.
 </AgentOnly>
 
@@ -78,6 +79,9 @@ Use a host-routable URL such as `http://localhost:8000/v1` when you want onboard
 To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+For an authenticated backend already reachable at `http://host.openshell.internal:<port>/v1`, native attachments preserve the accepted unprivileged port.
+NemoClaw rejects ports reserved for its gateways, Model Router, dashboards, and credential proxies.
+Automatic loopback rewriting remains limited to the ports listed above.
 For qualifying custom hosted endpoints, the attached provider profile authorizes the selected endpoint and API.
 <AgentOnly variant="openclaw">
 For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint, selected API, and OpenClaw runtime binaries.

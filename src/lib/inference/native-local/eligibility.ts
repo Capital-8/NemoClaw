@@ -19,6 +19,11 @@ export function usesNativeLocalInference(
   if (provider !== "compatible-endpoint" || !endpointUrl) return false;
   try {
     const endpoint = new URL(endpointUrl);
+    if (
+      endpoint.hostname === "host.openshell.internal" &&
+      qualifiedNativeLocalEndpointUrl(endpointUrl)
+    )
+      return true;
     return (
       endpoint.protocol === "http:" &&
       [11434, OLLAMA_PROXY_PORT, VLLM_PORT].includes(Number(endpoint.port)) &&

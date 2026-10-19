@@ -1005,12 +1005,17 @@ describe("fixed hosted rebuild authority", () => {
   });
 });
 
-it.each(["openai-completions", "openai-responses"] as const)(
-  "preserves the compatible %s attachment and proxy owner across rebuild handoff",
-  (api) => {
+it.each([
+  { agent: "openclaw" as const, api: "openai-completions" as const },
+  { agent: "openclaw" as const, api: "openai-responses" as const },
+  { agent: "hermes" as const, api: "openai-completions" as const },
+  { agent: "hermes" as const, api: "openai-responses" as const },
+])(
+  "preserves the compatible $agent $api attachment and proxy owner across rebuild handoff",
+  ({ agent, api }) => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
     const binding = {
-      agent: "openclaw" as const,
+      agent,
       provider: "compatible-endpoint" as const,
       endpointUrl: "http://host.openshell.internal:11435/v1",
       credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
@@ -1028,7 +1033,7 @@ it.each(["openai-completions", "openai-responses"] as const)(
     const result = prepareRebuildResumeConfig(
       "alpha",
       entry({
-        agent: "openclaw",
+        agent,
         provider: "compatible-endpoint",
         model: "served-model",
         endpointUrl: "http://127.0.0.1:8000/v1",
@@ -1036,7 +1041,7 @@ it.each(["openai-completions", "openai-responses"] as const)(
         preferredInferenceApi: api,
         nativeLocalProviderAttachment: attachment,
       }),
-      "openclaw",
+      agent,
       noopLog,
       throwingBail,
     );

@@ -1326,7 +1326,7 @@ describe("runInferenceSet compatible providers", () => {
     },
   );
 
-  it("does not roll back a created direct provider after an ambiguous route result", async () => {
+  it("retains a legacy shared provider after an ambiguous route result", async () => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
@@ -1349,10 +1349,10 @@ describe("runInferenceSet compatible providers", () => {
       entry: {
         name: "alpha",
         agent: "openclaw",
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "old-model",
       },
-      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      session: baseSession({ provider: "compatible-endpoint", model: "old-model" }),
       captureOpenshell,
       inferenceRouteMutator: { setInferenceRoute },
     });
@@ -1383,7 +1383,7 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
   });
 
-  it("fails before provider or route mutation when a provider-backed route has no rollback authority", async () => {
+  it("rejects a retained shared route without rollback authority before mutation", async () => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
@@ -1394,7 +1394,7 @@ describe("runInferenceSet compatible providers", () => {
     const setInferenceRoute = vi.fn();
     const deps = createDeps({
       config: {},
-      entry: { name: "alpha", agent: "openclaw" },
+      entry: { name: "alpha", agent: "openclaw", provider: "compatible-endpoint" },
       captureOpenshell,
       inferenceRouteObserver: {
         observeInferenceRoute: vi.fn(async () => ({
@@ -1426,7 +1426,7 @@ describe("runInferenceSet compatible providers", () => {
     ).toBe(false);
   });
 
-  it("retries exactly once only for definite provider-not-found after direct binding", async () => {
+  it("retries a retained shared binding only after definite provider-not-found", async () => {
     const directCapture = createCompatibleProviderCapture({
       name: "compatible-endpoint",
       type: "openai",
@@ -1449,7 +1449,7 @@ describe("runInferenceSet compatible providers", () => {
       .mockResolvedValueOnce({ ok: true as const });
     const directDeps = createDeps({
       config: {},
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      entry: { name: "alpha", agent: "openclaw", provider: "compatible-endpoint", model: "old" },
       captureOpenshell: directCapture,
       inferenceRouteMutator: { setInferenceRoute: directSet },
     });
@@ -1481,14 +1481,11 @@ describe("runInferenceSet compatible providers", () => {
     }));
     const noBindingDeps = createDeps({
       config: {},
-      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      entry: { name: "alpha", agent: "openclaw", provider: "vllm-local", model: "old" },
       inferenceRouteMutator: { setInferenceRoute: noBindingSet },
     });
     await expect(
-      runInferenceSet(
-        { provider: "nvidia-router", model: "gpt-test", noVerify: true },
-        noBindingDeps,
-      ),
+      runInferenceSet({ provider: "vllm-local", model: "gpt-test", noVerify: true }, noBindingDeps),
     ).rejects.toThrow("provider not found");
     expect(noBindingSet).toHaveBeenCalledOnce();
   });

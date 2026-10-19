@@ -727,23 +727,25 @@ it.each([
   expect(config.inferenceApi).toBe(expectedApi);
 });
 
-it.each(["openai-completions", "openai-responses"])(
-  "preserves compatible OpenClaw native API %s",
-  (api) => {
-    expect(
-      getSandboxInferenceConfig(
-        "served-alias",
-        "compatible-endpoint",
-        api,
-        true,
-        "http://host.openshell.internal:8000/v1",
-        "openclaw",
-      ),
-    ).toMatchObject({
-      inferenceBaseUrl: "http://host.openshell.internal:8000/v1",
-      inferenceApi: api,
-      primaryModelRef: "inference/served-alias",
-      providerKey: "inference",
-    });
-  },
-);
+it.each([
+  { agent: "openclaw" as const, api: "openai-completions" as const },
+  { agent: "openclaw" as const, api: "openai-responses" as const },
+  { agent: "hermes" as const, api: "openai-completions" as const },
+  { agent: "hermes" as const, api: "openai-responses" as const },
+])("preserves compatible $agent native API $api", ({ agent, api }) => {
+  expect(
+    getSandboxInferenceConfig(
+      "served-alias",
+      "compatible-endpoint",
+      api,
+      true,
+      "http://host.openshell.internal:8000/v1",
+      agent,
+    ),
+  ).toMatchObject({
+    inferenceBaseUrl: "http://host.openshell.internal:8000/v1",
+    inferenceApi: api,
+    primaryModelRef: "inference/served-alias",
+    providerKey: "inference",
+  });
+});

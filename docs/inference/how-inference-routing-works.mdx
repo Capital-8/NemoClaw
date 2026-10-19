@@ -40,7 +40,7 @@ Existing sandboxes without a native attachment retain their recorded shared rout
 Legacy local routes have the recovery restrictions described under [Credential Boundary](#credential-boundary).
 New Deep Agents Code, Hermes, OpenClaw, and Pi selections for Ollama, standalone vLLM, and llama.cpp use sandbox-attached providers for qualified host-local endpoints.
 Deep Agents Code, Hermes, OpenClaw, and Pi also use attached providers for qualifying host-local compatible endpoints.
-OpenClaw compatible attachments preserve the selected Chat Completions or Responses API.
+OpenClaw and Hermes compatible attachments preserve the selected Chat Completions or Responses API.
 Qualifying custom hosted endpoints use sandbox-attached providers.
 New Model Router selections use sandbox-attached providers for the configured router endpoint, normally `http://host.openshell.internal:4000/v1`.
 OpenShell authorizes model-list and Chat Completions requests and supplies the provider credential; the sandbox receives only an endpoint-bound credential reference.

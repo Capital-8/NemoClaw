@@ -358,3 +358,57 @@ it.each(["openai-completions", "openai-responses"] as const)(
     expect(harness.commands.some(({ command }) => command.startsWith("inference "))).toBe(false);
   },
 );
+
+it.each([
+  { agent: "openclaw", api: "openai-responses", expectedAgent: "openclaw" },
+  { agent: "hermes", api: "openai-completions", expectedAgent: "hermes" },
+  { agent: "hermes", api: "openai-responses", expectedAgent: "hermes" },
+  { agent: "langchain-deepagents-code", api: "openai-completions", expectedAgent: undefined },
+])(
+  "registers $agent compatible inference on an accepted reserved-alias port",
+  async ({ agent, api, expectedAgent }) => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        hydrateCredentialEnv: () => "fixture-only-host-key",
+        isNonInteractive: () => true,
+      },
+    });
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "served-alias",
+        "compatible-endpoint",
+        "http://host.openshell.internal:42103/v1",
+        "HOST_COMPATIBLE_KEY",
+        null,
+        [],
+        { agentName: agent, preferredInferenceApi: api },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect([...harness.native.authorities.values()]).toEqual([
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:42103/v1",
+        authMode: "authenticated",
+      }),
+    ]);
+    expect([...harness.native.authorities.values()][0]?.agent).toBe(expectedAgent);
+    expect(harness.native.profiles[0]).toMatchObject({
+      endpoints: [
+        {
+          port: 42103,
+          rules: [
+            { allow: { method: "GET", path: "/v1/models" } },
+            {
+              allow: {
+                method: "POST",
+                path: api === "openai-responses" ? "/v1/responses" : "/v1/chat/completions",
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(harness.commands.some(({ command }) => command.startsWith("inference "))).toBe(false);
+  },
+);

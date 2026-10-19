@@ -1350,7 +1350,7 @@ export function createSetupInference(
                   ? { agent: nativeLocalAgent }
                   : {}),
                 endpointUrl: hostReachableEndpoint,
-                ...(nativeLocalAgent === "openclaw" &&
+                ...((nativeLocalAgent === "openclaw" || nativeLocalAgent === "hermes") &&
                 name === "compatible-endpoint" &&
                 selectedInferenceApi === "openai-responses"
                   ? { api: "openai-responses" as const }

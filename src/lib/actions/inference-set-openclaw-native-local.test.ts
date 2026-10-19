@@ -402,12 +402,18 @@ describe("OpenClaw native local live selection", () => {
   });
 });
 
-it.each(["openai-completions", "openai-responses"] as const)(
-  "switches OpenClaw to a compatible native %s endpoint without shared route commands",
-  async (api) => {
+it.each([
+  { api: "openai-completions" as const, port: 8000 },
+  { api: "openai-responses" as const, port: 8000 },
+  { api: "openai-completions" as const, port: 42103 },
+  { api: "openai-responses" as const, port: 42103 },
+])(
+  "switches OpenClaw to a compatible native $api endpoint on port $port without shared route commands",
+  async ({ api, port }) => {
     const { deps } = switchingFixture({
       provider: "compatible-endpoint",
       authMode: "authenticated",
+      endpointUrl: `http://host.openshell.internal:${port}/v1`,
       ...(api === "openai-responses" ? { api } : {}),
     });
     deps.calls.resolveCredentialValue.mockReturnValue("fixture-only-host-key");
@@ -417,7 +423,7 @@ it.each(["openai-completions", "openai-responses"] as const)(
           provider: "compatible-endpoint",
           model: "served-alias",
           sandboxName: "alpha",
-          endpointUrl: "http://host.openshell.internal:8000/v1",
+          endpointUrl: `http://host.openshell.internal:${port}/v1`,
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: api,
         },
@@ -431,7 +437,7 @@ it.each(["openai-completions", "openai-responses"] as const)(
         nativeLocalProviderAttachment: expect.objectContaining({
           provider: "compatible-endpoint",
           agent: "openclaw",
-          endpointUrl: "http://host.openshell.internal:8000/v1",
+          endpointUrl: `http://host.openshell.internal:${port}/v1`,
         }),
       }),
     );
@@ -612,5 +618,34 @@ it.each(["http://127.0.0.1:11434/v1", "http://127.0.0.1:8000/other", "http://loc
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
     expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+  },
+);
+
+it.each([8080, 4000])(
+  "rejects a compatible switch to reserved control port %s before mutation",
+  async (port) => {
+    const { deps } = switchingFixture({
+      provider: "compatible-endpoint",
+      authMode: "authenticated",
+      endpointUrl: `http://host.openshell.internal:${port}/v1`,
+    });
+    const create = vi.spyOn(deps.providerAdapter, "createProvider");
+    const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "served-alias",
+          sandboxName: "alpha",
+          endpointUrl: `http://host.openshell.internal:${port}/v1`,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/protected host port/);
+    expect(create).not.toHaveBeenCalled();
+    expect(detach).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   },
 );

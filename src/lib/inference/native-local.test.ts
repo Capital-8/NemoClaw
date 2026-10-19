@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import { OLLAMA_PROXY_PORT } from "../core/ollama-proxy-port";
+import { prepareNativeLocalSelection } from "./native-local/selection";
 import { isProtectedLocalInferencePort } from "./gateway/local-endpoint-ports";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
@@ -181,9 +182,9 @@ describe("native local inference", () => {
     ["pi", "http://169.254.169.254:12345/v1", false],
     ["pi", "http://host.openshell.internal:80/v1", false],
     ["pi", "http://user:secret@host.openshell.internal:12345/v1", false],
-    ["langchain-deepagents-code", "http://host.openshell.internal:12345/v1", false],
-    ["openclaw", "http://host.openshell.internal:12345/v1", false],
-    ["hermes", "http://host.openshell.internal:12345/v1", false],
+    ["langchain-deepagents-code", "http://host.openshell.internal:12345/v1", true],
+    ["openclaw", "http://host.openshell.internal:12345/v1", true],
+    ["hermes", "http://host.openshell.internal:12345/v1", true],
   ] as const)("classifies %s compatible endpoint %s as native=%s", (agent, endpoint, expected) => {
     expect(usesNativeLocalInferenceForAgent(agent, "compatible-endpoint", endpoint)).toBe(expected);
   });
@@ -826,18 +827,15 @@ describe("local inference endpoint port reservations", () => {
   });
 });
 
-it.each(["http://10.1.2.3:8000/v1", "http://host.openshell.internal:42103/v1"])(
-  "keeps compatible endpoint %s on the shared route (#13197)",
-  (endpoint) => {
-    expect(
-      usesNativeLocalInferenceForAgent(
-        "langchain-deepagents-code",
-        "compatible-endpoint",
-        endpoint,
-      ),
-    ).toBe(false);
-  },
-);
+it.each([
+  "http://10.1.2.3:8000/v1",
+  "http://localhost:42103/v1",
+  "http://host.docker.internal:42103/v1",
+])("keeps compatible endpoint %s on the shared route (#13197)", (endpoint) => {
+  expect(
+    usesNativeLocalInferenceForAgent("langchain-deepagents-code", "compatible-endpoint", endpoint),
+  ).toBe(false);
+});
 
 it("keeps Local NIM shared while selecting compatible OpenClaw endpoints natively", () => {
   expect(
@@ -851,13 +849,19 @@ it("keeps Local NIM shared while selecting compatible OpenClaw endpoints nativel
   );
 });
 
-it.each([undefined, "openai-responses"] as const)(
-  "binds compatible OpenClaw API %s to its provider identity and request path",
-  async (api) => {
+it.each([
+  { agent: "openclaw" as const, api: "openai-completions" as const },
+  { agent: "openclaw" as const, api: "openai-responses" as const },
+  { agent: "hermes" as const, api: "openai-completions" as const },
+  { agent: "hermes" as const, api: "openai-responses" as const },
+])(
+  "binds compatible $agent API $api to its provider identity and request path",
+  async ({ agent, api: selectedApi }) => {
+    const api = selectedApi === "openai-responses" ? selectedApi : undefined;
     const selected = {
       ...binding,
       provider: "compatible-endpoint" as const,
-      agent: "openclaw" as const,
+      agent,
       ...(api ? { api } : {}),
     };
     const profile = prepareNativeLocalProfile(selected);
@@ -892,12 +896,12 @@ it.each([undefined, "openai-responses"] as const)(
 
 it.each([
   { provider: "ollama-local", agent: "openclaw", api: "openai-responses" },
-  { provider: "compatible-endpoint", agent: "hermes", api: "openai-responses" },
+  { provider: "compatible-endpoint", agent: "pi", api: "openai-responses" },
   { provider: "compatible-endpoint", agent: "openclaw", api: "anthropic-messages" },
   {
     provider: "compatible-endpoint",
     agent: "openclaw",
-    endpointUrl: "http://host.openshell.internal:42103/v1",
+    endpointUrl: "http://host.docker.internal:42103/v1",
   },
   {
     provider: "compatible-endpoint",
@@ -907,3 +911,18 @@ it.each([
 ])("rejects unqualified compatible OpenClaw binding %j", (override) => {
   expect(normalizeNativeLocalBinding({ ...binding, ...override })).toBeUndefined();
 });
+
+it.each([8080, 4000, 18789, 8642, 11435, 11436, 11437, 11438, 12345, 12346])(
+  "rejects compatible reserved alias port %s before provider creation",
+  async (port) => {
+    const selected = {
+      ...binding,
+      provider: "compatible-endpoint" as const,
+      agent: "openclaw" as const,
+      endpointUrl: `http://host.openshell.internal:${port}/v1`,
+    };
+    const f = fixture(selected);
+    await expect(prepareNativeLocalSelection(f.input)).rejects.toThrow(/protected host port/);
+    expect(f.adapter.createProvider).not.toHaveBeenCalled();
+  },
+);

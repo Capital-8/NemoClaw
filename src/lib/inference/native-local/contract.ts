@@ -32,7 +32,7 @@ export type NativeLocalBinding = Readonly<{
   endpointUrl: string;
   credentialEnv: string;
   authMode: "authenticated" | "sentinel";
-  /** Only compatible OpenClaw endpoints can select the Responses API. */
+  /** Compatible OpenClaw and Hermes endpoints can select the Responses API. */
   api?: "openai-responses";
   gatewayName: string;
   sandboxName: string;
@@ -57,7 +57,7 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
       !usesNativeLocalInference(input.provider as string, input.endpointUrl as string)) ||
     (input.api !== undefined &&
       (input.api !== "openai-responses" ||
-        input.agent !== "openclaw" ||
+        (input.agent !== "openclaw" && input.agent !== "hermes") ||
         input.provider !== "compatible-endpoint")) ||
     typeof input.endpointUrl !== "string" ||
     typeof input.credentialEnv !== "string" ||
