@@ -700,7 +700,10 @@ export async function executeSandboxDestroy({
       try {
         runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
           sandboxName,
-          sandbox,
+          {
+            ...sandbox,
+            openshellDriver: sandbox.openshellDriver ?? expectedRuntimeProviderIdentity?.providerId,
+          },
           runtimeProviders,
         ).provider;
         hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(

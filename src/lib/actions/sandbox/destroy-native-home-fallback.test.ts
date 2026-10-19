@@ -194,95 +194,172 @@ describe("native-home destroy fallback", () => {
     expect(clearStoppedNativeHome).not.toHaveBeenCalled();
   });
 
-  it("destroys through the provider's pinned sandbox user after both cleanup passes fail", async () => {
-    const events: string[] = [];
-    const base = createInMemoryRuntimeProviderBundle({
-      providerId: "mxc",
-      workloadProfile: {
-        support: null,
-        hostArchitectures: ["x64"],
-        managedImageSelectionPolicy: "prefer-managed",
-        legacyDockerfileBuilds: false,
-      },
-    });
-    const control = base.lifecycle.privilegedSandboxControl;
-    const failure = { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
-    const execute = vi.fn((_input: { readonly command: readonly string[] }) => {
-      events.push("privileged");
-      return failure;
-    });
-    const executeAsSandboxUser = vi.fn(() => {
-      events.push("sandbox-user");
-      return { ...failure, status: 0 };
-    });
-    const identity = {
-      schemaVersion: 1 as const,
-      providerId: "mxc",
-      resourceHandle: "in-memory:alpha",
-      ownershipSha256: null,
-    };
-    const bundle = {
-      ...base,
-      cleanup: { ...base.cleanup, captureDestroyIdentity: () => identity },
-      lifecycle: {
-        ...base.lifecycle,
-        privilegedSandboxControl: { ...control, execute, executeAsSandboxUser },
-      },
-    };
-    const sandbox: SandboxEntry = {
-      name: "alpha",
-      agent: "langchain-deepagents-code",
-      openshellDriver: "mxc",
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "alpha-generation-1",
-    };
-    let current: SandboxEntry | null = sandbox;
-    const ok = { status: 0, stdout: "", stderr: "" };
-    const handlers: Record<string, () => { status: number; stdout: string; stderr: string }> = {
-      "sandbox:exec": () => {
-        events.push("openshell-exec");
-        return { status: 255, stdout: "", stderr: "sandbox is not running" };
-      },
-      "sandbox:delete": () => {
-        events.push("delete");
-        current = null;
-        return ok;
-      },
-      "sandbox:get": () =>
-        current
-          ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
-          : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
-    };
-    const runOpenshell = vi.fn(
-      (args: string[]) => handlers[`${String(args[0])}:${String(args[1])}`]?.() ?? ok,
-    );
+  it.each([
+    { state: "registered", openshellDriver: "mxc" },
+    { state: "pending", openshellDriver: undefined },
+  ])(
+    "destroys a $state sandbox through its provider's pinned sandbox user",
+    async ({ openshellDriver }) => {
+      const events: string[] = [];
+      const base = createInMemoryRuntimeProviderBundle({
+        providerId: "mxc",
+        workloadProfile: {
+          support: null,
+          hostArchitectures: ["x64"],
+          managedImageSelectionPolicy: "prefer-managed",
+          legacyDockerfileBuilds: false,
+        },
+      });
+      const control = base.lifecycle.privilegedSandboxControl;
+      const failure = { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+      const execute = vi.fn((_input: { readonly command: readonly string[] }) => {
+        events.push("privileged");
+        return failure;
+      });
+      const executeAsSandboxUser = vi.fn(() => {
+        events.push("sandbox-user");
+        return { ...failure, status: 0 };
+      });
+      const identity = {
+        schemaVersion: 1 as const,
+        providerId: "mxc",
+        resourceHandle: "in-memory:alpha",
+        ownershipSha256: null,
+      };
+      const bundle = {
+        ...base,
+        cleanup: {
+          ...base.cleanup,
+          captureDestroyIdentity: () => identity,
+          captureDestroyIdentityByName: () => identity,
+        },
+        lifecycle: {
+          ...base.lifecycle,
+          privilegedSandboxControl: { ...control, execute, executeAsSandboxUser },
+        },
+      };
+      const sandbox: SandboxEntry = {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        openshellDriver,
+        ...(openshellDriver === undefined ? { pendingRouteReservation: true as const } : {}),
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "alpha-generation-1",
+      };
+      let current: SandboxEntry | null = sandbox;
+      const ok = { status: 0, stdout: "", stderr: "" };
+      const handlers: Record<string, () => { status: number; stdout: string; stderr: string }> = {
+        "sandbox:exec": () => {
+          events.push("openshell-exec");
+          return { status: 255, stdout: "", stderr: "sandbox is not running" };
+        },
+        "sandbox:delete": () => {
+          events.push("delete");
+          current = null;
+          return ok;
+        },
+        "sandbox:get": () =>
+          current
+            ? { status: 0, stdout: "Name: alpha\nPhase: Ready", stderr: "" }
+            : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" },
+      };
+      const runOpenshell = vi.fn(
+        (args: string[]) => handlers[`${String(args[0])}:${String(args[1])}`]?.() ?? ok,
+      );
+      const stopInferenceResources = vi.fn();
+      const onMutationStarted = vi.fn();
 
-    await executeSandboxDestroy({
-      force: false,
-      deleteGatewayName: "nemoclaw",
-      getSandbox: () => current,
-      listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
-      runOpenshell,
-      sandbox,
-      sandboxConfirmedAbsent: false,
-      sandboxName: "alpha",
-      stopInferenceResources: vi.fn(),
-      onMutationStarted: vi.fn(),
-      runtimeProviders: { mxc: bundle },
-      expectedRuntimeProviderIdentity: identity,
-      deps: { deleteConvergence: { now: () => 0, sleep: () => undefined } },
-    });
-
-    expect(events.slice(0, 4)).toEqual(["openshell-exec", "privileged", "sandbox-user", "delete"]);
-    expect(executeAsSandboxUser).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
+      const result = await executeSandboxDestroy({
+        force: false,
+        deleteGatewayName: "nemoclaw",
+        getSandbox: () => current,
+        listSandboxes: () => ({ sandboxes: current ? [current] : [] }),
+        runOpenshell,
+        sandbox,
+        sandboxConfirmedAbsent: false,
         sandboxName: "alpha",
-        sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
-        expectedResourceHandle: "in-memory:alpha",
-        command: execute.mock.calls[0]![0].command,
-      }),
-    );
-  });
+        stopInferenceResources,
+        onMutationStarted,
+        runtimeProviders: { mxc: bundle },
+        expectedRuntimeProviderIdentity: identity,
+        deps: { deleteConvergence: { now: () => 0, sleep: () => undefined } },
+      });
+
+      expect(result.ok, result.deleteOutput).toBe(true);
+      expect(sandbox.openshellDriver).toBe(openshellDriver);
+      expect(events.slice(0, 4)).toEqual([
+        "openshell-exec",
+        "privileged",
+        "sandbox-user",
+        "delete",
+      ]);
+      expect(executeAsSandboxUser).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          sandboxName: "alpha",
+          sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+          expectedResourceHandle: "in-memory:alpha",
+          command: execute.mock.calls[0]![0].command,
+        }),
+      );
+    },
+  );
+
+  it.each([
+    { condition: "provider changed", observe: () => ({ providerId: "other" }) },
+    { condition: "resource changed", observe: () => ({ resourceHandle: "replacement" }) },
+    { condition: "ownership changed", observe: () => ({ ownershipSha256: "replacement" }) },
+    {
+      condition: "probe failed",
+      observe: () => {
+        throw new Error("runtime identity probe unavailable");
+      },
+    },
+  ])(
+    "preserves a pending sandbox without mutation when its identity $condition",
+    async ({ observe }) => {
+      const identity = {
+        schemaVersion: 1 as const,
+        providerId: "mxc",
+        resourceHandle: "in-memory:alpha",
+        ownershipSha256: null,
+      };
+      const base = createInMemoryRuntimeProviderBundle({
+        providerId: "mxc",
+        workloadProfile: {
+          support: null,
+          hostArchitectures: ["x64"],
+          managedImageSelectionPolicy: "prefer-managed",
+          legacyDockerfileBuilds: false,
+        },
+      });
+      const captureDestroyIdentityByName = vi.fn(() => ({ ...identity, ...observe() }));
+      const sandbox: SandboxEntry = Object.freeze({ name: "alpha", pendingRouteReservation: true });
+      const runOpenshell = vi.fn();
+      const stopInferenceResources = vi.fn();
+      const onMutationStarted = vi.fn();
+      const result = await executeSandboxDestroy({
+        force: false,
+        deleteGatewayName: "nemoclaw",
+        getSandbox: () => sandbox,
+        runOpenshell,
+        sandbox,
+        sandboxConfirmedAbsent: false,
+        sandboxName: "alpha",
+        stopInferenceResources,
+        onMutationStarted,
+        runtimeProviders: {
+          mxc: { ...base, cleanup: { ...base.cleanup, captureDestroyIdentityByName } },
+        },
+        expectedRuntimeProviderIdentity: identity,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.deleteOutput).toContain("before destroy preparation");
+      expect(captureDestroyIdentityByName).toHaveBeenCalledExactlyOnceWith("alpha");
+      expect(runOpenshell).not.toHaveBeenCalled();
+      expect(stopInferenceResources).not.toHaveBeenCalled();
+      expect(onMutationStarted).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function cleanupFixture() {

@@ -331,8 +331,12 @@ describe("Hermes inference switch command shape", () => {
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "route synced" });
     const mockBaseline = {
       baseUrl: "http://host.openshell.internal:11434/v1",
-      requests: () => [{ method: "GET", path: "/v1/models" }],
-    } as Parameters<typeof prepareProxyResolutionRoute>[0]["mockBaseline"];
+      logFile: "fixture-server.log",
+      requestsFile: "fixture-requests.jsonl",
+      environmentKeys: () => [],
+      requests: () => [{ method: "GET", path: "/v1/models", bodyBytes: 0 }],
+      close: async () => undefined,
+    } satisfies NonNullable<Parameters<typeof prepareProxyResolutionRoute>[0]["mockBaseline"]>;
     const selected = await prepareProxyResolutionRoute({
       apiKey: "fixture-key",
       host: { command } as unknown as HostCliClient,
@@ -354,7 +358,7 @@ describe("Hermes inference switch command shape", () => {
         "--model",
         PROXY_RESOLUTION_MODEL,
         "--endpoint-url",
-        mockBaseline!.baseUrl,
+        mockBaseline.baseUrl,
         "--credential-env",
         "COMPATIBLE_API_KEY",
         "--inference-api",
