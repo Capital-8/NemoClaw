@@ -2986,15 +2986,27 @@ def _validate_restored_native_local_source(
         upstream = source["_nemoclaw_upstream"]
         provider = upstream["provider"]
         model = source["model"]
-        managed = source["providers"][provider]
+        provider_key = upstream["provider_key"]
+        managed = source["providers"][provider_key]
         custom = source["custom_providers"]
         matches = [entry for entry in custom if isinstance(entry, dict) and entry.get("name") == provider]
         previous = model["api_key"]
         reference = candidate["model"]["api_key"]
-        pattern = r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_NEMOCLAW_LOCAL_INFERENCE_TOKEN"
+        local = provider in {"ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"}
+        previous_reference = re.fullmatch(
+            r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_([A-Z][A-Z0-9_]{0,255})",
+            previous if isinstance(previous, str) else "",
+        )
+        env_key = "NEMOCLAW_LOCAL_INFERENCE_TOKEN" if local else (
+            previous_reference.group(1) if previous_reference else ""
+        )
+        pattern = rf"openshell:resolve:env:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}"
         if (
-            provider not in {"ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"}
-            or upstream.get("provider_key") != provider
+            not isinstance(provider, str)
+            or re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}", provider) is None
+            or provider_key != re.sub(r"-+", "-", provider.lower()).strip("-")
+            or not env_key
+            or (not local and previous_reference is None)
             or model.get("provider") != "custom"
             or upstream.get("model") != model.get("default")
             or managed.get("default_model") != model.get("default")
@@ -3002,17 +3014,17 @@ def _validate_restored_native_local_source(
             or managed.get("api") != model.get("base_url")
             or matches[0].get("base_url") != model.get("base_url")
             or not isinstance(previous, str)
-            or (previous != "${NEMOCLAW_LOCAL_INFERENCE_TOKEN}" and re.fullmatch(pattern, previous) is None)
+            or (not (local and previous == "${NEMOCLAW_LOCAL_INFERENCE_TOKEN}") and re.fullmatch(pattern, previous) is None)
             or managed.get("api_key") != previous
             or matches[0].get("api_key") != previous
             or not isinstance(reference, str)
             or re.fullmatch(pattern, reference) is None
         ):
-            raise ValueError("invalid managed local slots")
+            raise ValueError("invalid managed native slots")
         expected = {
             **source,
             "model": {**model, "api_key": reference},
-            "providers": {**source["providers"], provider: {**managed, "api_key": reference}},
+            "providers": {**source["providers"], provider_key: {**managed, "api_key": reference}},
             "custom_providers": [
                 {**entry, "api_key": reference} if entry is matches[0] else entry
                 for entry in custom
@@ -3021,7 +3033,7 @@ def _validate_restored_native_local_source(
         if json.dumps(expected, sort_keys=True, allow_nan=False) != json.dumps(candidate, sort_keys=True, allow_nan=False):
             raise ValueError("candidate changed non-credential configuration")
     except (AttributeError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
-        raise UnsafePathError("restored Hermes write may change only its three native local credential slots") from exc
+        raise UnsafePathError("restored Hermes write may change only its three native credential slots") from exc
     env_text, env_snapshot = _read_text(env_path, MAX_ENV_BYTES)
     validator = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
     if os.path.abspath(__file__) != INSTALLED_RUNTIME_CONFIG_GUARD:
@@ -3035,7 +3047,7 @@ def _adopt_restored_native_local_source(
     expected_config_sha256: str | None, candidate_bytes: bytes,
     hermes_meta: dict[str, int], file_states: dict[str, dict[str, object]],
 ) -> None:
-    """Accept only a restored mutable source for an exact local-reference update.
+    """Accept only a restored mutable source for an exact native-reference update.
 
     The namespace is already frozen by seal_restart. General config writes keep
     their strict-anchor requirement; this operation cannot change route or user

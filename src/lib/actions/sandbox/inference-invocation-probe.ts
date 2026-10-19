@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  normalizeRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "../../inference/config";
+
 import { nativeHostedAuthHeaderScript } from "../../inference/native-provider/contract";
 import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../inference/native-local/agent-config";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
@@ -62,6 +67,7 @@ export type SandboxInferenceInvocationInput = {
   preferredInferenceApi: string | null;
   nativeProvider?: boolean;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
+  registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   nativeEndpointUrl?: string;
 };
 
@@ -91,6 +97,25 @@ export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 95_000;
 const INFERENCE_INVOCATION_MAX_RESPONSE_BYTES = 64 * 1024;
 
 function nativeProbeDefinition(input: SandboxInferenceInvocationInput) {
+  if (input.registeredInferenceProviderAttachment) {
+    const binding = normalizeRegisteredInferenceProviderAttachment(
+      input.registeredInferenceProviderAttachment,
+    );
+    if (
+      !binding ||
+      binding.providerName !== input.provider ||
+      binding.sandboxName !== input.sandboxName ||
+      binding.gatewayName !== input.gatewayName ||
+      binding.inferenceApi !== input.preferredInferenceApi
+    )
+      throw new Error("Registered inference probe does not match its selected attachment");
+    return {
+      logicalProvider: binding.providerName,
+      endpoint: binding.endpointUrl,
+      credentialEnv: binding.credentialEnv,
+      api: binding.inferenceApi,
+    };
+  }
   if (input.nativeLocalProviderAttachment) return undefined;
   if (input.nativeProvider && isCustomHostedProvider(input.provider)) {
     if (!input.nativeEndpointUrl)
@@ -131,10 +156,14 @@ function buildProbeRequest(input: SandboxInferenceInvocationInput): {
     input.nativeProvider ?? Boolean(local),
     local?.endpointUrl ?? input.nativeEndpointUrl ?? null,
     input.agentName,
+    input.registeredInferenceProviderAttachment,
   );
   const useNativeNvidia = input.nativeProvider === true && isNativeNvidiaProvider(input.provider);
   const hosted = nativeProbeDefinition(input);
-  const nativeHosted = input.nativeProvider === true ? hosted : undefined;
+  const nativeHosted =
+    input.nativeProvider === true || input.registeredInferenceProviderAttachment
+      ? hosted
+      : undefined;
   if (input.nativeProvider === true && !useNativeNvidia && !nativeHosted && !local) {
     throw new Error("Unsupported native inference probe selection");
   }
@@ -209,7 +238,10 @@ export function buildSandboxInferenceInvocationCommand(
   const useNativeLocal = Boolean(
     normalizeNativeLocalProviderAttachment(input.nativeLocalProviderAttachment),
   );
-  const nativeHosted = input.nativeProvider === true ? nativeProbeDefinition(input) : undefined;
+  const nativeHosted =
+    input.nativeProvider === true || input.registeredInferenceProviderAttachment
+      ? nativeProbeDefinition(input)
+      : undefined;
   const nativeAuth = useNativeNvidia
     ? NATIVE_NVIDIA_AUTH_HEADER_SCRIPT
     : useNativeLocal
@@ -225,6 +257,11 @@ export function buildSandboxInferenceInvocationCommand(
   const endpoint = shellQuote(request.endpoint);
   return [
     "umask 077",
+    ...(input.registeredInferenceProviderAttachment && nativeHosted
+      ? [
+          `printf '%s' "$${nativeHosted.credentialEnv}" | LC_ALL=C grep -Eq '^openshell:resolve:env:(v[0-9]{1,20}|s[a-f0-9]{64})_${nativeHosted.credentialEnv}$' || exit 2`,
+        ]
+      : []),
     ...(nativeAuth ? [nativeAuth] : []),
     "body=$(mktemp /tmp/nemoclaw-inference-invocation.XXXXXX) || exit 1",
     "trap 'rm -f \"$body\"' EXIT HUP INT TERM",
@@ -341,6 +378,7 @@ export async function probeSandboxInferenceInvocation(
         input.nativeEndpointUrl ??
         null,
       input.agentName,
+      input.registeredInferenceProviderAttachment,
     ).inferenceApi;
     if (httpStatus !== null && validateInferenceResponseBody(inferenceApi, body).ok) {
       return { ok: true };

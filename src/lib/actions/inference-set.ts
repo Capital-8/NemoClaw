@@ -1,6 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  attachRegisteredInferenceProvider,
+  recordedRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "./inference-set/native";
+import {
+  resolveRegisteredSelection,
+  readRegisteredInferenceCredentialHandle,
+  readVerifiedRegisteredCredentialHandle,
+  detachPreviousRegisteredSelection,
+  rollbackRegisteredSelection,
+  restorePreviousRegisteredSelection,
+} from "./inference-set/native";
+
 import type { NativeLocalProviderAttachment } from "../inference/config";
 import {
   requireNativeProviderPolicy,
@@ -69,6 +83,7 @@ import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations
 import { resolveRuntimeInferenceApi } from "./inference-route-api";
 import {
   isModelRouterProvider,
+  canonicalOwnedInferenceProviderName,
   nativeModelRouterEndpoint,
   withRoutedInferencePortLock,
   assertInferenceModelId,
@@ -258,6 +273,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
   resolveCredentialValue: (credentialEnv: string) => string;
   readNativeNvidiaCredentialHandle: (sandboxName: string, gatewayName: string) => Promise<string>;
+  readRegisteredInferenceCredentialHandle?: typeof readRegisteredInferenceCredentialHandle;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute: (routeId: string) => Promise<boolean>;
   probeSandboxRoute: InferenceSetSandboxRouteProbe;
@@ -352,7 +368,7 @@ export function normalizeInferenceSetProvider(provider: string): string {
     if (hyphenatedAlias) return hyphenatedAlias;
     if (SUPPORTED_PROVIDER_NAME_SET.has(hyphenated)) return hyphenated;
   }
-  return trimmed;
+  return canonicalOwnedInferenceProviderName(trimmed);
 }
 
 /** Exposed for the alias-sync regression test. */
@@ -710,14 +726,17 @@ function buildProviderConfig(
   inheritedMaxTokens?: number,
   upstreamProviderMarker?: string,
   reasoningEffort: ReasoningEffortRequest = { effort: null, explicit: false },
+  registered = false,
 ): ConfigObject {
   const existingModels = Array.isArray(existing.models) ? existing.models : [];
   const selectedIndex = existingModels.findIndex(
     (entry) => isConfigObject(entry) && entry.id === model,
   );
-  const selectedModel = cloneConfigObject(existingModels[selectedIndex] ?? existingModels[0]);
+  const selectedModel = cloneConfigObject(
+    existingModels[selectedIndex] ?? (registered ? undefined : existingModels[0]),
+  );
   const existingModelId = typeof selectedModel.id === "string" ? selectedModel.id : null;
-  delete selectedModel.compat;
+  if (!registered) delete selectedModel.compat;
   if (selectedIndex < 0) {
     // A different model's limits are not evidence for the selected model. Let
     // OpenClaw use its own defaults unless this route has an authoritative
@@ -733,16 +752,16 @@ function buildProviderConfig(
   // unchanged while the prior config write still contains the old model.
   if (typeof contextWindow === "number") {
     selectedModel.contextWindow = contextWindow;
-  } else if (contextWindow === null || existingModelId !== model) {
+  } else if ((contextWindow === null && !registered) || existingModelId !== model) {
     delete selectedModel.contextWindow;
   }
-  if (route.inferenceApi === "anthropic-messages") {
+  if (!registered && route.inferenceApi === "anthropic-messages") {
     applyOpenClawAnthropicReplyBudget(selectedModel, inheritedMaxTokens);
   }
   if (route.inferenceCompat) {
     selectedModel.compat = asConfigObject(route.inferenceCompat);
   }
-  applyReasoningEffortParams(selectedModel, provider, route, reasoningEffort);
+  if (!registered) applyReasoningEffortParams(selectedModel, provider, route, reasoningEffort);
 
   const providerConfig: ConfigObject = {
     ...existing,
@@ -775,6 +794,8 @@ export function patchOpenClawInferenceConfig(
   inheritPrimaryReplyBudget = true,
   nativeEndpointUrl?: string,
   nativeProvider = usesNativeConfigByDefault(provider, nativeEndpointUrl),
+  registered?: RegisteredInferenceProviderAttachment,
+  registeredHandle?: string,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(
@@ -784,6 +805,7 @@ export function patchOpenClawInferenceConfig(
     nativeProvider,
     nativeEndpointUrl,
     "openclaw",
+    registered,
   );
   const inheritedMaxTokens = inheritPrimaryReplyBudget
     ? readOpenClawPrimaryReplyBudget(config)
@@ -804,8 +826,14 @@ export function patchOpenClawInferenceConfig(
     inheritedMaxTokens,
     upstreamProviderMarker,
     reasoningEffort,
+    Boolean(registered),
   );
 
+  if (registered) {
+    const selected = cloneConfigObject(providers[route.providerKey]);
+    selected.apiKey = registeredHandle ?? existingProvider.apiKey;
+    providers[route.providerKey] = selected;
+  }
   return { changed: before !== JSON.stringify(config), route };
 }
 
@@ -840,7 +868,10 @@ export function writeOpenClawInferenceConfigNatively(
   if (selectedAgentUpdate) updates.push(selectedAgentUpdate);
   updates.push(
     { dotpath: "models.mode", value: "merge" },
-    { dotpath: `models.providers.${route.providerKey}`, value: providerConfig },
+    {
+      dotpath: appendOpenClawConfigPathSegment("models.providers", route.providerKey),
+      value: providerConfig,
+    },
   );
   writeValues(sandboxName, updates, gatewayName);
 }
@@ -887,6 +918,7 @@ export function patchHermesInferenceConfig(
   nativeEndpointUrl?: string,
   nativeProvider = usesNativeConfigByDefault(provider, nativeEndpointUrl),
   nativeCredentialHandle?: string,
+  registered?: RegisteredInferenceProviderAttachment,
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(
@@ -896,6 +928,7 @@ export function patchHermesInferenceConfig(
     nativeProvider,
     nativeEndpointUrl,
     "hermes",
+    registered,
   );
   applyHermesManagedRoute(config, {
     model,
@@ -904,6 +937,7 @@ export function patchHermesInferenceConfig(
     inferenceApi: route.inferenceApi,
     contextWindow,
     nativeCredentialHandle,
+    ...(registered ? { registeredCredentialEnv: registered.credentialEnv } : {}),
   });
 
   return { changed: before !== JSON.stringify(config), route };
@@ -1225,6 +1259,92 @@ function resolveMatchingAgentConfigTarget(
   return target;
 }
 
+async function resolveRegisteredConfigSelection(input: {
+  options: InferenceSetOptions;
+  deps: InferenceSetDeps;
+  entry: SandboxEntry;
+  provider: string;
+  model: string;
+  sandboxName: string;
+  agentName: string;
+  expectedGatewayName: string;
+}) {
+  const { options, deps, entry, provider, model, sandboxName, agentName, expectedGatewayName } =
+    input;
+  const previousRegistered = recordedRegisteredInferenceProviderAttachment(entry);
+  if (getProviderSelectionConfig(provider, model) || isModelRouterProvider(provider))
+    return { previousRegistered, registeredConfig: undefined, registered: undefined };
+  const registeredConfig = readInSandboxConfigOrFail(
+    deps,
+    sandboxName,
+    resolveMatchingAgentConfigTarget(deps, sandboxName, agentName),
+    expectedGatewayName,
+  );
+  const registered = await resolveRegisteredSelection({
+    ...options,
+    provider,
+    sandboxName,
+    gatewayName: expectedGatewayName,
+    agentName,
+    config: registeredConfig,
+    previous: previousRegistered,
+    adapter: deps.providerAdapter,
+  });
+  return { previousRegistered, registeredConfig, registered };
+}
+
+function assertInferenceSetAgent(agentName: string, sandboxName: string): void {
+  if (agentName !== "openclaw" && agentName !== "hermes") {
+    // #6321: Deep Agents Code (langchain-deepagents-code) bakes its model into
+    // the sandbox image at build time (agents/langchain-deepagents-code/Dockerfile
+    // ARG NEMOCLAW_MODEL → ~/.deepagents/config.toml), so — unlike OpenClaw and
+    // Hermes — it has no runtime inference-set config-mutation path. The blunt
+    // "supports OpenClaw and Hermes" message left dcode users with no next step;
+    // point them at the only way to change a Deep Agents model: re-onboard with
+    // a new selection.
+    const dcodeHint =
+      agentName === "langchain-deepagents-code"
+        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
+        : "";
+    throw new InferenceSetError(
+      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,
+      2,
+    );
+  }
+}
+
+function logInferenceProbeRetry(
+  log: InferenceSetDeps["log"],
+  result: Awaited<ReturnType<InferenceSetSandboxRouteProbe>>,
+  delayMs: number,
+  attempt: number,
+): void {
+  if (result.ok) return;
+  const retryCause =
+    result.httpStatus === null
+      ? "the sandbox probe did not receive an HTTP status"
+      : `HTTP ${result.httpStatus}`;
+  log(
+    `  Waiting ${delayMs / 1_000}s for OpenShell route convergence after ${retryCause} (probe ${attempt}/3)...`,
+  );
+}
+
+function unavailableSandboxInferenceProbe(
+  probeError: unknown,
+): Awaited<ReturnType<InferenceSetSandboxRouteProbe>> {
+  const probeFailureDetail =
+    probeError instanceof Error && probeError.message
+      ? (onboardSession.redactSensitiveText(probeError.message)?.trim() ?? "")
+      : "";
+  return {
+    ok: false,
+    detail: probeFailureDetail
+      ? `sandbox inference invocation probe was unavailable: ${probeFailureDetail}`
+      : "sandbox inference invocation probe was unavailable",
+    httpStatus: null,
+  };
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -1243,23 +1363,18 @@ async function runInferenceSetWithoutHostLock(
 
   const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
   const priorHttpsPinRouteId = parseHttpsPinRouteId(entry.endpointUrl);
-  if (agentName !== "openclaw" && agentName !== "hermes") {
-    // #6321: Deep Agents Code (langchain-deepagents-code) bakes its model into
-    // the sandbox image at build time (agents/langchain-deepagents-code/Dockerfile
-    // ARG NEMOCLAW_MODEL → ~/.deepagents/config.toml), so — unlike OpenClaw and
-    // Hermes — it has no runtime inference-set config-mutation path. The blunt
-    // "supports OpenClaw and Hermes" message left dcode users with no next step;
-    // point them at the only way to change a Deep Agents model: re-onboard with
-    // a new selection.
-    const dcodeHint =
-      agentName === "langchain-deepagents-code"
-        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
-        : "";
-    throw new InferenceSetError(
-      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,
-      2,
-    );
-  }
+  assertInferenceSetAgent(agentName, sandboxName);
+  const { previousRegistered, registeredConfig, registered } =
+    await resolveRegisteredConfigSelection({
+      options,
+      deps,
+      entry,
+      provider,
+      model,
+      sandboxName,
+      agentName,
+      expectedGatewayName,
+    });
   const session = deps.loadSession();
   const explicitInferenceApi =
     typeof options.inferenceApi === "string" && options.inferenceApi.trim()
@@ -1280,9 +1395,8 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  const hasExplicitCustomRoute = Boolean(
-    options.endpointUrl || options.credentialEnv || options.inferenceApi,
-  );
+  const hasExplicitCustomRoute =
+    !registered && Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
   if (
     isModelRouterProvider(provider) &&
     (hasExplicitCustomRoute || !nativeModelRouterEndpoint(provider))
@@ -1300,7 +1414,9 @@ async function runInferenceSetWithoutHostLock(
         // routes still require the operator to supply a complete identity.
         inferenceApi: resolveAgentInferenceApi(agentName, provider, explicitOrRecordedInferenceApi),
       }
-    : options;
+    : registered
+      ? {}
+      : options;
   const routeEntry = {
     ...entry,
     preferredInferenceApi: resolveAgentInferenceApi(
@@ -1345,6 +1461,7 @@ async function runInferenceSetWithoutHostLock(
     deps,
   });
   const selectingNative =
+    Boolean(registered) ||
     selectingNativeLocal ||
     Boolean(localSwitch.selected || localSwitch.prepare) ||
     isNativeInferenceSelection(provider, entry, options.endpointUrl, expectedGatewayName, deps);
@@ -1382,7 +1499,7 @@ async function runInferenceSetWithoutHostLock(
   }
   const {
     registryMetadata,
-    explicitPreferredInferenceApi,
+    explicitPreferredInferenceApi: finalizedPreferredInferenceApi,
     directProviderBinding,
     httpsPinProviderBinding,
     routeImpactWarning,
@@ -1415,6 +1532,15 @@ async function runInferenceSetWithoutHostLock(
       }),
     effectiveInferenceApi: preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
   });
+
+  if (registered)
+    Object.assign(registryMetadata, {
+      endpointUrl: registered.endpointUrl,
+      endpointSource: "inference-set",
+      credentialEnv: registered.credentialEnv,
+      preferredInferenceApi: registered.inferenceApi,
+    });
+  const explicitPreferredInferenceApi = registered?.inferenceApi ?? finalizedPreferredInferenceApi;
 
   const nimSelection = verifyNimSwitchSelection(
     provider,
@@ -1495,7 +1621,9 @@ async function runInferenceSetWithoutHostLock(
   // leaving a half-applied switch across the three config layers (#6997).
   // Route finalization has no side effect when metadata is reused; explicit
   // custom routes were capability-checked before finalization above.
-  const config = readInSandboxConfigOrFail(deps, sandboxName, target, preparedRoute.gatewayName);
+  const config =
+    registeredConfig ??
+    readInSandboxConfigOrFail(deps, sandboxName, target, preparedRoute.gatewayName);
   const preMutationInferenceApi =
     explicitPreferredInferenceApi ??
     resolveRuntimeInferenceApi({
@@ -1570,6 +1698,10 @@ async function runInferenceSetWithoutHostLock(
   let nativeLocalRegistryCommitted = false;
   let previousNativeLocalDetached = false;
   let previousNativeLocalDetachCommitted = false;
+  let registeredAttachment = registered;
+  let registeredAttachmentChanged = false;
+  let registeredCommitted = false;
+  let previousRegisteredDetached = false;
   let nativeCredentialHandle: string | undefined;
   let nativeProviderAttachment: NativeProviderAttachment | undefined;
   let nativeAttachmentChanged = false;
@@ -1592,6 +1724,33 @@ async function runInferenceSetWithoutHostLock(
     return detail;
   };
   try {
+    previousRegisteredDetached = await detachPreviousRegisteredSelection({
+      adapter: deps.providerAdapter,
+      previous: previousRegistered,
+      next: registered,
+    });
+    if (registered) {
+      previousNativeDetached = await detachPreviousNativeBeforePublish({
+        selectingNative,
+        selectedProvider: provider,
+        previousAttachment: previousNativeAttachment,
+        gatewayName: preparedRoute.gatewayName,
+        sandboxName,
+        deps,
+      });
+      previousLocalDetached = await detachPreviousOpenClawLocal({
+        previous: localSwitch.previous,
+        selected: localSwitch.selected,
+        sandboxName,
+        deps,
+      });
+      previousNativeLocalDetached = await detachPreviousNativeLocalBeforePublish({
+        adapter: deps.providerAdapter,
+        sandboxName,
+        detached: false,
+        previous: previousNativeLocalAttachment,
+      });
+    }
     await prepareOpenClawLocalSwitch({
       selection: localSwitch,
       entry,
@@ -1612,9 +1771,27 @@ async function runInferenceSetWithoutHostLock(
         });
       },
     });
+    if (registered) {
+      const selected = await attachRegisteredInferenceProvider({
+        adapter: deps.providerAdapter,
+        expected: registered,
+      });
+      registeredAttachment = selected.attachment;
+      registeredAttachmentChanged = selected.changed;
+      nativeCredentialHandle = await readVerifiedRegisteredCredentialHandle({
+        attachment: registeredAttachment,
+        adapter: deps.providerAdapter,
+        read: deps.readRegisteredInferenceCredentialHandle,
+        sleep: deps.sleep,
+      });
+    }
     const nativeSelection = await prepareNativeSelection({
       selectingNative:
-        selectingNative && !selectingNativeLocal && !localSwitch.selected && !localSwitch.prepare,
+        selectingNative &&
+        !registered &&
+        !selectingNativeLocal &&
+        !localSwitch.selected &&
+        !localSwitch.prepare,
       provider,
       expectedAttachment: nativeProviderAuthority,
       gatewayName: preparedRoute.gatewayName,
@@ -1637,7 +1814,7 @@ async function runInferenceSetWithoutHostLock(
     });
     nativeProviderAttachment = nativeSelection.attachment;
     nativeAttachmentChanged = nativeSelection.attachmentChanged;
-    nativeCredentialHandle = await readHermesNativeNvidiaCredentialHandleIfNeeded({
+    nativeCredentialHandle ??= await readHermesNativeNvidiaCredentialHandleIfNeeded({
       agentName,
       provider,
       sandboxName,
@@ -1774,6 +1951,7 @@ async function runInferenceSetWithoutHostLock(
               model,
               preferredInferenceApi: preMutationInferenceApi,
               ...(selectingNative ? { nativeProvider: true } : {}),
+              registeredInferenceProviderAttachment: registeredAttachment,
               ...openClawLocalProbeFields(nativeSelection.endpointUrl, localSwitch.selected),
               ...(agentName === "hermes"
                 ? {
@@ -1791,30 +1969,12 @@ async function runInferenceSetWithoutHostLock(
           {
             probe: deps.probeSandboxRoute,
             sleep: deps.sleep,
-            onRetry: (result, delayMs, attempt) => {
-              if (result.ok) return;
-              const retryCause =
-                result.httpStatus === null
-                  ? "the sandbox probe did not receive an HTTP status"
-                  : `HTTP ${result.httpStatus}`;
-              deps.log(
-                `  Waiting ${delayMs / 1_000}s for OpenShell route convergence after ${retryCause} (probe ${attempt}/3)...`,
-              );
-            },
+            onRetry: (result, delayMs, attempt) =>
+              logInferenceProbeRetry(deps.log, result, delayMs, attempt),
           },
         );
       } catch (probeError) {
-        const probeFailureDetail =
-          probeError instanceof Error && probeError.message
-            ? (onboardSession.redactSensitiveText(probeError.message)?.trim() ?? "")
-            : "";
-        probe = {
-          ok: false,
-          detail: probeFailureDetail
-            ? `sandbox inference invocation probe was unavailable: ${probeFailureDetail}`
-            : "sandbox inference invocation probe was unavailable",
-          httpStatus: null,
-        };
+        probe = unavailableSandboxInferenceProbe(probeError);
       }
       await requireSuccessfulInferenceProbe({
         probe,
@@ -1887,6 +2047,7 @@ async function runInferenceSetWithoutHostLock(
         previousNativeLocalDetached,
       ),
       ...nativeSelectionRegistryFields(nativeProviderAttachment, previousNativeDetached),
+      registeredInferenceProviderAttachment: registeredAttachment,
       ...openClawLocalRegistryFields(localSwitch.selected, previousLocalDetached),
       ...(nativeLocalProviderAttachment?.endpointUrl
         ? { endpointUrl: nativeLocalProviderAttachment.endpointUrl }
@@ -1912,6 +2073,7 @@ async function runInferenceSetWithoutHostLock(
         `Failed to update NemoClaw registry for sandbox '${sandboxName}'.`,
       );
     }
+    registeredCommitted = true;
     nativeLocalRegistryCommitted = Boolean(nativeLocalProviderAttachment);
     previousNativeLocalDetachCommitted = previousNativeLocalDetached;
     nativeRegistryCommitted = Boolean(nativeProviderAttachment);
@@ -1985,6 +2147,7 @@ async function runInferenceSetWithoutHostLock(
           localSwitch.selected?.endpointUrl,
         selectingNative,
         nativeCredentialHandle,
+        registeredAttachment,
       );
     } else {
       // Recompute the context window for the model being switched to, so it does
@@ -2012,6 +2175,8 @@ async function runInferenceSetWithoutHostLock(
           nativeSelection.endpointUrl ??
           localSwitch.selected?.endpointUrl,
         selectingNative,
+        registeredAttachment,
+        nativeCredentialHandle,
       );
     }
 
@@ -2022,7 +2187,10 @@ async function runInferenceSetWithoutHostLock(
     );
     // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent).
     // Both agents return an error after a failed sync so automation cannot accept partial
-    // convergence. OpenClaw retries the atomic native update; Hermes rebuilds its managed config.
+    // convergence. Registered selections retry without replacing restored agent configuration.
+    const registeredConfigRecovery = registeredAttachment
+      ? "Retry the same inference set command to finish applying the recorded selection."
+      : undefined;
     let inSandboxConfigSynced = false;
     try {
       if (agentName === "openclaw") {
@@ -2054,7 +2222,8 @@ async function runInferenceSetWithoutHostLock(
       );
       failOpenClawInferenceConfigSync(agentName, sandboxName, detail, deps);
       deps.log(
-        `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
+        registeredConfigRecovery ??
+          `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
       );
     }
     const sessionUpdated =
@@ -2108,7 +2277,7 @@ async function runInferenceSetWithoutHostLock(
       throw new InferenceSetError(
         `Hermes inference route synchronization did not complete for '${sandboxName}'. ` +
           `The OpenShell route and NemoClaw registry remain committed, but the in-sandbox ` +
-          `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
+          `Hermes configuration did not fully converge. ${registeredConfigRecovery ?? `Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`}`,
       );
     }
     await retirePreviousOpenClawLocal({
@@ -2145,6 +2314,12 @@ async function runInferenceSetWithoutHostLock(
       Boolean(ambiguousInferenceSelection || providerMutation),
       expectedGatewayName,
     );
+    await rollbackRegisteredSelection({
+      adapter: deps.providerAdapter,
+      committed: registeredCommitted,
+      attachment: registeredAttachment,
+      changed: registeredAttachmentChanged,
+    });
     if (error instanceof OpenClawInferenceConfigSyncError) throw error;
     const hermesLocalFailure = await rollbackNativeLocalSelection({
       adapter: deps.providerAdapter,
@@ -2187,6 +2362,14 @@ async function runInferenceSetWithoutHostLock(
       gatewayName: preparedRoute.gatewayName,
       deps,
       error: hermesLocalFailure,
+    });
+    await restorePreviousRegisteredSelection({
+      adapter: deps.providerAdapter,
+      committed: registeredCommitted,
+      previous: previousRegistered,
+      previousDetached: previousRegisteredDetached,
+      cleanupError: localRollbackFailure,
+      originalError: error,
     });
     const failure = await restorePreviousOpenClawLocal({
       previous: localSwitch.previous,

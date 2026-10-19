@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordedRegisteredInferenceProviderAttachment } from "../../../inference/config";
+
 import type { ModelSelectionProvenance } from "../../../domain/telemetry/provenance";
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import {
@@ -287,6 +289,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       forceInferenceSetup: boolean;
       credentialEnv: string | null;
       nativeCustomSetup?: boolean;
+      registeredNativeSetup?: boolean;
     }>;
     ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
@@ -586,6 +589,7 @@ function canResumeInferenceRoute(input: {
   forceProviderSelection: boolean;
   forceInferenceSetup: boolean;
   effectiveResume: boolean;
+  registeredResumeVerified?: boolean;
   routeReady(): boolean;
 }): boolean {
   return (
@@ -595,7 +599,7 @@ function canResumeInferenceRoute(input: {
     !input.forceProviderSelection &&
     !input.forceInferenceSetup &&
     input.effectiveResume &&
-    input.routeReady()
+    (input.registeredResumeVerified || input.routeReady())
   );
 }
 
@@ -1309,6 +1313,40 @@ async function resolveSelectionSandboxName<Agent>(
   return deps.promptValidatedSandboxName(agent);
 }
 
+function registeredResumeSelection(
+  getSandbox: ((name: string) => Partial<SandboxEntry> | null) | undefined,
+  resume: boolean,
+  sandboxName: string | null,
+  selection: {
+    gatewayName: string;
+    provider: string | null;
+    endpointUrl: string | null;
+    credentialEnv: string | null;
+    preferredInferenceApi: string | null;
+  },
+) {
+  if (!resume || !sandboxName) return undefined;
+  const binding = recordedRegisteredInferenceProviderAttachment(getSandbox?.(sandboxName) ?? {});
+  if (
+    binding &&
+    (binding.gatewayName !== selection.gatewayName ||
+      binding.providerName !== selection.provider ||
+      binding.endpointUrl !== selection.endpointUrl ||
+      binding.credentialEnv !== selection.credentialEnv ||
+      binding.inferenceApi !== selection.preferredInferenceApi)
+  )
+    throw new Error("Registered provider resume selection does not match its recorded binding.");
+  return binding;
+}
+
+function hydrateResumedProviderCredential(
+  registeredResumeVerified: boolean,
+  credentialEnv: string | null,
+  hydrate: (name: string | null) => string | null | undefined,
+): string | null | undefined {
+  return registeredResumeVerified ? null : hydrate(credentialEnv);
+}
+
 function nativeLocalAgentOptions(
   agent: unknown,
   provider: string,
@@ -1364,15 +1402,17 @@ function usesNativeLocalSelection(
   selection: { provider: string | null; endpointUrl: string | null },
   localNimSelected: boolean,
   preserveSharedRoute: boolean,
+  registeredSelection = false,
 ): boolean {
   return (
-    !preserveSharedRoute &&
-    usesNativeLocalInferenceForAgent(
-      agent,
-      selection.provider,
-      selection.endpointUrl,
-      localNimSelected,
-    )
+    registeredSelection ||
+    (!preserveSharedRoute &&
+      usesNativeLocalInferenceForAgent(
+        agent,
+        selection.provider,
+        selection.endpointUrl,
+        localNimSelected,
+      ))
   );
 }
 
@@ -1566,6 +1606,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     clearAutoDetectedCompatibleContextWindow(process.env);
     let forceInferenceSetup = initialForceInferenceSetup;
     let recoveredRecordedProvider = false;
+    let registeredResumeVerified = false;
+    const registeredResumeBinding = registeredResumeSelection(
+      deps.getSandboxRegistryEntry,
+      effectiveResume,
+      reusableResumeSandboxName,
+      { gatewayName, provider, endpointUrl, credentialEnv, preferredInferenceApi },
+    );
     const providerRecovery = createRecovery(fresh, sandboxName, session, deps, {
       recoveryReceipt: providerRecoveryReceipt,
       recoveryReceiptLedger: providerRecoveryReceiptLedger,
@@ -1618,6 +1665,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           { provider: provider, endpointUrl },
           Boolean(nimContainer),
           preservesLegacyPiRoute(sandboxName, { provider: provider, model: model, endpointUrl }),
+          Boolean(registeredResumeBinding),
         ),
       );
       // A completed provider-selection checkpoint is not proof that a managed
@@ -1638,6 +1686,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         undefined,
         { sandboxName: reusableResumeSandboxName, endpointUrl },
       );
+      registeredResumeVerified = recovery.registeredNativeSetup === true;
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1667,7 +1716,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           "  [resume] Refreshing the gateway provider to match the required inference surface.",
         );
       }
-      const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
+      const hydratedCredential = hydrateResumedProviderCredential(
+        registeredResumeVerified,
+        credentialEnv,
+        deps.hydrateCredentialEnv,
+      );
       // A retained OpenRouter gateway provider still owns the credential,
       // while the host adapter needs only its persisted authorization hash
       // to recover a stopped process. Do not export the gateway credential
@@ -1989,6 +2042,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       forceProviderSelection,
       forceInferenceSetup: forceInferenceSetup || deps.isRoutedInferenceProvider(selectedProvider),
       effectiveResume,
+      registeredResumeVerified,
       routeReady: () => deps.isInferenceRouteReady(gatewayName, selectedProvider, selectedModel),
     });
     if (resumeInference) {
@@ -2116,6 +2170,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                   model: selectedModel,
                   endpointUrl,
                 }),
+                registeredResumeVerified,
               ),
             );
             try {
@@ -2194,6 +2249,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 model: selectedModel,
                 endpointUrl,
               }),
+              registeredResumeVerified,
             ),
           );
           return reserveRecoveredSandboxInferenceRoute(

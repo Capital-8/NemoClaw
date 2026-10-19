@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { inspectInferenceProviderProfile } from "./provider-profile";
 import { requireSandboxPolicyAuthority } from "./provider-policy";
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -844,7 +845,10 @@ export function createCliOpenShellProviderAdapter(
         isDeepStrictEqual(JSON.parse(exported) as unknown, snapshot),
       );
     }
-    return success({ credentialKeys });
+    const inference = request.includeInferenceProjection
+      ? inspectInferenceProviderProfile(commandStdout(result))
+      : undefined;
+    return success({ credentialKeys, ...(inference ? { inference } : {}) });
   };
 
   const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async (

@@ -12,6 +12,7 @@ import type {
   InferenceSelectionInput,
 } from "../inference/selection";
 import {
+  recordedRegisteredInferenceProviderAttachment,
   inferenceSelectionRegistryFields,
   normalizeNativeLocalProviderAttachment,
   normalizeInferenceSelection,
@@ -91,6 +92,7 @@ export interface CreatedSandboxRegistryEntryInput {
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
@@ -249,6 +251,11 @@ export function buildCreatedSandboxRegistryEntry(
   const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
     input.hostLocalInferenceProvenance,
   );
+  const registeredInferenceProviderAttachment = recordedRegisteredInferenceProviderAttachment({
+    ...input,
+    ...input.inferenceSelection,
+    name: input.sandboxName,
+  });
   const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
     input.nativeLocalProviderAttachment,
   );
@@ -341,6 +348,7 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+    ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
     ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
@@ -437,6 +445,8 @@ export function prepareCreatedSandboxRegistration(
     input.nativeHostedProviderAttachment ?? pending?.nativeHostedProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    registeredInferenceProviderAttachment:
+      input.registeredInferenceProviderAttachment ?? pending?.registeredInferenceProviderAttachment,
     nativeHostedProviderAttachment: pendingNativeHostedProviderAttachment,
     inferenceSelection: pendingRoute
       ? { ...input.inferenceSelection, ...pendingRoute }
@@ -585,10 +595,19 @@ export function nativeInferenceCreateIntentFields(
   localNimSelected = false,
 ): {
   inferenceProvider: string | null;
+  registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
 } {
+  const registeredInferenceProviderAttachment = entry
+    ? recordedRegisteredInferenceProviderAttachment(entry)
+    : undefined;
+  if (
+    registeredInferenceProviderAttachment &&
+    provider !== registeredInferenceProviderAttachment.providerName
+  )
+    throw new Error("Registered provider binding does not match the selected provider.");
   const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
     entry?.nativeLocalProviderAttachment,
   );
@@ -608,9 +627,11 @@ export function nativeInferenceCreateIntentFields(
   );
   return {
     inferenceProvider:
+      registeredInferenceProviderAttachment?.providerName ??
       nativeLocalProviderAttachment?.providerName ??
       hostedAttachment?.providerName ??
       nativeInferenceProviderForSandbox(provider),
+    ...(registeredInferenceProviderAttachment ? { registeredInferenceProviderAttachment } : {}),
     ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     nativeHostedProviderAttachment: hostedAttachment,
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),

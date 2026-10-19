@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  recordedRegisteredInferenceProviderAttachment,
+  verifyRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
+import {
   normalizeNativeLocalProviderAttachment,
   type NativeLocalProviderAttachment,
 } from "../../inference/native-local/contract";
@@ -16,7 +21,6 @@ import {
 } from "../../inference/native-provider/fixed";
 import { nativeProviderLifecycle } from "../../inference/native-provider";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
-import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import { buildSandboxCommandEnvironment } from "../../adapters/sandbox/command-transport";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
@@ -26,6 +30,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
 import {
+  NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
   NVIDIA_HOSTED_NATIVE_ENDPOINT,
   verifyNativeNvidiaProviderAttachment,
   type NativeNvidiaProviderAttachment,
@@ -74,6 +79,24 @@ export async function verifyNativeNvidiaStatusAttachment(input: {
     expected: input.expected,
   });
 }
+
+export type VerifyRegisteredStatusAttachment = (input: {
+  gatewayName: string;
+  sandboxName: string;
+  expected: RegisteredInferenceProviderAttachment;
+}) => Promise<void>;
+
+export const verifyRegisteredStatusAttachment: VerifyRegisteredStatusAttachment = async (input) => {
+  if (
+    input.expected.gatewayName !== input.gatewayName ||
+    input.expected.sandboxName !== input.sandboxName
+  )
+    throw new Error("Registered provider sandbox or gateway binding changed.");
+  await verifyRegisteredInferenceProviderAttachment({
+    adapter: createCliOpenShellProviderAdapter(),
+    expected: input.expected,
+  });
+};
 
 export type VerifyNativeLocalStatusAttachment = (input: {
   gatewayName: string;
@@ -399,6 +422,7 @@ export type SandboxInferenceRouteHealthContext = {
   nativeLocalEndpoint?: string;
   nativeProvider?: boolean;
   nativeEndpointUrl?: string;
+  registeredInferenceProviderAttachment?: RegisteredInferenceProviderAttachment;
   model?: string | null;
   preferredInferenceApi?: string | null;
 };
@@ -455,6 +479,9 @@ export function buildSandboxInferenceRouteHealth(
     };
   }
   const definition =
+    (context.registeredInferenceProviderAttachment
+      ? { logicalProvider: context.provider ?? "", label: "registered" }
+      : undefined) ??
     fixedNativeProvider(context.provider) ??
     (context.nativeProvider &&
     (context.provider === "compatible-endpoint" ||
@@ -466,12 +493,14 @@ export function buildSandboxInferenceRouteHealth(
       invocation && !invocation.ok && invocation.endpoint
         ? invocation.endpoint
         : resolveSandboxInferenceInvocationEndpoint({
-            sandboxName: "",
+            sandboxName: context.registeredInferenceProviderAttachment?.sandboxName ?? "",
             provider: definition.logicalProvider,
             model: context.model ?? "",
             preferredInferenceApi: context.preferredInferenceApi ?? null,
             nativeProvider: true,
             nativeEndpointUrl: context.nativeEndpointUrl,
+            gatewayName: context.registeredInferenceProviderAttachment?.gatewayName,
+            registeredInferenceProviderAttachment: context.registeredInferenceProviderAttachment,
           });
     const diagnostics = providerHealthDiagnostics(providerHealth, Boolean(invocation?.ok));
     const nativeHealth: ProviderHealthStatus = invocation?.ok
@@ -489,7 +518,9 @@ export function buildSandboxInferenceRouteHealth(
           endpoint,
           detail: invocation
             ? `The native ${definition.label} route did not serve an inference request: ${invocation.detail}.`
-            : `Could not probe the native ${definition.label} route from inside the sandbox. Recreate legacy beta sandboxes before using this route.`,
+            : context.registeredInferenceProviderAttachment
+              ? "Could not probe the registered provider from inside the sandbox. Check its binding and selected model, then retry."
+              : `Could not probe the native ${definition.label} route from inside the sandbox. Recreate legacy beta sandboxes before using this route.`,
           failureLabel: classifyInferenceInvocationFailureLabel(invocation?.httpStatus ?? null),
         };
     return diagnostics.length > 0 ? { ...nativeHealth, subprobes: diagnostics } : nativeHealth;
@@ -578,9 +609,12 @@ export async function runSandboxInferenceInvocationProbe(
 
 export function readNativeStatusSelection(entry: SandboxEntry | null | undefined) {
   let attachment: NativeProviderAttachment | undefined;
+  let registeredAttachment: RegisteredInferenceProviderAttachment | undefined;
   let failure: string | null = null;
   try {
-    if (entry?.nativeLocalProviderAttachment !== undefined) {
+    if (entry?.registeredInferenceProviderAttachment !== undefined) {
+      registeredAttachment = recordedRegisteredInferenceProviderAttachment(entry);
+    } else if (entry?.nativeLocalProviderAttachment !== undefined) {
       attachment = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
       if (!attachment)
         failure =
@@ -589,8 +623,9 @@ export function readNativeStatusSelection(entry: SandboxEntry | null | undefined
       attachment = entry ? recordedNativeProviderAttachment(entry) : undefined;
     }
   } catch {
-    failure = "Recorded native provider ownership is invalid; no inference request was sent.";
+    failure = "Recorded native provider binding is invalid; no inference request was sent.";
   }
+  const registered = entry?.registeredInferenceProviderAttachment !== undefined;
   const local = entry?.nativeLocalProviderAttachment !== undefined;
   const definition = local
     ? null
@@ -599,10 +634,13 @@ export function readNativeStatusSelection(entry: SandboxEntry | null | undefined
       : hostedNativeProvider(entry?.provider);
   return {
     attachment,
+    registeredAttachment,
     failure,
-    label: local ? "local" : (definition?.label ?? "NVIDIA"),
-    endpoint: local
-      ? (attachment?.endpointUrl ?? "")
-      : (definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT),
+    label: registered ? "registered" : local ? "local" : (definition?.label ?? "NVIDIA"),
+    endpoint: registered
+      ? (registeredAttachment?.endpointUrl ?? "")
+      : local
+        ? (attachment?.endpointUrl ?? "")
+        : (definition?.endpoint ?? NVIDIA_HOSTED_NATIVE_ENDPOINT),
   };
 }

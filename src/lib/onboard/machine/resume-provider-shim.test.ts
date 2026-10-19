@@ -7,6 +7,7 @@ vi.mock("../../credentials/store", () => ({
   resolveProviderCredential: vi.fn(() => null),
 }));
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import { customNativeProvider } from "../../inference/native-provider/custom";
 import { createResumeProviderShim } from "./resume-provider-shim";
 
@@ -117,7 +118,7 @@ it.each([
               custom: definition.custom,
             },
           }
-        : { pendingRouteReservation: state === "reservation" };
+        : { ...(state === "reservation" ? { pendingRouteReservation: true as const } : {}) };
     const providerExistsInGateway = vi.fn(() => true);
     const replaceNamedCredential = vi.fn(async () => "unexpected");
     const shim = createResumeProviderShim({
@@ -249,3 +250,56 @@ it("rejects an altered native attachment before recovering its credential bindin
   expect(h.providerExistsInGateway).not.toHaveBeenCalled();
   expect(h.replaceNamedCredential).not.toHaveBeenCalled();
 });
+
+it.each(["retained", "recreated", "replaced", "wrong-endpoint"] as const)(
+  "resumes only the exact external binding: %s",
+  async (state) => {
+    const f = registeredInferenceFixture(state === "retained");
+    const entry = {
+      name: f.binding.sandboxName,
+      gatewayName: f.binding.gatewayName,
+      provider: f.binding.providerName,
+      endpointUrl: f.binding.endpointUrl,
+      credentialEnv: f.binding.credentialEnv,
+      preferredInferenceApi: f.binding.inferenceApi,
+      registeredInferenceProviderAttachment: f.binding,
+    };
+    const shim = createResumeProviderShim({
+      getSandbox: () => entry,
+      providerAdapter: f.adapter,
+      isNonInteractive: () => true,
+      providerExistsInGateway: vi.fn(),
+      isRoutedInferenceProvider: () => false,
+      replaceNamedCredential: vi.fn(),
+    });
+    f.state.id = state === "replaced" ? "replacement" : f.state.id;
+    const result = shim.ensureResumeProviderReady(
+      f.binding.gatewayName,
+      f.binding.providerName,
+      f.binding.credentialEnv,
+      undefined,
+      {
+        sandboxName: f.binding.sandboxName,
+        endpointUrl:
+          state === "wrong-endpoint" ? "https://other.example/v1" : f.binding.endpointUrl,
+      },
+    );
+    expect(
+      await result.then(
+        (value) => value,
+        () => "rejected",
+      ),
+    ).toEqual(
+      state === "retained" || state === "recreated"
+        ? {
+            forceInferenceSetup: false,
+            credentialEnv: f.binding.credentialEnv,
+            registeredNativeSetup: true,
+          }
+        : "rejected",
+    );
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+  },
+);

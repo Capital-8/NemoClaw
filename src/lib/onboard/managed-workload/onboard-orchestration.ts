@@ -207,6 +207,7 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly localNimSelected?: boolean;
   readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly nativeProvider?: boolean;
+  readonly registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   readonly startupProfile: ManagedProfileInput;
   readonly note: (message: string) => void;
   readonly fallbackBuildEstimate: () => string | null;
@@ -431,6 +432,7 @@ export function createManagedWorkloadOnboardRuntime(
         : (input.nativeProvider ?? true),
       endpointUrl,
       input.agentName,
+      input.registeredInferenceProviderAttachment,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,

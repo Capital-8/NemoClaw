@@ -167,3 +167,5 @@ export function inferenceSelectionRegistryFields(
 ): InferenceSelection {
   return normalizeInferenceSelection(input);
 }
+
+export { recordedRegisteredInferenceProviderAttachment } from "./native-provider/registered";

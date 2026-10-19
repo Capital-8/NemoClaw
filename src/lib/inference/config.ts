@@ -6,6 +6,7 @@
  * All functions are pure.
  */
 
+import type { RegisteredInferenceProviderAttachment } from "./native-provider/registered";
 import { nativeLocalCredentialReference } from "./native-local/model-router";
 import {
   usesNativeLocalInference,
@@ -348,7 +349,19 @@ export function getSandboxInferenceConfig(
   nativeProvider?: boolean,
   nativeEndpointUrl?: string | null,
   agentName?: string | null,
+  registered?: RegisteredInferenceProviderAttachment,
 ): SandboxInferenceConfig {
+  if (registered) {
+    if (registered.providerName !== provider)
+      throw new Error("Registered inference provider does not match selection");
+    return {
+      providerKey: registered.providerName,
+      primaryModelRef: `${registered.providerName}/${model}`,
+      inferenceBaseUrl: registered.endpointUrl,
+      inferenceApi: registered.inferenceApi,
+      inferenceCompat: null,
+    };
+  }
   const nativeCustom =
     nativeProvider === true &&
     isCustomHostedProvider(provider) &&
@@ -560,3 +573,10 @@ export function formatInferenceRouteDriftForDisplay(
     warning: `gateway inference route (${liveProvider}/${liveModel}) differs from the recorded route ${owner} (${recordedRoute}).`,
   };
 }
+
+export {
+  recordedRegisteredInferenceProviderAttachment,
+  normalizeRegisteredInferenceProviderAttachment,
+  verifyRegisteredInferenceProviderAttachment,
+} from "./native-provider/registered";
+export type { RegisteredInferenceProviderAttachment } from "./native-provider/registered";

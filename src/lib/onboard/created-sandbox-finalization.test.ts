@@ -1274,6 +1274,50 @@ describe("restored OpenClaw selection reconciliation", () => {
     );
   });
 
+  it("refreshes a registered route during ordinary rebuild before releasing the gateway", async () => {
+    const { registeredInferenceFixture } =
+      await import("../../../test/helpers/registered-inference");
+    const binding = {
+      ...registeredInferenceFixture(true).binding,
+      sandboxName: options.sandboxName,
+      gatewayName: options.gatewayName,
+    };
+    const order: string[] = [];
+    const dependencies = deps(order);
+    vi.mocked(restoreWindow.finishUnregisteredOpenClawPostRestoreDoctor).mockImplementation(
+      async () => {
+        order.push("restart");
+        return { ok: true };
+      },
+    );
+    await finalizeCreatedSandbox(
+      {
+        ...options,
+        reconcileOpenClawInference: false,
+        provider: binding.providerName,
+        preferredInferenceApi: binding.inferenceApi,
+        nativeProvider: true,
+        endpointUrl: binding.endpointUrl,
+        registeredInferenceProviderAttachment: binding,
+      },
+      dependencies,
+    );
+    expect(order).toEqual(["restore", "selection", "restart", "register"]);
+    expect(dependencies.writeRestoredOpenclawInferenceRoute).toHaveBeenCalledExactlyOnceWith(
+      options.sandboxName,
+      options.model,
+      binding.providerName,
+      binding.inferenceApi,
+      options.gatewayName,
+      undefined,
+      {
+        endpointUrl: binding.endpointUrl,
+        nativeProvider: true,
+        registeredInferenceProviderAttachment: binding,
+      },
+    );
+  });
+
   it.each([
     {
       label: "ordinary rebuild",

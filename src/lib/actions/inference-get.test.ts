@@ -1311,3 +1311,51 @@ describe("native hosted inference get", () => {
     },
   );
 });
+
+it.each(["text", "json", "quiet"])(
+  "reads the registered sandbox selection without a shared route in %s mode",
+  async (mode) => {
+    const binding = {
+      schemaVersion: 1 as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      providerName: "operator-provider",
+      providerId: "operator-id",
+      profileId: "operator-profile",
+      profileDigest: "a".repeat(64),
+      endpointUrl: "https://api.example.test/v1",
+      inferenceApi: "openai-completions" as const,
+      credentialEnv: "OPERATOR_API_KEY",
+      attachedBySelection: false,
+    };
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: binding.gatewayName,
+      provider: binding.providerName,
+      model: "model-a",
+      endpointUrl: binding.endpointUrl,
+      preferredInferenceApi: binding.inferenceApi,
+      credentialEnv: binding.credentialEnv,
+      registeredInferenceProviderAttachment: binding,
+    };
+    const deps = createDeps(configuredRoute("unrelated", "other-model"));
+    deps.getSandbox = () => sandbox;
+    const result = await runInferenceGet(
+      { sandboxName: "alpha", json: mode === "json", quiet: mode === "quiet" },
+      deps,
+    );
+    expect(result).toEqual({
+      provider: binding.providerName,
+      model: "model-a",
+      endpointUrl: binding.endpointUrl,
+    });
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.log).toHaveBeenCalledTimes(mode === "quiet" ? 0 : mode === "json" ? 1 : 3);
+    sandbox.gatewayName = "other";
+    await expect(runInferenceGet({ sandboxName: "alpha" }, deps)).rejects.toThrow(
+      "does not match its sandbox route",
+    );
+    expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
+  },
+);

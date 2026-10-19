@@ -1,5 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
+import {
+  recordedRegisteredInferenceProviderAttachment,
+  registeredInferenceProviderRevision,
+} from "../../inference/native-provider/registered";
+import type { SandboxEntry } from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import {
   recordedCustomCredentialEnv,
@@ -27,7 +33,8 @@ const onboardProviders = require("../providers") as {
 };
 
 export type ResumeProviderShimDeps = {
-  getSandbox?: (name: string) => Parameters<typeof usesCustomNativeOnboarding>[3];
+  getSandbox?: (name: string) => Partial<SandboxEntry> | null | undefined;
+  providerAdapter?: ReturnType<typeof createManagedProviderAdapter>;
   isNonInteractive: ResumeProviderRecoveryDeps["isNonInteractive"];
   providerExistsInGateway(name: string, gatewayName: string): boolean | Promise<boolean>;
   isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
@@ -60,6 +67,31 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
     ): Promise<ResumeProviderRecoveryResult> {
       const recorded =
         provider && selection?.sandboxName ? deps.getSandbox?.(selection.sandboxName) : undefined;
+      if (recorded?.registeredInferenceProviderAttachment !== undefined) {
+        const expected = recordedRegisteredInferenceProviderAttachment(recorded);
+        if (
+          !expected ||
+          expected.gatewayName !== gatewayName ||
+          expected.sandboxName !== selection?.sandboxName ||
+          expected.providerName !== provider ||
+          expected.endpointUrl !== selection?.endpointUrl ||
+          expected.credentialEnv !== credentialEnv
+        )
+          throw new Error(
+            "Registered provider resume selection does not match its recorded binding.",
+          );
+        revalidateSandboxIdentity?.("verifying registered provider resume");
+        await registeredInferenceProviderRevision({
+          adapter: deps.providerAdapter ?? createManagedProviderAdapter(),
+          expected,
+        });
+        revalidateSandboxIdentity?.("verified registered provider resume");
+        return {
+          forceInferenceSetup: false,
+          credentialEnv: expected.credentialEnv,
+          registeredNativeSetup: true,
+        };
+      }
       if (
         provider &&
         selection?.sandboxName &&

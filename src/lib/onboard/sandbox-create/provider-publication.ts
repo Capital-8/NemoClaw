@@ -506,3 +506,8 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
     );
   }
 }
+
+export {
+  attachRegisteredInferenceProvider,
+  registeredInferenceProviderRevision,
+} from "../../inference/native-provider/registered";

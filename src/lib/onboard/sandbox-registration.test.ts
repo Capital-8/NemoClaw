@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../test/helpers/registered-inference";
+
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1044,4 +1046,29 @@ describe("Hermes native attachment registration", () => {
       "does not match the selected Hermes sandbox",
     );
   });
+});
+
+it("retains the external binding and namespace through sandbox recreation", () => {
+  const f = registeredInferenceFixture();
+  const defaults = createdRegistryEntryInput();
+  const input = createdRegistryEntryInput({
+    sandboxName: f.binding.sandboxName,
+    gatewayName: f.binding.gatewayName,
+    inferenceSelection: {
+      ...defaults.inferenceSelection,
+      provider: f.binding.providerName,
+      model: "model-a",
+      endpointUrl: f.binding.endpointUrl,
+      credentialEnv: f.binding.credentialEnv,
+      preferredInferenceApi: f.binding.inferenceApi,
+    },
+    registeredInferenceProviderAttachment: f.binding,
+  });
+  const entry = buildCreatedSandboxRegistryEntry(input);
+  expect(nativeInferenceCreateIntentFields(f.binding.providerName, entry)).toMatchObject({
+    inferenceProvider: f.binding.providerName,
+    registeredInferenceProviderAttachment: f.binding,
+  });
+  expect(() => buildCreatedSandboxRegistryEntry({ ...input, gatewayName: "wrong" })).toThrow();
+  expect(() => nativeInferenceCreateIntentFields("other-provider", entry)).toThrow();
 });

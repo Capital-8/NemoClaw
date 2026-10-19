@@ -53,6 +53,7 @@ import {
 } from "../../inference/native-nvidia";
 import {
   hostedNativeProvider,
+  HOSTED_NATIVE_PROVIDERS,
   usesNativeHermesEndpoint,
   isCustomHostedProvider,
   customNativeCredentialEnv,
@@ -482,3 +483,35 @@ export function assertInferenceModelId(model: string): void {
       2,
     );
 }
+
+/** Keep owned resource names on their existing logical-provider lifecycle. */
+export function canonicalOwnedInferenceProviderName(name: string): string {
+  if (name === fixedNativeProvider("nvidia-prod")!.providerName) return "nvidia-prod";
+  const fixed = HOSTED_NATIVE_PROVIDERS.find((definition) => definition.providerName === name);
+  if (fixed) return fixed.logicalProvider;
+  if (
+    /^nemoclaw-(?:local-v1-[a-f0-9]{24}|custom-[a-f0-9]{32}-v1|hermes-[a-f0-9]{20}-v1)$/u.test(name)
+  )
+    throw new InferenceSetError(
+      "Use the recorded logical provider name for this NemoClaw-owned attachment",
+      2,
+    );
+  return name;
+}
+
+export {
+  attachRegisteredInferenceProvider,
+  detachRegisteredInferenceProvider,
+  verifyRegisteredInferenceProviderAttachment,
+  registeredInferenceProviderRevision,
+  recordedRegisteredInferenceProviderAttachment,
+  type RegisteredInferenceProviderAttachment,
+} from "./registered";
+export {
+  resolveRegisteredSelection,
+  readRegisteredInferenceCredentialHandle,
+  readVerifiedRegisteredCredentialHandle,
+  detachPreviousRegisteredSelection,
+  rollbackRegisteredSelection,
+  restorePreviousRegisteredSelection,
+} from "./registered";

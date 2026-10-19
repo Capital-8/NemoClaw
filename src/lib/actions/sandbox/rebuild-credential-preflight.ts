@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  recordedRegisteredInferenceProviderAttachment,
+  verifyRegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { fixedNativeProviderForAttachment } from "../../inference/native-provider/fixed";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
@@ -175,6 +179,20 @@ export async function preflightRebuildCredentials(
   bail: RebuildBail,
   options: RebuildCredentialPreflightOptions = {},
 ): Promise<boolean> {
+  if (sb.registeredInferenceProviderAttachment !== undefined) {
+    try {
+      const expected = recordedRegisteredInferenceProviderAttachment(sb);
+      if (!expected) throw new Error("Missing registered provider binding");
+      await verifyRegisteredInferenceProviderAttachment({
+        adapter: createManagedProviderAdapter(),
+        expected,
+      });
+      return true;
+    } catch {
+      bail("Could not verify registered provider binding; sandbox is untouched");
+      return false;
+    }
+  }
   const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(
     sb.provider,
     sb.credentialEnv,

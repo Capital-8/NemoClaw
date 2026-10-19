@@ -54,9 +54,10 @@ export async function initializeExternalHermesInferenceRoute(
       "Initial Hermes inference route does not match its registered external-image selection.",
     );
   }
-  // The native-local initializer owns projection and credential-only restore.
+  // The attached native route initializer owns projection and credential-only restore.
   // Do not replace its provider-bound reference with a shared-route sentinel.
   if (
+    entry.registeredInferenceProviderAttachment ||
     entry.nativeLocalProviderAttachment ||
     usesNativeLocalInferenceForAgent(
       "hermes",

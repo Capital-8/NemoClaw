@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import {
   HOSTED_NATIVE_PROVIDERS,
   hostedNativeProvider,
@@ -20,6 +21,7 @@ import {
   inspectRebuildGatewayProviderRegistration,
   shouldVerifyRebuildGatewayProvider,
   verifyRebuildNativeLocalProviderBeforeDelete,
+  verifyRebuildRegisteredProviderBeforeDelete,
 } from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import * as managedProviderAdapter from "../../adapters/openshell/managed-provider-adapter";
@@ -729,3 +731,39 @@ describe("hosted native rebuild provider preflight", () => {
     },
   );
 });
+
+it.each(["valid", "replaced", "detached", "selection-changed"] as const)(
+  "checks the external binding at the destructive rebuild boundary: %s",
+  async (state) => {
+    const f = registeredInferenceFixture(state !== "detached");
+    f.state.id = state === "replaced" ? "replacement" : f.state.id;
+    vi.spyOn(managedProviderAdapter, "createManagedProviderAdapter").mockReturnValue(f.adapter);
+    const resume = config({
+      agent: "openclaw",
+      provider: f.binding.providerName,
+      model: "model-a",
+      endpointUrl: f.binding.endpointUrl,
+      credentialEnv: f.binding.credentialEnv,
+      preferredInferenceApi: f.binding.inferenceApi,
+      registeredInferenceProviderAttachment: f.binding,
+    });
+    const entry = {
+      ...resume,
+      name: f.binding.sandboxName,
+      gatewayName: f.binding.gatewayName,
+      model: state === "selection-changed" ? "other-model" : resume.model,
+    };
+    expect(
+      await verifyRebuildRegisteredProviderBeforeDelete(
+        f.binding.sandboxName,
+        f.binding.gatewayName,
+        resume,
+        undefined,
+        () => entry,
+      ),
+    ).toBe(state === "valid");
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+  },
+);

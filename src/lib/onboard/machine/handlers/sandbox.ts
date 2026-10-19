@@ -361,6 +361,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      registeredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
       nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
       nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
       nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];

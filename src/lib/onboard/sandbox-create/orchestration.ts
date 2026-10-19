@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  attachRegisteredInferenceProvider,
+  registeredInferenceProviderRevision,
+} from "./provider-publication";
+
 import { isDeepStrictEqual } from "node:util";
 import fs from "node:fs";
 
@@ -1438,6 +1443,7 @@ export function createProviderEffectBoundary(input: {
   readonly resumingVerifiedCreate?: boolean;
   readonly sandboxName: string;
   readonly gatewayName: string;
+  readonly expectedRegisteredInferenceProviderAttachment?: SandboxEntry["registeredInferenceProviderAttachment"];
   readonly expectedNativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
   readonly expectedNativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   readonly expectedNativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
@@ -1453,7 +1459,19 @@ export function createProviderEffectBoundary(input: {
   const deps = { ...input.preparationDeps, providerAdapter: adapter };
   let verifiedOwnedProfileIds: readonly string[] = [];
   let verifiedHermesToolGatewayProfileId: string | null = null;
+  const validateRegistered = async () => {
+    const expected = input.expectedRegisteredInferenceProviderAttachment;
+    if (!expected) return;
+    if (
+      expected.sandboxName !== input.sandboxName ||
+      expected.gatewayName !== input.gatewayName ||
+      expected.providerName !== input.preparationInput.inferenceProvider
+    )
+      throw new Error("Registered provider binding does not match sandbox creation.");
+    await registeredInferenceProviderRevision({ adapter, expected });
+  };
   const validate = async () => {
+    await validateRegistered();
     await validateAttachedMessagingProvidersBeforeSandboxCreation(input.preparationInput, deps);
     if (!input.deferred && !input.resumingVerifiedCreate) {
       verifiedOwnedProfileIds = await validateAttachedOwnedProfilesBeforeSandboxCreation(
@@ -1499,6 +1517,16 @@ export function createProviderEffectBoundary(input: {
   const attachAndVerifyNativeInferenceProvider = async (
     context: VerifiedSandboxCreateEffectsContext,
   ) => {
+    if (input.expectedRegisteredInferenceProviderAttachment) {
+      context.revalidateSandboxIdentity("restoring registered inference attachment");
+      await validateRegistered();
+      await attachRegisteredInferenceProvider({
+        adapter,
+        expected: input.expectedRegisteredInferenceProviderAttachment,
+      });
+      context.revalidateSandboxIdentity("verifying restored registered inference attachment");
+      return;
+    }
     if (input.expectedNativeLocalProviderAttachment) {
       context.revalidateSandboxIdentity(
         `attaching native local provider for sandbox '${input.sandboxName}'`,
@@ -1554,7 +1582,7 @@ export function createProviderEffectBoundary(input: {
     };
   }
   return {
-    validateBeforeCreate: async () => undefined,
+    validateBeforeCreate: validateRegistered,
     publishBeforeCreate: async () => undefined,
     runAfterVerifiedCreate: async (context) => {
       context.revalidateSandboxIdentity(
@@ -2121,8 +2149,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           preferredInferenceApi,
           endpointUrl: createIntent?.endpointUrl ?? null,
           localNimSelected: createIntent?.localNimSelected === true,
+          registeredInferenceProviderAttachment:
+            resolvedCreateIntent.registeredInferenceProviderAttachment,
           nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
           nativeProvider: Boolean(
+            resolvedCreateIntent.registeredInferenceProviderAttachment ||
             resolvedCreateIntent.nativeLocalProviderAttachment ||
             resolvedCreateIntent.nativeHostedProviderAttachment ||
             resolvedCreateIntent.nativeNvidiaProviderAttachment,
@@ -2483,6 +2514,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               createIntent,
               nativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
               nativeProvider: Boolean(
+                existingSandboxEntry?.registeredInferenceProviderAttachment ||
                 existingSandboxEntry?.nativeLocalProviderAttachment ||
                 existingSandboxEntry?.nativeHostedProviderAttachment ||
                 existingSandboxEntry?.nativeNvidiaProviderAttachment,
@@ -2837,6 +2869,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   createIntent?.endpointUrl ??
                   null,
                 nativeProvider: Boolean(
+                  resolvedCreateIntent.registeredInferenceProviderAttachment ||
                   resolvedCreateIntent.nativeLocalProviderAttachment ||
                   resolvedCreateIntent.nativeHostedProviderAttachment ||
                   resolvedCreateIntent.nativeNvidiaProviderAttachment,
@@ -3746,6 +3779,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
       sandboxName,
       gatewayName: GATEWAY_NAME,
+      expectedRegisteredInferenceProviderAttachment:
+        resolvedCreateIntent.registeredInferenceProviderAttachment,
       expectedNativeLocalProviderAttachment: resolvedCreateIntent.nativeLocalProviderAttachment,
       expectedNativeNvidiaProviderAttachment: resolvedCreateIntent.nativeNvidiaProviderAttachment,
       expectedNativeHostedProviderAttachment: resolvedCreateIntent.nativeHostedProviderAttachment,

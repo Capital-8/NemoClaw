@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  recordedRegisteredInferenceProviderAttachment,
+  verifyRegisteredInferenceProviderAttachment,
+} from "../../inference/native-provider/registered";
 import { validateNvidiaApiKeyValue } from "../../credentials/api-key-validation";
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/anthropic/openai-surface";
 import {
@@ -154,6 +158,45 @@ function rebuildProviderAdapter(
           })) as RunProviderCommand)
       : undefined,
   );
+}
+
+/** Recheck the external provider without acquiring ownership of it. */
+export async function verifyRebuildRegisteredProviderBeforeDelete(
+  sandboxName: string,
+  gatewayName: string,
+  config: RebuildResumeConfig,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  getSandbox: (name: string) => RebuildSandboxEntry | null = registry.getSandbox,
+): Promise<boolean> {
+  try {
+    const expected = recordedRegisteredInferenceProviderAttachment({
+      ...config,
+      name: sandboxName,
+      gatewayName,
+    });
+    const currentMatches = () => {
+      const current = getSandbox(sandboxName);
+      return (
+        current?.agent === config.agent &&
+        current.model === config.model &&
+        JSON.stringify(recordedRegisteredInferenceProviderAttachment(current)) ===
+          JSON.stringify(expected)
+      );
+    };
+    if (
+      !expected ||
+      (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) ||
+      !currentMatches()
+    )
+      return false;
+    await verifyRegisteredInferenceProviderAttachment({
+      adapter: rebuildProviderAdapter(runtimeSelection),
+      expected,
+    });
+    return currentMatches();
+  } catch {
+    return false;
+  }
 }
 
 /** Revalidate the frozen scoped authority immediately before destructive rebuild work. */
@@ -471,6 +514,15 @@ export async function checkRebuildGatewayCredentialReuseOrBail(
   bail: (msg: string, code?: number) => never,
   deps: GatewayCredentialReusePreflightDeps = defaultGatewayCredentialReusePreflightDeps(),
 ): Promise<boolean> {
+  if (config.registeredInferenceProviderAttachment !== undefined) {
+    const expected = config.registeredInferenceProviderAttachment;
+    if (
+      await verifyRebuildRegisteredProviderBeforeDelete(sandboxName, expected.gatewayName, config)
+    )
+      return true;
+    bail("Could not verify registered provider credential reuse; sandbox is untouched");
+    return false;
+  }
   if (config.nativeLocalProviderAttachment !== undefined) {
     try {
       await verifyRecordedNativeLocalProviderAttachment({

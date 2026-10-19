@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import {
   HOSTED_NATIVE_PROVIDERS,
   hostedNativeProvider,
@@ -1053,3 +1054,40 @@ it.each([
     });
   },
 );
+
+it("retains the external inference binding without borrowing an unrelated resume session", () => {
+  const f = registeredInferenceFixture();
+  vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+    sandboxName: "other",
+    provider: "openai-api",
+    model: "other",
+    endpointUrl: "https://other.example/v1",
+  });
+  const selected = entry({
+    gatewayName: f.binding.gatewayName,
+    provider: f.binding.providerName,
+    model: "model-a",
+    endpointUrl: f.binding.endpointUrl,
+    credentialEnv: f.binding.credentialEnv,
+    preferredInferenceApi: f.binding.inferenceApi,
+    registeredInferenceProviderAttachment: f.binding,
+  });
+  expect(
+    prepareRebuildResumeConfig("alpha", selected, "openclaw", noopLog, throwingBail),
+  ).toMatchObject({
+    provider: f.binding.providerName,
+    endpointUrl: f.binding.endpointUrl,
+    credentialEnv: f.binding.credentialEnv,
+    preferredInferenceApi: f.binding.inferenceApi,
+    registeredInferenceProviderAttachment: f.binding,
+  });
+  expect(() =>
+    prepareRebuildResumeConfig(
+      "alpha",
+      { ...selected, endpointUrl: "https://other.example/v1" },
+      "openclaw",
+      noopLog,
+      throwingBail,
+    ),
+  ).toThrow("sandbox is untouched");
+});

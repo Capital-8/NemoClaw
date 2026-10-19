@@ -111,7 +111,7 @@ export async function readHermesNativeLocalCredentialHandleIfNeeded(
   return handle;
 }
 
-async function readNativeCredentialHandle(
+export async function readNativeCredentialHandle(
   sandboxName: string,
   gatewayName: string,
   deps: {

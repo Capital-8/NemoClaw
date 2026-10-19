@@ -421,6 +421,11 @@ export async function runRebuildPostRestorePhase(
         bail("OpenClaw gateway-down maintenance authority was lost during rebuild.");
         return;
       }
+      await rebuildOnboardDependencies.refreshRestoredRegisteredOpenclawInferenceRoute(
+        recreatedEntry,
+        mcpRuntimeSelection,
+        registry.getSandbox,
+      );
       log("Releasing OpenClaw for one final start after all offline post-restore writes");
       const startResult = await finishUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
       log(`OpenClaw native final start: ${startResult.ok ? "verified" : startResult.stage}`);
