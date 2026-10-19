@@ -62,6 +62,7 @@ import {
   NEMOCLAW_VLLM_GPU_DEVICE_ENV,
   normalizeVllmGpuDevice,
   parseVllmExtraServeArgs,
+  resolveVllmModelAlias,
   resolveVllmGpuMemoryUtilization,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
@@ -1861,10 +1862,12 @@ function resolveVllmInstallSelectionEnv(
 ): VllmInstallSelectionEnv {
   const resumedModel = String(modelIntent ?? "").trim();
   const environmentModel = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim();
+  const registeredModel = resolveVllmModelAlias(resumedModel);
   if (
     resumedModel &&
     environmentModel &&
-    resumedModel.toLowerCase() !== environmentModel.toLowerCase()
+    resumedModel.toLowerCase() !== environmentModel.toLowerCase() &&
+    !(registeredModel && vllmModelMatchesAlias(registeredModel, environmentModel))
   ) {
     return { ok: false };
   }
