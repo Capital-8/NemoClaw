@@ -14,6 +14,10 @@ use k8s_openapi::api::{
     core::v1::{Namespace, PersistentVolumeClaim, Secret},
 };
 use kube::{Api, api::ListParams};
+use nemoclaw_e2e::{
+    assert_same_deployment_state,
+    state::{runtime_id, sandbox_binding},
+};
 use nemoclaw_sdk::{
     ObservationError,
     bundle::Bundle,
@@ -562,11 +566,127 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
     }
 }
 
+/// What the deployment's namespace shows when apply fails: each pod's phase
+/// and container states, recent events, and the end of each container's log.
+/// Live failures otherwise leave only the SDK's summary in CI logs.
+async fn namespace_diagnostics(client: &kube::Client, namespace: &str) -> String {
+    use k8s_openapi::api::core::v1::{Event, Pod};
+    use kube::api::LogParams;
+    let mut out = format!("diagnostics for namespace {namespace}:\n");
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    match pods.list(&ListParams::default()).await {
+        Ok(list) => {
+            for pod in list.items {
+                let name = pod.metadata.name.clone().unwrap_or_default();
+                let status = pod.status.clone().unwrap_or_default();
+                out += &format!("pod {name}: {}\n", status.phase.unwrap_or_default());
+                for container in status.container_statuses.unwrap_or_default() {
+                    let state = container.state.as_ref().map(|state| {
+                        if let Some(waiting) = &state.waiting {
+                            format!(
+                                "waiting {} {}",
+                                waiting.reason.clone().unwrap_or_default(),
+                                waiting.message.clone().unwrap_or_default()
+                            )
+                        } else if let Some(done) = &state.terminated {
+                            format!(
+                                "terminated {} exit {}",
+                                done.reason.clone().unwrap_or_default(),
+                                done.exit_code
+                            )
+                        } else {
+                            "running".into()
+                        }
+                    });
+                    out += &format!(
+                        "  container {}: ready={} restarts={} {}\n",
+                        container.name,
+                        container.ready,
+                        container.restart_count,
+                        state.unwrap_or_default()
+                    );
+                    let params = LogParams {
+                        container: Some(container.name.clone()),
+                        tail_lines: Some(40),
+                        ..LogParams::default()
+                    };
+                    if let Ok(log) = pods.logs(&name, &params).await {
+                        for line in log.lines() {
+                            out += &format!("    | {line}\n");
+                        }
+                    }
+                }
+            }
+        }
+        Err(error) => out += &format!("cannot list pods: {error}\n"),
+    }
+    if let Ok(list) = Api::<Event>::namespaced(client.clone(), namespace)
+        .list(&ListParams::default())
+        .await
+    {
+        let mut events = list.items;
+        events.sort_by_key(|event| event.last_timestamp.clone().map(|time| time.0));
+        for event in events.iter().rev().take(15).rev() {
+            out += &format!(
+                "event {} {}: {}\n",
+                event.reason.clone().unwrap_or_default(),
+                event.involved_object.name.clone().unwrap_or_default(),
+                event
+                    .message
+                    .clone()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(240)
+                    .collect::<String>()
+            );
+        }
+    }
+    out
+}
+
+/// Print the namespace's diagnostics if `applied` failed, while its pods still
+/// exist; the caller asserts the result.
+async fn diagnosed<T, E>(
+    applied: Result<T, E>,
+    client: &kube::Client,
+    namespace: &str,
+) -> Result<T, E> {
+    if applied.is_err() {
+        eprintln!("{}", namespace_diagnostics(client, namespace).await);
+    }
+    applied
+}
+
+/// Each sandbox's ID and its agent's Fabric runtime ID, by sandbox name, from
+/// the deployment's OpenTofu state. The readers panic on a missing record;
+/// the panic is returned so the caller can destroy before raising it.
+fn identities(
+    directory: &Path,
+    document: &Document,
+) -> std::thread::Result<BTreeMap<String, (String, String)>> {
+    std::panic::catch_unwind(|| {
+        document
+            .spec
+            .sandboxes
+            .iter()
+            .map(|sandbox| {
+                let id = sandbox_binding(directory, &sandbox.name)["id"].clone();
+                let runtime = runtime_id(directory, &sandbox.name);
+                (sandbox.name.clone(), (id, runtime))
+            })
+            .collect()
+    })
+}
+
 /// A full deployment on a real cluster through the public SDK: the managed
 /// gateway, then an agent sandbox from an image built from this checkout.
-/// Apply starts the agent through `fabric-agent-ctl`; export must recover the
-/// authored document, and destroy must keep the gateway's storage: its
-/// namespace, encryption key and claims keep their UIDs.
+/// Apply starts the agent through `fabric-agent-ctl`. Applying the document
+/// again, and then its export, must change nothing and keep each sandbox's ID
+/// and its agent's runtime ID; the first of these must also leave OpenTofu
+/// state as it was. Export must recover the authored document, and destroy
+/// must keep the gateway's storage: its namespace, encryption key and claims
+/// keep their UIDs. A failed apply prints the namespace's pods, events and
+/// log tails.
 ///
 /// `cargo ci live-kind` also provides:
 /// - `NEMOCLAW_TEST_BUNDLE`: the verified bundle
@@ -696,18 +816,52 @@ spec:
     .with_secrets(Arc::new(credentials));
     let cancel = CancellationToken::new();
 
-    let (applied, ()) = tokio::join!(
-        deployment.apply(&document, &cancel),
-        while_applying(&namespace)
-    );
-    applied.expect("the agent starts through fabric-agent-ctl");
-    let state_snapshot = fs::read(state.path().join("terraform.tfstate")).unwrap();
+    // Stop waiting on the caller's hook if apply fails first, so the error and
+    // the namespace's state show; after a successful apply, wait for the hook.
+    let apply = deployment.apply(&document, &cancel);
+    let hook = while_applying(&namespace);
+    tokio::pin!(apply, hook);
+    let applied = tokio::select! {
+        result = &mut apply => {
+            if result.is_ok() {
+                hook.await;
+            }
+            result
+        }
+        () = &mut hook => apply.await,
+    };
+    diagnosed(applied, &cluster, &namespace)
+        .await
+        .expect("the agent starts through fabric-agent-ctl");
+    let state_file = state.path().join("terraform.tfstate");
+    let state_snapshot = fs::read(&state_file).unwrap();
+    let applied_identities = identities(state.path(), &document);
 
-    // A complete deployment must be exportable. Clean up before asserting so a
-    // failed export or storage observation retains no live workload after this
-    // test. Storage is observed after export, which only refreshes, so the
-    // comparison spans destroy alone.
+    // A complete deployment must apply unchanged, be exportable, and accept
+    // its export unchanged. Clean up before asserting so a failed check
+    // retains no live workload after this test. Storage is observed after
+    // these steps, so the comparison spans destroy alone.
+    let unchanged = diagnosed(
+        deployment.apply(&document, &cancel).await,
+        &cluster,
+        &namespace,
+    )
+    .await;
+    let unchanged_state = fs::read(&state_file).unwrap();
     let exported = deployment.export(&cancel).await;
+    let reapplied = match &exported {
+        Ok(exported) => Some(
+            diagnosed(
+                deployment.apply(exported, &cancel).await,
+                &cluster,
+                &namespace,
+            )
+            .await,
+        ),
+        Err(_) => None,
+    };
+    let reapplied_state = fs::read(&state_file).unwrap();
+    let reapplied_identities = identities(state.path(), &document);
     let kept = retained(&cluster, &namespace, &release).await;
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     let remaining = retained(&cluster, &namespace, &release).await;
@@ -718,10 +872,37 @@ spec:
             change.resource
         );
     }
+    let unchanged = unchanged.expect("an unchanged apply must succeed");
+    assert!(
+        unchanged.changes.is_empty(),
+        "an unchanged apply changes nothing: {:?}",
+        unchanged.changes
+    );
     assert_eq!(
         exported.expect("export of the applied deployment must succeed"),
         document,
         "export recovers the authored configuration without readiness checks"
+    );
+    let reapplied = reapplied
+        .expect("the export was applied")
+        .expect("applying the export must succeed");
+    assert!(
+        reapplied.changes.is_empty(),
+        "applying the export changes nothing: {:?}",
+        reapplied.changes
+    );
+    // The first apply records the sandbox's policy hash as empty until the
+    // gateway reports the policy loaded, and the auth resource's Helm release
+    // as absent until the release exists; the unchanged apply's refresh
+    // records both. From then on, state must not change.
+    assert_same_deployment_state(&reapplied_state, &unchanged_state);
+    let applied_identities =
+        applied_identities.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    let reapplied_identities =
+        reapplied_identities.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    assert_eq!(
+        reapplied_identities, applied_identities,
+        "unchanged applies keep each sandbox and its agent's runtime"
     );
     assert!(
         kept.expect("the gateway's storage is observable before destroy")

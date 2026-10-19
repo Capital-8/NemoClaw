@@ -21,14 +21,19 @@ cargo ci live-kind
 
 The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The agent test uses the public SDK to deploy a gateway and sandbox from that image.
-It supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
-Export must reproduce the authored configuration; destroy then keeps the namespace, encryption key, and gateway PVC with unchanged UIDs.
-The OpenShift-profile test supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID through the same SDK flow.
+The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandbox from that image.
+The flow supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
+A second apply must report no changes.
+Its refresh records two values the first apply leaves for later: the sandbox's loaded policy hash and the auth resource's Helm release presence.
+Export must reproduce the authored configuration, and applying the export must report no changes and leave OpenTofu state as the second apply left it, apart from its serial and the order of check results.
+Each sandbox must keep its ID, and its agent its Fabric runtime ID, through the second apply and the export's apply.
+Destroy then keeps the namespace, encryption key, and gateway PVC with unchanged UIDs.
+If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, and the namespace's 15 most recent events; CI keeps that output in the suite's JUnit report for 14 days.
+The OpenShift-profile test also supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
 It checks anonymous and wrong-credential rejection, then deploys an agent with a caller-managed image pull Secret provisioned after namespace creation.
 A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
-Apply, export and destroy must preserve the authored references, keep registry values out of OpenTofu state, and retain the caller-managed Secret.
+Export must preserve the authored image and Secret references; OpenTofu state must hold no registry values, and destroy must retain the caller-managed Secret.
 The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
 These live tests request no inference and need no GPU or user registry credentials.
 The render tests check the Kubernetes gateway UID, observed OpenShift UID and group, and image pull references in gateway/helper pods and sandbox-driver configuration.
