@@ -1954,7 +1954,9 @@ export function createSetupInference(
             });
           }
           await cleanupUnreservedNativeLocalAfterHostFailure({
-            selectingNativeLocal,
+            // A runtime-owned native provider must roll back through its publication journal.
+            selectingNativeLocal:
+              selectingNativeLocal && !hostLocalGatewayMutation?.registerNativeProvider,
             attachment: nativeLocalProviderAttachment,
             reservationEntered: nativeLocalReservationEntered,
             sandboxName,
