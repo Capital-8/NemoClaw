@@ -460,6 +460,7 @@ describe("native local inference", () => {
     const openClawProfile = prepareNativeLocalProfile({ ...binding, agent: "openclaw" });
     expect(openClawProfile.document.binaries).toContain("/usr/local/bin/node");
     expect(openClawProfile.document.binaries).toContain("/usr/bin/python3");
+    expect(openClawProfile.document.binaries).toContain("/usr/bin/python3.13");
     expect(openClawProfile.profileId).not.toBe(profile.profileId);
     expect(profile.document.binaries).not.toContain("/usr/local/bin/openclaw");
     const piProfile = prepareNativeLocalProfile({ ...binding, agent: "pi" });
