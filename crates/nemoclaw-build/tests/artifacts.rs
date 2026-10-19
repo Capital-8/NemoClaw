@@ -553,3 +553,21 @@ fn runtime_source_identity_ignores_unrelated_inputs_and_dependency_owners() {
         source_version(&nemoclaw_build::runtime_source_inputs(root.path()).unwrap())
     );
 }
+
+#[test]
+fn runtime_sources_stage_from_the_lockfile_without_a_registry() {
+    use std::{fs, path::Path};
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = tempfile::tempdir().unwrap();
+    nemoclaw_build::stage_runtime_sources(&repository, root.path()).unwrap();
+    fs::remove_file(root.path().join("crates/nemoclaw-runtime/Cargo.toml.orig")).unwrap();
+    // Any registry request now fails at once. A stalled one would instead hold
+    // Cargo's package cache lock and block every other Cargo command.
+    fs::create_dir(root.path().join(".cargo")).unwrap();
+    fs::write(
+        root.path().join(".cargo/config.toml"),
+        "[http]\nproxy = \"127.0.0.1:1\"\n\n[net]\nretry = 0\n",
+    )
+    .unwrap();
+    nemoclaw_build::runtime_source_inputs(root.path()).unwrap();
+}

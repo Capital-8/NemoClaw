@@ -33,11 +33,15 @@ pub fn stage_runtime_sources(root: &Path, destination: &Path) -> Result<Vec<(Str
     // Reject nonregular source inputs before Cargo follows filesystem paths.
     supervisor_source_files(root)?;
     let package = tempfile::tempdir()?;
+    // The lockfile pins every dependency, so the package's own lockfile comes
+    // from the index Cargo has already cached. A registry request would hold
+    // Cargo's package cache lock, blocking other Cargo commands, while it stalls.
     let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .current_dir(root)
         .args([
             "package",
             "--locked",
+            "--offline",
             "--no-verify",
             "--allow-dirty",
             "-p",
