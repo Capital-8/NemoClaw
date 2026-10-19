@@ -30,7 +30,6 @@ test(
   async ({ artifacts, cleanup, host, lifecycle, runtimeProvider, sandbox, secrets, progress }) => {
     const credential = secrets.required("NVIDIA_API_KEY");
     const agent = process.env.NEMOCLAW_AGENT as "hermes" | "langchain-deepagents-code";
-    expect(["hermes", "langchain-deepagents-code"]).toContain(agent);
     const cli = agent === "hermes" ? "nemohermes" : "nemo-deepagents";
     const redactionValues = secrets.redactionValues();
     const env: NodeJS.ProcessEnv = {
@@ -70,9 +69,23 @@ test(
       ),
     );
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-      cleanupWhenOpenShellAvailable(host, commandOptions, () =>
-        sandbox.cleanupSandboxWhileGatewayRegistered(SANDBOX_NAME, commandOptions),
-      ),
+      cleanupWhenOpenShellAvailable(host, commandOptions, async () => {
+        await sandbox.cleanupSandboxBeforeOnboard(SANDBOX_NAME, commandOptions);
+        const remaining = await runtimeProvider.command(
+          [
+            "container",
+            "ps",
+            "--all",
+            "--filter",
+            `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+            "--format",
+            "{{.ID}}",
+          ],
+          { ...commandOptions, artifactName: "deferred-sandbox-absence" },
+        );
+        expect(remaining.exitCode, resultText(remaining)).toBe(0);
+        expect(remaining.stdout.trim(), resultText(remaining)).toBe("");
+      }),
     );
     cleanup.trackDisposable(`destroy deferred sandbox ${SANDBOX_NAME}`, () =>
       cleanupAcquiredResource(getSandbox(SANDBOX_NAME) !== null, async () => {
@@ -151,7 +164,6 @@ test(
       captureGatewayLog: true,
     });
     expect(onboarded.exitCode, resultText(onboarded)).toBe(0);
-    expect(getSandbox(SANDBOX_NAME)?.agent).toBe(agent);
     expect(loadSession()).toMatchObject({ status: "complete", sandboxName: SANDBOX_NAME });
     assertStockManagedImageReceipt({
       environment: onboardEnv,

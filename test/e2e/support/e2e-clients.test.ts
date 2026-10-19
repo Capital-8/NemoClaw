@@ -820,6 +820,7 @@ describe("E2E fixture clients", () => {
       ["sandbox", "delete", "assistant"],
     ]);
     expect(runner.calls[0].options).toMatchObject(options);
+    expect(runner.calls[1].options).toMatchObject(options);
   });
 
   it("initial cleanup accepts only the requested absent gateway", async () => {
