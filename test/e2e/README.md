@@ -1376,6 +1376,15 @@ rejection before replacement, rebuild from the recorded digest, NemoClaw
 destruction, and shared image retention. If the rebuild fails or times out, the
 target attempts to capture bounded, redacted lifecycle diagnostics before cleanup.
 
+Hermes images with the startup-completion helper wait up to 10 seconds for the non-root supervisor before configuration integrity inspection.
+The supervisor publishes completion after gateway startup, auxiliary startup, and Tirith finalization.
+The receipt binds the supervisor and gateway process generations; inspection rechecks it afterward.
+An unsafe receipt, missing completion at the deadline, or a changed process generation fails verification.
+All existing topology, ownership, permission, and metadata checks, including `st_ctime_ns`, remain required.
+Integrity failures are not retried.
+The receipt schedules inspection; it grants no security authority and does not prove that all native writers have stopped.
+Retained images without the helper and root-separated startup retain their existing integrity contracts.
+
 The same Docker and rootless Podman jobs run a separate legacy-volume refusal
 case before agent activation. It creates a disposable owned volume without
 OpenShell attachment approval. The production preflight must reject that volume.

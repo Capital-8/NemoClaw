@@ -16,12 +16,13 @@ export interface MutableHermesConfigVerification {
   readonly errors: readonly string[];
 }
 
-const MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS = 20_000;
+const MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS = 35_000;
 const MUTABLE_HERMES_CONFIG_PROBE = String.raw`
 import errno
 import fcntl
 import os
 import pwd
+import runpy
 import stat
 import struct
 import subprocess
@@ -36,6 +37,22 @@ config_dir = os.path.normpath(sys.argv[1])
 config_paths = [os.path.normpath(value) for value in sys.argv[2:]]
 if not os.path.isabs(config_dir) or not config_paths:
     raise RuntimeError("Hermes mutable config probe requires absolute paths")
+
+# Health can precede the supervisor's final startup writes. Wait before taking
+# the integrity snapshot; never retry an inspection that observes a mutation.
+startup_helper = "/usr/local/lib/nemoclaw/hermes-startup-completion.py"
+try:
+    startup = runpy.run_path(startup_helper)
+except FileNotFoundError as error:
+    if error.filename != startup_helper:
+        raise
+    # Retained/custom images predate the scheduling helper. Their existing
+    # integrity contract remains required, without a startup-completion claim.
+    startup = None
+if startup is not None and not startup["requires_completion"]():
+    # The root-separated entrypoint retains its existing startup protocol.
+    startup = None
+startup_receipt = startup["wait_for_completion"]() if startup is not None else None
 
 directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY
 file_flags = os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW
@@ -118,6 +135,8 @@ try:
                           zip(metadata_fields, initial_directory, current_directory)
                           if before != after]
         raise RuntimeError("Hermes config root changed during inspection: " + ", ".join(changed_fields))
+    if startup is not None and startup["read_completion"]() != startup_receipt:
+        raise RuntimeError("Hermes startup generation changed during config inspection")
 finally:
     os.close(directory_fd)
 `;
@@ -173,7 +192,7 @@ export function inspectMutableHermesConfigPerms(
           "--no-tty",
           "--no-login-shell",
           "--timeout",
-          "15",
+          "30",
           "--",
           ...command,
         ],

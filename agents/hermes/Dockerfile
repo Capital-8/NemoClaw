@@ -88,6 +88,7 @@ COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
 COPY agents/hermes/migrate-dashboard-state.py /usr/local/lib/nemoclaw/migrate-hermes-dashboard-state.py
 COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py
+COPY agents/hermes/startup-completion.py /usr/local/lib/nemoclaw/hermes-startup-completion.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
 COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py
 COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.3.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.1.3.json

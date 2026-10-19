@@ -296,6 +296,10 @@ _HERMES_TIRITH_MARKER_FINALIZER="/usr/local/lib/nemoclaw/finalize-tirith-marker.
 if [ ! -f "$_HERMES_TIRITH_MARKER_FINALIZER" ]; then
   _HERMES_TIRITH_MARKER_FINALIZER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/finalize-tirith-marker.py"
 fi
+_HERMES_STARTUP_COMPLETION="/usr/local/lib/nemoclaw/hermes-startup-completion.py"
+if [ ! -f "$_HERMES_STARTUP_COMPLETION" ]; then
+  _HERMES_STARTUP_COMPLETION="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/startup-completion.py"
+fi
 _HERMES_GUARD_TIMEOUT=(timeout --signal=TERM --kill-after=5s 12m)
 _HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=2s 15s)
 _HERMES_DASHBOARD_STATE_MIGRATION_TIMEOUT=(timeout --signal=TERM --kill-after=5s 30m)
@@ -3248,6 +3252,11 @@ relaunch_hermes_gateway_current_user() {
   ensure_hermes_supervised_auxiliaries || return $?
   finalize_tirith_marker_retry
   refresh_hermes_supervised_child_pids
+  publish_hermes_startup_completion || return $?
+}
+
+publish_hermes_startup_completion() {
+  "$_HERMES_PYTHON" -I "$_HERMES_STARTUP_COMPLETION" "$GATEWAY_PID"
 }
 
 supervise_hermes_service_restarts_current_user() {
@@ -3345,6 +3354,7 @@ if [ "$(id -u)" -ne 0 ]; then
   wait_for_hermes_gateway_internal "$GATEWAY_PID" || exit 1
   ensure_hermes_supervised_auxiliaries || exit 1
   finalize_tirith_marker_retry
+  publish_hermes_startup_completion || exit 1
   print_dashboard_urls
   supervise_hermes_service_restarts_current_user
   exit $?

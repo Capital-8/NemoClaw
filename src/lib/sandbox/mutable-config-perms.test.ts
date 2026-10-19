@@ -35,9 +35,10 @@ import {
 
 // The host has no sandbox account; retain real file ownership and execution identity.
 const localSandboxIdentity = `
-import os, pwd, types
+import os, pwd, types, runpy
 sandbox_uid, sandbox_gid = os.geteuid(), os.getegid()
 pwd.getpwnam = lambda name: types.SimpleNamespace(pw_uid=sandbox_uid, pw_gid=sandbox_gid)
+runpy.run_path = lambda path: {"requires_completion": lambda: True, "wait_for_completion": lambda: "fixture", "read_completion": lambda: "fixture"}
 `;
 
 const hermesTarget: AgentConfigTarget = {
@@ -79,11 +80,11 @@ describe("mutable Hermes config permissions", () => {
         "--no-tty",
         "--no-login-shell",
         "--timeout",
-        "15",
+        "30",
         "--",
         ...mutableHermesConfigProbeCommand(hermesTarget),
       ],
-      expect.objectContaining({ timeout: 20_000, maxBuffer: 64 * 1024 }),
+      expect.objectContaining({ timeout: 35_000, maxBuffer: 64 * 1024 }),
     );
     expect(mutableHermesConfigProbeCommand(hermesTarget)[0]).toBe("/usr/bin/python3");
   });
@@ -149,6 +150,7 @@ describe("mutable Hermes config permissions", () => {
 
   it("executes the Hermes probe and rejects read-only or linked config artifacts", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mutable-probe-"));
+    fs.chownSync(root, process.getuid!(), process.getgid!());
     const configDir = path.join(root, ".hermes");
     const configPath = path.join(configDir, "config.yaml");
     const hashPath = path.join(configDir, ".config-hash");
@@ -218,6 +220,8 @@ describe("mutable Hermes config permissions", () => {
   it.each([
     [0o3770, "unavailable", true, ""],
     [0o700, "verified", true, ""],
+    [0o700, "retained-image", true, ""],
+    [0o3770, "root-separated", true, ""],
     [0o700, "unavailable", false, "Private Hermes config requires an attested same-UID runtime"],
     [0o700, "changed", false, "Private Hermes config requires an attested same-UID runtime"],
     [
@@ -239,10 +243,17 @@ describe("mutable Hermes config permissions", () => {
     [0o3770, "root", false, "Hermes config probe requires the non-root sandbox identity"],
     [0o3770, "wrong-user", false, "Hermes config probe requires the non-root sandbox identity"],
     [0o3770, "wrong-group", false, "Hermes config probe requires the non-root sandbox identity"],
+    [
+      0o3770,
+      "startup-generation",
+      false,
+      "Hermes startup generation changed during config inspection",
+    ],
   ] as const)(
     "checks mode %s with %s topology without changing state",
     (mode, topology, expected, diagnostic) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-hermes-probe-"));
+      fs.chownSync(root, process.getuid!(), process.getgid!());
       const configDir = path.join(root, ".hermes");
       fs.mkdirSync(configDir, { mode });
       fs.chmodSync(configDir, mode);
@@ -267,6 +278,12 @@ describe("mutable Hermes config permissions", () => {
 ${localSandboxIdentity}
 import fcntl, os, stat, struct, subprocess, types
 topology = ${JSON.stringify(topology)}
+if topology == "startup-generation":
+    runpy.run_path = lambda path: {"requires_completion": lambda: True, "wait_for_completion": lambda: "old", "read_completion": lambda: "new"}
+elif topology == "retained-image":
+    runpy.run_path = lambda path: (_ for _ in ()).throw(FileNotFoundError(2, "missing helper", path))
+elif topology == "root-separated":
+    runpy.run_path = lambda path: {"requires_completion": lambda: False}
 original_fstat = os.fstat
 original_ioctl = fcntl.ioctl
 def blocking_flags(fd, append_flag, immutable_flag):
