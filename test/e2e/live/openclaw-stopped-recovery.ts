@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { parseStrictOpenShellSandboxListJson } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { waitUntilAsync } from "../../../src/lib/core/wait.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -43,13 +44,13 @@ export async function proveStoppedDockerAgentRecovery(
       timeoutMs: 10_000,
     });
     assertExitZero(result, "observe the test-owned sandbox lifecycle");
-    const rows = JSON.parse(result.stdout) as Array<{ id: string; name: string; phase: string }>;
+    const rows = parseStrictOpenShellSandboxListJson(result.stdout);
+    assert(rows, "Stopped recovery requires a complete, valid sandbox inventory");
     const selected = rows.filter((row) => row.name === sandboxName);
     assert.equal(selected.length, 1);
     return selected[0]!;
   };
   const source = await readSource();
-  assert(typeof source.id === "string" && /^[A-Za-z0-9._-]{1,512}$/u.test(source.id));
   assert.equal(source.phase, "Ready");
   const container = await runtime.resolveSandboxResourceHandle(sandboxName, {
     artifactName: `${prefix}-stopped-source-container`,
