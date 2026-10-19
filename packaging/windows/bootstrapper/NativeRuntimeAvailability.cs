@@ -23,7 +23,7 @@ internal sealed class NativeRuntimeAvailability
     internal bool IsSelectedRuntimeBuild => this.statuses is not null;
     internal bool CanSelect(string agent) => Agents.Contains(agent, StringComparer.Ordinal)
         && this.statuses is not null
-        && (this.statuses[agent] == "qualified" || agent == "openclaw" && this.statuses[agent] == "unqualified");
+        && this.statuses[agent] is "qualified" or "unqualified";
     internal bool IsUnqualified(string agent) => this.statuses is not null && this.statuses.TryGetValue(agent, out var status) && status == "unqualified";
     internal string UnavailableText => "Unavailable in this preview";
 

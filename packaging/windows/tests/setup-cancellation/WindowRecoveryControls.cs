@@ -96,16 +96,16 @@ internal static class WindowRecoveryControls
                 availability.SetValue(window, parse.Invoke(null, new object[] { record }));
                 Invoke(window, "ApplyRuntimeAvailability");
                 Invoke(window, "ShowNativeOnboarding", agent);
-                var enabled = status == "qualified" || agent == "openclaw" && status == "unqualified";
+                var enabled = status is "qualified" or "unqualified";
                 var expected = status == "unqualified"
-                    ? agent == "openclaw" ? "Preview: full runtime checks are pending." : "Unavailable: runtime qualification is pending."
+                    ? "Preview: full runtime checks are pending."
                     : status == "qualified" ? string.Empty : "Unavailable in this preview";
                 var selectedChoice = (RadioButton)window.FindName(agent == "openclaw" ? "OpenClawChoice" : "HermesChoice");
                 if (((TextBlock)window.FindName("AgentAvailabilityDetail")).Text != expected
                     || window.SelectedAgent != agent
                     || ((Button)window.FindName("ContinueAgentButton")).IsEnabled != enabled
                     || selectedChoice.IsEnabled != enabled)
-                    throw new InvalidOperationException($"Onboarding lost the {agent} qualification boundary or selected another agent.");
+                    throw new InvalidOperationException($"Onboarding lost the {agent} preview warning or selected another agent.");
                 // Exercise the fresh-install handlers without attaching a native install/save owner.
                 typeof(MainWindow).GetField("packageInstalled", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, false);
                 typeof(MainWindow).GetField("savedSettingsReady", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true);
@@ -113,7 +113,7 @@ internal static class WindowRecoveryControls
                 if ((((FrameworkElement)window.FindName("ConfigurationPanel")).Visibility == Visibility.Visible) != enabled)
                     throw new InvalidOperationException($"The {agent} configuration did not respect runtime availability.");
                 if (enabled && status == "unqualified" && !((TextBlock)window.FindName("ConfigurationDetail")).Text.StartsWith(expected, StringComparison.Ordinal))
-                    throw new InvalidOperationException("The OpenClaw preview warning disappeared during configuration.");
+                    throw new InvalidOperationException($"The {agent} preview warning disappeared during configuration.");
                 var providers = (ComboBox)window.FindName("ProviderChoice");
                 providers.SelectedItem = providers.Items.OfType<ComboBoxItem>().Single(value => value.Tag as string == "local");
                 ((TextBox)window.FindName("EndpointBox")).Text = "http://127.0.0.1:12345/v1";

@@ -88,11 +88,8 @@ export function assertNativePackageIncludesAgent(installRoot: string, agent: str
 export function nativePackageAgentSelectable(
   availability: NativePackageAvailability,
   agent: string,
-  qualification: boolean,
 ): boolean {
   if (agent !== "openclaw" && agent !== "hermes") return false;
   const status = availability[agent];
-  return (
-    status === "qualified" || ((agent === "openclaw" || qualification) && status === "unqualified")
-  );
+  return status === "qualified" || status === "unqualified";
 }

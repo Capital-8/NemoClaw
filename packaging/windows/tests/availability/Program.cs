@@ -23,11 +23,12 @@ static void Reject(byte[] bytes)
     throw new Exception("Invalid availability was admitted.");
 }
 var selected = NativeRuntimeAvailability.Parse(Record());
-Require(selected.IsSelectedRuntimeBuild && selected.CanSelect("openclaw") && !selected.CanSelect("hermes") && !selected.CanSelect("pi"));
+Require(selected.IsSelectedRuntimeBuild && selected.CanSelect("openclaw") && selected.CanSelect("hermes") && !selected.CanSelect("pi"));
 var preview = NativeRuntimeAvailability.Parse(Record("unqualified"));
 Require(preview.CanSelect("openclaw") && preview.IsUnqualified("openclaw")
     && preview.SelectionDetail("openclaw") == "Preview: full runtime checks are pending."
-    && !preview.CanSelect("hermes") && preview.SelectionDetail("hermes") == "Unavailable: runtime qualification is pending."
+    && preview.CanSelect("hermes") && preview.IsUnqualified("hermes")
+    && preview.SelectionDetail("hermes") == "Preview: full runtime checks are pending."
     && selected.SelectionDetail("openclaw") == string.Empty);
 Require(NativeRuntimeAvailability.Parse(Record("qualified", "qualified")).CanSelect("hermes"));
 Require(!NativeRuntimeAvailability.Parse(Record("not-included", "not-included")).CanSelect("openclaw") && !NativeRuntimeAvailability.Parse(Record("not-included", "not-included")).CanSelect("hermes"));
@@ -49,7 +50,7 @@ Require(!selected.BundledLocalInferenceAvailable);
 var withEngine = Encoding.UTF8.GetString(Record()).Replace("\"schemaVersion\":1", "\"schemaVersion\":1,\"prebuiltLocalModelAvailable\":false,\"bundledLocalInferenceAvailable\":true", StringComparison.Ordinal);
 var engine = NativeRuntimeAvailability.Parse(Encoding.UTF8.GetBytes(withEngine));
 Require(engine.BundledLocalInferenceAvailable && !engine.PrebuiltLocalModelAvailable);
-Require(engine.IsUnqualified("hermes") && !engine.CanSelect("hermes") && !engine.CanSelect("pi"));
+Require(engine.IsUnqualified("hermes") && engine.CanSelect("hermes") && !engine.CanSelect("pi"));
 Reject(Encoding.UTF8.GetBytes(withEngine.Replace("\"bundledLocalInferenceAvailable\":true", "\"bundledLocalInferenceAvailable\":\"true\"", StringComparison.Ordinal)));
 Reject(Encoding.UTF8.GetBytes(withEngine.Replace("\"bundledLocalInferenceAvailable\":true", "\"bundledLocalInferenceAvailable\":true,\"bundledLocalInferenceAvailable\":false", StringComparison.Ordinal)));
-Console.WriteLine("17 availability controls passed; included OpenClaw previews remain unqualified and selectable.");
+Console.WriteLine("17 availability controls passed; included OpenClaw and Hermes previews remain unqualified and selectable.");

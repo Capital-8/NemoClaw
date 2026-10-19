@@ -484,7 +484,7 @@ export async function startOnboardingServer(
           chunks.push(chunk);
         }
         const submitted = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        if (!nativePackageAgentSelectable(availability, submitted?.agent, qualification))
+        if (!nativePackageAgentSelectable(availability, submitted?.agent))
           throw new Error("The selected agent is unavailable in this installer.");
         const normalized = normalizeOnboardingConfiguration(submitted, qualification);
         const configPath = qualification
@@ -575,7 +575,7 @@ export async function startOnboardingServer(
               .replace(
                 /data-agent="(openclaw|hermes)"/gu,
                 (_match, agent) =>
-                  `data-agent="${agent}" data-package-selectable="${nativePackageAgentSelectable(availability, agent, qualification)}"`,
+                  `data-agent="${agent}" data-package-selectable="${nativePackageAgentSelectable(availability, agent)}"`,
               )
           : content,
       );
@@ -679,7 +679,7 @@ async function driveBrowser(
       for (const agent of AGENT_CHOICE_PROOF) {
         const card = page.locator(`[data-agent='${agent}']`);
         if (!availability) fail("the package agent selection record is missing");
-        if (!nativePackageAgentSelectable(availability, agent, qualification)) {
+        if (!nativePackageAgentSelectable(availability, agent)) {
           if (!(await card.isDisabled()) || (await card.getAttribute("aria-checked")) === "true")
             fail(`unavailable native agent ${agent} is selectable`);
           disabledAgentChoices.push(agent);
@@ -693,7 +693,7 @@ async function driveBrowser(
         console.log(`WEB UI> AGENT CHOICE selected ${agent}`);
         await sleep(1500);
       }
-      if (!availability || !nativePackageAgentSelectable(availability, targetAgent, qualification))
+      if (!availability || !nativePackageAgentSelectable(availability, targetAgent))
         fail("the requested agent is unavailable in this installer");
       await page.locator(`[data-agent='${targetAgent}']`).click();
       await page.screenshot({

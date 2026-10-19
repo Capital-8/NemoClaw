@@ -13,12 +13,12 @@ recognize those historical identities; they cannot start a new agent session.
 Non-Windows integrations and OpenClaw's internal dependencies are unchanged.
 This scope reduction does not establish installed qualification or release approval.
 
-An included OpenClaw preview can be configured and launched while its package
+An included OpenClaw or Hermes preview can be configured and launched while its package
 status remains `unqualified`. Setup displays the pending-runtime-checks warning
 during agent selection and configuration. Missing or invalid availability records
-and `not-included` agents remain unavailable. Hermes selection still requires
-`qualified` status. Preview selection does not grant runtime admission, mark
-evidence qualified, authorize CI credentials, or satisfy qualified-publication gates.
+and `not-included` agents remain unavailable. Preview selection does not grant
+runtime admission, mark evidence qualified, authorize CI credentials, or satisfy
+qualified-publication gates.
 
 Same-repository OpenClaw pull requests publish a downloadable Actions artifact
 named `unqualified-openclaw-preview-<commit>-<run>-<attempt>` after the package

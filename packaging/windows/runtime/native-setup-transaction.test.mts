@@ -276,11 +276,7 @@ for (const included of ["openclaw", "hermes"] as const) {
         assert.equal(page.status, 200);
         assert.equal(readNativePackageAvailability(installed.root)[included], status);
         const html = await page.text();
-        assert(
-          html.includes(
-            `data-agent="${included}" data-package-selectable="${included === "openclaw" || qualification || status === "qualified"}"`,
-          ),
-        );
+        assert(html.includes(`data-agent="${included}" data-package-selectable="true"`));
         assert(html.includes(`data-agent="${absent}" data-package-selectable="false"`));
         const token = new URL(server.url).searchParams.get("session")!;
         const submit = (agent: string, session = token) =>
@@ -307,12 +303,7 @@ for (const included of ["openclaw", "hermes"] as const) {
           assert.equal(server.runtimeConfiguration()?.configPath, null);
         } else {
           // A selectable normal agent still cannot use qualification inference.
-          assert.match(
-            (await selected.json()).message,
-            included === "openclaw" || status === "qualified"
-              ? /Select a valid inference provider/u
-              : /unavailable in this installer/u,
-          );
+          assert.match((await selected.json()).message, /Select a valid inference provider/u);
           assert.equal(server.selection(), null);
         }
         assert.equal(readNativePackageAvailability(installed.root)[included], status);
