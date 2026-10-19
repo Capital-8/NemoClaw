@@ -43,6 +43,22 @@ fn profile_override(packages: &[String], level: u8) -> Result<String, String> {
     Ok(config)
 }
 
+fn codegen_override(packages: &[String], units: u8) -> Result<String, String> {
+    let mut config = profile_override(packages, 3)?;
+    if !matches!(units, 16 | 64) {
+        return Err("codegen comparison requires the default 16 or candidate 64 units".into());
+    }
+    if units == 64 {
+        for name in packages {
+            config.push_str(&format!(
+                "\n[profile.release.package.{}]\ncodegen-units = 64\n",
+                serde_json::to_string(name).unwrap()
+            ));
+        }
+    }
+    Ok(config)
+}
+
 fn execution_allowed(ci: bool, os: &str) -> Result<(), String> {
     if !ci || os != "windows" {
         return Err("destructive workspace rebuilding is restricted to an explicit Windows GitHub Actions run".into());
@@ -69,6 +85,13 @@ fn experiment_order(link_times: bool) -> Vec<(u8, bool)> {
     }
 }
 
+fn codegen_order() -> Vec<(u8, bool)> {
+    sample_order()
+        .into_iter()
+        .map(|(level, measured)| (if level == 3 { 16 } else { 64 }, measured))
+        .collect()
+}
+
 fn cargo_arguments(args: &[OsString], config: &Path) -> Vec<OsString> {
     if args.first().is_some_and(|a| a == "build") && args.iter().any(|a| a == "--release") {
         [
@@ -93,6 +116,38 @@ fn traced_cargo_arguments(args: &[OsString], config: &Path, link_times: bool) ->
         forwarded.push("--message-format=json".into());
     }
     forwarded
+}
+
+fn validate_codegen(log: &str, units: u8) -> Result<(), String> {
+    if !matches!(units, 16 | 64) {
+        return Err("unsupported codegen-unit configuration".into());
+    }
+    for name in [
+        "nemoclaw_sdk",
+        "nemoclaw_provider",
+        "openshell_provider",
+        "fabric_provider",
+        "nemoclaw",
+    ] {
+        let marker = format!("--crate-name {name} ");
+        let line = log
+            .lines()
+            .find(|line| line.contains(&marker))
+            .ok_or_else(|| format!("no compiler invocation for {name}"))?;
+        if !line.contains("-C opt-level=3") || line.contains("-C incremental=") {
+            return Err(format!(
+                "{name} must retain non-incremental optimization level 3"
+            ));
+        }
+        if units == 64 && !line.contains("-C codegen-units=64")
+            || units == 16 && line.contains("codegen-units")
+        {
+            return Err(format!(
+                "{name} did not attest the requested codegen-unit configuration {units}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_compilation(units: &serde_json::Value, packages: &[String]) -> Result<(), String> {
@@ -154,6 +209,13 @@ fn compatible_inventory(
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExperimentMode {
+    Optimization,
+    Linker,
+    CodegenUnits,
 }
 
 const PLATFORM: &str = "windows_amd64";
@@ -338,7 +400,9 @@ fn checkpoint(stage: &Path, report: &Value) -> AnyResult<()> {
         stage.join("report.json"),
         serde_json::to_vec_pretty(report)?,
     )?;
-    let purpose = if report["link_times"] == true {
+    let purpose = if report["codegen_units"] == true {
+        "Codegen-unit comparison at unchanged optimization level 3: baseline retains the pinned compiler default (16, non-incremental), candidate sets 64 only for named workspace crates. Dependency settings and linker are unchanged. Two warmups precede rebuilt-workspace ABBA samples."
+    } else if report["link_times"] == true {
         "Unchanged release level 3 with MSVC /TIME diagnostics. One warmup is excluded; one rebuilt-workspace bundle provides per-target link-pass data. This is a diagnostic trace, not an optimization A/B comparison."
     } else {
         "Baseline uses the existing release profile. Candidate overrides only the listed workspace packages to level 2. Third-party profile settings are unchanged."
@@ -347,8 +411,8 @@ fn checkpoint(stage: &Path, report: &Value) -> AnyResult<()> {
         "# Windows bundle investigation\n\nSource: {}\n\n{purpose}\n\n\
          The SDK-enabled dev assembler was built once in {:.2}s, outside sample timing. \
          Samples time the complete bundle command (release compilation, schema/manifest generation and assembly), not whole-CI elapsed time.\n\n\
-         | Sample | Level | Measured | Bundle seconds | Fresh units | Dirty units | Bundle bytes |\n\
-         |---|---:|---|---:|---:|---:|---:|\n",
+         | Sample | Opt level | CGUs | Measured | Bundle seconds | Fresh units | Dirty units | Bundle bytes |\n\
+         |---|---:|---:|---|---:|---:|---:|---:|\n",
         report["source_sha"].as_str().unwrap_or("unknown"),
         report["assembler_seconds"].as_f64().unwrap_or_default()
     );
@@ -356,9 +420,10 @@ fn checkpoint(stage: &Path, report: &Value) -> AnyResult<()> {
         use std::fmt::Write as _;
         writeln!(
             summary,
-            "| {} | {} | {} | {:.3} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {:.3} | {} | {} | {} |",
             sample["label"].as_str().unwrap_or("?"),
             sample["level"],
+            sample["codegen_units"],
             sample["measured"],
             sample["seconds"].as_f64().unwrap_or_default(),
             sample["fresh"],
@@ -478,7 +543,7 @@ fn snapshot(root: &Path, stage: &Path, level: u8) -> AnyResult<()> {
     let temporary = tempfile::tempdir_in(&parent)?;
     let source = temporary.path().join("bundle");
     copy_new_tree(&root.join("dist").join(PLATFORM), &source)?;
-    let destination = parent.join(format!("level-{level}"));
+    let destination = parent.join(format!("variant-{level}"));
     if destination.exists() {
         if fs::symlink_metadata(&destination)?.file_type().is_symlink() {
             return Err("snapshot destination cannot be a link".into());
@@ -489,12 +554,20 @@ fn snapshot(root: &Path, stage: &Path, level: u8) -> AnyResult<()> {
     Ok(())
 }
 
-fn restore(root: &Path, level: u8) -> AnyResult<()> {
-    if !matches!(level, 2 | 3) {
-        return Err("restore requires level 2 or 3".into());
+fn restore_variant_allowed(codegen: bool, setting: u8) -> bool {
+    if codegen {
+        matches!(setting, 16 | 64)
+    } else {
+        matches!(setting, 2 | 3)
     }
+}
+
+fn restore(root: &Path, level: u8) -> AnyResult<()> {
     let stage = root.join(STAGE);
     let report: Value = serde_json::from_slice(&fs::read(stage.join("report.json"))?)?;
+    if !restore_variant_allowed(report["codegen_units"] == true, level) {
+        return Err("restore setting must belong to this experiment".into());
+    }
     if report["completed"] != true || report["source_sha"] != source_sha(root)? {
         return Err("only a completed comparison from this exact source can be restored".into());
     }
@@ -503,7 +576,7 @@ fn restore(root: &Path, level: u8) -> AnyResult<()> {
         return Err("bundle destination cannot be a link".into());
     }
     let current: Value = serde_json::from_slice(&fs::read(destination.join("manifest.json"))?)?;
-    let selected = stage.join("bundles").join(format!("level-{level}"));
+    let selected = stage.join("bundles").join(format!("variant-{level}"));
     let next: Value = serde_json::from_slice(&fs::read(selected.join("manifest.json"))?)?;
     compatible_inventory(&current, &next)?;
     let parent = root.join("dist");
@@ -515,7 +588,7 @@ fn restore(root: &Path, level: u8) -> AnyResult<()> {
     copy_new_tree(&selected, &copied)?;
     fs::remove_dir_all(&destination)?;
     fs::rename(copied, destination)?;
-    println!("Restored opt-level {level} bundle for native validation");
+    println!("Restored configuration {level} bundle for native validation");
     Ok(())
 }
 
@@ -523,8 +596,10 @@ fn experiment(
     root: &Path,
     packages: &[String],
     real_cargo: &OsString,
-    link_times: bool,
+    mode: ExperimentMode,
 ) -> AnyResult<()> {
+    let link_times = mode == ExperimentMode::Linker;
+    let codegen = mode == ExperimentMode::CodegenUnits;
     let sha = source_sha(root)?;
     let target = root.join("target");
     fs::create_dir_all(&target)?;
@@ -536,12 +611,20 @@ fn experiment(
     fs::create_dir(&stage)?; // Never overwrite another run's evidence.
     fs::create_dir(stage.join("profiles"))?;
     fs::create_dir(stage.join("samples"))?;
-    let order = experiment_order(link_times);
+    let order = if codegen {
+        codegen_order()
+    } else {
+        experiment_order(link_times)
+    };
     let levels: std::collections::BTreeSet<_> = order.iter().map(|(level, _)| *level).collect();
     for level in levels {
         fs::write(
-            stage.join("profiles").join(format!("level-{level}.toml")),
-            profile_override(packages, level)?,
+            stage.join("profiles").join(format!("variant-{level}.toml")),
+            if codegen {
+                codegen_override(packages, level)?
+            } else {
+                profile_override(packages, level)?
+            },
         )?;
     }
     if link_times {
@@ -559,7 +642,7 @@ fn experiment(
     let tool = root.join("target/debug/nemoclaw-build.exe");
     let shim = env::current_exe()?;
     let mut report = serde_json::json!({
-        "source_sha":sha, "platform":PLATFORM, "link_times":link_times,
+        "source_sha":sha, "platform":PLATFORM, "link_times":link_times, "codegen_units":codegen,
         "rustc":output(Command::new("rustc").arg("-vV"))?,
         "cargo":output(Command::new(real_cargo).arg("--version"))?,
         "github_run":env::var("GITHUB_RUN_ID").ok(),
@@ -569,13 +652,19 @@ fn experiment(
     checkpoint(&stage, &report)?;
     let mut baseline: Option<Value> = None;
     for (index, (level, measured)) in order.into_iter().enumerate() {
+        let opt_level = if codegen { 3 } else { level };
         if source_sha(root)? != sha {
             return Err("source revision changed during experiment".into());
         }
         let label = format!(
-            "{:02}-{}-opt{level}",
+            "{:02}-{}-{}",
             index + 1,
-            if measured { "sample" } else { "warmup" }
+            if measured { "sample" } else { "warmup" },
+            if codegen {
+                format!("cgu{level}")
+            } else {
+                format!("opt{level}")
+            }
         );
         let sample_dir = stage.join("samples").join(&label);
         fs::create_dir(&sample_dir)?;
@@ -604,7 +693,7 @@ fn experiment(
             )
             .env(
                 "WINDOWS_BUNDLE_PROFILE_CONFIG",
-                stage.join("profiles").join(format!("level-{level}.toml")),
+                stage.join("profiles").join(format!("variant-{level}.toml")),
             );
         if link_times {
             command.env("LINK", time_link_options(env::var_os("LINK")));
@@ -618,15 +707,18 @@ fn experiment(
         fs::copy(&html, sample_dir.join("cargo-timing.html"))?;
         let units = cargo_units(&timing)?;
         let log = fs::read_to_string(sample_dir.join("build.log"))?;
-        let expected = format!("-C opt-level={level}");
+        let expected = format!("-C opt-level={opt_level}");
         let mut problem = None;
         if !log
             .lines()
             .any(|l| l.contains("--crate-name nemoclaw_sdk ") && l.contains(&expected))
         {
             problem = Some(format!(
-                "compiler invocation did not attest SDK optimization level {level}"
+                "compiler invocation did not attest SDK optimization level {opt_level}"
             ));
+        }
+        if codegen && let Err(error) = validate_codegen(&log, level) {
+            problem = Some(error);
         }
         if measured && let Err(error) = validate_compilation(&units, packages) {
             problem = Some(error);
@@ -673,7 +765,7 @@ fn experiment(
         let mut sizes = BTreeMap::new();
         file_sizes(&bundle, &bundle, &mut sizes)?;
         report["samples"].as_array_mut().unwrap().push(serde_json::json!({
-            "label":label, "level":level, "measured":measured,
+            "label":label, "variant":level, "level":opt_level, "codegen_units":if codegen { Some(level) } else { None }, "measured":measured,
             "seconds":seconds, "fresh":timing_count(&timing,"Fresh units")?,
             "dirty":timing_count(&timing,"Dirty units")?,
             "bundle_bytes":sizes.values().sum::<u64>(), "file_bytes":sizes,
@@ -714,39 +806,40 @@ fn entry() -> AnyResult<()> {
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
-            "bundle_profile_experiment [--plan | --run | --link-times | --restore 2|3]\n\
+            "bundle_profile_experiment [--plan | --plan-codegen-units | --run | --link-times | --codegen-units | --restore CONFIG]\n\
             --run rebuilds only release workspace artifacts and requires Windows GitHub Actions.\n\
             Production profiles are never edited; reports go under {STAGE}."
         );
         return Ok(());
     }
-    if args
-        .first()
-        .is_some_and(|a| a == "--run" || a == "--link-times" || a == "--restore")
-    {
+    if args.first().is_some_and(|a| {
+        a == "--run" || a == "--link-times" || a == "--codegen-units" || a == "--restore"
+    }) {
         windows_only()?; // Refuse before metadata, writes or artifact cleanup.
     }
     let real = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let (root, packages) = workspace(&real)?;
     match args.first().and_then(|s| s.to_str()) {
-        None | Some("--plan") if args.len() <= 1 => {
+        None | Some("--plan") | Some("--plan-codegen-units") if args.len() <= 1 => {
+            let cgus = args.first().is_some_and(|a| a == "--plan-codegen-units");
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "source_sha":output(Command::new("git").current_dir(&root).args(["rev-parse","HEAD"]))?,
                     "platform":PLATFORM, "workspace_packages":packages,
-                    "baseline":profile_override(&packages,3)?, "candidate":profile_override(&packages,2)?,
-                    "order":sample_order().map(|(level,measured)| serde_json::json!({"level":level,"measured":measured}))
+                    "baseline":if cgus { codegen_override(&packages,16)? } else { profile_override(&packages,3)? }, "candidate":if cgus { codegen_override(&packages,64)? } else { profile_override(&packages,2)? },
+                    "order":if cgus { codegen_order() } else { sample_order().to_vec() }.into_iter().map(|(setting,measured)| serde_json::json!({"setting":setting,"measured":measured})).collect::<Vec<_>>()
                 }))?
             );
             Ok(())
         }
-        Some("--run") if args.len() == 1 => experiment(&root, &packages, &real, false),
-        Some("--link-times") if args.len() == 1 => experiment(&root, &packages, &real, true),
+        Some("--run") if args.len() == 1 => experiment(&root, &packages, &real, ExperimentMode::Optimization),
+        Some("--link-times") if args.len() == 1 => experiment(&root, &packages, &real, ExperimentMode::Linker),
+        Some("--codegen-units") if args.len() == 1 => experiment(&root, &packages, &real, ExperimentMode::CodegenUnits),
         Some("--restore") if args.len() == 2 => {
             restore(&root, args[1].to_str().ok_or("invalid level")?.parse()?)
         }
-        _ => Err("expected --plan, --run, --link-times, or --restore 2|3".into()),
+        _ => Err("expected --plan, --plan-codegen-units, --run, --link-times, --codegen-units, or --restore CONFIG".into()),
     }
 }
 
@@ -760,6 +853,88 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_configurations_must_belong_to_the_recorded_experiment() {
+        assert!(restore_variant_allowed(true, 16));
+        assert!(restore_variant_allowed(true, 64));
+        assert!(!restore_variant_allowed(true, 3));
+        assert!(restore_variant_allowed(false, 3));
+        assert!(!restore_variant_allowed(false, 64));
+        assert!(!restore_variant_allowed(true, 0));
+    }
+
+    #[test]
+    fn codegen_samples_attest_both_partitioning_and_unchanged_optimization() {
+        let names = [
+            "nemoclaw_sdk",
+            "nemoclaw_provider",
+            "openshell_provider",
+            "fabric_provider",
+            "nemoclaw",
+        ];
+        let baseline = names
+            .map(|n| format!("rustc --crate-name {n} --edition=2024 -C opt-level=3"))
+            .join("\n");
+        assert!(
+            validate_codegen(&baseline, 64).is_err(),
+            "an ignored override is not a candidate sample"
+        );
+        assert!(validate_codegen(&baseline, 16).is_ok());
+        let candidate = baseline.replace("-C opt-level=3", "-C opt-level=3 -C codegen-units=64");
+        assert!(validate_codegen(&candidate, 64).is_ok());
+        assert!(
+            validate_codegen(&candidate, 16).is_err(),
+            "baseline must retain the pinned compiler default"
+        );
+        assert!(validate_codegen(&candidate.replace("opt-level=3", "opt-level=2"), 64).is_err());
+    }
+
+    #[test]
+    fn codegen_comparison_warms_both_then_rebuilds_in_abba_order() {
+        assert_eq!(
+            codegen_order(),
+            [
+                (16, false),
+                (64, false),
+                (16, true),
+                (64, true),
+                (64, true),
+                (16, true)
+            ]
+        );
+    }
+
+    #[test]
+    fn codegen_candidate_changes_only_workspace_partitioning_not_optimization() {
+        let packages = vec!["nemoclaw-sdk".into(), "nemoclaw-provider".into()];
+        let candidate: toml::Value =
+            toml::from_str(&codegen_override(&packages, 64).unwrap()).unwrap();
+        assert_eq!(
+            candidate["profile"]["release"]["package"]["nemoclaw-sdk"]["codegen-units"]
+                .as_integer(),
+            Some(64)
+        );
+        assert!(
+            candidate["profile"]["release"]["package"]["nemoclaw-sdk"]
+                .get("opt-level")
+                .is_none()
+        );
+        assert!(
+            candidate["profile"]["release"]
+                .get("codegen-units")
+                .is_none()
+        );
+        assert!(
+            candidate["profile"]["release"]["package"]
+                .get("*")
+                .is_none()
+        );
+        let baseline: toml::Value =
+            toml::from_str(&codegen_override(&packages, 16).unwrap()).unwrap();
+        assert!(baseline.get("profile").is_none());
+        assert!(codegen_override(&packages, 0).is_err());
+    }
 
     #[test]
     fn link_timing_preserves_existing_msvc_options() {

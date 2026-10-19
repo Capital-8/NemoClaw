@@ -3,9 +3,38 @@
 
 # Windows bundle profile investigation
 
+## Current codegen-unit comparison
+
+The workflow now uses --codegen-units. It keeps optimization level 3 and the
+selected linker unchanged. Baseline retains the pinned non-incremental rustc
+default of 16 codegen units; candidate sets 64 for named workspace packages only.
+Third-party settings stay unchanged, and no LINK=/TIME diagnostics are enabled.
+
+Preview without cleaning or building bundles:
+
+```sh
+cargo run --locked --target-dir target/ci-runner -p nemoclaw-build --no-default-features \
+  --example bundle_profile_experiment -- --plan-codegen-units
+```
+
+The driver warms both variants, then measures 16/64/64/16 with fresh release
+workspace artifacts and warm dependencies. Compiler commands must attest level
+3 for the SDK, CLI and provider libraries, no explicit CGU override for baseline,
+and codegen-units=64 for candidate. The fixed CI environment disables incremental
+compilation. Other source/cache/manifest checks remain in force.
+
+After timing, cargo ci build prepares native validation executables once.
+--restore 16 and --restore 64 select snapshots belonging to this experiment;
+the workflow runs the native suite against each and retains separate XML.
+The report records optimization level, codegen-unit setting, raw compiler logs
+and executable sizes. More codegen units can hurt runtime optimization, so build
+time alone cannot justify a production change.
+
+[Compiler codegen-unit defaults](https://doc.rust-lang.org/rustc/codegen-options/index.html#codegen-units).
+
 ## Linker diagnostic mode
 
-The current workflow uses --link-times at unchanged release level 3. It first
+The earlier workflow used --link-times at unchanged release level 3. It first
 compiles a small Rust probe with MSVC's LINK=/TIME and verifies that the pinned
 rustc forwards the linker diagnostics. It then warms dependencies and records
 one rebuilt-workspace bundle command with structured Cargo diagnostics.

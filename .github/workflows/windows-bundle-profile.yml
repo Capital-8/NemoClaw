@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   compare:
-    name: Windows / Linker timing
+    name: Windows / Codegen-unit ABBA
     if: github.head_ref == 'perf/windows-bundle-profile' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-2025
     timeout-minutes: 90
@@ -40,11 +40,11 @@ jobs:
         run: >-
           cargo test --locked -p nemoclaw-build
           --example bundle_profile_experiment sdk_manifest_serializer_matches_the_checked_wire_contract
-      - name: Measure unchanged release linker passes
+      - name: Compare unchanged optimization with codegen units 16 and 64
         id: compare
         run: >-
           cargo run --locked --target-dir target/ci-runner -p nemoclaw-build
-          --no-default-features --example bundle_profile_experiment -- --link-times
+          --no-default-features --example bundle_profile_experiment -- --codegen-units
       - name: Build native validation executables
         id: native-build
         if: always() && steps.compare.outcome == 'success'
@@ -55,7 +55,7 @@ jobs:
           NEXTEST_TEST_THREADS: "4"
         if: always() && steps.compare.outcome == 'success' && steps.native-build.outcome == 'success'
         run: |
-          target/ci-runner/debug/examples/bundle_profile_experiment.exe --restore 3
+          target/ci-runner/debug/examples/bundle_profile_experiment.exe --restore 16
           cargo ci lifecycle
       - name: Preserve baseline validation timings
         if: always() && steps.compare.outcome == 'success'
@@ -65,6 +65,20 @@ jobs:
             cp target/nextest/lifecycle/lifecycle.xml .build/windows-bundle-profile/validation/baseline.xml
           fi
           rm -f target/nextest/lifecycle/lifecycle.xml
+      - name: Validate candidate native lifecycle
+        id: candidate
+        env:
+          NEXTEST_TEST_THREADS: "4"
+        if: always() && steps.compare.outcome == 'success' && steps.native-build.outcome == 'success'
+        run: |
+          target/ci-runner/debug/examples/bundle_profile_experiment.exe --restore 64
+          cargo ci lifecycle
+      - name: Preserve candidate validation timings
+        if: always() && steps.compare.outcome == 'success'
+        run: |
+          if [ -f target/nextest/lifecycle/lifecycle.xml ]; then
+            cp target/nextest/lifecycle/lifecycle.xml .build/windows-bundle-profile/validation/candidate.xml
+          fi
       - name: Publish comparison summary
         if: always()
         run: |
