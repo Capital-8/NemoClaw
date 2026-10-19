@@ -1925,7 +1925,7 @@ world-writable system temporary directory. The test cleanup removes the workspac
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
-allowlisted `cloud-onboard-trace-timing-summary.json` timing schema and deletes
+allowlisted `cloud-onboard-trace-timing-summary.json` schema. The workflow deletes
 the raw directory. Aggregation ratchets require `report-to-pr` and `scorecard`
 to wait for the same execution-job set.
 
@@ -1936,6 +1936,24 @@ them before upload, deletes the raw trace directory, and uploads only
 target artifact. These per-target summaries are artifact evidence only; the
 Slack/GitHub scorecard comparison remains tied to the dedicated `cloud-onboard`
 artifact so baseline aggregation stays stable.
+The summary also retains `provider_probes` when validation emitted probe events.
+Each trace keeps fixed probe and event names, attempt numbers, success flags,
+HTTP/curl statuses, and retry delays. Provider bodies, URLs, credentials, arbitrary
+attributes, and error messages are excluded. Probe evidence covers every valid
+onboard trace within the existing input bounds, even when a shorter failed trace
+is not selected for timing. Each trace retains at most 16 probe spans and each
+span retains at most 32 events, with at most 1024 events across the summary.
+Omitted records and a reached input-file limit are reported explicitly.
+
+Deferred Hermes and Deep Agents Code use the opt-in `onboardTrace` fixture for
+their installed onboarding command. It keeps raw traces in a private directory
+outside the artifact upload root, runs the same reducer during fixture teardown,
+and passes the summary through `ArtifactSink` before removing the private
+directory. It records `onboard-trace-capture.json` with `status: unavailable` if
+no valid trace was produced. Missing or omitted probe evidence does not establish
+a successful retry. No raw trace is uploaded, including when onboarding fails.
+Sanitization or raw-directory removal failure fails the fixture and preserves
+earlier failures in the reported error.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 

@@ -21,6 +21,7 @@ import {
   StateClient,
 } from "./clients/index.ts";
 import { DockerPrerequisite, DockerProbe } from "./docker-probe.ts";
+import { withOnboardTrace } from "./onboard-trace.ts";
 import { createE2EInferenceAdapter, type E2EInferenceAdapter } from "./inference-adapter.ts";
 import {
   ConfigExportValidationPhaseFixture,
@@ -51,6 +52,7 @@ declare module "vitest" {
 
 export interface E2ETargetFixtures {
   artifacts: ArtifactSink;
+  onboardTrace: NodeJS.ProcessEnv;
   cleanup: CleanupRegistry;
   secrets: SecretStore;
   docker: DockerPrerequisite;
@@ -139,6 +141,9 @@ function outcomeForTaskState(state: string | undefined): ProgressPhaseOutcome {
 }
 
 export const test = base.extend<E2ETargetFixtures>({
+  onboardTrace: async ({ artifacts, progress }, use) => {
+    await withOnboardTrace(artifacts, progress, use);
+  },
   secrets: async ({ skip }, use) => {
     await use(new SecretStore(process.env, skip));
   },

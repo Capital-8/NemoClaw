@@ -3,7 +3,10 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { flushTrace, resetTraceForTests, type TraceArtifact } from "../trace";
 import { assertEndpointResolvesPublic } from "./endpoint-ssrf-preflight";
 import {
   type OpenAiValidationSessionDeps,
@@ -41,18 +44,58 @@ describe("OpenAI validation curl fallback", () => {
     });
     const port = await listen(server);
     const harness = createOpenAiValidationTestDeps();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-retry-trace-"));
+    const traceFile = path.join(directory, "trace.json");
+    vi.stubEnv("NEMOCLAW_TRACE_FILE", traceFile);
+    resetTraceForTests();
+    try {
+      const result = await probeOpenAiLikeEndpointWithValidationSession(
+        `http://provider.example.test:${port}/v1`,
+        "test-model",
+        "test-key",
+        { skipResponsesProbe: true },
+        harness,
+      );
 
-    const result = await probeOpenAiLikeEndpointWithValidationSession(
-      `http://provider.example.test:${port}/v1`,
-      "test-model",
-      "test-key",
-      { skipResponsesProbe: true },
-      harness,
-    );
-
-    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-    expect(requests).toBe(3);
-    expect(harness.legacyProbe).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+      expect(requests).toBe(3);
+      expect(harness.legacyProbe).not.toHaveBeenCalled();
+      flushTrace();
+      const artifact = JSON.parse(fs.readFileSync(traceFile, "utf8")) as TraceArtifact;
+      const probe = artifact.resource_spans[0].scope_spans[0].spans.find(
+        (span) => span.name === "nemoclaw.inference.validation_probe",
+      );
+      expect(
+        probe?.events.map(({ name, attributes }) => ({
+          name,
+          attributes,
+        })),
+      ).toEqual([
+        {
+          name: "probe_result",
+          attributes: { attempt: 1, ok: false, http_status: 503, curl_status: 0 },
+        },
+        {
+          name: "probe_retry_sleep",
+          attributes: { delay_ms: 5_000, http_status: 503, curl_status: 0 },
+        },
+        {
+          name: "probe_result",
+          attributes: { attempt: 2, ok: false, http_status: 429, curl_status: 0 },
+        },
+        {
+          name: "probe_retry_sleep",
+          attributes: { delay_ms: 15_000, http_status: 429, curl_status: 0 },
+        },
+        {
+          name: "probe_result",
+          attributes: { attempt: 3, ok: true, http_status: 200, curl_status: 0 },
+        },
+      ]);
+    } finally {
+      resetTraceForTests();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("falls back once after transient HTTP retries are exhausted", async () => {

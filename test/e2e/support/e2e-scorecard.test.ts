@@ -106,7 +106,7 @@ type GitHubTraceDeps = {
   };
 };
 
-function makeRawTrace(totalMs = 1200, preflightMs = 500): Record<string, unknown> {
+function makeRawTrace(totalMs = 1200, preflightMs = 500) {
   return {
     resource_spans: [
       {
@@ -738,38 +738,72 @@ describe("E2E scorecard", () => {
     }
   });
 
-  it("bounds trace input count and file size before parsing", () => {
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-bounds-"));
-    const source = join(directory, "raw");
-    const output = join(directory, "trusted");
-    try {
-      mkdirSync(source);
-      writeFileSync(join(source, "000-valid.json"), JSON.stringify(makeRawTrace(1_200)));
-      for (let index = 1; index < 100; index += 1) {
-        writeFileSync(join(source, `${String(index).padStart(3, "0")}-invalid.json`), "{}");
-      }
-      writeFileSync(join(source, "100-ignored.json"), JSON.stringify(makeRawTrace(9_999)));
-      writeFileSync(join(source, "101-oversized.json"), " ".repeat(2 * 1024 * 1024 + 1));
+  it.each([
+    { label: "timing-only", populated: false, expectedEvents: 0 },
+    { label: "probe-heavy", populated: true, expectedEvents: 1024 },
+  ])(
+    "bounds $label trace input and summary size before scorecard ingestion",
+    ({ populated, expectedEvents }) => {
+      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-bounds-"));
+      const source = join(directory, "raw");
+      const output = join(directory, "trusted");
+      const crowded = makeRawTrace(1_200);
+      (crowded.resource_spans[0].scope_spans[0].spans as unknown[]).push(
+        ...Array.from({ length: 16 }, () => ({
+          name: "nemoclaw.inference.validation_transport_retry",
+          events: Array.from({ length: 32 }, () => ({
+            name: "probe_result",
+            attributes: { attempt: 1, ok: false, http_status: 503, curl_status: 0 },
+          })),
+        })),
+      );
+      const retainedInput = populated ? JSON.stringify(crowded) : "{}";
+      try {
+        mkdirSync(source);
+        writeFileSync(join(source, "000-valid.json"), JSON.stringify(makeRawTrace(1_200)));
+        for (let index = 1; index < 100; index += 1) {
+          writeFileSync(
+            join(source, `${String(index).padStart(3, "0")}-invalid.json`),
+            retainedInput,
+          );
+        }
+        writeFileSync(
+          join(source, "100-ignored.json"),
+          JSON.stringify({ ...crowded, summary: { ...crowded.summary, total_duration_ms: 9_999 } }),
+        );
+        writeFileSync(join(source, "101-oversized.json"), " ".repeat(2 * 1024 * 1024 + 1));
 
-      const result = runSanitizer(source, output);
-      expect(result.status, result.stderr).toBe(0);
-      expect(
-        JSON.parse(readFileSync(join(output, "cloud-onboard-trace-timing-summary.json"), "utf8")),
-      ).toMatchObject({ total_duration_ms: 1_200 });
+        const result = runSanitizer(source, output);
+        expect(result.status, result.stderr).toBe(0);
+        const summaryText = readFileSync(
+          join(output, "cloud-onboard-trace-timing-summary.json"),
+          "utf8",
+        );
+        const summary = JSON.parse(summaryText);
+        expect(summary).toMatchObject({ total_duration_ms: 1_200, input_file_limit_reached: true });
+        const groups = summary.provider_probes ?? [];
+        expect(
+          groups.flatMap((group: { spans: Array<{ events: unknown[] }> }) =>
+            group.spans.flatMap((span) => span.events),
+          ),
+        ).toHaveLength(expectedEvents);
+        // Preserve the scorecard archive consumer's 1 MiB uncompressed evidence limit.
+        expect(Buffer.byteLength(summaryText)).toBeLessThan(1024 * 1024);
 
-      rmSync(output, { force: true, recursive: true });
-      rmSync(join(source, "000-valid.json"));
-      for (let index = 1; index < 100; index += 1) {
-        rmSync(join(source, `${String(index).padStart(3, "0")}-invalid.json`));
+        rmSync(output, { force: true, recursive: true });
+        rmSync(join(source, "000-valid.json"));
+        for (let index = 1; index < 100; index += 1) {
+          rmSync(join(source, `${String(index).padStart(3, "0")}-invalid.json`));
+        }
+        rmSync(join(source, "100-ignored.json"));
+        const oversizedOnly = runSanitizer(source, output);
+        expect(oversizedOnly.status, oversizedOnly.stderr).toBe(0);
+        expect(readdirSync(output)).toEqual([]);
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
       }
-      rmSync(join(source, "100-ignored.json"));
-      const oversizedOnly = runSanitizer(source, output);
-      expect(oversizedOnly.status, oversizedOnly.stderr).toBe(0);
-      expect(readdirSync(output)).toEqual([]);
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
+    },
+  );
 
   it("rejects symlinked trace sources and trusted output paths", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-symlink-"));

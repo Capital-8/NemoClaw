@@ -215,6 +215,11 @@ async function requestWithHttpRetry(
         !RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus),
       retryDelaysMs: RETRY_DELAYS_MS,
       onRetry: (result, delayMs) => {
+        addTraceEvent("probe_retry_sleep", {
+          delay_ms: delayMs,
+          http_status: result.httpStatus,
+          curl_status: result.curlStatus,
+        });
         console.log(
           `  ${name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
         );

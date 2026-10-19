@@ -27,7 +27,17 @@ const PHASES = [
 test(
   "deferred-onboarding: the installed agent onboards after credentials arrive",
   { timeout: testTimeout(45 * 60_000), meta: { e2ePhases: PHASES } },
-  async ({ artifacts, cleanup, host, lifecycle, runtimeProvider, sandbox, secrets, progress }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    lifecycle,
+    onboardTrace,
+    runtimeProvider,
+    sandbox,
+    secrets,
+    progress,
+  }) => {
     const credential = secrets.required("NVIDIA_API_KEY");
     const agent = process.env.NEMOCLAW_AGENT as "hermes" | "langchain-deepagents-code";
     expect(["hermes", "langchain-deepagents-code"]).toContain(agent);
@@ -137,7 +147,7 @@ test(
     expect(JSON.parse(deferred.stdout)).toEqual([]);
 
     progress.phase("complete the deferred installation");
-    const onboardEnv = { ...env, NVIDIA_INFERENCE_API_KEY: credential };
+    const onboardEnv = { ...env, ...onboardTrace, NVIDIA_INFERENCE_API_KEY: credential };
     const onboarded = await host.command(cli, ["onboard", "--non-interactive", "--yes"], {
       ...commandOptions,
       env: onboardEnv,

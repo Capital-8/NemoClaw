@@ -517,7 +517,10 @@ test/e2e/
   `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
   Raw onboard traces stay under the runner temporary directory and are deleted
   before artifact upload.
-  These per-target timing summaries are artifact evidence only.
+  These per-target summaries retain timing and allowlisted provider-probe metadata;
+  they exclude raw attributes, provider bodies, URLs, credentials, and error messages.
+  The deferred-onboarding fixture uses the same reducer and removes its private
+  raw traces during teardown. Missing trace evidence is recorded as unavailable.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
   Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest

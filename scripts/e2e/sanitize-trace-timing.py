@@ -2,18 +2,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reduce raw NemoClaw traces to a timing-only scorecard artifact.
+"""Reduce raw NemoClaw traces to timing and provider-probe evidence.
 
 The E2E target controls the raw trace directory, so CI must never upload it.
 This script accepts only the onboard timing shape needed by the scorecard and
-writes a single allowlisted summary without attributes, events, paths, prompts,
-environment data, or raw error messages.
+writes a single allowlisted summary. Probe records retain only fixed event names
+and bounded status, attempt, success, and delay values. Arbitrary attributes,
+paths, prompts, environment data, and raw error messages are excluded.
 
 Source-of-truth note: raw trace shape is produced by src/lib/trace.ts
 TraceArtifact. This reducer is intentionally narrower than that source schema:
-raw traces remain useful local diagnostics, while CI only needs timing evidence.
-If the producer grows a timing-only artifact, this post-run reducer can be
-removed in favor of that source artifact.
+raw traces remain useful local diagnostics, while CI receives only this projection.
+If the producer emits this allowlisted timing and probe summary, it can replace
+this post-run reducer.
 """
 
 from __future__ import annotations
@@ -40,6 +41,13 @@ ONBOARD_PHASE_NAMES = {
 MAX_JSON_FILES = 100
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_SLOWEST_SPANS = 10
+MAX_PROBE_SPANS = 16
+MAX_PROBE_EVENTS = 32
+MAX_TOTAL_PROBE_EVENTS = 1024
+PROBE_SPAN_NAMES = {
+    "nemoclaw.inference.validation_probe",
+    "nemoclaw.inference.validation_transport_retry",
+}
 TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 STATUS_VALUES = {"OK", "ERROR", "UNSET"}
 
@@ -108,6 +116,85 @@ def extract_spans(artifact: Any) -> list[dict[str, Any]]:
     return [span for span in spans if isinstance(span, dict)] if isinstance(spans, list) else []
 
 
+def bounded_integer(value: Any, minimum: int, maximum: int) -> bool:
+    return type(value) is int and minimum <= value <= maximum
+
+
+def extract_probe_event(event: Any) -> dict[str, Any] | None:
+    if not isinstance(event, dict) or not isinstance(event.get("attributes"), dict):
+        return None
+    attributes = event["attributes"]
+    http_status = attributes.get("http_status")
+    if not bounded_integer(http_status, 0, 599) or 0 < http_status < 100:
+        return None
+    curl_status = attributes.get("curl_status")
+    valid_curl = type(curl_status) is int and (
+        curl_status == -110 or 0 <= curl_status <= 255
+    )
+    if event.get("name") == "probe_result":
+        attempt = attributes.get("attempt")
+        ok = attributes.get("ok")
+        if not bounded_integer(attempt, 1, 32) or type(ok) is not bool or not valid_curl:
+            return None
+        return {
+            "name": "probe_result",
+            "attempt": attempt,
+            "ok": ok,
+            "http_status": http_status,
+            "curl_status": curl_status,
+        }
+    if event.get("name") == "probe_retry_sleep":
+        delay_ms = attributes.get("delay_ms")
+        if not bounded_integer(delay_ms, 0, 60_000):
+            return None
+        if "curl_status" in attributes and not valid_curl:
+            return None
+        return {
+            "name": "probe_retry_sleep",
+            "delay_ms": delay_ms,
+            "http_status": http_status,
+            **({"curl_status": curl_status} if valid_curl else {}),
+        }
+    return None
+
+
+def extract_provider_probes(artifact: Any, event_budget: int) -> dict[str, Any] | None:
+    spans = extract_spans(artifact)
+    if not any(span.get("name") == ONBOARD_ROOT_SPAN for span in spans):
+        return None
+    probes = [
+        span for span in spans
+        if isinstance(span.get("name"), str) and span["name"] in PROBE_SPAN_NAMES
+    ]
+    retained = []
+    omitted_spans = max(0, len(probes) - MAX_PROBE_SPANS)
+    for span in probes[:MAX_PROBE_SPANS]:
+        events = span.get("events")
+        if not isinstance(events, list):
+            omitted_spans += 1
+            continue
+        projected = [
+            extract_probe_event(event) for event in events[:min(MAX_PROBE_EVENTS, event_budget)]
+        ]
+        records = [event for event in projected if event is not None]
+        event_budget -= len(records)
+        omitted = len(events) - len(records)
+        retained.append({
+            "name": span["name"],
+            "events": records,
+            **({"omitted_events": omitted} if omitted else {}),
+        })
+    if not retained and not omitted_spans:
+        return None
+    summary = artifact.get("summary")
+    trace_id = summary.get("trace_id") if isinstance(summary, dict) else None
+    return {
+        "trace_id": trace_id if isinstance(trace_id, str) and TRACE_ID_RE.fullmatch(trace_id) else None,
+        "spans": retained,
+        **({"omitted_spans": omitted_spans} if omitted_spans else {}),
+    }
+
+
 def extract_candidate(artifact: Any) -> dict[str, Any] | None:
     """Extract the allowlisted subset of src/lib/trace.ts TraceArtifact."""
     if not isinstance(artifact, dict):
@@ -125,7 +212,7 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
     for span in spans:
         name = span.get("name")
         duration_ms = finite_number(span.get("duration_ms"))
-        if name in ONBOARD_PHASE_NAMES and duration_ms is not None:
+        if isinstance(name, str) and name in ONBOARD_PHASE_NAMES and duration_ms is not None:
             phases[name] = phases.get(name, 0.0) + duration_ms
     if not phases:
         return None
@@ -180,15 +267,28 @@ def main(argv: list[str]) -> int:
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     candidates = []
-    for json_file in iter_json_files(source):
-        candidate = extract_candidate(load_json(json_file))
+    provider_probes = []
+    event_budget = MAX_TOTAL_PROBE_EVENTS
+    json_files = iter_json_files(source)
+    for json_file in json_files:
+        artifact = load_json(json_file)
+        candidate = extract_candidate(artifact)
         if candidate is not None:
             candidates.append(candidate)
+            probes = extract_provider_probes(artifact, event_budget)
+            if probes is not None:
+                provider_probes.append(probes)
+                event_budget -= sum(len(span["events"]) for span in probes["spans"])
     if not candidates:
         print("No valid NemoClaw onboard trace found; no timing summary emitted.")
         return 0
 
     selected = max(candidates, key=lambda item: item["total_duration_ms"])
+    if provider_probes:
+        # Timing still selects one trace; a shorter failed onboarding retains its probes too.
+        selected["provider_probes"] = provider_probes
+    if len(json_files) == MAX_JSON_FILES:
+        selected["input_file_limit_reached"] = True
     output = output_dir / OUTPUT_FILE
     if output.is_symlink():
         print("trusted timing summary must not be a symlink", file=sys.stderr)
