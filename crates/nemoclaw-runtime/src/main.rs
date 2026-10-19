@@ -1,8 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(target_os = "linux")]
+fn main() -> std::process::ExitCode {
+    // A readiness probe runs this binary under its ready name. A name, not an
+    // argument, selects it: runtimes that predate it ignore arguments and
+    // would start a second service instead.
+    let ready = std::path::Path::new(nemoclaw_runtime::READY_ENTRYPOINT).file_name();
+    if std::env::args_os()
+        .next()
+        .is_some_and(|program| std::path::Path::new(&program).file_name() == ready)
+    {
+        return if nemoclaw_runtime::ready() {
+            std::process::ExitCode::SUCCESS
+        } else {
+            std::process::ExitCode::FAILURE
+        };
+    }
+    serve()
+}
+
+#[cfg(target_os = "linux")]
 #[tokio::main]
-async fn main() -> std::process::ExitCode {
+async fn serve() -> std::process::ExitCode {
     use nemoclaw_runtime::{CancellationToken, Error};
     let cancel = CancellationToken::new();
     let trip = CancellationToken::new();

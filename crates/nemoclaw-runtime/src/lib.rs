@@ -21,11 +21,19 @@ mod execution;
 #[path = "../../test-support/http.rs"]
 mod http_fixture;
 #[cfg(all(feature = "execution", target_os = "linux"))]
-pub use execution::run;
+pub use execution::{ready, run};
 
 /// The launch environment variable holding a user-supplied API key for an
 /// authenticated server. When set, the runtime uses it instead of generating one.
 pub const INFERENCE_KEY_ENV: &str = "NEMOCLAW_INFERENCE_KEY";
+/// The runtime binary under the name a platform's readiness probe runs: it
+/// exits 0 only while the service in the same container reports ready.
+pub const READY_ENTRYPOINT: &str = "/usr/local/bin/nemoclaw-runtime-ready";
+/// The launch environment variable a platform that restarts exited containers
+/// sets to `hold`: after memory protection stops the service, the runtime
+/// stays alive and unready instead of exiting, so the platform cannot restart
+/// the model under the same memory pressure. Omitted or `exit`, it exits.
+pub const ON_STOP_ENV: &str = "NEMOCLAW_RUNTIME_ON_STOP";
 #[derive(
     Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]

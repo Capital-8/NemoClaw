@@ -675,9 +675,19 @@ data "vllm_runtime" "qwen" {
 
 `launch` and `requirements` describe the server for any platform, so a Docker container, a Kubernetes pod, or any other placement can run it without the SDK:
 
-- `launch` has `entrypoint`, `command`, `environment` (only `NEMOCLAW_RUNTIME_SPEC`, holding `spec`), the `port` the server listens on, the `data_path` for its model cache, and `key_env`: with `authentication`, the variable a platform sets to [supply the server's API key](inference.md#supply-the-key-on-other-platforms), otherwise empty.
+- `launch` has `entrypoint`, `command`, `environment` (only `NEMOCLAW_RUNTIME_SPEC`, holding `spec`), the `port` the server listens on, the `data_path` for its model cache, `key_env`: with `authentication`, the variable a platform sets to [supply the server's API key](inference.md#supply-the-key-on-other-platforms), otherwise empty, and `ready_command`, for a readiness probe run in the container.
 - `requirements` has `gpu`, a recommended minimum `shared_memory_bytes` (8 GiB), and `ulimits` by name, where `-1` is unlimited: `memlock` and `stack`. Platforms that cannot set process limits leave them to the node.
 - Memory and CPU limits, IPC, publication, and credentials are the placement's choice.
+
+`ready_command` runs the runtime binary under the name `nemoclaw-runtime-ready`, which the vLLM and Ollama runtime images install.
+It reads the status the runtime keeps with its data and exits 0 only while the server reports ready, with the model loaded, and is still running.
+The runtime replaces that status as soon as it starts, so status left on retained storage by an earlier container never counts.
+Runtime images built before this command existed lack it, so a probe that runs it never succeeds there.
+
+A runtime exits when memory protection stops the server.
+A platform that restarts exited containers, such as a Kubernetes Deployment, would then start the model again under the same memory pressure.
+Set `NEMOCLAW_RUNTIME_ON_STOP=hold` in its environment on such a platform: after a protective stop, the runtime stops the server and keeps running, unready, until the platform stops the container, so restarting it is an explicit choice.
+Other failures still exit, so the platform can retry them; omitted or `exit` always exits, and any other value stops startup.
 
 ```hcl
 resource "docker_container" "qwen" {

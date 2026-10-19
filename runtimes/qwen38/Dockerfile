@@ -11,6 +11,8 @@ COPY LICENSE /opt/nemoclaw/source/Apache-2.0.txt
 RUN SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH python3 /opt/nemoclaw/source/apply_patches.py
 COPY --chmod=755 prepare.py verify.py /opt/nemoclaw/recipe/
 COPY nemoclaw-runtime /usr/local/bin/nemoclaw-runtime
+# Readiness probes run the runtime under this name; see docs/provider.md.
+RUN ln -s nemoclaw-runtime /usr/local/bin/nemoclaw-runtime-ready
 COPY supervisor-source.tar.gz supervisor.json /opt/nemoclaw/source/
 COPY Dockerfile build.json /opt/nemoclaw/source/
 ENTRYPOINT ["/usr/local/bin/nemoclaw-runtime"]

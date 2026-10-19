@@ -338,7 +338,8 @@ env:
 ```
 
 Register the server with OpenShell using the same key: give `openshell_inference` a `server` object whose `credential_env` names a variable holding the key where OpenTofu runs.
-Readiness on those platforms is the platform's job; point its readiness probe at `GET /health`, which needs no key.
+Readiness on those platforms is the platform's job: point its readiness probe at `vllm_runtime`'s `launch.ready_command`, which succeeds only once the model is loaded, or at `GET /health`, which needs no key.
+On a platform that restarts exited containers, also set [`NEMOCLAW_RUNTIME_ON_STOP=hold`](provider.md#vllm-runtime-contract).
 In YAML, set the provider's `credential` to that variable; [Use a Model Server in the Cluster](kubernetes.md#use-a-model-server-in-the-cluster) shows a Kubernetes example.
 
 ## Use External Ollama through a Managed Proxy

@@ -46,6 +46,7 @@ fn placement(spec: &str) -> Option<(serde_json::Value, serde_json::Value)> {
             "port": port,
             "data_path": RUNTIME_DATA_PATH,
             "key_env": key_env,
+            "ready_command": [nemoclaw_runtime::READY_ENTRYPOINT],
         }),
         serde_json::json!({
             "gpu": true,
@@ -90,8 +91,9 @@ fn placement_types() -> [(&'static str, AttributeType, &'static str); 2] {
                 ("port".into(), Number),
                 ("data_path".into(), String),
                 ("key_env".into(), String),
+                ("ready_command".into(), List(Box::new(String))),
             ])),
-            "What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, and key_env, the variable an authenticated server reads a supplied API key from (empty without authentication). Place it with any container platform.",
+            "What any platform runs: entrypoint, command, environment (including the contract), the port the server listens on, the path for its data, key_env, the variable an authenticated server reads a supplied API key from (empty without authentication), and ready_command, a command a readiness probe runs in the container, which succeeds only while the server reports ready. Place it with any container platform.",
         ),
         (
             REQUIREMENTS,
@@ -487,5 +489,26 @@ mod tests {
         let open = r#"{"serving":{"port":8000}}"#;
         let (launch, _) = placement(open).unwrap();
         assert_eq!(launch["key_env"], "");
+    }
+
+    #[test]
+    fn the_launch_names_the_readiness_command_the_runtime_images_install() {
+        let (launch, _) = placement(r#"{"serving":{"port":8000}}"#).unwrap();
+        assert_eq!(
+            launch["ready_command"],
+            serde_json::json!([nemoclaw_runtime::READY_ENTRYPOINT])
+        );
+        let link = format!(
+            "RUN ln -s nemoclaw-runtime {}\n",
+            nemoclaw_runtime::READY_ENTRYPOINT
+        );
+        for image in ["vllm", "ollama", "qwen38"] {
+            let dockerfile = std::fs::read_to_string(format!(
+                "{}/../../runtimes/{image}/Dockerfile",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            assert!(dockerfile.contains(&link), "{image}");
+        }
     }
 }

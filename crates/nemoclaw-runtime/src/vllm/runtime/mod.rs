@@ -41,6 +41,9 @@ pub(crate) async fn run(
     lock.try_lock().map_err(|_| {
         Error::Conflict("persistent storage already has a writer or locking failed")
     })?;
+    // Replace any status an earlier container left on this storage before
+    // anything can read it as this runtime's.
+    report("initializing", "runtime started", 0)?;
     // A platform may supply the key; otherwise the runtime generates one in its
     // credential storage, which keeps its own writer lock even if the model
     // cache is replaced.
@@ -70,6 +73,7 @@ pub(crate) async fn run(
     if let Err(error) = &result {
         // Only the holder of the persistent writer lock may publish status.
         let _ = report("stopped", &error.to_string(), 0);
+        crate::execution::hold(error, trip, cancel).await;
     }
     result
 }
