@@ -2097,7 +2097,9 @@ Run the target from a clean candidate checkout on the Spark host:
 E2E_JOB=1 E2E_TARGET_ID=spark-express-vllm NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_SANDBOX_NAME=e2e-spark-vllm npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/dgx-express.test.ts --selector '^spark-express-vllm:'
 ```
 
-A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, `inference.local` completes a chat request, and unrelated sandbox egress receives an HTTP `403` response.
+A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe.
+The managed container carries catalog provenance and the catalog-derived serve command.
+The authenticated native local provider completes a sandbox chat request, and unrelated sandbox egress receives an HTTP `403` response.
 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.
