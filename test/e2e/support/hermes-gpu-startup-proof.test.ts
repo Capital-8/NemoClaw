@@ -12,6 +12,7 @@ import { openshellMainProcessSpecEnvValue } from "../../../src/lib/onboard/docke
 import type { ManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
 import {
   assertHermesContainerImageAuthority,
+  buildHermesGpuInferenceCommand,
   assertHermesGpuStartupOutputContract,
   assertHermesManagedWorkloadAuthority,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
@@ -316,4 +317,60 @@ describe("Hermes GPU managed-image authority proof", () => {
       assertHermesContainerImageAuthority("ghcr.io/nvidia/test:latest", MANAGED_IMAGE_REFERENCE),
     ).toThrow();
   });
+});
+
+function runHermesNativeInferenceProbe(handle: string) {
+  const directory = mkdtempSync(join(tmpdir(), "hermes-gpu-native-probe-"));
+  try {
+    writeFileSync(join(directory, "curl"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o700 });
+    return spawnSync(
+      "/bin/bash",
+      [
+        "-c",
+        buildHermesGpuInferenceCommand(
+          "http://host.openshell.internal:42103/v1",
+          'model/$(exit 99)"quoted',
+        ),
+      ],
+      {
+        env: { PATH: `${directory}:/usr/bin:/bin`, NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle },
+        encoding: "utf8",
+      },
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+it("sends the Hermes GPU request through its scoped native credential", () => {
+  const handle = "openshell:resolve:env:v3_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+  const result = runHermesNativeInferenceProbe(handle);
+  expect(result.status).toBe(0);
+  expect(result.stdout.trim().split("\n")).toEqual([
+    "-fsS",
+    "--max-time",
+    "60",
+    "http://host.openshell.internal:42103/v1/chat/completions",
+    "-H",
+    "Content-Type: application/json",
+    "-H",
+    `Authorization: Bearer ${handle}`,
+    "--data",
+    JSON.stringify({
+      model: 'model/$(exit 99)"quoted',
+      messages: [{ role: "user", content: "reply with OK" }],
+      max_tokens: 8,
+    }),
+  ]);
+});
+
+it.each([
+  "",
+  "raw-host-key",
+  "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  "openshell:resolve:env:v3_NEMOCLAW_LOCAL_INFERENCE_TOKEN\nraw-host-key",
+])("rejects an unscoped Hermes GPU credential before curl (%j)", (handle) => {
+  const result = runHermesNativeInferenceProbe(handle);
+  expect(result.status).toBe(2);
+  expect(result.stdout).toBe("");
 });

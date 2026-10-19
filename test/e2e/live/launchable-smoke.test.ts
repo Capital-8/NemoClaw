@@ -412,7 +412,8 @@ test(
     await expectPongFromSandboxInference(
       sandboxExec,
       hosted.providerName,
-      entry?.nativeHostedProviderAttachment?.endpointUrl,
+      entry?.nativeLocalProviderAttachment?.endpointUrl ??
+        entry?.nativeHostedProviderAttachment?.endpointUrl,
     );
 
     const sessionId = `e2e-bootstrap-${Date.now()}-${randomUUID()}`;

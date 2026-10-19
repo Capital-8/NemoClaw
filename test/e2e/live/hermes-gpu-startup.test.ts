@@ -31,6 +31,7 @@ import {
 } from "./hermes-gpu-startup-fallback.ts";
 import {
   assertHermesGpuStartupProof,
+  buildHermesGpuInferenceCommand,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
 } from "./hermes-gpu-startup-proof.ts";
 
@@ -552,15 +553,7 @@ test(
     progress.phase("exercise authenticated GPU inference route");
     const inference = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(
-        `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
-          {
-            model: FAKE_MODEL,
-            messages: [{ role: "user", content: "reply with OK" }],
-            max_tokens: 8,
-          },
-        )}'`,
-      ),
+      trustedSandboxShellScript(buildHermesGpuInferenceCommand(fake.baseUrl, FAKE_MODEL)),
       {
         artifactName: "phase-5-authenticated-inference-post",
         env: commandEnv(),

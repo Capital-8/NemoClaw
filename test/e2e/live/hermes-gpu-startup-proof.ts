@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
 import {
   type ManagedWorkloadAuthority,
   readManagedWorkloadAuthority,
@@ -15,6 +16,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   type HostCliClient,
   resultText,
+  shellQuote,
   type SandboxClient,
   trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
@@ -137,6 +139,16 @@ export function assertHermesContainerImageAuthority(
   ).toBe(true);
 }
 
+/** The fixture owns this host-alias endpoint; OpenShell supplies its scoped credential. */
+export function buildHermesGpuInferenceCommand(endpointUrl: string, model: string): string {
+  const payload = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "reply with OK" }],
+    max_tokens: 8,
+  });
+  return `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 60 ${shellQuote(`${endpointUrl}/chat/completions`)} -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data ${shellQuote(payload)}`;
+}
+
 export async function assertHermesGpuStartupProof({
   env,
   gpuRoute,
@@ -176,7 +188,7 @@ export async function assertHermesGpuStartupProof({
   );
   expect(pid1Topology.exitCode, resultText(pid1Topology)).toBe(0);
   expect(JSON.parse(pid1Topology.stdout)).toEqual({
-    argv0: "/opt/openshell/bin/openshell-sandbox",
+    argv0: "/.openshell/runtime/openshell-sandbox",
     has_nemoclaw_start: false,
   });
 
@@ -186,6 +198,8 @@ export async function assertHermesGpuStartupProof({
       "ps",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
       "--format",
       "{{.ID}} {{.Names}}",
     ],
@@ -347,6 +361,8 @@ export async function assertHermesGpuStartupProof({
       "--all",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/isolation-role=sandbox",
       "--format",
       "{{.Names}}",
     ],

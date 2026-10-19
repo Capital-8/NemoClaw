@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
+import {
+  nativeLocalCredentialReference,
+  NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
+} from "../../../src/lib/inference/native-local/agent-config.ts";
 import { nativeHostedAuthHeaderScript } from "../../../src/lib/inference/native-provider/contract.ts";
 import {
   NATIVE_NVIDIA_AUTH_HEADER_SCRIPT,
@@ -473,10 +477,12 @@ export function buildSandboxInferenceChatCommand(
   const nativeCustom = logicalProvider === "compatible-endpoint" && endpointUrl;
   if (logicalProvider === NVIDIA_HOSTED_LOGICAL_PROVIDER || nativeCustom) {
     const auth = nativeCustom
-      ? nativeHostedAuthHeaderScript({
-          credentialEnv: "COMPATIBLE_API_KEY",
-          api: "openai-completions",
-        })
+      ? nativeLocalCredentialReference(logicalProvider, endpointUrl, "openclaw")
+        ? NATIVE_LOCAL_AUTH_HEADER_SCRIPT
+        : nativeHostedAuthHeaderScript({
+            credentialEnv: "COMPATIBLE_API_KEY",
+            api: "openai-completions",
+          })
       : NATIVE_NVIDIA_AUTH_HEADER_SCRIPT;
     return [
       "bash",
