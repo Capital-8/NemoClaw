@@ -552,13 +552,13 @@ describe("OpenClaw native restart diagnostics", () => {
     };
     const referenceProbe = vi
       .fn()
-      .mockResolvedValueOnce({ ok: false, httpStatus: 503, detail: "HTTP 503" })
+      .mockResolvedValueOnce({
+        ok: false,
+        httpStatus: 503,
+        detail: "HTTP 503",
+        proxyFailureCategory: "middleware-admission",
+      })
       .mockResolvedValueOnce({ ok: true });
-    const classificationExec = vi.fn(async (_owner: string, _script: string) => ({
-      status: 0,
-      stdout: "503\nmiddleware-admission\n",
-      stderr: "",
-    }));
     const requests = vi.fn(() => []);
     const nemoclaw = vi.fn(async () => ({ exitCode: 0 }));
     const writeJson = vi.fn(async () => "artifact");
@@ -568,7 +568,6 @@ describe("OpenClaw native restart diagnostics", () => {
       apiKey,
       attachment,
       referenceProbe,
-      classificationExec,
       fake: { requests } as never,
       host: { nemoclaw } as never,
       artifacts: { writeJson } as never,
@@ -582,24 +581,13 @@ describe("OpenClaw native restart diagnostics", () => {
       {},
       20_000,
     );
-    expect(classificationExec).toHaveBeenCalledOnce();
-    expect(classificationExec).toHaveBeenCalledWith(
-      "owner",
-      expect.stringContaining("--data-binary"),
-      20_000,
-      { gatewayName: "nemoclaw" },
-    );
-    const command = classificationExec.mock.calls[0]?.[1] as string;
-    expect(command).toContain("http://host.openshell.internal:8081/v1/chat/completions");
-    expect(command).toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
-    expect(command).not.toContain(apiKey);
     expect(nemoclaw).toHaveBeenCalledWith(["owner", "doctor"], expect.any(Object));
     expect(writeJson).toHaveBeenCalledWith("owner-restart-503-diagnostic.json", {
-      immediateReference: { ok: false, httpStatus: 503, reachedEndpoint: false },
-      immediateReferenceClass: {
-        exitCode: 0,
-        httpStatus: "503",
-        category: "middleware-admission",
+      immediateReference: {
+        ok: false,
+        httpStatus: 503,
+        reachedEndpoint: false,
+        proxyFailureCategory: "middleware-admission",
       },
       delayedReference: { ok: true, httpStatus: null, reachedEndpoint: false },
       doctorExitCode: 0,
@@ -610,7 +598,6 @@ describe("OpenClaw native restart diagnostics", () => {
 
   it("captures a native local HTTP 503 from the final start check (#12975)", async () => {
     vi.useFakeTimers();
-    const classificationExec = vi.fn();
     const writeJson = vi.fn(async () => "artifact");
     const diagnostic = captureNativeRestart503Diagnostic(
       {
@@ -625,7 +612,6 @@ describe("OpenClaw native restart diagnostics", () => {
         apiKey: "sk-native-test-not-real",
         attachment,
         referenceProbe: vi.fn(async () => ({ ok: true as const })),
-        classificationExec,
         fake: { requests: vi.fn(() => []) } as never,
         host: { nemoclaw: vi.fn(async () => ({ exitCode: 0 })) } as never,
         artifacts: { writeJson } as never,
@@ -633,17 +619,22 @@ describe("OpenClaw native restart diagnostics", () => {
     );
     await vi.advanceTimersByTimeAsync(8_000);
     await diagnostic;
-    expect(classificationExec).not.toHaveBeenCalled();
     expect(writeJson).toHaveBeenCalledOnce();
   });
 
-  it("retains reference status when failure classification rejects (#12975)", async () => {
+  it("retains the first reference status when a later probe rejects (#12975)", async () => {
     vi.useFakeTimers();
     const apiKey = "sk-native-test-not-real";
     const writeJson = vi.fn(async () => "artifact");
-    const classificationExec = vi.fn(async (_owner: string, _script: string) => {
-      throw new Error("test probe failure");
-    });
+    const referenceProbe = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        httpStatus: 503,
+        detail: "HTTP 503",
+        proxyFailureCategory: "inference-upstream",
+      })
+      .mockRejectedValueOnce(new Error("test probe failure"));
     const diagnostic = captureNativeRestart503Diagnostic(
       {
         exitCode: 1,
@@ -655,12 +646,7 @@ describe("OpenClaw native restart diagnostics", () => {
         model: "nemoclaw-openclaw-native-local",
         apiKey,
         attachment,
-        classificationExec,
-        referenceProbe: vi.fn(async () => ({
-          ok: false as const,
-          httpStatus: 503,
-          detail: "HTTP 503",
-        })),
+        referenceProbe,
         fake: { requests: vi.fn(() => []) } as never,
         host: { nemoclaw: vi.fn(async () => ({ exitCode: 0 })) } as never,
         artifacts: { writeJson } as never,
@@ -668,36 +654,16 @@ describe("OpenClaw native restart diagnostics", () => {
     );
     await vi.advanceTimersByTimeAsync(8_000);
     await diagnostic;
-    const classCommand = classificationExec.mock.calls[0]?.[1] as string;
-    expect(() => execFileSync("sh", ["-n"], { input: classCommand })).not.toThrow();
-    expect(classCommand).not.toContain(apiKey);
-    const diagnosticBin = fs.mkdtempSync(path.join(os.tmpdir(), "native-503-class-"));
-    try {
-      const curlStub = path.join(diagnosticBin, "curl");
-      fs.writeFileSync(
-        curlStub,
-        '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; output=$1; fi; shift; done\nprintf \'{"error":"middleware_failed","secret":"must-stay-inside"}\' > "$output"\nprintf 503\n',
-        { mode: 0o700 },
-      );
-      const classified = execFileSync("sh", ["-c", classCommand], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${diagnosticBin}:${process.env.PATH ?? ""}`,
-          NEMOCLAW_LOCAL_INFERENCE_TOKEN: "openshell:resolve:env:v1_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        },
-      });
-      expect(classified).toBe("503\nmiddleware-admission\n");
-      expect(classified).not.toContain("must-stay-inside");
-    } finally {
-      fs.rmSync(diagnosticBin, { recursive: true, force: true });
-    }
     expect(writeJson).toHaveBeenCalledWith(
       "owner-restart-503-diagnostic.json",
       expect.objectContaining({
-        immediateReference: { ok: false, httpStatus: 503, reachedEndpoint: false },
-        immediateReferenceClass: { error: "probe unavailable" },
-        delayedReference: { ok: false, httpStatus: 503, reachedEndpoint: false },
+        immediateReference: {
+          ok: false,
+          httpStatus: 503,
+          reachedEndpoint: false,
+          proxyFailureCategory: "inference-upstream",
+        },
+        delayedReference: { error: "probe unavailable" },
         doctorExitCode: 0,
       }),
     );
@@ -706,17 +672,17 @@ describe("OpenClaw native restart diagnostics", () => {
   });
 
   it("does not probe when restart did not fail with the native HTTP 503 signature (#12975)", async () => {
-    const classificationExec = vi.fn();
+    const referenceProbe = vi.fn();
     await captureNativeRestart503Diagnostic({ exitCode: 1, stderr: "HTTP 401" } as never, {
       owner: "owner",
       model: "nemoclaw-openclaw-native-local",
       apiKey: "sk-native-test-not-real",
       attachment,
-      classificationExec,
+      referenceProbe,
       fake: { requests: vi.fn() } as never,
       host: { nemoclaw: vi.fn() } as never,
       artifacts: { writeJson: vi.fn() } as never,
     });
-    expect(classificationExec).not.toHaveBeenCalled();
+    expect(referenceProbe).not.toHaveBeenCalled();
   });
 });

@@ -939,6 +939,57 @@ describe("native hosted inference probe credential boundary", () => {
   });
 });
 
+it.each([
+  ['{"error":"middleware_failed","secret":"must-stay-inside"}', "middleware-admission"],
+  ['{"error":"inference service unavailable"}', "inference-upstream"],
+  ['{"error":"cluster inference is not configured"}', "inference-unconfigured"],
+  ['{"error":"tls_termination_unavailable"}', "tls-unavailable"],
+  ['{"error":"unrecognized","secret":"must-stay-inside"}', "other-503"],
+])(
+  "classifies a native-local HTTP 503 inside its original request (%s)",
+  async (body, category) => {
+    const binding = {
+      provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated",
+      gatewayName: "nemoclaw",
+      sandboxName: input.sandboxName,
+    } as const;
+    const selected = {
+      ...input,
+      nativeLocalProviderAttachment: {
+        ...binding,
+        ...nativeLocalIdentity(binding),
+        schemaVersion: 1 as const,
+        providerId: "fixture-local-provider",
+      },
+    };
+    const { stdout } = runProbeCommandWithBody("503", body, tmpdir(), selected, {
+      NEMOCLAW_LOCAL_INFERENCE_TOKEN: "openshell:resolve:env:v123_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    });
+    expect(stdout).toBe(`503\nnemoclaw-proxy-503:${category}\n`);
+    expect(stdout).not.toContain("must-stay-inside");
+    const result = await probeSandboxInferenceInvocation(selected, {
+      execute: vi.fn(async () => ({ status: 1, stdout, stderr: "" })),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      httpStatus: 503,
+      proxyFailureCategory: category,
+    });
+    expect(JSON.stringify(result)).not.toContain("must-stay-inside");
+  },
+);
+
+it("does not classify hosted HTTP 503 bodies as native-local proxy errors", () => {
+  const { stdout } = runProbeCommandWithBody(
+    "503",
+    '{"error":"middleware_failed","secret":"must-stay-inside"}',
+  );
+  expect(stdout).toBe("503\n");
+});
+
 it.each([true, undefined])(
   "uses a native local attachment without custom hosted authority (native=%s) (#13195)",
   async (nativeProvider) => {

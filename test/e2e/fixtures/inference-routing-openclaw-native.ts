@@ -4,13 +4,6 @@
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import type { NativeLocalProviderAttachment } from "../../../src/lib/inference/native-local/contract.ts";
 import { probeSandboxInferenceInvocation } from "../../../src/lib/actions/sandbox/inference-invocation-probe.ts";
-import { executeSandboxExecCommand } from "../../../src/lib/adapters/sandbox/command-transport.ts";
-import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-local/agent-config.ts";
-import {
-  resolveMaxTokensField,
-  resolveProbeReplyTokens,
-} from "../../../src/lib/inference/max-tokens-field.ts";
-import { shellQuote } from "../../../src/lib/runner.ts";
 import {
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_DELAY_MS,
@@ -40,7 +33,6 @@ type RestartDiagnosticContext = Pick<NativeOpenClawContext, "artifacts" | "host"
   fake: Awaited<ReturnType<typeof startFakeOpenAiCompatibleServer>>;
   attachment: NativeLocalProviderAttachment | null | undefined;
   referenceProbe?: typeof probeSandboxInferenceInvocation;
-  classificationExec?: typeof executeSandboxExecCommand;
 };
 
 /** Preserve the original restart failure while collecting bounded route evidence for HTTP 503. */
@@ -53,7 +45,6 @@ export async function captureNativeRestart503Diagnostic(
     fake,
     attachment,
     referenceProbe,
-    classificationExec,
     artifacts,
     host,
   }: RestartDiagnosticContext,
@@ -93,61 +84,12 @@ export async function captureNativeRestart503Diagnostic(
         ok: probe.ok,
         httpStatus: probe.ok ? null : probe.httpStatus,
         reachedEndpoint: fake.requests().length > before,
-      };
-    };
-    // Classify a proxy-owned 503 without exporting its response body or credential.
-    const inspectReferenceFailureClass = async () => {
-      const body = JSON.stringify({
-        model,
-        [resolveMaxTokensField(model)]: resolveProbeReplyTokens(attachment.provider, model),
-        messages: [{ role: "user", content: "Reply with OK" }],
-        stream: false,
-      });
-      const script = [
-        "umask 077",
-        NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
-        "response=$(mktemp /tmp/nemoclaw-native-diagnostic.XXXXXX) || exit 1",
-        "trap 'rm -f \"$response\"' EXIT HUP INT TERM",
-        `status=$(curl -q -sS --connect-timeout 5 --max-time 10 --max-filesize 65536 -o "$response" -w '%{http_code}' -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-binary ${shellQuote(body)} ${shellQuote(`${attachment.endpointUrl}/chat/completions`)}) || exit 1`,
-        'printf "%s\\n" "$status"',
-        'if [ "$status" != 503 ]; then printf "not-503\\n"; exit 0; fi',
-        `if grep -Fq '"error":"middleware_failed"' "$response"; then printf "middleware-admission\\n"`,
-        `elif grep -Fq '"error":"inference service unavailable"' "$response"; then printf "inference-upstream\\n"`,
-        `elif grep -Fq '"error":"cluster inference is not configured"' "$response"; then printf "inference-unconfigured\\n"`,
-        `elif grep -Fq '"error":"tls_termination_unavailable"' "$response"; then printf "tls-unavailable\\n"`,
-        'else printf "other-503\\n"; fi',
-      ].join("; ");
-      const result = await (classificationExec ?? executeSandboxExecCommand)(
-        owner,
-        script,
-        OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_PROBE_TIMEOUT_MS,
-        { gatewayName: attachment.gatewayName },
-      );
-      const [status, category] = result.stdout.trim().split(/\r?\n/u);
-      return {
-        exitCode: result.status,
-        httpStatus: /^[1-5]\d\d$/u.test(status ?? "") ? status : "unknown",
-        category: [
-          "not-503",
-          "middleware-admission",
-          "inference-upstream",
-          "inference-unconfigured",
-          "tls-unavailable",
-          "other-503",
-        ].includes(category ?? "")
-          ? category
-          : "unavailable",
+        ...(!probe.ok && probe.proxyFailureCategory
+          ? { proxyFailureCategory: probe.proxyFailureCategory }
+          : {}),
       };
     };
     await observe("immediateReference", inspectReferenceRoute);
-    if (
-      typeof evidence.immediateReference === "object" &&
-      evidence.immediateReference !== null &&
-      "httpStatus" in evidence.immediateReference &&
-      evidence.immediateReference.httpStatus === 503
-    ) {
-      await observe("immediateReferenceClass", inspectReferenceFailureClass);
-    }
     await new Promise((resolve) => setTimeout(resolve, OPENCLAW_NATIVE_LOCAL_DIAGNOSTIC_DELAY_MS));
     await observe("delayedReference", inspectReferenceRoute);
     await observe("doctorExitCode", async () => {

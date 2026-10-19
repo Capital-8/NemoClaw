@@ -67,7 +67,18 @@ export type SandboxInferenceInvocationInput = {
 
 export type SandboxInferenceInvocationResult =
   | { ok: true }
-  | { ok: false; detail: string; httpStatus: number | null; endpoint?: string };
+  | {
+      ok: false;
+      detail: string;
+      httpStatus: number | null;
+      endpoint?: string;
+      proxyFailureCategory?:
+        | "middleware-admission"
+        | "inference-upstream"
+        | "inference-unconfigured"
+        | "tls-unavailable"
+        | "other-503";
+    };
 
 export type SandboxInferenceInvocationDeps = {
   commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
@@ -222,6 +233,18 @@ export function buildSandboxInferenceInvocationCommand(
       .join(" ") + (nativeAuth ? ' -H "$AUTH_HEADER"' : "");
   const payload = shellQuote(JSON.stringify(request.payload));
   const endpoint = shellQuote(request.endpoint);
+  // Classify the original failed request inside the sandbox. A second request
+  // can observe a recovered proxy and cannot explain the response that failed.
+  const nativeLocal503Case = useNativeLocal
+    ? [
+        "503)",
+        `if grep -Fq '"error":"middleware_failed"' "$body"; then printf 'nemoclaw-proxy-503:middleware-admission\\n';`,
+        `elif grep -Fq '"error":"inference service unavailable"' "$body"; then printf 'nemoclaw-proxy-503:inference-upstream\\n';`,
+        `elif grep -Fq '"error":"cluster inference is not configured"' "$body"; then printf 'nemoclaw-proxy-503:inference-unconfigured\\n';`,
+        `elif grep -Fq '"error":"tls_termination_unavailable"' "$body"; then printf 'nemoclaw-proxy-503:tls-unavailable\\n';`,
+        "else printf 'nemoclaw-proxy-503:other-503\\n'; fi; exit 1 ;;",
+      ].join(" ")
+    : "";
   return [
     "umask 077",
     ...(nativeAuth ? [nativeAuth] : []),
@@ -232,7 +255,7 @@ export function buildSandboxInferenceInvocationCommand(
     // A non-2xx body never leaves the sandbox (#6195). A 404 is classified
     // here instead, so status can name the cause the onboarding probe already
     // recognises without carrying the body that proved it (#10879).
-    `case "$code" in 2??) cat "$body"; exit 0 ;; 404) grep ${NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS} ${shellQuote(NVCF_FUNCTION_NOT_FOUND_SHELL_ERE)} "$body" && printf '%s\\n' ${shellQuote(NVCF_FUNCTION_NOT_FOUND_MARKER)}; exit 1 ;; *) exit 1 ;; esac`,
+    `case "$code" in 2??) cat "$body"; exit 0 ;; 404) grep ${NVCF_FUNCTION_NOT_FOUND_SHELL_MATCH_ARGS} ${shellQuote(NVCF_FUNCTION_NOT_FOUND_SHELL_ERE)} "$body" && printf '%s\\n' ${shellQuote(NVCF_FUNCTION_NOT_FOUND_MARKER)}; exit 1 ;; ${nativeLocal503Case} *) exit 1 ;; esac`,
   ].join("; ");
 }
 
@@ -352,6 +375,12 @@ export async function probeSandboxInferenceInvocation(
     };
   }
   const httpStatus = result.stdout.match(/(?:^|\n)([1-5]\d\d)(?:\n|$)/)?.[1];
+  const proxyFailureCategory =
+    input.nativeLocalProviderAttachment && httpStatus === "503"
+      ? result.stdout.match(
+          /(?:^|\n)nemoclaw-proxy-503:(middleware-admission|inference-upstream|inference-unconfigured|tls-unavailable|other-503)(?:\n|$)/u,
+        )?.[1]
+      : undefined;
   // Only the fixed marker is read back, never the line that carried it, so an
   // upstream body can still not reach diagnostics (#6195).
   const nvcfFunctionNotFound = result.stdout
@@ -374,5 +403,13 @@ export async function probeSandboxInferenceInvocation(
           : detail,
     httpStatus: httpStatus ? Number.parseInt(httpStatus, 10) : null,
     endpoint: resolveSandboxInferenceInvocationEndpoint(input),
+    ...(proxyFailureCategory
+      ? {
+          proxyFailureCategory: proxyFailureCategory as Exclude<
+            SandboxInferenceInvocationResult,
+            { ok: true }
+          >["proxyFailureCategory"],
+        }
+      : {}),
   };
 }
