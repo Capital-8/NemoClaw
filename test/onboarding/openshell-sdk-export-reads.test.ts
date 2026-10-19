@@ -234,8 +234,14 @@ describe("released OpenShell SDK export reads", () => {
               },
             });
           },
-          getSandboxConfig: async () =>
-            roundTrip(raw.GetSandboxConfigResponseSchema, {
+          getSandboxConfig: async (input) => {
+            expect(
+              toJson(
+                raw.GetSandboxConfigRequestSchema,
+                roundTrip(raw.GetSandboxConfigRequestSchema, input),
+              ),
+            ).toEqual({ name: "alpha", workspaceScope: { workspace: "default" } });
+            return roundTrip(raw.GetSandboxConfigResponseSchema, {
               policy: {
                 version: 1,
                 filesystem: { readOnly: ["/usr"] },
@@ -253,7 +259,8 @@ describe("released OpenShell SDK export reads", () => {
               policySource: 1,
               configRevision: 9007199254740993n,
               providerEnvRevision: 18446744073709551615n,
-            }),
+            });
+          },
         },
       };
       const connect = async () => client;
@@ -663,7 +670,18 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy document conversio
         raw: {
           getProvider: async () => undefined,
           getProviderProfile: async () => undefined,
-          getSandbox: async () => undefined,
+          getSandbox: async () => ({
+            sandbox: {
+              metadata: {
+                id: "verified-id",
+                name: "alpha",
+                workspace: "default",
+                resourceVersion: 1n,
+              },
+              status: { currentPolicyVersion: 3 },
+              spec: { template: { image: "fixture-image" }, providers: [] },
+            },
+          }),
           getSandboxConfig: async () => ({
             policy,
             workspace: "default",
@@ -678,6 +696,7 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy document conversio
       }));
       const config = await reader.get({
         sandboxId: "verified-id",
+        name: "alpha",
         target: { kind: "named", gatewayName: "nemoclaw" },
         workspace: "default",
         signal: new AbortController().signal,

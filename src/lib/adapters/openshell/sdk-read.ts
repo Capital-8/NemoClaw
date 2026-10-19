@@ -36,7 +36,10 @@ export interface OpenShellReadClient {
       request: { name: string; workspaceScope: WorkspaceScope },
       options: Options,
     ): Promise<unknown>;
-    getSandboxConfig(request: { sandboxId: string }, options: Options): Promise<unknown>;
+    getSandboxConfig(
+      request: { name: string; workspaceScope: WorkspaceScope },
+      options: Options,
+    ): Promise<unknown>;
   };
 }
 export type ConnectOpenShellReader = (

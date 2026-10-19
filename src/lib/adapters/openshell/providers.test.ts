@@ -808,10 +808,10 @@ describe("OpenShell sandbox export evidence", () => {
   });
 
   it.each([1, 2])(
-    "reads source %i configuration by verified ID without settings values",
+    "reads source %i configuration by name and verifies its ID without settings values",
     async (policySource) => {
       const { connect, raw } = fixture();
-      const input = { ...request(), sandboxId: "verified-id" };
+      const input = { ...request(), sandboxId: "resource-id" };
       const response = await raw.getSandboxConfig();
       raw.getSandboxConfig.mockClear().mockResolvedValue({
         ...response,
@@ -820,7 +820,7 @@ describe("OpenShell sandbox export evidence", () => {
       });
       const result = await createSandboxConfig(connect, async () => "version: 1\n").get(input);
       expect(result).toMatchObject({
-        sandboxId: "verified-id",
+        sandboxId: "resource-id",
         workspace: "default",
         revision: 3,
         configRevision: "18446744073709551615",
@@ -829,12 +829,45 @@ describe("OpenShell sandbox export evidence", () => {
         policy: { document: "version: 1\n", appliedRevision: policySource === 1 ? 3 : 4 },
       });
       expect(raw.getSandboxConfig).toHaveBeenCalledWith(
-        { sandboxId: "verified-id" },
+        {
+          name: "alpha",
+          workspaceScope: { selection: { case: "workspace", value: "default" } },
+        },
         { signal: input.signal },
       );
       expect(JSON.stringify(result)).not.toContain(canary);
     },
   );
+
+  it.each([{ id: "replacement-id" }, { workspace: "other" }])(
+    "rejects changed sandbox identity %j after reading configuration",
+    async (change) => {
+      const { connect, raw } = fixture();
+      const response = await raw.getSandbox();
+      raw.getSandbox.mockClear().mockResolvedValue({
+        ...response,
+        sandbox: {
+          ...response.sandbox,
+          metadata: { ...response.sandbox.metadata, ...change },
+        },
+      });
+      const serialize = vi.fn(async () => "version: 1\n");
+      await expect(
+        createSandboxConfig(connect, serialize).get({ ...request(), sandboxId: "resource-id" }),
+      ).rejects.toMatchObject({ kind: "schema" });
+      expect(serialize).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a missing sandbox after reading configuration", async () => {
+    const { connect, raw } = fixture();
+    raw.getSandbox.mockRejectedValue({ code: 5 });
+    const serialize = vi.fn(async () => "version: 1\n");
+    await expect(
+      createSandboxConfig(connect, serialize).get({ ...request(), sandboxId: "resource-id" }),
+    ).rejects.toMatchObject({ kind: "schema" });
+    expect(serialize).not.toHaveBeenCalled();
+  });
 
   it("does not serialize a configuration response that arrives after abort", async () => {
     const { connect, raw } = fixture();
@@ -848,7 +881,7 @@ describe("OpenShell sandbox export evidence", () => {
     await expect(
       createSandboxConfig(connect, serialize).get({
         ...request(),
-        sandboxId: "verified-id",
+        sandboxId: "resource-id",
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ kind: "timeout" });
@@ -867,7 +900,7 @@ describe("OpenShell sandbox export evidence", () => {
     const response = await raw.getSandboxConfig();
     raw.getSandboxConfig.mockResolvedValue({ ...response, ...change });
     await expect(
-      createSandboxConfig(connect).get({ ...request(), sandboxId: "verified-id" }),
+      createSandboxConfig(connect).get({ ...request(), sandboxId: "resource-id" }),
     ).rejects.toMatchObject({ kind: "schema" });
   });
 });

@@ -639,7 +639,7 @@ describe("live export snapshot reader", () => {
     });
     const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
     expect(result).toMatchObject({ ok: true, source: { tools: { disclosure: "direct" } } });
-    expect(raw.getSandbox).toHaveBeenCalledTimes(2);
+    expect(raw.getSandbox).toHaveBeenCalledTimes(4);
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 

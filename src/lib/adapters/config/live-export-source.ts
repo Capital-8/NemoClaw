@@ -322,6 +322,7 @@ async function effectivePolicy(gateway: ObservedExportGateway, row: Sandbox, sig
     target: namedOpenShellGateway(gateway.name),
     workspace: row.workspace,
     sandboxId: row.id,
+    name: row.name,
     signal,
   });
   if (policy.appliedRevision === null) {

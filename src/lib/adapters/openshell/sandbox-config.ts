@@ -7,6 +7,7 @@ import { sortCanonicalMappings } from "../../config/canonical-mapping";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import type { SandboxConfiguration } from "../../domain/sandbox/configuration";
 import type { OpenShellSandboxPolicyRead } from "./sandbox-policy";
+import { createSandboxes } from "./sandboxes";
 import {
   PolicyJsonSchema,
   SandboxConfigResponseSchema,
@@ -31,20 +32,31 @@ export function createSandboxConfig(
 ) {
   return {
     get: (
-      request: ReadRequest & Readonly<{ sandboxId: string }>,
+      request: ReadRequest & Readonly<{ sandboxId: string; name: string }>,
     ): Promise<SandboxConfiguration & { readonly policy: OpenShellSandboxPolicyRead }> =>
       readOpenShell(request, async () => {
         const sandboxId = text(request.sandboxId);
+        const name = text(request.name);
         const client = await connect(request.target);
         request.signal.throwIfAborted();
-        // sandbox.getConfig(name) performs a new name lookup and omits workspace identity.
+        // OpenShell 0.1.3 selects configuration by workspace and public name.
         const config = readValue(
           SandboxConfigResponseSchema,
-          await client.raw.getSandboxConfig({ sandboxId }, { signal: request.signal }),
+          await client.raw.getSandboxConfig(
+            {
+              name,
+              workspaceScope: { selection: { case: "workspace", value: request.workspace } },
+            },
+            { signal: request.signal },
+          ),
         );
         if (config.workspace !== request.workspace) {
           throw new OpenShellReadError("schema");
         }
+        request.signal.throwIfAborted();
+        // Reject replacement under the same name before associating policy with the observed ID.
+        const confirmed = await createSandboxes(async () => client).get(request);
+        if (confirmed?.id !== sandboxId) throw new OpenShellReadError("schema");
         request.signal.throwIfAborted();
         const document = await serializePolicy(config.policy, request.signal);
         request.signal.throwIfAborted();
