@@ -10,7 +10,10 @@ import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-p
 import { InferenceSetError } from "../inference-set-error";
 import type { SandboxEntry } from "../../state/registry";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import { resolveHermesLocalSwitchRuntime } from "../inference-set/local-runtime";
+import {
+  resolveHermesLocalSwitchRuntime,
+  type NimSwitchSelection,
+} from "../inference-set/local-runtime";
 import {
   normalizeNativeLocalProviderAttachment,
   usesNativeLocalInference,
@@ -41,6 +44,7 @@ export async function prepareNativeLocalSwitch(input: {
   credentialEnv?: string | null;
   inferenceApi?: string | null;
   explicitCustomRoute?: boolean;
+  nimSelection?: NimSwitchSelection;
   adapter: OpenShellProviderAdapter;
   resolveCredentialValue: (name: string) => string;
   readAuthority?: Parameters<typeof prepareNativeLocalSelection>[0]["readAuthority"];
@@ -111,6 +115,7 @@ export async function prepareNativeLocalSwitch(input: {
     input.provider,
     binding,
     input.resolveCredentialValue,
+    input.nimSelection,
   );
   if (!runtime.endpointUrl) throw new Error("Native local inference endpoint is missing.");
   const receipt = await (

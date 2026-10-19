@@ -7,9 +7,9 @@ import {
   fixture,
   switchingFixture,
 } from "../../../test/helpers/inference-set-openclaw-native-local";
+import { createDeps, nativeLocalTestReceipt } from "../../../test/helpers/inference-set";
 import { resolveOpenClawLocalSwitch } from "./inference-set/native-local";
 import { runInferenceSet } from "./inference-set";
-import { createDeps } from "../../../test/helpers/inference-set";
 import { nativeLocalIdentity } from "../inference/native-local/contract";
 import * as routerBlueprint from "../core/model-router-port";
 import * as routerProcess from "../onboard/model-router-process";
@@ -25,7 +25,7 @@ describe("OpenClaw native local live selection", () => {
     { provider: "vllm-local", expected: {} },
     { provider: "ollama-local", expected: { prepare: true } },
   ])(
-    "keeps owned NIM shared only when selecting $provider still uses NIM",
+    "preserves legacy NIM until recreation when selecting $provider",
     async ({ provider, expected }) => {
       const deps = fixture();
       deps.resolveCredentialValue = () => "test-hosted-secret";
@@ -153,6 +153,34 @@ describe("OpenClaw native local live selection", () => {
     ).rejects.toThrow("Model Router uses its configured endpoint");
     expect(create).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("reuses the verified native NIM provider without preparing managed vLLM", async () => {
+    const receipt = nativeLocalTestReceipt("vllm-local", "http://host.openshell.internal:8000/v1", {
+      agent: "openclaw",
+      authMode: "sentinel",
+    });
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      provider: "vllm-local",
+      model: "served-nim-model",
+      nimContainer: "owned-nim",
+      endpointUrl: receipt.endpointUrl,
+      nativeLocalProviderAttachment: receipt,
+    };
+    const deps = createDeps({ config: {}, entry });
+    await expect(
+      resolveOpenClawLocalSwitch({
+        agentName: "openclaw",
+        entry,
+        provider: "vllm-local",
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        deps,
+      }),
+    ).resolves.toEqual({ selected: receipt, previous: receipt });
   });
 
   it("detaches and retires local authority before publishing a hosted selection", async () => {

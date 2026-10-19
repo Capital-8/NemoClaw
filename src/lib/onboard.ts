@@ -1704,7 +1704,7 @@ async function handleNimLocalSelection(
   state.model = nim.expectedServedModelId(catalogModel);
   state.provider = "vllm-local";
   state.credentialEnv = null;
-  state.endpointUrl = getLocalProviderBaseUrl(state.provider);
+  state.endpointUrl = nim.getNimInferenceEndpoints().baseUrl;
   state.preferredInferenceApi = "openai-completions";
   if (!state.endpointUrl) {
     console.error("  Local NVIDIA NIM base URL could not be determined.");
@@ -1778,7 +1778,7 @@ async function handleNimLocalSelection(
 
   state.model = nim.adoptServedModelId(catalogModel);
   state.assertRouteCompatible?.();
-  const nimValidationUrl = getLocalProviderValidationBaseUrl(state.provider) || state.endpointUrl;
+  const nimValidationUrl = nim.getNimInferenceEndpoints().validationBaseUrl;
   const validation = await validateOpenAiLikeSelection(
     "Local NVIDIA NIM",
     nimValidationUrl,

@@ -127,18 +127,52 @@ it.each([nativeBinding.endpointUrl, "http://host.openshell.internal:42103/v1"])(
   },
 );
 
-it.each(["openclaw", "langchain-deepagents-code"] as const)(
-  "keeps owned Local NIM on the %s shared route without an attachment (#13116)",
+it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+  "%s refuses to start NIM without its native attachment",
   (agentName) => {
+    expect(() =>
+      prepareProfile(agentName, {
+        provider: "vllm-local",
+        endpointUrl: nativeBinding.endpointUrl,
+        localNimSelected: true,
+      }),
+    ).toThrow("Local NIM inference requires its native provider attachment");
+  },
+);
+
+it("preserves the published Pi NIM shared startup path on OpenShell 0.0.x", () => {
+  const prepared = prepareProfile("pi", {
+    provider: "vllm-local",
+    endpointUrl: nativeBinding.endpointUrl,
+    localNimSelected: true,
+  });
+  expect(prepared?.profile.inference?.routedBaseUrl).toBe("https://inference.local/v1");
+});
+
+it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"] as const)(
+  "uses the %s Local NIM native attachment",
+  (agentName) => {
+    const nimBinding = {
+      ...nativeBinding,
+      provider: "vllm-local" as const,
+      authMode: "sentinel" as const,
+      ...(agentName === "langchain-deepagents-code" ? {} : { agent: agentName }),
+    };
+    const nimAttachment = {
+      ...nimBinding,
+      ...nativeLocalIdentity(nimBinding),
+      schemaVersion: 1 as const,
+      providerId: "nim-provider",
+    };
     const prepared = prepareProfile(agentName, {
       provider: "vllm-local",
-      endpointUrl: "http://127.0.0.1:8000/v1",
+      endpointUrl: nativeBinding.endpointUrl,
       localNimSelected: true,
-      nativeProvider: false,
+      attachment: nimAttachment,
     });
     expect(prepared?.profile.inference).toMatchObject({
       upstreamProvider: "vllm-local",
-      routedBaseUrl: "https://inference.local/v1",
+      routedBaseUrl: nativeBinding.endpointUrl,
     });
   },
 );

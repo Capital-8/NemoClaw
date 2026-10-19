@@ -35,6 +35,7 @@ export {
 export { reconcilePreviousOpenClawLocal } from "./native-local";
 export {
   resolveLocalSwitchRuntime,
+  verifyNimSwitchSelection,
   validateLocalProvider,
   type ValidationResult,
 } from "./local-runtime";

@@ -106,8 +106,7 @@ function hardRouteConflict(
         : target.agent === "hermes"
           ? local.agent === "hermes"
           : (target.agent === "openclaw" || target.agent === "pi") &&
-            local.agent === target.agent &&
-            !target.nimContainer) ||
+            local.agent === target.agent) ||
       local.sandboxName !== sandboxName ||
       local.gatewayName !== gatewayName ||
       local.provider !== route.provider

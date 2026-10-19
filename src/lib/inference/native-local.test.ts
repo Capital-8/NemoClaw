@@ -377,20 +377,14 @@ describe("native local inference", () => {
     );
   });
 
-  it("keeps an owned Local NIM selection on the shared route while standalone vLLM is native", () => {
-    expect(usesNativeLocalInferenceForAgent("openclaw", "vllm-local", null)).toBe(true);
-    expect(usesNativeLocalInferenceForAgent("langchain-deepagents-code", "vllm-local", null)).toBe(
-      true,
-    );
-    expect(usesNativeLocalInferenceForAgent("openclaw", "vllm-local", null, true)).toBe(false);
-    expect(usesNativeLocalInferenceForAgent("pi", "vllm-local", null, true)).toBe(false);
-    expect(
-      usesNativeLocalInferenceForAgent("langchain-deepagents-code", "vllm-local", null, true),
-    ).toBe(false);
-    expect(
-      usesNativeLocalInferenceForAgent("langchain-deepagents-code", "llama-cpp-local", null, true),
-    ).toBe(true);
-  });
+  it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"])(
+    "selects native Local NIM for %s",
+    (agent) => {
+      expect(usesNativeLocalInferenceForAgent(agent, "vllm-local", binding.endpointUrl, true)).toBe(
+        true,
+      );
+    },
+  );
 
   it("isolates Hermes interpreter permissions without changing canonical DCode identity", () => {
     expect(identity).toEqual({
@@ -428,7 +422,7 @@ describe("native local inference", () => {
       "/usr/bin/curl",
     ]);
     expect(hermes.document.endpoints).toEqual(dcode.document.endpoints);
-    expect(usesNativeLocalInferenceForAgent("hermes", "vllm-local", null, true)).toBe(false);
+    expect(usesNativeLocalInferenceForAgent("hermes", "vllm-local", null, true)).toBe(true);
     expect(
       usesNativeLocalInferenceForAgent("openclaw", "compatible-endpoint", binding.endpointUrl),
     ).toBe(true);
@@ -837,10 +831,10 @@ it.each([
   ).toBe(false);
 });
 
-it("keeps Local NIM shared while selecting compatible OpenClaw endpoints natively", () => {
+it("selects Local NIM and compatible OpenClaw endpoints natively", () => {
   expect(
     usesNativeLocalInferenceForAgent("openclaw", "vllm-local", binding.endpointUrl, true),
-  ).toBe(false);
+  ).toBe(true);
   expect(
     usesNativeLocalInferenceForAgent("openclaw", "compatible-endpoint", binding.endpointUrl),
   ).toBe(true);

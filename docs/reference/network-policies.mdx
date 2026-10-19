@@ -225,7 +225,7 @@ OpenShell mediates inference traffic and keeps provider credentials outside the 
 <AgentOnly variant="openclaw">
 
 New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers.
-Owned Local NVIDIA NIM and remaining shared custom and local selections retain `inference.local` on OpenShell `0.0.x`.
+Remaining shared custom and local selections retain `inference.local` on OpenShell `0.0.x`.
 Refer to [How Inference Routing Works](../inference/about-inference-routing) for qualification and existing-sandbox boundaries.
 
 </AgentOnly>
@@ -234,7 +234,7 @@ Refer to [How Inference Routing Works](../inference/about-inference-routing) for
 New Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
 The profile restricts the recorded host, port, methods, paths, and Hermes runtime binaries.
 OpenShell replaces the scoped credential reference at the allowed endpoint; the upstream credential remains outside the sandbox.
-Owned Local NVIDIA NIM, remaining custom shared selections, and retained legacy local routes use `inference.local` on OpenShell `0.0.x`.
+Remaining custom shared selections and retained legacy local routes use `inference.local` on OpenShell `0.0.x`.
 Hermes live qualification for the new local lifecycle remains pending.
 Refer to [How Inference Routing Works](../inference/about-inference-routing) for the route boundary.
 
@@ -247,7 +247,7 @@ These local HTTP endpoints do not use TLS termination on port `443`.
 OpenShell replaces the sandbox's credential placeholder at the allowed endpoint.
 For a credentialless upstream, the protected local proxy removes the sentinel authorization header before forwarding the request.
 
-Remaining custom shared selections and owned Local NVIDIA NIM retain `inference.local` on OpenShell `0.0.x`.
+Remaining custom shared selections retain `inference.local` on OpenShell `0.0.x`.
 Existing DCode local sandboxes without native authority require explicit recreation; NemoClaw does not migrate them automatically.
 Before recreation, download the state you need to an independently managed location and verify that the download is complete.
 Follow [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually) before deleting the existing sandbox.

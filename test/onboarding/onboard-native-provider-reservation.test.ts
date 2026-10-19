@@ -412,3 +412,45 @@ it.each([
     expect(harness.commands.some(({ command }) => command.startsWith("inference "))).toBe(false);
   },
 );
+
+it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"])(
+  "registers Local NIM as a sentinel native provider for %s",
+  async (agent) => {
+    const nim =
+      require("../../src/lib/inference/nim.ts") as typeof import("../../src/lib/inference/nim");
+    vi.spyOn(nim, "getServedModelId").mockReturnValue("local/nim-model");
+    const getManagedVllmProviderBinding = vi.fn(() => ({
+      baseUrl: "http://host.openshell.internal:18000/v1",
+      apiKey: "managed-vllm-secret",
+    }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: { applyLocalInferenceRoute: undefined, getManagedVllmProviderBinding },
+    });
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "local/nim-model",
+        "vllm-local",
+        nim.getNimInferenceEndpoints().baseUrl,
+        null,
+        null,
+        [],
+        { agentName: agent, localNimSelected: true },
+      ),
+    ).resolves.toEqual({ ok: true });
+    const attachment = [...harness.native.authorities.values()][0];
+    expect(attachment).toMatchObject({
+      provider: "vllm-local",
+      authMode: "sentinel",
+      endpointUrl: nim.getNimInferenceEndpoints().baseUrl,
+      sandboxName: "test-box",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    });
+    expect(attachment.agent).toBe(agent === "langchain-deepagents-code" ? undefined : agent);
+    expect(harness.native.adapter.createProvider.mock.calls[0][0].credentials).toEqual([
+      { name: "NEMOCLAW_LOCAL_INFERENCE_TOKEN", value: "dummy" },
+    ]);
+    expect(getManagedVllmProviderBinding).not.toHaveBeenCalled();
+    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
+  },
+);

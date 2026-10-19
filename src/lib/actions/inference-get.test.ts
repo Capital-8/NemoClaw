@@ -37,7 +37,7 @@ function configuredRoute(provider: string, model: string): OpenShellInferenceRou
 
 function nativeLocalSandbox(
   overrides: Record<string, unknown> = {},
-  agent: "langchain-deepagents-code" | "hermes" | "openclaw" = "langchain-deepagents-code",
+  agent: "langchain-deepagents-code" | "hermes" | "openclaw" | "pi" = "langchain-deepagents-code",
 ) {
   const binding: NativeLocalBinding = {
     provider: "ollama-local",
@@ -260,6 +260,30 @@ describe("runInferenceGet", () => {
         model: "qwen2.5:7b",
         endpointUrl,
       });
+    },
+  );
+
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
+    "reads the %s Local NIM attachment without querying the shared route",
+    async (agent) => {
+      const deps = createDeps(configuredRoute("stale-provider", "stale-model"));
+      const row = nativeLocalSandbox({}, agent);
+      const binding = {
+        ...row.nativeLocalProviderAttachment,
+        provider: "vllm-local" as const,
+        authMode: "sentinel" as const,
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+      };
+      deps.getSandbox = () => ({
+        ...row,
+        provider: binding.provider,
+        nimContainer: "owned-nim",
+        nativeLocalProviderAttachment: { ...binding, ...nativeLocalIdentity(binding) },
+      });
+      await expect(
+        runInferenceGet({ json: true, sandboxName: "alpha" }, deps),
+      ).resolves.toMatchObject({ provider: "vllm-local", endpointUrl: binding.endpointUrl });
+      expect(deps.observeInferenceRoute).not.toHaveBeenCalled();
     },
   );
 

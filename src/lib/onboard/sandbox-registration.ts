@@ -255,6 +255,13 @@ export function buildCreatedSandboxRegistryEntry(
   if (input.nativeLocalProviderAttachment !== undefined && !nativeLocalProviderAttachment)
     throw new Error("Invalid native local provider attachment.");
   if (
+    input.inferenceSelection.provider === "vllm-local" &&
+    input.inferenceSelection.nimContainer &&
+    nativeLocalProviderAttachment &&
+    nativeLocalProviderAttachment.authMode !== "sentinel"
+  )
+    throw new Error("Local NIM cannot reuse authenticated managed vLLM provider authority.");
+  if (
     nativeLocalProviderAttachment &&
     (requestedAgent === "hermes" || nativeLocalProviderAttachment.agent === "hermes") &&
     !(
@@ -334,10 +341,7 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
-    ...(nativeLocalProviderAttachment &&
-    !(input.inferenceSelection.provider === "vllm-local" && input.inferenceSelection.nimContainer)
-      ? { nativeLocalProviderAttachment }
-      : {}),
+    ...(nativeLocalProviderAttachment ? { nativeLocalProviderAttachment } : {}),
     ...(nativeNvidiaProviderAttachment ? { nativeNvidiaProviderAttachment } : {}),
     ...(nativeHostedProviderAttachment ? { nativeHostedProviderAttachment } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted: true as const } : {}),
@@ -585,11 +589,16 @@ export function nativeInferenceCreateIntentFields(
   nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
 } {
-  // Local NIM keeps its shared route even if a stale vLLM attachment exists.
-  const nativeLocalProviderAttachment =
-    provider === "vllm-local" && (localNimSelected || entry?.nimContainer)
-      ? undefined
-      : normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
+  const nativeLocalProviderAttachment = normalizeNativeLocalProviderAttachment(
+    entry?.nativeLocalProviderAttachment,
+  );
+  if (
+    provider === "vllm-local" &&
+    (localNimSelected || entry?.nimContainer) &&
+    nativeLocalProviderAttachment &&
+    nativeLocalProviderAttachment.authMode !== "sentinel"
+  )
+    throw new Error("Local NIM cannot reuse authenticated managed vLLM provider authority.");
   const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
     entry?.nativeNvidiaProviderAttachment,
   );

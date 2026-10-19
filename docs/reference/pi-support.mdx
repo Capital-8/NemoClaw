@@ -33,7 +33,7 @@ Pi is a NemoClaw agent runtime. Docker is the initial compute runtime. Pi-specif
 | Host platform       | Linux AMD64 or Linux ARM64               |
 | Compute runtime     | Docker                                   |
 | Managed API         | OpenAI Chat Completions                  |
-| Sandbox route       | Native endpoint for NVIDIA, fixed hosted providers, qualifying custom hosted endpoints, and new qualified local selections; shared route for Local NVIDIA NIM, remaining custom shared selections, and published legacy selections |
+| Sandbox route       | Native endpoint for NVIDIA, fixed hosted providers, qualifying custom hosted endpoints, and new qualified local selections; shared route for remaining custom shared selections and published legacy selections |
 | Qualification model | `nvidia/nemotron-3-super-120b-a12b`      |
 | Interactive command | `pi`                                     |
 | Headless command    | `pi --no-approve --print`                |
@@ -63,7 +63,7 @@ Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains th
 The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Pi selections for Ollama, standalone vLLM, llama.cpp, and qualified host-local compatible endpoints use sandbox-attached providers.
 Qualifying custom hosted endpoints also use sandbox-attached providers.
 OpenShell supplies the issued credential at egress; Pi receives only an opaque reference.
-Local NVIDIA NIM, remaining custom shared selections, and unchanged published Pi shared-route selections retain `inference.local`.
+Remaining custom shared selections and unchanged published Pi shared-route selections retain `inference.local`.
 Those shared routes require OpenShell `0.0.x`; OpenShell `0.1.3` removes `inference.local`.
 Pi native local onboarding on `0.1.3` remains unqualified for this upgrade.
 A failed native selection stops without falling back to the shared route. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.

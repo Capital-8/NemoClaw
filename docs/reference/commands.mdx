@@ -1198,7 +1198,7 @@ During that lease, another `launch` still verifies these conditions:
 
 - The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
   NVIDIA Endpoints, supported fixed hosted selections, and new OpenClaw Ollama, standalone vLLM, and llama.cpp selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
-  Local NVIDIA NIM, retained shared custom endpoints, and retained shared local selections use `inference.local`.
+  Retained shared custom endpoints and retained shared local selections use `inference.local`.
   Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
   A failed model request rejects readiness before the agent starts.
   This check is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
@@ -1208,7 +1208,7 @@ During that lease, another `launch` still verifies these conditions:
 
 - The recorded inference selection matches its provider path, and every configured route serves a valid response to a bounded request for the recorded model.
   NVIDIA Endpoints, supported fixed hosted selections, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections verify their recorded sandbox-attached provider and request the model at its native endpoint without a shared-route models probe.
-  Owned Local NVIDIA NIM, retained legacy and other custom shared routes use `inference.local`.
+  Retained legacy and other custom shared routes use `inference.local`.
   Their models probe must return HTTP 2xx, except that a retained legacy `openrouter-api` shared route can return HTTP 404 for `GET /v1/models` when the bounded model request succeeds.
   A failed model request rejects readiness before the agent starts.
 
@@ -1731,7 +1731,7 @@ When that deadline expires, `start` keeps the existing container, exits non-zero
 
 After the gateway and forward checks pass, `start` sends one inference request through the sandbox's selected provider path using its recorded provider and model.
 NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections, use native endpoints through sandbox-attached OpenShell providers.
-Owned Local NVIDIA NIM, retained shared custom endpoints, unchanged published Pi shared local selections, and retained shared local selections use `inference.local` on OpenShell `0.0.x`.
+Retained shared custom endpoints, unchanged published Pi shared local selections, and retained shared local selections use `inference.local` on OpenShell `0.0.x`.
 A reachable provider path can still reject an inference request or return an invalid result, so the command exits non-zero in either case.
 It prints the probe result, including the HTTP status when the path returned one, and points you to the sandbox doctor command.
 Ordinary providers request 16 reply tokens; Gemini requests 256 reply tokens so reasoning has room before visible content.
@@ -1794,7 +1794,7 @@ $$nemoclaw sandbox status my-assistant --json
 
 The command probes the selected provider path from inside the sandbox, and when that probe reports the path reachable it sends an inference request over the same path.
 NVIDIA Endpoints, supported fixed hosted providers, and new Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections, plus new OpenClaw Ollama, standalone vLLM, and llama.cpp selections, use native endpoints through sandbox-attached OpenShell providers.
-Owned Local NVIDIA NIM, retained shared custom endpoints, unchanged published Pi shared local selections, and retained shared local selections use `inference.local` on OpenShell `0.0.x`.
+Retained shared custom endpoints, unchanged published Pi shared local selections, and retained shared local selections use `inference.local` on OpenShell `0.0.x`.
 That inference request is the authoritative inference health check, and both checks exercise the path that agent traffic uses.
 The main `Inference` line reports one of these states:
 
@@ -2156,7 +2156,7 @@ The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Owned Local NVIDIA NIM, retained legacy and other custom shared routes use `inference.local`.
+`gateway-token` is not applicable to Deep Agents sandboxes because there is no OpenClaw gateway token. NVIDIA Endpoints, supported fixed hosted providers, and new Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use native endpoints through sandbox-attached OpenShell providers. Retained legacy and other custom shared routes use `inference.local`.
 
 </AgentOnly>
 
@@ -3365,8 +3365,8 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 
 After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
 Deep Agents also uses attached providers for qualified local endpoints.
-Local NVIDIA NIM, other agents' retained shared local selections, and remaining custom shared selections retain the `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
-Legacy Deep Agents Code local sandboxes without an attachment stop before rebuild. Local NVIDIA NIM retains its shared rebuild path.
+Other agents' retained shared local selections and remaining custom shared selections retain the `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+Legacy Deep Agents Code local sandboxes without an attachment stop before rebuild. Local NVIDIA NIM also requires its recorded native attachment before rebuild.
 Back up the sandbox data before running `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`.
 
 </AgentOnly>
@@ -3375,7 +3375,7 @@ Back up the sandbox data before running `nemo-deepagents onboard --fresh --name 
 
 Older OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without a native attachment stop before rebuild.
 Back up the sandbox data before running `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox`.
-Owned Local NVIDIA NIM sandboxes retain their shared-route rebuild path on OpenShell `0.0.x`.
+New Local NVIDIA NIM sandboxes use their recorded native attachment during rebuild. Back up and recreate older shared-route NIM sandboxes before upgrading OpenShell.
 
 </AgentOnly>
 
@@ -3679,7 +3679,7 @@ $$nemoclaw my-assistant inference get
 
 <AgentOnly variant="openclaw">
 
-Switch the active inference provider or model for a NemoClaw-managed OpenClaw sandbox. For NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider, the command attaches or updates the selected sandbox's native provider. Retained shared custom endpoints, Local NVIDIA NIM, and unmigrated local selections retain their existing shared OpenShell route. It then patches the selected running agent config to match the selected inference path, recomputes the config hash, and updates the NemoClaw registry. It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`. For OpenClaw, the patch updates the OpenClaw config provider namespace and selected model. After any changed config sync, NemoClaw uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards. The sandbox remains running, but agent requests are briefly interrupted. If the restart fails, the selected inference path and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch. After every changed synchronized inference selection, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success. If pairing does not converge, the selected inference path and config remain committed. Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
+Switch the active inference provider or model for a NemoClaw-managed OpenClaw sandbox. For NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider, the command attaches or updates the selected sandbox's native provider. Retained shared custom endpoints and unmigrated local selections retain their existing shared OpenShell route. It then patches the selected running agent config to match the selected inference path, recomputes the config hash, and updates the NemoClaw registry. It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`. For OpenClaw, the patch updates the OpenClaw config provider namespace and selected model. After any changed config sync, NemoClaw uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards. The sandbox remains running, but agent requests are briefly interrupted. If the restart fails, the selected inference path and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch. After every changed synchronized inference selection, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success. If pairing does not converge, the selected inference path and config remain committed. Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3687,7 +3687,7 @@ Switch the active inference provider or model for a NemoClaw-managed OpenClaw sa
 Switch the active inference provider or model for a NemoClaw-managed Hermes sandbox.
 For NVIDIA Endpoints, OpenAI, Anthropic, Gemini, OpenRouter, and Hermes Provider, the command attaches or updates the selected sandbox's native provider.
 New Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections also use sandbox-attached providers.
-Owned Local NVIDIA NIM, remaining custom shared selections, and retained legacy shared routes keep their shared OpenShell route on `0.0.x`.
+Remaining custom shared selections and retained legacy shared routes keep their shared OpenShell route on `0.0.x`.
 It then patches the shared native `/sandbox/.hermes/config.yaml`, recomputes the config hash, and updates the NemoClaw registry.
 Changes between shared routes do not rebuild or restart Hermes.
 If the current or selected route uses a native hosted or local provider, NemoClaw restarts the Hermes gateway after configuration sync.
@@ -3712,7 +3712,7 @@ New Deep Agents Code and Hermes Ollama, standalone vLLM, llama.cpp, and qualifyi
 New OpenClaw Ollama, standalone vLLM, and llama.cpp selections also receive native attachments during onboarding.
 Hermes also supports native local switches through `inference set`.
 Deep Agents Code requires the onboarding recreation workflow to change its provider or model.
-The following route-conflict rules apply whenever the command changes the shared gateway route, including owned Local NVIDIA NIM, retained legacy shared routes, retained custom shared endpoints, and unchanged published Pi shared local routes.
+The following route-conflict rules apply whenever the command changes the shared gateway route, including retained legacy shared routes, retained custom shared endpoints, and unchanged published Pi shared local routes.
 These shared routes require OpenShell `0.0.x`.
 Before changing the route, NemoClaw compares it with every same-gateway registry entry, including stopped sandboxes.
 When only the provider or model differs, the command names the affected sandboxes and warns immediately before it re-points the shared route.
@@ -3741,7 +3741,7 @@ For NVIDIA Endpoints and the five fixed hosted providers, NemoClaw attaches or u
 Hermes qualified local switches use native attachments.
 OpenClaw model switches on recorded native Ollama, standalone vLLM, and llama.cpp attachments also leave the shared route unchanged.
 When switching to a different provider among those local options, NemoClaw prepares and attaches a provider for the selected runtime without changing the shared route.
-Retained shared custom endpoints, Local NVIDIA NIM, and unmigrated local selections retain their existing shared-route workflow on OpenShell `0.0.x`.
+Retained shared custom endpoints and unmigrated local selections retain their existing shared-route workflow on OpenShell `0.0.x`.
 Use onboarding to create a new Deep Agents Code native local selection.
 NemoClaw resolves the OpenShell gateway from the target sandbox's recorded gateway binding, including non-default `NEMOCLAW_GATEWAY_PORT` deployments.
 Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses registry compatibility checks and can break other sandboxes.

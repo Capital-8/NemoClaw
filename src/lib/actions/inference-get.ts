@@ -368,12 +368,11 @@ export async function runInferenceGet(
       !selectedSandbox.model.trim() ||
       !(selectedSandbox.agent === "langchain-deepagents-code"
         ? attachment.agent === undefined
-        : selectedSandbox.agent === "hermes"
-          ? attachment.agent === "hermes"
+        : selectedSandbox.agent === "hermes" || selectedSandbox.agent === "pi"
+          ? attachment.agent === selectedSandbox.agent
           : selectedSandbox.agent === "openclaw" &&
             attachment.agent === "openclaw" &&
-            isLocalInferenceProvider(selectedSandbox.provider) &&
-            !selectedSandbox.nimContainer)
+            isLocalInferenceProvider(selectedSandbox.provider))
     ) {
       throw new InferenceGetError(
         "Invalid native local provider attachment for the recorded inference selection",

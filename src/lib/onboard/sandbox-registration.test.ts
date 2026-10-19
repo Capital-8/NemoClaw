@@ -96,7 +96,7 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
-  it("omits stale Local NIM native attachments while retaining standalone vLLM attachments", () => {
+  it("retains sentinel Local NIM and standalone vLLM attachments", () => {
     const { nativeLocalIdentity } = requireDist(
       "../inference/native-local/contract.ts",
     ) as typeof import("../inference/native-local/contract");
@@ -131,18 +131,59 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     const nim = makeEntry("nemoclaw-nim-owned");
     const standalone = makeEntry(null);
 
-    expect(nim.nativeLocalProviderAttachment).toBeUndefined();
+    expect(nim.nativeLocalProviderAttachment).toEqual(attachment);
     expect(standalone.nativeLocalProviderAttachment).toEqual(attachment);
     expect(
       nativeInferenceCreateIntentFields("vllm-local", nim).nativeLocalProviderAttachment,
-    ).toBeUndefined();
+    ).toEqual(attachment);
     expect(
       nativeInferenceCreateIntentFields("vllm-local", standalone).nativeLocalProviderAttachment,
     ).toEqual(attachment);
     expect(
       nativeInferenceCreateIntentFields("vllm-local", standalone, true)
         .nativeLocalProviderAttachment,
-    ).toBeUndefined();
+    ).toEqual(attachment);
+  });
+
+  it("rejects authenticated vLLM authority for Local NIM registration and creation", () => {
+    const { nativeLocalIdentity } = requireDist(
+      "../inference/native-local/contract.ts",
+    ) as typeof import("../inference/native-local/contract");
+    const binding = {
+      provider: "vllm-local" as const,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "demo",
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "managed-vllm-provider",
+    };
+    const base = createdRegistryEntryInput();
+    const input = {
+      ...base,
+      nativeLocalProviderAttachment: attachment,
+      inferenceSelection: {
+        ...base.inferenceSelection,
+        provider: "vllm-local",
+        nimContainer: "owned-nim",
+        endpointUrl: binding.endpointUrl,
+      },
+    };
+    expect(() => buildCreatedSandboxRegistryEntry(input)).toThrow(
+      "Local NIM cannot reuse authenticated managed vLLM provider authority",
+    );
+    const entry = buildCreatedSandboxRegistryEntry({
+      ...input,
+      inferenceSelection: { ...input.inferenceSelection, nimContainer: null },
+    });
+    expect(() => nativeInferenceCreateIntentFields("vllm-local", entry, true)).toThrow(
+      "Local NIM cannot reuse authenticated managed vLLM provider authority",
+    );
   });
 
   it("records only an exact native NVIDIA provider identity", () => {

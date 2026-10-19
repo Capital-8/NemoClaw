@@ -6,6 +6,7 @@ import {
   assertNativeModelRouterOwner,
   prepareNativeModelRouterSelection,
 } from "../../onboard/routed-inference";
+import type { NimSwitchSelection } from "./local-runtime";
 import type { InferenceSetDeps } from "../inference-set";
 import { InferenceSetError } from "../inference-set-error";
 import {
@@ -147,6 +148,7 @@ export async function prepareOpenClawLocalSwitch(input: {
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   inferenceApi?: string | null;
+  nimSelection?: NimSwitchSelection;
   sandboxName: string;
   gatewayName: string;
   deps: InferenceSetDeps;
@@ -171,7 +173,11 @@ export async function prepareOpenClawLocalSwitch(input: {
           authMode: "authenticated" as const,
           ownedProxy,
         }
-      : deps.resolveLocalSwitchRuntime(input.provider, deps.resolveCredentialValue);
+      : deps.resolveLocalSwitchRuntime(
+          input.provider,
+          deps.resolveCredentialValue,
+          input.nimSelection,
+        );
   if (!runtime.endpointUrl)
     throw new InferenceSetError("The local runtime endpoint is unavailable.");
   input.selection.selected = await (

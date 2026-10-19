@@ -1092,6 +1092,7 @@ export function createSetupInference(
     const usesBedrockRuntimeAdapter =
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
     let shouldLogSuccessfulRoute = false;
+    let selectedLocalNim = false;
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
       deps.withGatewayRouteMutationLock(gatewayName, () =>
         withRoutedInferencePortLock(routedProvider, operation, deps),
@@ -1684,7 +1685,7 @@ export function createSetupInference(
             if (outcome.done) return outcome.result;
           } else if (provider === "vllm-local") {
             const outcome = await inferenceProviders.setupVllmLocalInference(
-              { model, provider },
+              { model, provider, localNimSelected: selectedLocalNim },
               {
                 ...commonDeps,
                 validateLocalProvider: hostLocalRoute
@@ -2015,6 +2016,8 @@ export function createSetupInference(
         if (!selectedAgent && usesNativeLocalInference(provider, endpointUrl)) throw error;
         /* An unreadable registry skips GPU release; it must not fail onboarding. */
       }
+      selectedLocalNim =
+        provider === "vllm-local" && (options.localNimSelected ?? Boolean(recordedNimContainer));
       nativeLocalAgent = selectedAgent ?? recordedAgent;
       selectingNativeLocal =
         !options.hostLocalInference?.sharedInferenceRoute &&

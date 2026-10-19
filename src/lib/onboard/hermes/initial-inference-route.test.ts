@@ -331,14 +331,6 @@ describe("external Hermes initial native-local route", () => {
       },
     },
     {
-      name: "owned Local NIM",
-      setup(f: ReturnType<typeof fixture>) {
-        delete f.entry.nativeLocalProviderAttachment;
-        f.entry.provider = "vllm-local";
-        f.entry.nimContainer = "nemoclaw-nim-owned";
-      },
-    },
-    {
       name: "hosted",
       setup(f: ReturnType<typeof fixture>) {
         delete f.entry.nativeLocalProviderAttachment;
@@ -350,6 +342,33 @@ describe("external Hermes initial native-local route", () => {
     const f = fixture();
     setup(f);
     await f.initialize("alpha", "selected-local-model", "compatible-endpoint", "gateway-a");
+    expect(f.events).toEqual([]);
+    expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
+    expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("projects an attached native NIM route", async () => {
+    const f = fixture("vllm-local");
+    const binding = { ...f.receipt, authMode: "sentinel" as const };
+    const receipt = { ...binding, ...nativeLocalIdentity(binding) };
+    f.entry.nimContainer = "nemoclaw-nim-owned";
+    f.entry.nativeLocalProviderAttachment = receipt;
+    await f.run();
+    expect(f.deps.readCredentialHandle).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "gateway-a",
+      receipt,
+    );
+    expect(f.config.model).toMatchObject({ base_url: receipt.endpointUrl, api_key: issued("v7") });
+    expect(f.config.providers["vllm-local"].api_key).toBe(issued("v7"));
+    expect(f.events).toEqual(["lock", "credential", "read", "write", "restart", "unlock"]);
+  });
+
+  it("rejects legacy NIM before reading credentials or changing config", async () => {
+    const f = fixture("vllm-local");
+    f.entry.nimContainer = "nemoclaw-nim-owned";
+    delete f.entry.nativeLocalProviderAttachment;
+    await expect(f.run()).rejects.toThrow("does not match");
     expect(f.events).toEqual([]);
     expect(f.deps.readCredentialHandle).not.toHaveBeenCalled();
     expect(f.deps.writeSandboxConfig).not.toHaveBeenCalled();

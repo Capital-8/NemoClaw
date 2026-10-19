@@ -304,7 +304,7 @@ describe("rebuild legacy local route preflight", () => {
     },
   );
 
-  it("leaves Local NIM on its existing shared rebuild path", () => {
+  it("blocks a legacy Local NIM rebuild before mutation", () => {
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });
@@ -315,8 +315,10 @@ describe("rebuild legacy local route preflight", () => {
       model: "nim-model",
       nimContainer: "nim-alpha",
     } as RebuildSandboxEntry;
-    expect(blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toBe(false);
-    expect(bail).not.toHaveBeenCalled();
+    expect(() => blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toThrow(
+      "Legacy shared local inference cannot be rebuilt safely",
+    );
+    expect(bail).toHaveBeenCalledOnce();
   });
 
   it("leaves attached selections on their existing preflight path", () => {

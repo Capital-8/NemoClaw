@@ -45,9 +45,8 @@ export function usesNativeLocalInferenceForAgent(
   agentName: string | null | undefined,
   provider: string | null | undefined,
   endpointUrl?: string | null,
-  localNimSelected = false,
+  _localNimSelected = false,
 ): boolean {
-  if (provider === "vllm-local" && localNimSelected) return false;
   if (
     agentName === "pi" &&
     provider === "compatible-endpoint" &&

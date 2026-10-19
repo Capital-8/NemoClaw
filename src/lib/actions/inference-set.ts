@@ -86,6 +86,7 @@ import {
   listNativeLocalProviderAuthorities,
   resolveOpenClawLocalSwitch,
   resolveLocalSwitchRuntime,
+  verifyNimSwitchSelection,
   prepareOpenClawLocalSwitch,
   rollbackOpenClawLocalSwitch,
   getNativeLocalProviderAuthority,
@@ -912,8 +913,12 @@ function resolveHermesContextWindowForSwitch(
   provider: string,
   model: string,
   deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
+  nimContextWindow?: number | null,
 ): number | undefined {
-  const contextWindow = deps.resolveContextWindowForModel(provider, model);
+  const contextWindow =
+    nimContextWindow === undefined
+      ? deps.resolveContextWindowForModel(provider, model)
+      : nimContextWindow;
   if (contextWindow != null) {
     deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
     return contextWindow;
@@ -931,10 +936,14 @@ function resolveOpenClawContextWindowForSwitch(
     model: string;
     sandboxName: string;
     routeChanged: boolean;
+    nimContextWindow?: number | null;
   },
   deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
 ): number | null | undefined {
-  const contextWindow = deps.resolveContextWindowForModel(options.provider, options.model);
+  const contextWindow =
+    options.nimContextWindow === undefined
+      ? deps.resolveContextWindowForModel(options.provider, options.model)
+      : options.nimContextWindow;
   if (contextWindow != null) {
     deps.log(`  Context window for '${options.model}': ${contextWindow} tokens`);
     return contextWindow;
@@ -1407,13 +1416,20 @@ async function runInferenceSetWithoutHostLock(
     effectiveInferenceApi: preparedRoute.preliminaryExplicitMetadata?.preferredInferenceApi ?? null,
   });
 
+  const nimSelection = verifyNimSwitchSelection(
+    provider,
+    model,
+    registryMetadata,
+    localSwitch.selected ?? previousNativeLocalAttachment,
+  );
+
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
   // host.openshell.internal hostname, which the host-side `openshell inference set`
   // verify cannot resolve — its default verification is a guaranteed false negative
   // on a valid route. Validate the host stack ourselves, then skip the gateway-side
   // verify. Only a genuinely-unreachable host stack hard-fails here, before the
   // route is touched.
-  let effectiveNoVerify = options.noVerify === true;
+  let effectiveNoVerify = options.noVerify === true || Boolean(nimSelection);
   // A loopback endpoint onboarded without authentication is published to the
   // gateway through the local no-auth proxy on NemoClaw's sandbox bridge, so
   // the provider's base URL is a `host.openshell.internal` address even though
@@ -1436,7 +1452,7 @@ async function runInferenceSetWithoutHostLock(
   if (httpsPinProviderBinding || probeSandboxRoute) {
     effectiveNoVerify = true;
   }
-  if (deps.isLocalInferenceProvider(provider)) {
+  if (deps.isLocalInferenceProvider(provider) && !nimSelection) {
     const localValidation = deps.validateLocalProvider(provider);
     if (localValidation.ok) {
       effectiveNoVerify = true;
@@ -1582,6 +1598,7 @@ async function runInferenceSetWithoutHostLock(
       endpointUrl: registryMetadata.endpointUrl,
       credentialEnv: registryMetadata.credentialEnv,
       inferenceApi: preMutationInferenceApi,
+      nimSelection,
       sandboxName,
       gatewayName: preparedRoute.gatewayName,
       deps,
@@ -1640,6 +1657,7 @@ async function runInferenceSetWithoutHostLock(
         credentialEnv: registryMetadata.credentialEnv,
         inferenceApi: preMutationInferenceApi,
         explicitCustomRoute: hasExplicitCustomRoute,
+        nimSelection,
         adapter: deps.providerAdapter,
         resolveCredentialValue: deps.resolveCredentialValue,
         readAuthority: deps.getNativeLocalProviderAuthority,
@@ -1949,7 +1967,12 @@ async function runInferenceSetWithoutHostLock(
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
-      const contextWindow = resolveHermesContextWindowForSwitch(provider, model, deps);
+      const contextWindow = resolveHermesContextWindowForSwitch(
+        provider,
+        model,
+        deps,
+        nimSelection?.contextWindow,
+      );
       patched = patchHermesInferenceConfig(
         config,
         provider,
@@ -1971,6 +1994,7 @@ async function runInferenceSetWithoutHostLock(
           model,
           sandboxName,
           routeChanged: openClawConfigSyncPending,
+          nimContextWindow: nimSelection?.contextWindow,
         },
         deps,
       );
