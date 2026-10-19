@@ -213,7 +213,6 @@ export interface ObservedManagedVllmRuntime {
   readonly serving: import("../../config/model").NemoClawManagedVllmServing;
   readonly containerId: string;
   readonly imageId: string;
-  readonly networkId: string;
   readonly startedAt: string;
 }
 

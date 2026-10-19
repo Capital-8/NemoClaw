@@ -849,13 +849,15 @@ async function ensureAttachedLlamaCppReachable(
 ): Promise<void> {
   if (provider !== "llama-cpp-local" || managed) return;
   const result = await (deps.probeLlamaCppSandboxReachability?.() ??
-    probeHostServiceSandboxReachability({ port: LLAMA_CPP_PORT }));
+    probeHostServiceSandboxReachability({ port: LLAMA_CPP_PORT, nativeSupervisorNetwork: true }));
   if (result.ok || result.reason !== "tcp_failed") return;
   deps.error(
     `  Sandbox containers cannot reach Local llama.cpp at host.openshell.internal:${LLAMA_CPP_PORT}.`,
   );
   deps.error(
-    `  Keep host-loopback access and bind or publish port ${LLAMA_CPP_PORT} on ${result.gatewayIp ?? "the Docker gateway address"} for the sandbox network.`,
+    result.networkName === "host"
+      ? `  Check that the llama.cpp server listens on 127.0.0.1:${LLAMA_CPP_PORT} for the native supervisor.`
+      : `  Keep host-loopback access and bind or publish port ${LLAMA_CPP_PORT} on ${result.gatewayIp ?? "the Docker gateway address"} for the sandbox network.`,
   );
   deps.error("  Retain API-key authentication, check the host firewall, then retry onboarding.");
   deps.exitProcess(1);

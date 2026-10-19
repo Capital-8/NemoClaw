@@ -50,10 +50,11 @@ import {
   isCustomHostedProvider,
   customNativeCredentialEnv,
 } from "../../inference/native-provider/hosted";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/profile";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
 import { prepareCustomNativeProvider } from "../../inference/native-provider/custom-setup";
-import { isHostedCustomEndpoint } from "../../inference/native-provider/custom";
+import { isCustomNativeEndpoint } from "../../inference/native-provider/custom";
 
 /** Preserve shared-route config unless a custom native endpoint is explicit. */
 export function usesNativeConfigByDefault(provider: string, nativeEndpointUrl?: string): boolean {
@@ -69,8 +70,15 @@ export function isNativeInferenceSelection(
 ): boolean {
   if (isCustomHostedProvider(provider)) {
     const endpoint = endpointUrl ?? (entry.provider === provider ? entry.endpointUrl : undefined);
-    if (!endpoint || !recordedNativeProviderAttachment(entry)) return false;
-    return isHostedCustomEndpoint(provider, endpoint);
+    const local = normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+    const nativeLocal =
+      local &&
+      local.gatewayName === gatewayName &&
+      local.sandboxName === entry.name &&
+      local.provider === entry.provider &&
+      (local.agent ?? "langchain-deepagents-code") === entry.agent;
+    if (!endpoint || (!recordedNativeProviderAttachment(entry) && !nativeLocal)) return false;
+    return isCustomNativeEndpoint(provider, endpoint);
   }
   if (!fixedNativeProvider(provider)) return false;
   if (provider !== "hermes-provider") return true;

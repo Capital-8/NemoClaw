@@ -1113,6 +1113,7 @@ def managed_inference_api_key(base_url: str) -> str:
             if ipaddress.ip_address(normalized_host).is_loopback:
                 return "nemoclaw-managed-inference"
         except ValueError:
+            # DNS hostnames continue through hosted credential-reference validation.
             pass
         name = (
             "COMPATIBLE_API_KEY" if upstream_provider == "compatible-endpoint"

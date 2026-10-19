@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import { isAllowedOpenShellSandboxBridgeUrl } from "../../private-networks";
+import { isProtectedLocalInferencePort } from "../gateway/local-endpoint-ports";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import {
@@ -10,7 +12,7 @@ import {
 } from "../../security/trusted-private-endpoint";
 import { parseTrustedPrivateInferenceHostsFromEnv } from "../endpoint-ssrf-preflight";
 import type { NativeProviderAttachment } from "./contract";
-import { customNativeProvider, isHostedCustomEndpoint, type CustomNativeBinding } from "./custom";
+import { customNativeProvider, isCustomNativeEndpoint, type CustomNativeBinding } from "./custom";
 import { requireHostedProviderAttachment } from "./hosted-attachment";
 import { nativeProviderLifecycle } from "./index";
 import {
@@ -35,7 +37,7 @@ export function usesCustomNativeOnboarding(
 ): boolean {
   return Boolean(
     sandboxName &&
-    isHostedCustomEndpoint(provider, endpointUrl) &&
+    isCustomNativeEndpoint(provider, endpointUrl) &&
     (!recorded ||
       recorded.pendingRouteReservation ||
       recorded.nativeHostedProviderAttachment?.custom),
@@ -81,6 +83,11 @@ export async function prepareCustomNativeProvider(input: {
     input.endpointUrl,
     input.provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai",
   );
+  const bridge =
+    input.provider === "compatible-anthropic-endpoint" &&
+    isAllowedOpenShellSandboxBridgeUrl(new URL(endpointUrl));
+  if (bridge && isProtectedLocalInferencePort(Number(new URL(endpointUrl).port)))
+    throw new Error("The selected inference endpoint uses a protected host port.");
   const classified =
     input.provider === "compatible-anthropic-endpoint"
       ? classifyCustomAnthropicEndpoint(input.endpointUrl)
@@ -95,7 +102,7 @@ export async function prepareCustomNativeProvider(input: {
     previous.custom.api === api &&
     previous.custom.credentialEnv === input.credentialEnv;
   const admitted =
-    sameBinding || bedrock
+    sameBinding || bedrock || bridge
       ? undefined
       : await assertEndpointResolvesPublic(endpointUrl, input.lookup, {
           trustedPrivateHosts:

@@ -17,7 +17,7 @@ import {
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText, shellQuote } from "../fixtures/clients/command.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";

@@ -324,7 +324,7 @@ function parseJsonBody(body: string, label: string): unknown {
   }
 }
 
-function openAiContent(json: unknown): string {
+export function openAiContent(json: unknown): string {
   if (!json || typeof json !== "object") return "";
   const choices = (json as { choices?: unknown }).choices;
   if (!Array.isArray(choices)) return "";

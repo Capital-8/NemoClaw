@@ -24,6 +24,21 @@ Select **Other Anthropic-compatible endpoint**.
 Enter the endpoint base URL, model ID, and API key when prompted.
 Use any non-empty placeholder such as `dummy` when the endpoint does not require authentication.
 
+## Understand Native Endpoint Selection
+
+New qualifying custom endpoints use a sandbox-attached OpenShell provider.
+For a host service, use `http://host.openshell.internal:<port>` with an explicit port from `1024` through `65535`.
+The service must be reachable through the OpenShell host alias.
+NemoClaw rejects protected gateway, dashboard, agent API, Model Router, and credential-adapter ports, including their configured and recorded reservations.
+This host-service exception does not admit `host.docker.internal` or HTTPS on the OpenShell host alias.
+Public and explicitly trusted private endpoints retain their separate [security requirements](custom-endpoint-security).
+
+The native route binds the endpoint, API, and credential source to the selected sandbox.
+OpenShell supplies the host credential at egress; the agent receives a credential reference.
+Existing sandboxes without a native attachment retain their recorded shared route on OpenShell `0.0.x`.
+OpenShell `0.1.3` removes `inference.local`; this repair does not complete migration of every shared route.
+Native local qualification remains pending for this upgrade.
+
 <AgentOnly variant="openclaw">
 
 ## Understand OpenClaw Validation
@@ -50,9 +65,11 @@ Refer to [Onboarding rejects an Anthropic-compatible tool call](../../reference/
 
 ## Understand Hermes Routing
 
-Hermes uses the managed OpenAI Chat Completions frontend at `https://inference.local/v1` for this provider.
-NemoClaw validates `/v1/chat/completions`, verifies the same path during inference setup, and registers it with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
-The route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
+Hermes uses OpenAI Chat Completions for this provider.
+For a qualifying native selection, Hermes calls the recorded endpoint through its sandbox-attached OpenShell provider.
+NemoClaw validates `/v1/chat/completions` and configures the same API for inference.
+The route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its host credential binding.
+The agent receives `openshell:resolve:env:COMPATIBLE_ANTHROPIC_API_KEY` instead of the API key.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
 This path avoids duplicate Anthropic SSE `message_start` events.
@@ -68,7 +85,9 @@ AWS Bedrock routes keep their existing OpenAI-compatible adapter behavior.
 ## Understand Deep Agents Routing
 
 Deep Agents Code supports only OpenAI-compatible inference for this provider.
-NemoClaw validates `/v1/chat/completions`, coerces the route to `openai-completions`, and writes `https://inference.local/v1` as the provider base URL in `/sandbox/.deepagents/config.toml`.
+NemoClaw validates `/v1/chat/completions` and selects `openai-completions`.
+For a qualifying native selection, `/sandbox/.deepagents/config.toml` records the endpoint supplied through the sandbox-attached OpenShell provider.
+Retained shared selections use `https://inference.local/v1` on OpenShell `0.0.x`.
 The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
 If the endpoint implements only Anthropic Messages, onboarding stops instead of creating a Deep Agents sandbox with an unusable runtime route.
@@ -78,10 +97,12 @@ If the endpoint implements only Anthropic Messages, onboarding stops instead of 
 ## Run Non-Interactive Onboarding
 
 Set `NEMOCLAW_PROVIDER=anthropicCompatible` and provide the endpoint URL, model, and credential.
+Replace the example endpoint and model with your server values.
+Use `dummy` only when that server does not require authentication.
 
 ```bash
 NEMOCLAW_PROVIDER=anthropicCompatible \
-  NEMOCLAW_ENDPOINT_URL=http://localhost:8080 \
+  NEMOCLAW_ENDPOINT_URL=https://inference.example.com \
   NEMOCLAW_MODEL=my-model \
   COMPATIBLE_ANTHROPIC_API_KEY=dummy \
   $$nemoclaw onboard --non-interactive

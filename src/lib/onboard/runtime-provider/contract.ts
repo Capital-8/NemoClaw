@@ -164,6 +164,8 @@ export interface RuntimeProviderGatewayHostRuntime {
     readonly processOwnership: "scoped-namespace" | "runtime-marker";
   };
   readonly network: {
+    /** Supervisor topology available to host-service probes without a sandbox bridge. */
+    readonly supervisorNetwork?: { readonly name: string; readonly hostAddress: string };
     /** Provider-owned sandbox source ranges authorized to reach host services. */
     sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;

@@ -14,7 +14,7 @@ const INSTALLER_SOURCE = fs.readFileSync(
   "utf8",
 );
 const TRUSTED_V013_TEMPLATE_DIGEST =
-  "4c474fed277ea6c97ec8d49217d9323bd89fc9e129e9ea45ae697be57122837c";
+  "2b801fac9e584a6b2cb811968c3bd8c6669fff10881452446ec6408b0792ff0d";
 const originalCurl =
   'curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\';
 const boundedCurl = [
@@ -94,6 +94,10 @@ describe("installer Homebrew formula reuse trust", () => {
   it.each([
     ["existing template", untrustedTemplate],
     ["unbounded download", originalInstaller],
+    [
+      "retained sandbox registry guard",
+      boundedInstaller.replace("  verifyRetainedNemoClawRegistry();\n", ""),
+    ],
     [
       "download retry policy",
       boundedInstaller.replace("--retry 3 --retry-delay 2", "--retry 4 --retry-delay 2"),

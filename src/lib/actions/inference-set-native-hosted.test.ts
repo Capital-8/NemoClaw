@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { nativeLocalIdentity } from "../inference/native-local/contract";
 import { customNativeProvider } from "../inference/native-provider/custom";
 import { HOSTED_NATIVE_PROVIDERS, hostedNativeProvider } from "../inference/native-provider/hosted";
 import type { NativeProviderAttachment } from "../inference/native-provider/contract";
@@ -11,7 +12,12 @@ import { normalizeNativeNvidiaProviderAttachment } from "../inference/native-nvi
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
 import { prepareRebuildResumeConfig } from "./sandbox/rebuild-resume-config";
-import { createDeps, HERMES_TARGET, OPENCLAW_TARGET } from "../../../test/helpers/inference-set";
+import {
+  createDeps,
+  HERMES_TARGET,
+  OPENCLAW_TARGET,
+  nativeLocalTestReceipt,
+} from "../../../test/helpers/inference-set";
 
 function fixture(extraDefinitions: ReturnType<typeof hostedNativeProvider>[] = []) {
   const definitions = [
@@ -95,7 +101,7 @@ function fixture(extraDefinitions: ReturnType<typeof hostedNativeProvider>[] = [
   deps.setNativeHostedProviderAuthority = (gateway, provider, receipt) => {
     authorities.set(`${gateway}/${receipt.custom ? receipt.providerName : provider}`, receipt);
   };
-  return { deps, calls, attached, authorities, entry };
+  return { deps, calls, attached, authorities, entry, existing };
 }
 
 it("rejects Pi runtime switching before changing its native attachment (#12589)", async () => {
@@ -517,6 +523,75 @@ describe("Hermes native gateway credential refresh", () => {
 });
 
 describe("custom native inference selection", () => {
+  it("switches Hermes from its native local attachment to an Anthropic bridge without shared routing", async () => {
+    const binding = { ...nativeLocalTestReceipt(), agent: "hermes" as const };
+    const local = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      providerId: `id-${nativeLocalIdentity(binding).providerName}`,
+    };
+    const bridge = customNativeProvider({
+      provider: "compatible-anthropic-endpoint",
+      api: "openai-completions",
+      endpointUrl: "http://host.openshell.internal:49152",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      allowedIps: [],
+    });
+    const { deps, entry, calls, attached, existing } = fixture([
+      bridge,
+      {
+        ...local,
+        logicalProvider: local.provider,
+        endpoint: local.endpointUrl,
+        api: "openai-completions",
+        label: "local",
+      },
+    ]);
+    Object.assign(entry, {
+      agent: "hermes",
+      provider: local.provider,
+      endpointUrl: local.endpointUrl,
+      nativeLocalProviderAttachment: local,
+    });
+    deps.resolveAgentConfig = () => HERMES_TARGET;
+    deps.providerAdapter.inspectProviderProfile = async () => ({
+      ok: true,
+      value: { credentialKeys: [local.credentialEnv] },
+    });
+    attached.get("alpha")!.add(local.providerName);
+    existing.add(local.providerName);
+    await runInferenceSet(
+      {
+        provider: bridge.logicalProvider,
+        model: "mock-anthropic-model",
+        endpointUrl: bridge.custom.endpointUrl,
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    );
+    expect(entry.nativeHostedProviderAttachment?.custom).toEqual(bridge.custom);
+    expect(entry.nativeLocalProviderAttachment).toBeUndefined();
+    expect([...attached.get("alpha")!]).toEqual([bridge.providerName]);
+    expect([...attached.get("beta")!]).toEqual(["unrelated-provider"]);
+    expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nativeProvider: true,
+        nativeEndpointUrl: bridge.endpoint,
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(JSON.stringify(deps.calls.writeSandboxConfig.mock.calls)).toContain(
+      "${COMPATIBLE_ANTHROPIC_API_KEY}",
+    );
+    expect(JSON.stringify(deps.calls.writeSandboxConfig.mock.calls)).not.toContain(
+      "canary-host-secret",
+    );
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    deps.resolveCredentialValue = () => "";
+    await runInferenceSet({ provider: bridge.logicalProvider, model: "another-model" }, deps);
+    expect(calls.updateProvider).not.toHaveBeenCalled();
+  });
   const custom = customNativeProvider({
     provider: "compatible-endpoint",
     api: "openai-completions",

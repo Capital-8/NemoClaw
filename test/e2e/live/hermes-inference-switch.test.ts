@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
 import { testTimeout } from "../../helpers/timeouts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -261,8 +261,7 @@ test(
     switchBinding &&
       (await expectOpenAiProvider(
         host,
-        "compatible-anthropic-endpoint",
-        "COMPATIBLE_ANTHROPIC_API_KEY",
+        registryState().registry.sandboxes?.[SANDBOX_NAME]?.nativeHostedProviderAttachment,
       ));
 
     progress.phase("validate switched route and mutable config");
@@ -410,7 +409,12 @@ test(
       run: (attempt) =>
         sandbox.execShell(
           SANDBOX_NAME,
-          trustedSandboxShellScript(sandboxInferenceCommand(inferenceLocalPayload)),
+          trustedSandboxShellScript(
+            sandboxInferenceCommand(
+              inferenceLocalPayload,
+              switchEndpointUrl ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            ),
+          ),
           {
             artifactName: `hermes-sandbox-inference-chat-after-switch-${attempt}`,
             env: env(),
