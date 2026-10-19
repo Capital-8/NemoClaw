@@ -11,6 +11,8 @@ import {
 } from "../../src/lib/onboard/machine/handlers/provider-inference.test-support";
 import { nativeLocalSetupReceipt } from "../support/native-local-setup-harness";
 import { createDirectSetupInferenceHarness } from "../helpers/onboard-split-context";
+import type { SetupInferenceDeps } from "../../src/lib/onboard/setup-inference";
+import { serializedHostLocalInferenceReceipt } from "../helpers/host-local-inference-receipt";
 
 // Abandoned-reservation recovery has its own state tests. Keep this harness from
 // reading the developer's registry through the CommonJS onboarding boundary.
@@ -83,6 +85,65 @@ describe("native provider ownership before route reservation", () => {
     expect(harness.updateSandbox).not.toHaveBeenCalled();
     expect(harness.native.providers.size).toBe(0);
     expect(harness.native.authorities.size).toBe(0);
+  });
+  it("clears stale host-local ownership when selecting native NVIDIA inference", async () => {
+    const providerAdapter = {
+      importProviderProfile: vi.fn(async () => ({ ok: true as const })),
+      ensureProviderPolicyComposition: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      getProvider: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "absent" },
+        })
+        .mockResolvedValue({
+          ok: true,
+          value: {
+            name: "nemoclaw-nvidia-prod-v1",
+            type: "nemoclaw-nvidia-inference-v1",
+            credentialKeys: ["NVIDIA_INFERENCE_API_KEY"],
+            configKeys: [],
+            revision: { id: "native-identity", resourceVersion: 1 },
+          },
+        }),
+      createProvider: vi.fn(async () => ({ ok: true as const })),
+    } as unknown as NonNullable<SetupInferenceDeps["providerAdapter"]>;
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        providerAdapter,
+        hydrateCredentialEnv: () => "host-secret",
+        getNativeNvidiaProviderAuthority: () => undefined,
+        setNativeNvidiaProviderAuthority: vi.fn(),
+        getSandbox: () => ({
+          name: "sandbox-a",
+          provider: "vllm-local",
+          model: "qwen3.5-9b",
+          hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt(),
+        }),
+      },
+    });
+    await expect(
+      harness.setupInference(
+        "sandbox-a",
+        "remote-model",
+        "nvidia-prod",
+        null,
+        "NVIDIA_API_KEY",
+        null,
+        [],
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(harness.updateSandbox).toHaveBeenCalledWith(
+      "sandbox-a",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "remote-model",
+        hostLocalInferenceReceipt: null,
+        nativeNvidiaProviderAttachment: expect.objectContaining({ providerId: "native-identity" }),
+      }),
+    );
+    expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
   });
 });
 

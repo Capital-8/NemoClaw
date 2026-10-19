@@ -469,6 +469,8 @@ export async function runCredentialsAddAction(
           gatewayName: target.gatewayName,
           adapter: providerAdapter,
           endpointUrl: existing?.endpointUrl,
+          retainedHermesEndpoint:
+            hosted.logicalProvider === "hermes-provider" && Boolean(existing?.endpointUrl),
           credentialValue: fromExisting ? null : credentialValue,
           reuseExistingCredential: fromExisting,
           readAuthority,

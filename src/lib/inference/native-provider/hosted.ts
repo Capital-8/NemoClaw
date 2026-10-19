@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { isAllowedOpenShellSandboxBridgeUrl, isPrivateHostname } from "../../private-networks";
+import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 
 import { type NativeProviderAttachment, type NativeProviderDefinition } from "./contract.ts";
 
@@ -105,6 +107,24 @@ export function canonicalHermesNativeEndpoint(value: string): string {
   return `${endpoint.origin}${endpoint.pathname.replace(/\/+$/, "")}`;
 }
 
+/** Restore an existing Hermes endpoint without admitting other private destinations. */
+export function canonicalRecordedHermesEndpoint(value: string): string {
+  const endpoint = new URL(value);
+  if (
+    !["http:", "https:"].includes(endpoint.protocol) ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash ||
+    unsafeEndpointUrlViolation(value) ||
+    /%2f|%5c/iu.test(endpoint.pathname) ||
+    (isPrivateHostname(endpoint.hostname) && !isAllowedOpenShellSandboxBridgeUrl(endpoint))
+  )
+    throw new Error("Recorded Hermes inference endpoint is not an admitted HTTP(S) destination");
+  if (isAllowedOpenShellSandboxBridgeUrl(endpoint)) endpoint.hostname = "host.openshell.internal";
+  return `${endpoint.origin}${endpoint.pathname.replace(/\/+$/, "")}`;
+}
+
 export function hostedNativeProvider(
   provider: string | null | undefined,
   endpointUrl?: string | null,
@@ -114,7 +134,7 @@ export function hostedNativeProvider(
   );
   if (!definition || definition.logicalProvider !== "hermes-provider" || !endpointUrl)
     return definition;
-  const endpoint = canonicalHermesNativeEndpoint(endpointUrl);
+  const endpoint = canonicalRecordedHermesEndpoint(endpointUrl);
   if (endpoint === definition.endpoint) return definition;
   const suffix = createHash("sha256").update(endpoint).digest("hex").slice(0, 20);
   return {
@@ -126,12 +146,12 @@ export function hostedNativeProvider(
   };
 }
 
-/** Keep explicit user-supplied Hermes endpoints on their existing workflow. */
+/** Existing Hermes endpoints now use an endpoint-bound provider. */
 export function usesNativeHermesEndpoint(
   endpoint: string | null | undefined,
-  authority?: NativeProviderAttachment,
+  _authority?: NativeProviderAttachment,
 ): boolean {
-  const fixed = hostedNativeProvider("hermes-provider")!;
-  const normalized = endpoint?.replace(/\/+$/, "");
-  return !normalized || normalized === fixed.endpoint || normalized === authority?.endpointUrl;
+  if (!endpoint) return true;
+  canonicalRecordedHermesEndpoint(endpoint);
+  return true;
 }

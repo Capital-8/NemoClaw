@@ -1551,7 +1551,7 @@ export function createSetupInference(
               {
                 ...commonDeps,
                 getNativeProviderAuthority: () => hermesAuthority,
-                prepareNativeProvider: async (apiKey, returnedEndpoint) => {
+                prepareNativeProvider: async (apiKey, returnedEndpoint, retainedHermesEndpoint) => {
                   if (
                     !deps.providerAdapter ||
                     !deps.getNativeHostedProviderAuthority ||
@@ -1567,6 +1567,7 @@ export function createSetupInference(
                     adapter: deps.providerAdapter,
                     credentialValue: apiKey,
                     endpointUrl: returnedEndpoint,
+                    retainedHermesEndpoint,
                     lookup: deps.resolveEndpointHost,
                     recordedSandbox: sandboxName ? deps.getSandbox?.(sandboxName) : null,
                     reuseExistingCredential: apiKey === null,

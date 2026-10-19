@@ -29,7 +29,7 @@ Sandbox agent -> provider API hostname -> sandbox-attached OpenShell provider ->
 | Anthropic | `https://api.anthropic.com` |
 | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` |
 | OpenRouter | `https://openrouter.ai/api/v1` |
-| Hermes Provider | `https://inference-api.nousresearch.com/v1`, or the endpoint returned by authenticated login |
+| Hermes Provider | `https://inference-api.nousresearch.com/v1`, the endpoint returned by authenticated login, or a validated endpoint retained from an existing selection |
 
 Each sandbox records its selected provider attachment. Changing one sandbox's native selection does not change another sandbox's route.
 OpenRouter attribution headers remain in the managed agent configuration.

@@ -1524,6 +1524,7 @@ async function runInferenceSetWithoutHostLock(
     sandboxName,
     selectingNative,
     gatewayName: preparedRoute.gatewayName,
+    endpointUrl: registryMetadata.endpointUrl,
     deps,
   });
   const rollbackRoute = preMutationRoute.state === "configured" ? preMutationRoute.route : null;

@@ -62,6 +62,7 @@ import { recordedNativeProviderAttachment } from "../../inference/native-provide
 import type { SandboxEntry } from "../../state/registry";
 import { prepareCustomNativeProvider } from "../../inference/native-provider/custom-setup";
 import { isCustomNativeEndpoint } from "../../inference/native-provider/custom";
+import { prepareHostedNativeProvider } from "../../inference/native-provider/setup";
 
 /** Preserve shared-route config unless a custom native endpoint is explicit. */
 export function usesNativeConfigByDefault(provider: string, nativeEndpointUrl?: string): boolean {
@@ -126,6 +127,7 @@ export function resolveNativeSelectionAuthority(input: {
   provider: string;
   gatewayName: string;
   previousAttachment?: NativeProviderAttachment;
+  endpointUrl?: string | null;
   deps: InferenceSetDeps;
 }): NativeProviderAttachment | undefined {
   if (!input.selectingNative) return undefined;
@@ -143,7 +145,9 @@ export function resolveNativeSelectionAuthority(input: {
   const access = nativeAuthorityAccess(
     input.provider,
     input.deps,
-    previous ? hostedNativeProvider(input.provider, previous.endpointUrl)?.endpoint : undefined,
+    input.provider === "hermes-provider"
+      ? hostedNativeProvider(input.provider, input.endpointUrl ?? previous?.endpointUrl)?.endpoint
+      : undefined,
   );
   const gatewayAuthority = access.read(input.gatewayName);
   const definition = previous
@@ -236,6 +240,46 @@ export async function prepareNativeSelection(input: {
       credentialValue: input.deps.resolveCredentialValue(credentialEnv) || null,
       adapter: input.deps.providerAdapter,
       recordedAttachment: input.expectedAttachment,
+      readAuthority: input.deps.getNativeHostedProviderAuthority,
+      writeAuthority: input.deps.setNativeHostedProviderAuthority,
+    });
+    await input.beforeAttach?.(receipt);
+    const attached = await nativeProviderLifecycle(
+      fixedNativeProviderForAttachment(receipt),
+    ).ensureNativeProviderAttached({
+      adapter: input.deps.providerAdapter,
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      expected: receipt,
+    });
+    return {
+      attachment: attached.receipt,
+      attachmentChanged: attached.changed,
+      endpointUrl: receipt.endpointUrl,
+    };
+  }
+  if (
+    input.provider === "hermes-provider" &&
+    (input.endpointUrl || input.expectedAttachment?.endpointUrl)
+  ) {
+    if (
+      !input.deps.getNativeHostedProviderAuthority ||
+      !input.deps.setNativeHostedProviderAuthority
+    )
+      throw new InferenceSetError("Native hosted provider ownership storage is unavailable");
+    if (input.inferenceApi && input.inferenceApi !== "openai-completions")
+      throw new InferenceSetError("Hermes Provider requires its recorded Chat Completions API");
+    const receipt = await prepareHostedNativeProvider({
+      provider: input.provider,
+      gatewayName: input.gatewayName,
+      endpointUrl: input.endpointUrl ?? input.expectedAttachment?.endpointUrl,
+      retainedHermesEndpoint: true,
+      adapter: input.deps.providerAdapter,
+      credentialValue: input.expectedAttachment
+        ? null
+        : input.deps.resolveCredentialValue("NOUS_API_KEY") || null,
+      reuseExistingCredential: Boolean(input.expectedAttachment),
+      recordedSandbox: input.deps.getSandbox(input.sandboxName),
       readAuthority: input.deps.getNativeHostedProviderAuthority,
       writeAuthority: input.deps.setNativeHostedProviderAuthority,
     });
@@ -419,6 +463,7 @@ export function prepareNativeTransitionAuthority(input: {
   sandboxName: string;
   selectingNative: boolean;
   gatewayName: string;
+  endpointUrl?: string | null;
   deps: InferenceSetDeps;
 }) {
   const previousNativeAttachment = recordedNativeProviderAttachment(input.entry);
