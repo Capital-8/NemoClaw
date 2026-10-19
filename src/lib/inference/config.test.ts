@@ -668,7 +668,7 @@ describe("formatInferenceRouteDriftForDisplay", () => {
 });
 
 it.each([
-  ["openclaw", true, "https://inference.local/v1"],
+  ["openclaw", true, "http://host.openshell.internal:8000/v1"],
   ["pi", true, "http://host.openshell.internal:8000/v1"],
   ["pi", false, "https://inference.local/v1"],
   ["langchain-deepagents-code", false, "https://inference.local/v1"],
@@ -726,3 +726,24 @@ it.each([
   expect(config.inferenceBaseUrl).toBe(endpoint);
   expect(config.inferenceApi).toBe(expectedApi);
 });
+
+it.each(["openai-completions", "openai-responses"])(
+  "preserves compatible OpenClaw native API %s",
+  (api) => {
+    expect(
+      getSandboxInferenceConfig(
+        "served-alias",
+        "compatible-endpoint",
+        api,
+        true,
+        "http://host.openshell.internal:8000/v1",
+        "openclaw",
+      ),
+    ).toMatchObject({
+      inferenceBaseUrl: "http://host.openshell.internal:8000/v1",
+      inferenceApi: api,
+      primaryModelRef: "inference/served-alias",
+      providerKey: "inference",
+    });
+  },
+);

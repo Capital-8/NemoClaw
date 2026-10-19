@@ -65,7 +65,12 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
             : ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
           rules: [
             { allow: { method: "GET", path: `${endpoint.pathname}/models` } },
-            { allow: { method: "POST", path: `${endpoint.pathname}/chat/completions` } },
+            {
+              allow: {
+                method: "POST",
+                path: `${endpoint.pathname}/${binding.api === "openai-responses" ? "responses" : "chat/completions"}`,
+              },
+            },
           ],
         },
       ],

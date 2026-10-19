@@ -4,6 +4,7 @@
 import {
   nativeLocalIdentity,
   type NativeLocalProviderAttachment,
+  type NativeLocalBinding,
 } from "../../src/lib/inference/native-local/contract";
 import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import { createDeps } from "./inference-set";
@@ -24,15 +25,26 @@ export const attachment = {
   providerId: "owned-local-provider",
 };
 
-export function fixture() {
+export function fixture(
+  override: Partial<NativeLocalBinding> = {},
+  credentialEnv?: string,
+  endpointUrl?: string,
+) {
+  const selected = { ...binding, ...override };
+  const recorded = {
+    ...selected,
+    ...nativeLocalIdentity(selected),
+    schemaVersion: 1 as const,
+    providerId: attachment.providerId,
+  };
   const config: ConfigObject = {
     agents: { defaults: { model: { primary: "inference/old-model" } } },
     models: {
       providers: {
         inference: {
-          baseUrl: binding.endpointUrl,
+          baseUrl: selected.endpointUrl,
           apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-          api: "openai-completions",
+          api: selected.api ?? "openai-completions",
           models: [{ id: "old-model" }],
         },
       },
@@ -44,21 +56,26 @@ export function fixture() {
       name: "alpha",
       agent: "openclaw",
       gatewayName: "nemoclaw",
-      provider: binding.provider,
+      provider: selected.provider,
       model: "old-model",
-      endpointUrl: binding.endpointUrl,
-      preferredInferenceApi: "openai-completions",
-      nativeLocalProviderAttachment: attachment,
+      endpointUrl: endpointUrl ?? selected.endpointUrl,
+      ...(credentialEnv ? { credentialEnv } : {}),
+      preferredInferenceApi: selected.api ?? "openai-completions",
+      nativeLocalProviderAttachment: recorded,
     },
   });
 }
 
-export function switchingFixture() {
-  const deps = fixture();
+export function switchingFixture(
+  override: Partial<NativeLocalBinding> = {},
+  prior: Parameters<typeof fixture> = [],
+) {
+  const deps = fixture(...prior);
   const nextBinding = {
     ...binding,
     provider: "vllm-local" as const,
     endpointUrl: "http://host.openshell.internal:8000/v1",
+    ...override,
   };
   const next = {
     ...nextBinding,

@@ -16,6 +16,9 @@ Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible se
 Qualifying custom hosted endpoints use sandbox-attached OpenShell providers.
 
 <AgentOnly variant="openclaw">
+New OpenClaw sandboxes use attached providers for qualified host-local compatible endpoints.
+The attachment preserves the selected Chat Completions or Responses API and restricts requests to that API, model discovery, and the recorded endpoint.
+The sandbox receives a credential reference; OpenShell supplies the host-managed credential at egress.
 Remaining custom shared selections use `inference.local` on OpenShell `0.0.x`.
 OpenShell forwards that traffic to the endpoint configured during onboarding.
 </AgentOnly>
@@ -77,6 +80,7 @@ Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`80
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
 For qualifying custom hosted endpoints, the attached provider profile authorizes the selected endpoint and API.
 <AgentOnly variant="openclaw">
+For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint, selected API, and OpenClaw runtime binaries.
 Remaining custom shared selections use the base `inference.local` policy on OpenShell `0.0.x`.
 </AgentOnly>
 <AgentOnly variant="hermes,deepagents">

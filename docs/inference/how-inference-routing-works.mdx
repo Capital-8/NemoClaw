@@ -39,7 +39,8 @@ A different destination cannot gain access through a later DNS change.
 Existing sandboxes without a native attachment retain their recorded shared route.
 Legacy local routes have the recovery restrictions described under [Credential Boundary](#credential-boundary).
 New Deep Agents Code, Hermes, OpenClaw, and Pi selections for Ollama, standalone vLLM, and llama.cpp use sandbox-attached providers for qualified host-local endpoints.
-Deep Agents Code, Hermes, and Pi also use attached providers for qualifying host-local compatible endpoints.
+Deep Agents Code, Hermes, OpenClaw, and Pi also use attached providers for qualifying host-local compatible endpoints.
+OpenClaw compatible attachments preserve the selected Chat Completions or Responses API.
 Qualifying custom hosted endpoints use sandbox-attached providers.
 Local NVIDIA NIM, remaining shared custom selections, Model Router, and unchanged published Pi shared local selections retain the shared route.
 Shared `inference.local` routes require OpenShell `0.0.x`.
@@ -72,7 +73,7 @@ Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
 For retained shared local routes, rebuilds migrate away from stale OpenAI credential requirements.
 Legacy Deep Agents Code local sandboxes without an attachment require a backup and fresh recreation.
-On OpenShell `0.0.x`, existing OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without an attachment retain supported shared-route model switches.
+On OpenShell `0.0.x`, existing OpenClaw Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible sandboxes without an attachment retain supported shared-route model switches.
 They cannot resume or rebuild.
 Back one up and re-onboard with `--fresh --name <sandbox-name> --recreate-sandbox`.
 Owned Local NVIDIA NIM sandboxes can resume or rebuild on their shared route with OpenShell `0.0.x`.

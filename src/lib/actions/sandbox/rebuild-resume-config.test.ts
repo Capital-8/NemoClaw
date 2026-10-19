@@ -6,6 +6,7 @@ import {
   hostedNativeProvider,
 } from "../../inference/native-provider/hosted";
 import { createRequire } from "node:module";
+import { nativeLocalIdentity } from "../../inference/native-local/contract";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -1003,3 +1004,47 @@ describe("fixed hosted rebuild authority", () => {
     ).toThrow(/native|Native/);
   });
 });
+
+it.each(["openai-completions", "openai-responses"] as const)(
+  "preserves the compatible %s attachment and proxy owner across rebuild handoff",
+  (api) => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+    const binding = {
+      agent: "openclaw" as const,
+      provider: "compatible-endpoint" as const,
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      authMode: "authenticated" as const,
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      ...(api === "openai-responses" ? { api } : {}),
+    };
+    const attachment = {
+      ...binding,
+      ...nativeLocalIdentity(binding),
+      schemaVersion: 1 as const,
+      providerId: "owned-provider",
+    };
+    const result = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "served-model",
+        endpointUrl: "http://127.0.0.1:8000/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: api,
+        nativeLocalProviderAttachment: attachment,
+      }),
+      "openclaw",
+      noopLog,
+      throwingBail,
+    );
+    expect(result).toMatchObject({
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      preferredInferenceApi: api,
+      nativeLocalProviderAttachment: attachment,
+    });
+  },
+);

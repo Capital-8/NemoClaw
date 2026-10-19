@@ -88,9 +88,17 @@ export function resolveManagedStartupNativeLocalAttachment(input: {
   provider: string | null;
   endpointUrl: string | null;
   localNimSelected?: boolean;
+  preferredInferenceApi?: string | null;
   nativeLocalProviderAttachment?: NativeLocalProviderAttachment;
 }): NativeLocalProviderAttachment | undefined {
   const attachment = input.nativeLocalProviderAttachment;
+  if (
+    attachment?.agent === "openclaw" &&
+    attachment.provider === "compatible-endpoint" &&
+    (attachment.api ?? "openai-completions") !==
+      (input.preferredInferenceApi ?? "openai-completions")
+  )
+    throw new Error("Recorded compatible provider API does not match its native attachment.");
   return usesNativeLocalInferenceForAgent(
     input.agentName,
     input.provider,

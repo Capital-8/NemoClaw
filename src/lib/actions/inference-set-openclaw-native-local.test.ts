@@ -275,3 +275,216 @@ describe("OpenClaw native local live selection", () => {
     expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(attachment);
   });
 });
+
+it.each(["openai-completions", "openai-responses"] as const)(
+  "switches OpenClaw to a compatible native %s endpoint without shared route commands",
+  async (api) => {
+    const { deps } = switchingFixture({
+      provider: "compatible-endpoint",
+      authMode: "authenticated",
+      ...(api === "openai-responses" ? { api } : {}),
+    });
+    deps.calls.resolveCredentialValue.mockReturnValue("fixture-only-host-key");
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "served-alias",
+          sandboxName: "alpha",
+          endpointUrl: "http://host.openshell.internal:8000/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: api,
+        },
+        deps,
+      ),
+    ).resolves.toMatchObject({ provider: "compatible-endpoint" });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        preferredInferenceApi: api,
+        nativeLocalProviderAttachment: expect.objectContaining({
+          provider: "compatible-endpoint",
+          agent: "openclaw",
+          endpointUrl: "http://host.openshell.internal:8000/v1",
+        }),
+      }),
+    );
+    expect(deps.calls.resolveCredentialValue).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "inference",
+      ),
+    ).toBe(false);
+  },
+);
+
+it("restores the prior local attachment when a compatible Responses switch cannot publish its registry", async () => {
+  const { deps, isPresent, isAttached } = switchingFixture({
+    provider: "compatible-endpoint",
+    authMode: "authenticated",
+    api: "openai-responses",
+  });
+  deps.calls.resolveCredentialValue.mockReturnValue("fixture-only-host-key");
+  deps.calls.updateSandbox.mockReturnValue(false);
+  await expect(
+    runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "served-alias",
+        sandboxName: "alpha",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-responses",
+      },
+      deps,
+    ),
+  ).rejects.toThrow(/Failed to update NemoClaw registry/);
+  expect({ present: isPresent(), attached: isAttached() }).toEqual({
+    present: false,
+    attached: false,
+  });
+  expect(
+    await deps.providerAdapter.listProviderAttachments({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      sandboxName: "alpha",
+    }),
+  ).toMatchObject({ ok: true, value: { names: [attachment.providerName] } });
+});
+
+it.each([
+  { api: "openai-completions" as const, explicit: false },
+  { api: "openai-responses" as const, explicit: true },
+])(
+  "reuses an owned no-auth compatible $api proxy when explicit endpoint is $explicit",
+  async ({ api, explicit }) => {
+    const deps = fixture(
+      {
+        provider: "compatible-endpoint",
+        authMode: "authenticated",
+        ...(api === "openai-responses" ? { api } : {}),
+      },
+      "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      "http://127.0.0.1:8000/v1",
+    );
+    const prior = deps.getSandbox("alpha")!.nativeLocalProviderAttachment;
+    const create = vi.spyOn(deps.providerAdapter, "createProvider");
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        sandboxName: "alpha",
+        ...(explicit ? { endpointUrl: "http://127.0.0.1:8000/v1/" } : {}),
+      },
+      deps,
+    );
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        nativeLocalProviderAttachment: prior,
+        preferredInferenceApi: api,
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      }),
+    );
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nativeEndpointUrl: "http://host.openshell.internal:11435/v1",
+        nativeProvider: true,
+      }),
+    );
+    expect(create).not.toHaveBeenCalled();
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "inference",
+      ),
+    ).toBe(false);
+  },
+);
+
+it("changes a no-auth compatible API through the existing owned proxy", async () => {
+  const { deps, next } = switchingFixture(
+    {
+      provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      authMode: "authenticated",
+      api: "openai-responses",
+    },
+    [
+      { provider: "compatible-endpoint", authMode: "authenticated" },
+      "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      "http://127.0.0.1:8000/v1",
+    ],
+  );
+  deps.calls.resolveCredentialValue.mockReturnValue("fixture-only-proxy-token");
+  await runInferenceSet(
+    {
+      provider: "compatible-endpoint",
+      model: "new-model",
+      sandboxName: "alpha",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      inferenceApi: "openai-responses",
+    },
+    deps,
+  );
+  expect(deps.calls.resolveCredentialValue).toHaveBeenCalledWith("NEMOCLAW_OLLAMA_PROXY_TOKEN");
+  expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+    "alpha",
+    expect.objectContaining({
+      nativeLocalProviderAttachment: next,
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      preferredInferenceApi: "openai-responses",
+    }),
+  );
+});
+
+it("rejects a recorded compatible API mismatch before changing sandbox state", async () => {
+  const deps = fixture(
+    {
+      provider: "compatible-endpoint",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      authMode: "authenticated",
+      api: "openai-responses",
+    },
+    "COMPATIBLE_API_KEY",
+  );
+  const entry = deps.getSandbox("alpha")!;
+  deps.getSandbox = () => ({ ...entry, preferredInferenceApi: "openai-completions" });
+  await expect(
+    runInferenceSet(
+      { provider: "compatible-endpoint", model: "new-model", sandboxName: "alpha" },
+      deps,
+    ),
+  ).rejects.toThrow(/API or endpoint does not match/);
+  expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+});
+
+it.each(["http://127.0.0.1:11434/v1", "http://127.0.0.1:8000/other", "http://localhost:8000/v1"])(
+  "rejects a different no-auth backend %s before native mutation",
+  async (endpointUrl) => {
+    const deps = fixture(
+      { provider: "compatible-endpoint", authMode: "authenticated" },
+      "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      "http://127.0.0.1:8000/v1",
+    );
+    const create = vi.spyOn(deps.providerAdapter, "createProvider");
+    const detach = vi.spyOn(deps.providerAdapter, "detachProvider");
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new-model",
+          sandboxName: "alpha",
+          endpointUrl,
+          inferenceApi: "openai-responses",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/no-auth proxy is bound to the recorded backend/);
+    expect(create).not.toHaveBeenCalled();
+    expect(detach).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+  },
+);

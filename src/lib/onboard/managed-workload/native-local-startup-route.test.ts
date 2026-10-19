@@ -47,6 +47,7 @@ function prepareProfile(
     provider?: string;
     localNimSelected?: boolean;
     nativeProvider?: boolean;
+    api?: string;
   },
 ) {
   const runtime = createManagedWorkloadOnboardRuntime(
@@ -62,7 +63,7 @@ function prepareProfile(
       rootDir: process.cwd(),
       model: "fixture-model",
       provider: route.provider ?? "compatible-endpoint",
-      preferredInferenceApi: "openai-completions",
+      preferredInferenceApi: route.api ?? "openai-completions",
       endpointUrl: route.endpointUrl,
       localNimSelected: route.localNimSelected,
       nativeProvider: route.nativeProvider ?? Boolean(route.attachment),
@@ -226,4 +227,43 @@ it.each([
     upstreamProvider: "compatible-endpoint",
     routedBaseUrl: expected,
   });
+});
+
+it.each(["openai-completions", "openai-responses"] as const)(
+  "rebuilds compatible OpenClaw with its recorded native %s API",
+  (api) => {
+    const binding = {
+      ...nativeBinding,
+      agent: "openclaw" as const,
+      ...(api === "openai-responses" ? { api } : {}),
+    };
+    const attachment = { ...nativeAttachment, ...binding, ...nativeLocalIdentity(binding) };
+    const prepared = prepareProfile("openclaw", {
+      endpointUrl: binding.endpointUrl,
+      attachment,
+      api,
+    });
+    expect(prepared?.profile.inference).toMatchObject({
+      api,
+      upstreamProvider: "compatible-endpoint",
+      routedBaseUrl: binding.endpointUrl,
+      model: "fixture-model",
+    });
+  },
+);
+
+it("rejects a rebuilt compatible OpenClaw API that differs from its native provider", () => {
+  const binding = {
+    ...nativeBinding,
+    agent: "openclaw" as const,
+    api: "openai-responses" as const,
+  };
+  const attachment = { ...nativeAttachment, ...binding, ...nativeLocalIdentity(binding) };
+  expect(() =>
+    prepareProfile("openclaw", {
+      endpointUrl: binding.endpointUrl,
+      attachment,
+      api: "openai-completions",
+    }),
+  ).toThrow(/API does not match/);
 });

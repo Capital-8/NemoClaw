@@ -1316,6 +1316,9 @@ async function runInferenceSetWithoutHostLock(
     agentName,
     entry,
     provider,
+    endpointUrl: options.endpointUrl,
+    inferenceApi: explicitOrRecordedInferenceApi,
+    customRouteChanged: provider === "compatible-endpoint" && hasExplicitCustomRoute,
     sandboxName,
     gatewayName: expectedGatewayName,
     deps,
@@ -1562,7 +1565,11 @@ async function runInferenceSetWithoutHostLock(
   try {
     await prepareOpenClawLocalSwitch({
       selection: localSwitch,
+      entry,
       provider,
+      endpointUrl: registryMetadata.endpointUrl,
+      credentialEnv: registryMetadata.credentialEnv,
+      inferenceApi: preMutationInferenceApi,
       sandboxName,
       gatewayName: preparedRoute.gatewayName,
       deps,
@@ -1576,7 +1583,8 @@ async function runInferenceSetWithoutHostLock(
       },
     });
     const nativeSelection = await prepareNativeSelection({
-      selectingNative: selectingNative && !selectingNativeLocal,
+      selectingNative:
+        selectingNative && !selectingNativeLocal && !localSwitch.selected && !localSwitch.prepare,
       provider,
       expectedAttachment: nativeProviderAuthority,
       gatewayName: preparedRoute.gatewayName,
@@ -1660,7 +1668,7 @@ async function runInferenceSetWithoutHostLock(
         // not replace the provider binding.
         providerMutation = null;
       }
-    } else if (loopbackNoAuthProxyRoute) {
+    } else if (loopbackNoAuthProxyRoute && !selectingNative) {
       // A model-only switch builds no provider binding, so nothing above
       // inspects the live provider. This route's credential is the local
       // no-auth proxy token that OpenShell holds and sends on selection, and
@@ -1847,7 +1855,8 @@ async function runInferenceSetWithoutHostLock(
       ...(nativeLocalProviderAttachment?.endpointUrl
         ? { endpointUrl: nativeLocalProviderAttachment.endpointUrl }
         : (nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl) &&
-            !nativeProviderAttachment?.custom
+            !nativeProviderAttachment?.custom &&
+            !loopbackNoAuthProxyRoute
           ? { endpointUrl: nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl }
           : {}),
     });

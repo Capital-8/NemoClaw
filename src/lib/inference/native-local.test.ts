@@ -379,14 +379,14 @@ describe("native local inference", () => {
     expect(usesNativeLocalInferenceForAgent("hermes", "vllm-local", null, true)).toBe(false);
     expect(
       usesNativeLocalInferenceForAgent("openclaw", "compatible-endpoint", binding.endpointUrl),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       normalizeNativeLocalBinding({
         ...binding,
         provider: "compatible-endpoint",
         agent: "openclaw",
       }),
-    ).toBeUndefined();
+    ).toMatchObject({ agent: "openclaw", provider: "compatible-endpoint" });
   });
 
   it.each(["langchain-deepagents-code", "unknown"])(
@@ -788,14 +788,71 @@ it.each(["http://10.1.2.3:8000/v1", "http://host.openshell.internal:42103/v1"])(
   },
 );
 
-it("keeps Local NIM and generic compatible endpoints on the shared OpenClaw route", () => {
+it("keeps Local NIM shared while selecting compatible OpenClaw endpoints natively", () => {
   expect(
     usesNativeLocalInferenceForAgent("openclaw", "vllm-local", binding.endpointUrl, true),
   ).toBe(false);
   expect(
     usesNativeLocalInferenceForAgent("openclaw", "compatible-endpoint", binding.endpointUrl),
-  ).toBe(false);
+  ).toBe(true);
   expect(usesNativeLocalInferenceForAgent("openclaw", "vllm-local", binding.endpointUrl)).toBe(
     true,
   );
+});
+
+it.each([undefined, "openai-responses"] as const)(
+  "binds compatible OpenClaw API %s to its provider identity and request path",
+  async (api) => {
+    const selected = {
+      ...binding,
+      provider: "compatible-endpoint" as const,
+      agent: "openclaw" as const,
+      ...(api ? { api } : {}),
+    };
+    const profile = prepareNativeLocalProfile(selected);
+    const defaultProfile = prepareNativeLocalProfile({ ...selected, api: undefined });
+    expect(profile.document.endpoints[0]?.rules).toEqual([
+      { allow: { method: "GET", path: "/v1/models" } },
+      { allow: { method: "POST", path: api ? "/v1/responses" : "/v1/chat/completions" } },
+    ]);
+    expect(profile.profileId === defaultProfile.profileId).toBe(!api);
+    const f = fixture(selected);
+    const attached = await ensureNativeLocalProvider(f.input);
+    await ensureNativeLocalProviderAttached({
+      adapter: f.adapter,
+      expected: attached,
+      sandboxName: "alice",
+    });
+    await expect(
+      verifyNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected: attached,
+        sandboxName: "alice",
+      }),
+    ).resolves.toEqual(attached);
+    expect(
+      normalizeNativeLocalProviderAttachment({
+        ...attached,
+        api: api ? undefined : "openai-responses",
+      }),
+    ).toBeUndefined();
+  },
+);
+
+it.each([
+  { provider: "ollama-local", agent: "openclaw", api: "openai-responses" },
+  { provider: "compatible-endpoint", agent: "hermes", api: "openai-responses" },
+  { provider: "compatible-endpoint", agent: "openclaw", api: "anthropic-messages" },
+  {
+    provider: "compatible-endpoint",
+    agent: "openclaw",
+    endpointUrl: "http://host.openshell.internal:42103/v1",
+  },
+  {
+    provider: "compatible-endpoint",
+    agent: "openclaw",
+    endpointUrl: "http://192.168.1.20:8000/v1",
+  },
+])("rejects unqualified compatible OpenClaw binding %j", (override) => {
+  expect(normalizeNativeLocalBinding({ ...binding, ...override })).toBeUndefined();
 });

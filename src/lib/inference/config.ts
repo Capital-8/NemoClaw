@@ -464,7 +464,10 @@ export function getSandboxInferenceConfig(
     nativeLocalCredentialReference(provider, nativeEndpointUrl, agentName)
   ) {
     inferenceBaseUrl = nativeEndpointUrl;
-    inferenceApi = "openai-completions";
+    inferenceApi =
+      agentName === "openclaw" && provider === "compatible-endpoint"
+        ? selectedApi || "openai-completions"
+        : "openai-completions";
   }
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }

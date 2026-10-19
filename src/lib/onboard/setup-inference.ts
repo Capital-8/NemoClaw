@@ -1346,6 +1346,11 @@ export function createSetupInference(
                   ? { agent: nativeLocalAgent }
                   : {}),
                 endpointUrl: hostReachableEndpoint,
+                ...(nativeLocalAgent === "openclaw" &&
+                name === "compatible-endpoint" &&
+                selectedInferenceApi === "openai-responses"
+                  ? { api: "openai-responses" as const }
+                  : {}),
                 authMode:
                   (name === "ollama-local" && value === "ollama") ||
                   (name === "vllm-local" && value === "dummy")

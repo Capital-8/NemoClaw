@@ -102,3 +102,37 @@ describe("legacy local inference resume", () => {
     },
   );
 });
+
+it("blocks resume of a legacy OpenClaw compatible route before inference setup", async () => {
+  const session = createSession({
+    agent: "openclaw",
+    sandboxName: "my-assistant",
+    provider: "compatible-endpoint",
+    model: "served-model",
+    endpointUrl: "http://127.0.0.1:8000/v1",
+    credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    preferredInferenceApi: "openai-completions",
+  });
+  session.steps.provider_selection.status = "complete";
+  const recorded = {
+    name: "my-assistant",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    createdAt: "2026-09-01T00:00:00Z",
+    provider: session.provider,
+    model: session.model,
+    endpointUrl: session.endpointUrl,
+    credentialEnv: session.credentialEnv,
+    preferredInferenceApi: session.preferredInferenceApi,
+  } as SandboxEntry;
+  const { deps, calls } = createDeps({ getSandboxRegistryEntry: () => recorded });
+  await expect(
+    handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      agent: { name: "openclaw" },
+      sandboxName: "my-assistant",
+    }),
+  ).rejects.toThrow(/Back up|back up/);
+  expect(calls.setupInference).not.toHaveBeenCalled();
+});

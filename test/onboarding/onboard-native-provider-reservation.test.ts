@@ -310,3 +310,51 @@ it("stages explicit legacy Hermes recreation with a Hermes-scoped receipt", asyn
   expect(row).toEqual(before);
   expect(harness.commands.some(({ command }) => command.startsWith("inference set"))).toBe(false);
 });
+
+it.each(["openai-completions", "openai-responses"] as const)(
+  "creates a sandbox-owned OpenClaw compatible %s provider before publishing its reservation",
+  async (api) => {
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        hydrateCredentialEnv: () => "fixture-only-host-key",
+        isNonInteractive: () => true,
+      },
+    });
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "served-alias",
+        "compatible-endpoint",
+        "http://127.0.0.1:8000/v1",
+        "HOST_COMPATIBLE_KEY",
+        null,
+        [],
+        { agentName: "openclaw", preferredInferenceApi: api },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect([...harness.native.authorities.values()]).toEqual([
+      expect.objectContaining({
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        authMode: "authenticated",
+      }),
+    ]);
+    expect(harness.native.profiles[0]).toMatchObject({
+      endpoints: [
+        {
+          rules: [
+            { allow: { method: "GET", path: "/v1/models" } },
+            {
+              allow: {
+                method: "POST",
+                path: api === "openai-responses" ? "/v1/responses" : "/v1/chat/completions",
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(harness.commands.some(({ command }) => command.startsWith("inference "))).toBe(false);
+  },
+);

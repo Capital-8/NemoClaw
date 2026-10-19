@@ -269,6 +269,12 @@ describe("rebuild legacy local route preflight", () => {
     { agent: "openclaw", provider: "vllm-local", createdAt: undefined },
     { agent: "openclaw", provider: "llama-cpp-local", createdAt: undefined },
     {
+      agent: "openclaw",
+      provider: "compatible-endpoint",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      createdAt: "2026-09-01T00:00:00Z",
+    },
+    {
       agent: "langchain-deepagents-code",
       provider: "ollama-local",
       createdAt: "2026-09-01T00:00:00Z",

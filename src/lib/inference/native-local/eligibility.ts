@@ -51,7 +51,7 @@ export function usesNativeLocalInferenceForAgent(
   return (
     ((agentName === "langchain-deepagents-code" || agentName === "pi" || agentName === "hermes") &&
       usesNativeLocalInference(provider, endpointUrl)) ||
-    (agentName === "openclaw" && isLocalInferenceProvider(provider))
+    (agentName === "openclaw" && usesNativeLocalInference(provider, endpointUrl))
   );
 }
 
