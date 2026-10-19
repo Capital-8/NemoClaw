@@ -3,6 +3,10 @@
 
 import { randomUUID } from "node:crypto";
 
+import { parseCliOpenShellProviderMetadata } from "../../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
+import { nativeHostedAuthHeaderScript } from "../../../../src/lib/inference/native-provider/contract.ts";
+import { hostedNativeProviderForAttachment } from "../../../../src/lib/inference/native-provider/hosted-attachment.ts";
+
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { assertExitZero, outputContainsReadySandbox, resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
@@ -39,6 +43,9 @@ const NATIVE_STATE_CASES = [
 export interface DcodeInvalidCredentialRebuildOptions {
   gatewayName: string;
   providerName: string;
+  providerId: string;
+  profileId: string;
+  endpointUrl: string;
   credentialEnv: string;
   model: string;
   validCredential: string;
@@ -89,9 +96,25 @@ export function dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
       `DCode invalid-credential lifecycle requires credential env '${HOSTED_INFERENCE_CREDENTIAL_ENV}'`,
     );
   }
+  const receipt = entry.nativeHostedProviderAttachment;
+  const definition = hostedNativeProviderForAttachment(receipt);
+  if (
+    !definition?.custom ||
+    definition.logicalProvider !== providerName ||
+    definition.api !== "openai-completions" ||
+    definition.credentialEnv !== credentialEnv ||
+    entry.nativeLocalProviderAttachment !== undefined
+  ) {
+    throw new Error(
+      "DCode invalid-credential lifecycle requires its native hosted provider attachment",
+    );
+  }
   return {
     gatewayName: requiredString(entry, "gatewayName"),
-    providerName,
+    providerName: definition.providerName,
+    providerId: (receipt as { providerId: string }).providerId,
+    profileId: definition.profileId,
+    endpointUrl: definition.endpoint,
     credentialEnv,
     model: requiredString(entry, "model"),
     validCredential,
@@ -104,6 +127,9 @@ export function isDcodeInvalidCredentialRebuildOptions(
   return (
     "gatewayName" in options &&
     "providerName" in options &&
+    "providerId" in options &&
+    "profileId" in options &&
+    "endpointUrl" in options &&
     "credentialEnv" in options &&
     "model" in options &&
     "validCredential" in options
@@ -205,21 +231,12 @@ async function probeRoute(
   return await deps.sandbox.exec(
     sandboxName,
     [
-      "curl",
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--connect-timeout",
-      "5",
-      "--max-time",
-      "15",
-      "-H",
-      "Content-Type: application/json",
-      "--data-binary",
+      "bash",
+      "-c",
+      `${nativeHostedAuthHeaderScript({ credentialEnv: options.credentialEnv, api: "openai-completions" })}; exec curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 15 -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-binary "$2" "$1"`,
+      "dcode-native-route",
+      `${options.endpointUrl.replace(/\/+$/u, "")}/chat/completions`,
       payload,
-      "https://inference.local/v1/chat/completions",
     ],
     {
       artifactName: `lifecycle-dcode-route-${phase}-${attempt}`,
@@ -256,6 +273,28 @@ async function updateProviderCredential(
   phase: string,
   redactionValues: string[],
 ): Promise<ShellProbeResult> {
+  const queryOptions = {
+    env: gatewayEnv(options.gatewayName),
+    redactionValues,
+    timeoutMs: 30_000,
+  };
+  const provider = await deps.host.command(
+    "openshell",
+    ["provider", "get", "-g", options.gatewayName, options.providerName],
+    { ...queryOptions, artifactName: `lifecycle-dcode-provider-owner-${phase}` },
+  );
+  const metadata =
+    provider.exitCode === 0 ? parseCliOpenShellProviderMetadata(provider.stdout) : null;
+  if (
+    metadata?.name !== options.providerName ||
+    metadata.type !== options.profileId ||
+    metadata.revision?.id !== options.providerId ||
+    metadata.configKeys.length !== 0 ||
+    metadata.credentialKeys.length !== 1 ||
+    metadata.credentialKeys[0] !== options.credentialEnv
+  ) {
+    throw new Error(`DCode provider ownership changed before credential ${phase}`);
+  }
   const result = await deps.host.command(
     "openshell",
     [
