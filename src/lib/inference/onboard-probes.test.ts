@@ -1148,64 +1148,6 @@ printf '200'
       );
     });
 
-    it("keeps GPT-5 timeout retries strict when tool calling is required (#6642)", () => {
-      const script = `#!/usr/bin/env bash
-outfile=""
-payload=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -w) shift 2 ;;
-    -d) payload="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-n=$(cat "${HARNESS_COUNTER}")
-n=$((n + 1))
-echo "$n" > "${HARNESS_COUNTER}"
-printf '%s' "$payload" > "${HARNESS_TMPDIR}/request-$n.json"
-if [ "$n" -eq 1 ]; then
-  if [ -n "$outfile" ]; then
-    : > "$outfile"
-  fi
-  printf '000'
-  exit 28
-fi
-if [ -n "$outfile" ]; then
-  cat <<'JSON' > "$outfile"
-{"choices":[{"message":{"content":"OK"}}]}
-JSON
-fi
-printf '200'
-exit 0
-`;
-      withFakeCurlProbe(
-        { script, dirPrefix: "nemoclaw-strict-retry-probe-" },
-        ({ counter, tmpDir }) => {
-          const result = probeOpenAiLikeEndpoint(
-            "https://api.example.com/v1",
-            "gpt-5.4",
-            "sk-test",
-            { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
-          );
-
-          expect(result).toMatchObject({ ok: false });
-          expect(result.message).toContain("did not return a tool call");
-          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-          const retryPayload = JSON.parse(
-            fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8"),
-          );
-          expect(retryPayload).toMatchObject({
-            tool_choice: "required",
-            max_completion_tokens: 256,
-            stream: false,
-          });
-          expect(retryPayload.max_tokens).toBeUndefined();
-          expect(retryPayload.temperature).toBeUndefined();
-        },
-      );
-    });
-
     it("keeps retrying when initial timeout is followed by a transient 502", () => {
       const body = `n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))

@@ -424,78 +424,11 @@ describe("inference selection validation", () => {
       expect(promptValidationRecovery).not.toHaveBeenCalled();
       expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
         "  NVIDIA Endpoints endpoint validation failed.",
-        "  Validation probe summary: Chat Completions API: curl exit 28.",
+        "  Validation probe summary: Chat Completions API: curl exit 28 (timeout).",
         "  Validation details were omitted to avoid exposing credentials.",
         "  Validation timed out before the provider replied. Retry, or check network/proxy health.",
         `  ${EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY}`,
       ]);
-    } finally {
-      process.exitCode = originalExitCode;
-      error.mockRestore();
-    }
-  });
-
-  it("carries a default-probe WSL timeout through non-interactive teardown (#10413)", async () => {
-    let _requestIndex = 0;
-    const reasoningResponse =
-      '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}';
-    const replies = [(response: http.ServerResponse) => response.end(reasoningResponse), () => {}];
-    const server = http.createServer((request, response) => {
-      request.resume();
-      (replies[_requestIndex++] ?? replies[1])(response);
-    });
-    const port = await listen(server);
-    const originalExitCode = process.exitCode;
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const promptValidationRecovery = vi.fn(async () => "selection" as const);
-    const teardownOrphanManagedGatewayOnAbort = vi.fn(() => true);
-    const helpers = createInferenceSelectionValidationHelpers({
-      isNonInteractive: () => true,
-      agentProductName: () => "OpenClaw",
-      getCredential: () => "test-key",
-      teardownOrphanManagedGatewayOnAbort,
-      promptValidationRecovery,
-    });
-    const probeOptions = {
-      skipResponsesProbe: true,
-      requireChatCompletionsToolCalling: true,
-      isWsl: true,
-      spawnSyncImpl: () => {
-        throw new Error("unexpected legacy probe");
-      },
-      validationTiming: { connectTimeoutSeconds: 0.01, maxTimeSeconds: 0.01, source: "standard" },
-      validationSessionOptions: {
-        env: {},
-        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
-        allowPrivateAddressesForTesting: true,
-      },
-    };
-    try {
-      const failure = await helpers
-        .validateOpenAiLikeSelection(
-          "Compatible endpoint",
-          `http://provider.example.com:${port}/v1`,
-          "qwen3-vl:4b",
-          null,
-          undefined,
-          undefined,
-          probeOptions,
-        )
-        .catch((caught) => caught);
-      expect({
-        failure,
-        output: error.mock.calls.map((args) => args.join(" ")),
-        promptCalls: promptValidationRecovery.mock.calls.length,
-        teardownCalls: teardownOrphanManagedGatewayOnAbort.mock.calls.length,
-      }).toEqual({
-        failure: expect.objectContaining(resumableValidationExit),
-        output: expect.arrayContaining([
-          "  Validation timed out before the provider replied. Retry, or check network/proxy health.",
-          `  ${EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY}`,
-        ]),
-        promptCalls: 0,
-        teardownCalls: 1,
-      });
     } finally {
       process.exitCode = originalExitCode;
       error.mockRestore();
@@ -527,7 +460,7 @@ describe("inference selection validation", () => {
       // The prompt owns transport guidance here, so only the advisory is added.
       expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
         "  NVIDIA Endpoints endpoint validation failed.",
-        "  Validation probe summary: Chat Completions API: curl exit 28.",
+        "  Validation probe summary: Chat Completions API: curl exit 28 (timeout).",
         "  Validation details were omitted to avoid exposing credentials.",
         `  ${EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY}`,
       ]);

@@ -20,6 +20,8 @@ import {
   withTraceSpan,
 } from "./trace";
 
+const { runChatCompletionsRetryLoop } = require("./inference/probe-retry");
+
 function withTraceFile<T>(fn: (traceFile: string) => T): T {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-test-"));
   const traceFile = path.join(tmpDir, "trace.json");
@@ -40,6 +42,50 @@ afterEach(() => {
 });
 
 describe("onboard trace artifacts", () => {
+  it("retains transport retry attempts and delays without provider bodies (#13350)", () => {
+    withTraceFile((traceFile) => {
+      // The retry loop loads its collector through CommonJS under Vitest.
+      const retryTrace = require("./trace") as typeof import("./trace");
+      retryTrace.resetTraceForTests();
+      const results = [
+        { ok: false, httpStatus: 0, curlStatus: 28, body: "secret-key" },
+        { ok: false, httpStatus: 503, curlStatus: 0, body: "secret-key" },
+        { ok: false, httpStatus: 401, curlStatus: 0, body: "secret-key" },
+      ];
+      let call = 0;
+      try {
+        expect(runChatCompletionsRetryLoop(() => results[call++])).toBe(results[2]);
+        expect(retryTrace.flushTrace()).toBe(traceFile);
+        const spans = readTraceArtifact(traceFile).resource_spans[0].scope_spans[0].spans;
+        expect(spans[0].events.map(({ name, attributes }) => ({ name, attributes }))).toEqual([
+          {
+            name: "probe_result",
+            attributes: { attempt: 1, ok: false, http_status: 0, curl_status: 28 },
+          },
+          {
+            name: "probe_retry_sleep",
+            attributes: { delay_ms: 5_000, http_status: 0, curl_status: 28 },
+          },
+          {
+            name: "probe_result",
+            attributes: { attempt: 2, ok: false, http_status: 503, curl_status: 0 },
+          },
+          {
+            name: "probe_retry_sleep",
+            attributes: { delay_ms: 15_000, http_status: 503, curl_status: 0 },
+          },
+          {
+            name: "probe_result",
+            attributes: { attempt: 3, ok: false, http_status: 401, curl_status: 0 },
+          },
+        ]);
+        expect(fs.readFileSync(traceFile, "utf8")).not.toContain("secret-key");
+      } finally {
+        retryTrace.resetTraceForTests();
+      }
+    });
+  });
+
   it("writes OpenTelemetry-style spans and a slowest-span summary", () => {
     withTraceFile((traceFile) => {
       withTraceSpan("nemoclaw.onboard.phase.gateway", { provider: "nvidia-prod" }, () => {

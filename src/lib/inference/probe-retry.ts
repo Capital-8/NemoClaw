@@ -115,19 +115,40 @@ function executeProbeWithHttpRetry(probe) {
 // final probe result. Logs the same "retrying in Xs" notice the responses
 // retry loop emits so users on slow links see consistent progress messages.
 function runChatCompletionsRetryLoop(runProbe) {
-  return retryUntil(runProbe, {
-    accept: (result) => result.ok || !isRetriableProbeResult(result),
-    retryDelaysMs: HTTP_PROBE_RETRY_DELAYS_MS,
-    onRetry: (result, delayMs) => {
-      const reason = isTimeoutOrConnFailureStatus(result.curlStatus)
-        ? "timed out"
-        : `returned HTTP ${result.httpStatus}`;
-      console.log(
-        `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
-      );
-    },
-    sleep: sleepSync,
-  });
+  return trace.withTraceSpan("nemoclaw.inference.validation_transport_retry", {}, () =>
+    retryUntil(
+      (attempt) => {
+        const result = runProbe();
+        trace.addTraceEvent("probe_result", {
+          attempt,
+          ok: result.ok,
+          http_status: result.httpStatus,
+          curl_status: result.curlStatus,
+        });
+        return result;
+      },
+      {
+        accept: (result) => result.ok || !isRetriableProbeResult(result),
+        retryDelaysMs: HTTP_PROBE_RETRY_DELAYS_MS,
+        onRetry: (result, delayMs) => {
+          const reason = isProbeTimeout(result)
+            ? "timed out"
+            : result.curlStatus !== 0
+              ? `returned curl exit ${result.curlStatus}`
+              : `returned HTTP ${result.httpStatus}`;
+          console.log(
+            `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
+          );
+          trace.addTraceEvent("probe_retry_sleep", {
+            delay_ms: delayMs,
+            http_status: result.httpStatus,
+            curl_status: result.curlStatus,
+          });
+        },
+        sleep: sleepSync,
+      },
+    ),
+  );
 }
 
 module.exports = {

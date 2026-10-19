@@ -38,7 +38,7 @@ describe("summarizeProbeForDisplay", () => {
       ],
     });
 
-    expect(summary).toBe("Chat Completions API: curl exit 28");
+    expect(summary).toBe("Chat Completions API: curl exit 28 (timeout)");
     expect(summary).not.toContain("secret-key");
     expect(summary).not.toContain("operation timed out with token");
   });
@@ -79,7 +79,7 @@ describe("summarizeProbeForDisplay", () => {
       ],
     });
 
-    expect(summary).toBe("Anthropic Messages API (streaming): curl exit 28");
+    expect(summary).toBe("Anthropic Messages API (streaming): curl exit 28 (timeout)");
     expect(summary).not.toContain("secret-key");
     expect(summary).not.toContain("partial stream");
   });
@@ -92,6 +92,18 @@ describe("summarizeProbeForDisplay", () => {
       "timeout",
     );
   });
+  it.each([
+    [6, "DNS resolution failed"],
+    [7, "connection failed"],
+    [-110, "process timeout"],
+  ])("classifies curl status %s without exposing stderr (#13350)", (curlStatus, classification) => {
+    expect(
+      summarizeProbeForDisplay({
+        failures: [{ name: "Chat Completions API", curlStatus, message: "secret-key" }],
+      }),
+    ).toBe(`Chat Completions API: curl exit ${curlStatus} (${classification})`);
+  });
+
   it("surfaces a missing structured tool call without raw provider text (#8714)", () => {
     const summary = summarizeProbeForDisplay({
       message: "raw provider response with secret-key",

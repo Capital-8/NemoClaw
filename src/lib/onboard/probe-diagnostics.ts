@@ -17,6 +17,13 @@ const SAFE_PROBE_DIAGNOSTICS = new Map<string, string>([
   ["openai-chat-tool-call-leak", "tool call leaked into plain text content"],
 ]);
 
+const CURL_FAILURE_CLASSES = new Map<number, string>([
+  [6, "DNS resolution failed"],
+  [7, "connection failed"],
+  [28, "timeout"],
+  [-110, "process timeout"],
+]);
+
 function summarizeSafeProbeDiagnostics(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const summaries = new Set<string>();
@@ -35,7 +42,10 @@ function summarizeProbeFailureForDisplay(failure: Record<string, unknown>): stri
   if (httpStatus > 0 && (httpStatus < 200 || httpStatus >= 300)) {
     return `${name}: HTTP ${httpStatus}`;
   }
-  if (curlStatus !== 0) return `${name}: curl exit ${curlStatus}`;
+  if (curlStatus !== 0) {
+    const classification = CURL_FAILURE_CLASSES.get(curlStatus);
+    return `${name}: curl exit ${curlStatus}${classification ? ` (${classification})` : ""}`;
+  }
   const diagnostics = summarizeSafeProbeDiagnostics(failure.diagnosticCodes);
   if (diagnostics.length > 0) return `${name}: ${diagnostics.join("; ")}`;
   if (httpStatus > 0) return `${name}: HTTP ${httpStatus}`;

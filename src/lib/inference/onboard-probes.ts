@@ -1084,17 +1084,23 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       if (retryResult.ok) {
         return { ok: true, api: "openai-completions", label: "Chat Completions API" };
       }
-      if (options.requireChatCompletionsToolCalling === true) {
-        failures.push({
-          name: "Chat Completions API with tool calling (retry)",
+      // Trace spans retain the attempts; recovery must use the final result.
+      failures.splice(
+        failures.findIndex((failure) => failure.name === chatCompletionsProbe.name),
+        1,
+        {
+          name:
+            options.requireChatCompletionsToolCalling === true
+              ? "Chat Completions API with tool calling (retry)"
+              : "Chat Completions API (retry)",
           httpStatus: retryResult.httpStatus,
           curlStatus: retryResult.curlStatus,
           message: retryResult.message,
           body: retryResult.body,
           diagnosticCodes: retryResult.diagnosticCodes,
           reasoningRetryAttempted: retryResult.reasoningRetryAttempted === true,
-        });
-      }
+        },
+      );
     }
 
     // Detect the NVCF "Function not found for account" error and reframe it
