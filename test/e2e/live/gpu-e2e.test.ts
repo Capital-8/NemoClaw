@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
 import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
@@ -33,6 +34,8 @@ import {
   proxyStatus,
   REPO_ROOT,
   readTokenFileChecked,
+  readGpuOllamaRoute,
+  gpuOllamaChatCommand,
   restartProxy,
   SANDBOX_NAME,
   startAttachedOllama,
@@ -84,7 +87,7 @@ test(
         "install Ollama and GPU sandbox",
         "validate GPU runtime status",
         "validate Ollama proxy credential boundary",
-        "run sandbox inference.local chat",
+        "run sandbox native Ollama chat",
         "restart Ollama and recover agent inference",
       ],
     },
@@ -93,7 +96,7 @@ test(
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
-        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
+        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + native inference",
       credentialBoundary:
         "The proxy token remains host/OpenShell-owned and is absent from sandbox env.",
       remoteInstallerBoundary:
@@ -165,6 +168,8 @@ test(
         "--all",
         "--filter",
         `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+        "--filter",
+        "label=openshell.ai/isolation-role=sandbox",
         "--format",
         "{{.Names}}\t{{.State}}\t{{.Status}}",
       ],
@@ -191,12 +196,8 @@ test(
     expect(retainedSandboxContainer.State).toBe("running");
     expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
 
-    const route = await sandbox.openshell(["inference", "get"], {
-      artifactName: "openshell-inference-route",
-      env: env(),
-      timeoutMs: 30_000,
-    });
-    expect(resultText(route)).toMatch(/ollama/i);
+    const route = await readGpuOllamaRoute(sandbox, getSandbox(SANDBOX_NAME), env());
+    expect(route, "native Ollama provider identity and attachment must match").not.toBeNull();
 
     progress.phase("validate Ollama proxy credential boundary");
     const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
@@ -238,24 +239,12 @@ test(
       "OpenShell owns proxy authentication; the host proxy token must not enter sandbox env",
     ).toBe("");
 
-    progress.phase("run sandbox inference.local chat");
+    progress.phase("run sandbox native Ollama chat");
     const model = await detectOllamaModel(host);
     const chat = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(
-        `curl -sS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
-          {
-            model,
-            messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-            // Keep this assertion about routed inference, not the model's reasoning-token budget.
-            reasoning_effort: "none",
-            seed: 0,
-            temperature: 0,
-            max_tokens: 32,
-          },
-        )}'`,
-      ),
-      { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 150_000 },
+      trustedSandboxShellScript(gpuOllamaChatCommand(route!, model)),
+      { artifactName: "sandbox-native-ollama-chat", env: env(), timeoutMs: 150_000 },
     );
     expect(chatContent(chat.stdout)).toMatch(/pong/i);
 
