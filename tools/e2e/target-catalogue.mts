@@ -316,6 +316,7 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "src/lib/core/endpoint-url-safety.ts",
   "src/lib/inference/native-local/agent-config.ts",
   "src/lib/inference/native-provider/agent-config.ts",
+  "src/lib/inference/native-provider/catalog.ts",
   "src/lib/inference/native-nvidia/contract.ts",
   "src/lib/inference/native-provider/contract.ts",
   "src/lib/inference/native-provider/hosted.ts",

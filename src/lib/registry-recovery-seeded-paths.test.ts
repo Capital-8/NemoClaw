@@ -255,7 +255,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     expect(mockRegistryState.defaultSandbox).toBeNull();
   });
 
-  it("blocks route mutation after seeded recovery persists a live row without route metadata (#6315)", async () => {
+  it("blocks shared route mutation after seeded recovery persists a live row without route metadata (#6315)", async () => {
     mockRegistryState.sandboxes.gamma = gammaEntry([]);
     mockRegistryState.defaultSandbox = "gamma";
     vi.mocked(captureOpenshell).mockReturnValue({
@@ -275,9 +275,13 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
       entries: Object.values(mockRegistryState.sandboxes),
       defaultSandbox: "gamma",
     });
+    const listProviders = vi.spyOn(deps.providerAdapter, "listProviders").mockResolvedValue({
+      ok: true,
+      value: { names: ["registered-provider"] },
+    });
     await expect(
       runInferenceSet(
-        { provider: "nvidia-router", model: "nvidia/model-b", sandboxName: "gamma" },
+        { provider: "registered-provider", model: "nvidia/model-b", sandboxName: "gamma" },
         deps,
       ),
     ).rejects.toMatchObject({
@@ -285,6 +289,9 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
       exitCode: 2,
     });
 
+    expect(listProviders).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ target: { kind: "named", gatewayName: "nemoclaw" } }),
+    );
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();

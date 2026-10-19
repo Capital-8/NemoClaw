@@ -728,11 +728,19 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         const probe = runner.calls.find(
           (call) => call.options?.artifactName === "lifecycle-dcode-route-baseline-1",
         )!;
-        expect(probe.args[0]).toBe("/usr/local/lib/nemoclaw/dcode-managed-exec");
+        expect(probe.command).toBe("openshell");
+        expect(probe.args.slice(0, 6)).toEqual([
+          "sandbox",
+          "exec",
+          "-n",
+          sandboxName,
+          "--",
+          "/usr/local/lib/nemoclaw/dcode-managed-exec",
+        ]);
         expect(probe.args).toContain(options.endpoint);
         expect(probe.args.join(" ")).not.toContain("inference.local");
-        // Execute the managed launcher payload directly in this host-side unit test.
-        const command = probe.args.slice(1);
+        // Execute the shell payload after the sandbox wrapper and managed launcher.
+        const command = probe.args.slice(6);
         const fakeCurl = path.join(home, "curl");
         fs.writeFileSync(fakeCurl, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n", { mode: 0o700 });
         const handle = "openshell:resolve:env:s" + "a".repeat(64) + "_COMPATIBLE_API_KEY";
@@ -1033,7 +1041,16 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
     const probe = runner.calls.find(
       (call) => call.options?.artifactName === "lifecycle-dcode-route-baseline-1",
     )!;
-    const command = probe.args.slice(probe.args.indexOf("--") + 1);
+    expect(probe.command).toBe("openshell");
+    expect(probe.args.slice(0, 6)).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      sandboxName,
+      "--",
+      "/usr/local/lib/nemoclaw/dcode-managed-exec",
+    ]);
+    const command = probe.args.slice(6);
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-probe-denial-"));
     try {
       fs.writeFileSync(path.join(directory, "curl"), "#!/bin/sh\necho unexpected-curl\n", {
