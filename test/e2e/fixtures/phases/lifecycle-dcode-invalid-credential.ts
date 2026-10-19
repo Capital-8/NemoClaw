@@ -354,7 +354,7 @@ export async function simulateDcodeInvalidCredentialRebuild(
   const baseRedactions = [options.validCredential];
   const names = await deps.host.command(
     "openshell",
-    ["sandbox", "list", "--names", "--limit", "2", "-g", options.gatewayName],
+    ["sandbox", "list", "--names", "--page-size", "2", "-g", options.gatewayName],
     {
       artifactName: "lifecycle-dcode-gateway-sandboxes",
       env: gatewayEnv(options.gatewayName),

@@ -799,7 +799,12 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         options,
       ),
     ).rejects.toThrow(/gateway's only sandbox/);
-    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls).toEqual([
+      expect.objectContaining({
+        command: "openshell",
+        args: ["sandbox", "list", "--names", "--page-size", "2", "-g", "nemoclaw"],
+      }),
+    ]);
     expect(cleanup.calls).toHaveLength(0);
   });
 
