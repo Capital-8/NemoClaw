@@ -728,8 +728,11 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         const probe = runner.calls.find(
           (call) => call.options?.artifactName === "lifecycle-dcode-route-baseline-1",
         )!;
-        const commandStart = probe.args.indexOf("--") + 1;
-        const command = probe.args.slice(commandStart);
+        expect(probe.args[0]).toBe("/usr/local/lib/nemoclaw/dcode-managed-exec");
+        expect(probe.args).toContain(options.endpoint);
+        expect(probe.args.join(" ")).not.toContain("inference.local");
+        // Execute the managed launcher payload directly in this host-side unit test.
+        const command = probe.args.slice(1);
         const fakeCurl = path.join(home, "curl");
         fs.writeFileSync(fakeCurl, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n", { mode: 0o700 });
         const handle = "openshell:resolve:env:s" + "a".repeat(64) + "_COMPATIBLE_API_KEY";
@@ -740,6 +743,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         expect(probeRun.status).toBe(0);
         const probeArgs = probeRun.stdout.split("\0").filter(Boolean);
         expect(probeArgs).toEqual([
+          "-q",
           "-sS",
           "-o",
           "/dev/null",
@@ -760,7 +764,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
             messages: [{ role: "user", content: "Reply with OK" }],
             stream: false,
           }),
-          `${definition.endpoint}/chat/completions`,
+          options.endpoint,
         ]);
         expect(probe.options?.timeoutMs).toBe(25_000);
         expect(probe.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
@@ -923,6 +927,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       providerId: "dcode-owned-provider",
       profileId: definition.profileId,
       endpointUrl: definition.endpoint,
+      endpoint: "https://inference-api.nvidia.com/v1/chat/completions",
       credentialEnv: "COMPATIBLE_API_KEY",
       model: "nvidia/nvidia/nemotron-3-ultra",
       validCredential,
@@ -938,6 +943,29 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         validCredential,
       ),
     ).toThrow(/registry agent/);
+    expect(() =>
+      dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+        {
+          agent: "langchain-deepagents-code",
+          gatewayName: "nemoclaw",
+          provider: "compatible-endpoint",
+          model: "nvidia/model",
+        },
+        validCredential,
+      ),
+    ).toThrow(/native hosted provider attachment/);
+    expect(() =>
+      dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+        {
+          ...entry,
+          nativeHostedProviderAttachment: {
+            ...nativeHostedProviderAttachment,
+            providerName: "wrong-provider",
+          },
+        },
+        validCredential,
+      ),
+    ).toThrow(/native hosted provider attachment/);
   });
 
   it.each([

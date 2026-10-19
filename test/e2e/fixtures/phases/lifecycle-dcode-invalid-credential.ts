@@ -3,6 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import { DCODE_MANAGED_EXEC_LAUNCHER } from "../../../../src/lib/actions/sandbox/connect-inference-route-probe.ts";
 import { parseCliOpenShellProviderMetadata } from "../../../../src/lib/adapters/openshell/provider-metadata-cli.ts";
 import { nativeHostedAuthHeaderScript } from "../../../../src/lib/inference/native-provider/contract.ts";
 import { hostedNativeProviderForAttachment } from "../../../../src/lib/inference/native-provider/hosted-attachment.ts";
@@ -46,6 +47,8 @@ export interface DcodeInvalidCredentialRebuildOptions {
   providerId: string;
   profileId: string;
   endpointUrl: string;
+  /** Fully resolved native completion endpoint, used only by the managed probe launcher. */
+  endpoint: string;
   credentialEnv: string;
   model: string;
   validCredential: string;
@@ -115,6 +118,7 @@ export function dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
     providerId: (receipt as { providerId: string }).providerId,
     profileId: definition.profileId,
     endpointUrl: definition.endpoint,
+    endpoint: `${definition.endpoint.replace(/\/+$/u, "")}/chat/completions`,
     credentialEnv,
     model: requiredString(entry, "model"),
     validCredential,
@@ -130,6 +134,7 @@ export function isDcodeInvalidCredentialRebuildOptions(
     "providerId" in options &&
     "profileId" in options &&
     "endpointUrl" in options &&
+    "endpoint" in options &&
     "credentialEnv" in options &&
     "model" in options &&
     "validCredential" in options
@@ -231,12 +236,19 @@ async function probeRoute(
   return await deps.sandbox.exec(
     sandboxName,
     [
-      "bash",
+      DCODE_MANAGED_EXEC_LAUNCHER,
+      "/bin/sh",
       "-c",
-      `${nativeHostedAuthHeaderScript({ credentialEnv: options.credentialEnv, api: "openai-completions" })}; exec curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 15 -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-binary "$2" "$1"`,
-      "dcode-native-route",
-      `${options.endpointUrl.replace(/\/+$/u, "")}/chat/completions`,
+      [
+        nativeHostedAuthHeaderScript({
+          credentialEnv: options.credentialEnv,
+          api: "openai-completions",
+        }),
+        'exec curl -q -sS -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 15 -H "Content-Type: application/json" -H "$AUTH_HEADER" --data-binary "$1" "$2"',
+      ].join("; "),
+      "dcode-native-inference-probe",
       payload,
+      options.endpoint,
     ],
     {
       artifactName: `lifecycle-dcode-route-${phase}-${attempt}`,
