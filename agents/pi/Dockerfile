@@ -123,7 +123,7 @@ COPY agents/pi/generate-config.ts agents/pi/check-native-credentials.ts /opt/nem
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/endpoint-url-safety.ts
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/agent-config.ts
 COPY src/lib/inference/native-nvidia/contract.ts /src/lib/inference/native-nvidia/contract.ts
-COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/catalog.ts /src/lib/inference/native-provider/
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/pi/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold

@@ -15,7 +15,7 @@ describe("createResumeProviderShim", () => {
     vi.restoreAllMocks();
   });
 
-  it("binds the selected gateway and recovery dependencies", async () => {
+  it("sends routed recovery to native setup without querying a logical provider", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const providerExistsInGateway = vi.fn(() => false);
     const isRoutedInferenceProvider = vi.fn(() => true);
@@ -33,15 +33,9 @@ describe("createResumeProviderShim", () => {
       forceInferenceSetup: true,
       credentialEnv: "OPENAI_API_KEY",
     });
-    expect(providerExistsInGateway).toHaveBeenCalledWith("routed-provider", "gateway-west");
+    expect(providerExistsInGateway).not.toHaveBeenCalled();
     expect(isRoutedInferenceProvider).toHaveBeenCalledWith("routed-provider");
-    expect(replaceNamedCredential).toHaveBeenCalledWith(
-      "OPENAI_API_KEY",
-      expect.any(String),
-      null,
-      expect.any(Function),
-      undefined,
-    );
+    expect(replaceNamedCredential).not.toHaveBeenCalled();
   });
 
   it("delegates only an exact managed llama.cpp sandbox to lifecycle recovery (#8144)", async () => {

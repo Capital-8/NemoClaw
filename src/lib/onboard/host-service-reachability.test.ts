@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
+import { observeConfiguredGatewayHostRuntime } from "./docker-driver-gateway-env";
 import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 // Mock the docker adapter so the test never loads runner.ts (which requires
@@ -91,6 +92,11 @@ describe("probeHostServiceSandboxReachability", () => {
         port: 8081,
         nativeSupervisorNetwork: true,
         platform,
+        gatewayRuntime: observeConfiguredGatewayHostRuntime({
+          platform,
+          architecture: "arm64",
+          environment: {},
+        }),
         inspectNetworkImpl,
         usesHostGatewayRouteImpl: () => true,
         runImpl,

@@ -74,7 +74,7 @@ describe.concurrent("native provider handle refresh", () => {
       fs.writeFileSync(
         providerPath,
         `const fixture = require("./providers.json");
-exports.hostedNativeProvider = () => fixture.openrouter;
+exports.fixedHostedNativeProvider = () => fixture.openrouter;
 exports.NVIDIA_HOSTED_NATIVE_ENDPOINT = fixture.NVIDIA_HOSTED_NATIVE_ENDPOINT;
 exports.NVIDIA_HOSTED_CREDENTIAL_ENV = fixture.NVIDIA_HOSTED_CREDENTIAL_ENV;`,
       );

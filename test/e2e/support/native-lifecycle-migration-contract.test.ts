@@ -6,9 +6,114 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restorationScript } from "../live/openclaw-restoration.ts";
+
+const captured = vi.hoisted(() => ({ test: vi.fn() }));
+vi.mock("../fixtures/e2e-test.ts", async () => ({
+  expect: (await import("vitest")).expect,
+  test: captured.test,
+}));
+
+async function runCronTarget(
+  endpoint: string,
+  runResult = { exitCode: 0, stdout: '{"ok":true,"ran":true}', stderr: "" },
+) {
+  vi.stubEnv("NEMOCLAW_ENDPOINT_URL", endpoint);
+  vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "cron-test");
+  vi.spyOn(Date, "now").mockReturnValue(42);
+  vi.resetModules();
+  captured.test.mockClear();
+  await import("../live/cron-preflight-inference-local.test.ts");
+  const run = captured.test.mock.calls[0]![2] as (fixtures: object) => Promise<void>;
+  const success = { exitCode: 0, stdout: "", stderr: "" };
+  const exec = vi
+    .fn()
+    .mockResolvedValueOnce(success)
+    .mockResolvedValueOnce({
+      ...success,
+      stdout: '{"name":"nemoclaw-native-cron-42","id":"cron-42"}',
+    })
+    .mockResolvedValueOnce(runResult)
+    .mockResolvedValueOnce(success);
+  const command = vi.fn(
+    async (_command: string, _args: string[], _options: { env: NodeJS.ProcessEnv }) => success,
+  );
+  const complete = vi.fn();
+  const cleanupSandbox = vi.fn(async () => success);
+  const trackDisposable = vi.fn();
+  const finished = run({
+    artifacts: { target: { declare: vi.fn(), complete } },
+    cleanup: { trackDisposable },
+    host: { command },
+    progress: { phase: vi.fn() },
+    runtimeProvider: { requireAvailable: vi.fn() },
+    sandbox: {
+      exec,
+      cleanupSandbox,
+      openshell: vi.fn(async () => ({
+        ...success,
+        stdout: JSON.stringify({
+          paired: [{ scopes: ["operator.admin"], tokens: [{ scopes: ["operator.admin"] }] }],
+        }),
+      })),
+    },
+    secrets: { required: () => "test-hosted-key" },
+  });
+  return { finished, exec, command, complete, cleanupSandbox, trackDisposable };
+}
+
+describe("native scheduled inference target", () => {
+  it.each(["https://inference-api.nvidia.com/v1", "https://selected.example/team/v1"])(
+    "reports the selected %s endpoint after running and removing scheduled work",
+    async (endpoint) => {
+      const fixture = await runCronTarget(endpoint);
+      await fixture.finished;
+      expect(fixture.command.mock.calls[0]![2].env).toMatchObject({
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_ENDPOINT_URL: endpoint,
+        COMPATIBLE_API_KEY: "test-hosted-key",
+      });
+      expect(fixture.exec.mock.calls.map((call) => call[1].slice(0, 3))).toEqual([
+        ["openclaw", "cron", "add"],
+        ["openclaw", "cron", "add"],
+        ["openclaw", "cron", "run"],
+        ["openclaw", "cron", "remove"],
+      ]);
+      expect(fixture.exec.mock.calls.slice(2).map((call) => call[1][3])).toEqual([
+        "cron-42",
+        "cron-42",
+      ]);
+      expect(fixture.complete).toHaveBeenCalledExactlyOnceWith({
+        id: "cron-preflight-inference-local",
+        status: "passed",
+        nativeCronId: "cron-42",
+        nativeRunAccepted: true,
+        inferenceRoute: endpoint,
+      });
+      await fixture.trackDisposable.mock.calls[0]![1]();
+      expect(fixture.cleanupSandbox).toHaveBeenLastCalledWith(
+        "cron-test",
+        expect.objectContaining({
+          artifactName: "cron-preflight-cleanup-openshell-delete",
+        }),
+      );
+    },
+  );
+
+  it.each([
+    { exitCode: 42, stdout: "", stderr: "command failed" },
+    { exitCode: 0, stdout: '{"ok":true,"ran":false}', stderr: "" },
+    { exitCode: 0, stdout: '{"ok":true,"ran":true}', stderr: "EAI_AGAIN" },
+  ])("does not report completion for a rejected cron run %j", async (runResult) => {
+    const fixture = await runCronTarget("https://selected.example/v1", runResult);
+    await expect(fixture.finished).rejects.toThrow();
+    expect(fixture.complete).not.toHaveBeenCalled();
+    await fixture.trackDisposable.mock.calls[0]![1]();
+    expect(fixture.cleanupSandbox).toHaveBeenCalledTimes(2);
+  });
+});
 
 const LIVE_ROOT = path.join(import.meta.dirname, "..", "live");
 
@@ -17,15 +122,6 @@ function liveSource(name: string): string {
 }
 
 describe("native lifecycle E2E migration contracts", () => {
-  it("runs scheduled inference through native OpenClaw cron", () => {
-    const source = liveSource("cron-preflight-inference-local.test.ts");
-
-    expect(source).toMatch(/"openclaw",\s*"cron",\s*"add"/u);
-    expect(source).toContain('["openclaw", "cron", "run", cronId]');
-    expect(source).toContain('["openclaw", "cron", "remove", cronId]');
-    expect(source).not.toContain("preflightCronModelProvider");
-  });
-
   it.each([
     [
       "rebuild-openclaw.test.ts",

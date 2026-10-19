@@ -471,7 +471,7 @@ it.each([undefined, "2026-10-01T00:00:00Z"])(
 );
 
 it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
-  "resumes an owned Local NIM %s shared route without requiring a native attachment",
+  "preserves an owned legacy Local NIM %s route without a native attachment",
   async (agentName) => {
     const { deps, calls } = createDeps();
     deps.getSandboxRegistryEntry = () => ({
@@ -493,22 +493,23 @@ it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     const options = resumeOptions(deps, session);
     options.agent = { name: agentName } as never;
     options.forceInferenceSetup = true;
-    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
-      provider: "vllm-local",
-      model: "fixture-model",
-    });
-    expect(calls.error).not.toHaveBeenCalled();
+    await expect(handleProviderInferenceState(options)).rejects.toThrow(
+      "legacy shared local inference route",
+    );
     expect(calls.setupNim).not.toHaveBeenCalled();
-    expect(calls.setupInference).toHaveBeenCalledOnce();
-    expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
-      agentName,
-      localNimSelected: true,
-    });
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
   },
 );
 
 it("keeps a fresh OpenClaw native local endpoint independent of a shared peer", async () => {
   const { deps, calls } = createDeps();
+  deps.probeLlamaCppSandboxReachability = async () => ({
+    ok: true,
+    reason: "ok",
+    networkName: "host",
+  });
   const selection = {
     ...fallbackSelection,
     provider: "llama-cpp-local",

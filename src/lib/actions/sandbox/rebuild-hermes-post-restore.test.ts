@@ -210,7 +210,11 @@ describe("Hermes rebuild post-restore verification", () => {
         detachedProviderEntries: [mcpEntry],
         scrubbedAdapterEntries: [mcpEntry],
       },
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
 
     await expect(
@@ -243,7 +247,11 @@ describe("Hermes rebuild post-restore verification", () => {
         detachedProviderEntries: [mcpEntry],
         scrubbedAdapterEntries: [mcpEntry],
       },
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
     harness.restoreMcpBridgesAfterRebuildSpy.mockRejectedValueOnce(new Error("reload failed"));
 
@@ -260,7 +268,11 @@ describe("Hermes rebuild post-restore verification", () => {
     const harness = createRebuildFlowHarness({
       agentName: "hermes",
       sessionAgentName: null,
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
 
     await expect(
@@ -279,7 +291,11 @@ describe("Hermes rebuild post-restore verification", () => {
   it("rebinds and verifies ordinary Hermes after restoring its durable state", async () => {
     const harness = createRebuildFlowHarness({
       agentName: "hermes",
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
 
     await expect(
@@ -298,7 +314,11 @@ describe("Hermes rebuild post-restore verification", () => {
     const harness = createRebuildFlowHarness({
       agentName: "hermes",
       sessionAgentName: "langchain-deepagents-code",
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
     });
 
     await expect(

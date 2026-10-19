@@ -799,7 +799,11 @@ describe("rebuildSandbox flow: credential preflight", () => {
 
   it("stops before backup when the agent base-image preflight fails", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "hermes", provider: "nvidia-router" },
+      sandboxEntry: {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
       baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
     });
 

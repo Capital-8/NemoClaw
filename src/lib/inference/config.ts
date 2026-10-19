@@ -6,7 +6,7 @@
  * All functions are pure.
  */
 
-import { nativeLocalCredentialReference } from "./native-local/agent-config";
+import { nativeLocalCredentialReference } from "./native-local/model-router";
 import {
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,

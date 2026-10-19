@@ -115,3 +115,19 @@ describe("native provider protocol details", () => {
     expect(config.model).toEqual(expect.objectContaining({ api_mode: "anthropic_messages" }));
   });
 });
+
+it("projects the attached Router credential into OpenClaw without loading a host blueprint", () => {
+  const config = buildConfig({
+    ...baseOpenClawGenerationEnv(),
+    NEMOCLAW_UPSTREAM_PROVIDER: "team-router",
+    NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:43123/team/v1",
+    NEMOCLAW_INFERENCE_API: "openai-completions",
+    NEMOCLAW_LOCAL_INFERENCE_TOKEN: "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+  });
+  expect(config.models.providers["test-provider"]).toEqual(
+    expect.objectContaining({
+      baseUrl: "http://host.openshell.internal:43123/team/v1",
+      apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    }),
+  );
+});

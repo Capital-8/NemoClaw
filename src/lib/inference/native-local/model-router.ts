@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadBlueprintProfile, type BlueprintInferenceProfile } from "../../core/model-router-port";
+import {
+  nativeLocalCredentialReference as agentCredentialReference,
+  qualifiedNativeLocalEndpointUrl,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+} from "./agent-config";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 
 /** Recognize the existing provider even when its endpoint needs repair. */
@@ -66,4 +71,18 @@ export function nativeModelRouterEndpoint(
   } catch {
     return null;
   }
+}
+
+/** Host configuration keeps Router credentials bound to the selected blueprint. */
+export function nativeLocalCredentialReference(
+  provider: string | null | undefined,
+  endpointUrl: string,
+  agentName?: string | null,
+): string | null {
+  if (
+    nativeModelRouterEndpoint(provider, endpointUrl) &&
+    qualifiedNativeLocalEndpointUrl(endpointUrl)
+  )
+    return `openshell:resolve:env:${NATIVE_LOCAL_CREDENTIAL_ENV}`;
+  return agentCredentialReference(provider, endpointUrl, agentName);
 }

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isIP } from "node:net";
-import { nativeModelRouterEndpoint } from "./model-router";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety.ts";
 
 export const NATIVE_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_LOCAL_INFERENCE_TOKEN";
@@ -45,9 +44,22 @@ export function nativeLocalCredentialReference(
   provider: string | null | undefined,
   endpointUrl: string,
   agentName?: string | null,
+  runtimeCredentialHandle?: string,
 ): string | null {
+  const scoped = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(
+    runtimeCredentialHandle ?? "",
+  );
+  // The host owns Router admission. Images only project its issued credential
+  // for the canonical managed alias; they cannot read the host blueprint.
+  const issuedRouterCredential =
+    typeof provider === "string" &&
+    /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(provider) &&
+    scoped !== null &&
+    scoped[0] === runtimeCredentialHandle &&
+    qualifiedNativeLocalEndpointUrl(endpointUrl) !== null &&
+    new URL(endpointUrl).hostname === "host.openshell.internal";
   if (
-    !nativeModelRouterEndpoint(provider, endpointUrl) &&
+    !issuedRouterCredential &&
     !["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"].includes(
       provider ?? "",
     )

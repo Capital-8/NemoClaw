@@ -1031,7 +1031,9 @@ export function onboardInferenceVerificationContext(
       flow.provider === "vllm-local" && Boolean(attachment?.nimContainer),
     ) && !isPersistedPiSharedLocalInferenceRoute(attachment, flow);
   const nativeLocalProviderAttachment =
-    flow.provider === "vllm-local" && attachment?.nimContainer
+    flow.provider === "vllm-local" &&
+    (flow.nimContainer || attachment?.nimContainer) &&
+    attachment?.nativeLocalProviderAttachment?.authMode !== "sentinel"
       ? undefined
       : attachment?.nativeLocalProviderAttachment;
   const nativeHostedProviderAttachment = attachment?.nativeHostedProviderAttachment;

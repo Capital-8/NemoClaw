@@ -88,9 +88,15 @@ export function hermesProviderKey(provider: string): string {
 export function applyHermesManagedRoute(
   config: Record<string, unknown>,
   route: HermesManagedRoute,
+  runtimeLocalCredentialHandle?: string,
 ): asserts config is Record<string, unknown> & HermesManagedRouting {
   const nativeHosted = nativeHostedAgentConfig(route.upstreamProvider, route.baseUrl);
-  const nativeLocal = nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl);
+  const nativeLocal = nativeLocalCredentialReference(
+    route.upstreamProvider,
+    route.baseUrl,
+    undefined,
+    route.nativeCredentialHandle ?? runtimeLocalCredentialHandle,
+  );
   let apiKey = nativeLocal
     ? `\${${NATIVE_LOCAL_CREDENTIAL_ENV}}`
     : nativeHosted
@@ -199,7 +205,12 @@ export function refreshHermesNativeLocalCredential(
   const previous = model.api_key;
   const reference = new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN).exec(String(previous));
   if (
-    !nativeLocalCredentialReference(route.upstreamProvider, route.baseUrl) ||
+    !nativeLocalCredentialReference(
+      route.upstreamProvider,
+      route.baseUrl,
+      undefined,
+      route.nativeCredentialHandle,
+    ) ||
     upstream.provider !== route.upstreamProvider ||
     upstream.provider_key !== providerKey ||
     upstream.model !== route.model ||

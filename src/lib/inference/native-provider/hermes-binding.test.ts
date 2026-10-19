@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi, onTestFinished } from "vitest";
@@ -347,3 +348,30 @@ it.each([
     expect(importProviderProfile).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  "http://127.0.0.1:8000/v1",
+  "http://10.0.0.1:8000/v1",
+  "http://169.254.169.254/v1",
+  "http://[::1]:8000/v1",
+  "http://[::ffff:127.0.0.1]:8000/v1",
+  "http://other.internal:42103/v1",
+  "http://host.openshell.internal:8080/v1",
+])("cannot turn image configuration for %s into an attached destination", (endpointUrl) => {
+  // Environment-driven image config is public data, not authority to register a route.
+  expect(nativeHostedAgentConfig("hermes-provider", endpointUrl)?.apiKey).toBe(
+    "openshell:resolve:env:OPENAI_API_KEY",
+  );
+  const suffix = createHash("sha256").update(endpointUrl).digest("hex").slice(0, 20);
+  const forged = {
+    schemaVersion: 1 as const,
+    profileId: `nemoclaw-hermes-inference-${suffix}-v1`,
+    providerName: `nemoclaw-hermes-${suffix}-v1`,
+    providerId: "forged-identity",
+    endpointUrl,
+    allowedIps: ["8.8.8.8"],
+  };
+  expect(() => requireHostedProviderAttachment(forged, "hermes-provider")).toThrow();
+  expect(() => buildNativeHostedSandboxPolicy("{}", forged.providerName, forged)).toThrow();
+  expect(() => boundHermesNativeProfile({ ...definition, ...forged })).toThrow();
+});

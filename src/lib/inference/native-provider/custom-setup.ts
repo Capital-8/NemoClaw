@@ -3,7 +3,6 @@
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { isAllowedOpenShellSandboxBridgeUrl } from "../../private-networks";
-import { isProtectedLocalInferencePort } from "../gateway/local-endpoint-ports";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import {
@@ -86,8 +85,11 @@ export async function prepareCustomNativeProvider(input: {
   const bridge =
     input.provider === "compatible-anthropic-endpoint" &&
     isAllowedOpenShellSandboxBridgeUrl(new URL(endpointUrl));
-  if (bridge && isProtectedLocalInferencePort(Number(new URL(endpointUrl).port)))
-    throw new Error("The selected inference endpoint uses a protected host port.");
+  if (bridge) {
+    const { isProtectedLocalInferencePort } = await import("../gateway/local-endpoint-ports");
+    if (isProtectedLocalInferencePort(Number(new URL(endpointUrl).port)))
+      throw new Error("The selected inference endpoint uses a protected host port.");
+  }
   const classified =
     input.provider === "compatible-anthropic-endpoint"
       ? classifyCustomAnthropicEndpoint(input.endpointUrl)

@@ -13,11 +13,9 @@ import { usesNativeLocalInference } from "./eligibility";
 import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import type { NativeProviderAttachment } from "../native-provider/lifecycle";
 
-export {
-  NATIVE_LOCAL_CREDENTIAL_ENV,
-  isLocalInferenceProvider,
-  nativeLocalCredentialReference,
-} from "./agent-config";
+export { NATIVE_LOCAL_CREDENTIAL_ENV, isLocalInferenceProvider } from "./agent-config";
+
+export { nativeLocalCredentialReference } from "./model-router";
 
 export type NativeLocalProvider =
   | "ollama-local"

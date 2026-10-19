@@ -697,7 +697,7 @@ COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.c
 COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts src/lib/providerless-inference.ts src/lib/inference-credential.ts /src/lib/
 COPY src/lib/core/endpoint-url-safety.ts /src/lib/core/
 COPY src/lib/inference/native-local/agent-config.ts /src/lib/inference/native-local/
-COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/hosted.ts src/lib/inference/native-provider/contract.ts /src/lib/inference/native-provider/
+COPY src/lib/inference/native-provider/agent-config.ts src/lib/inference/native-provider/catalog.ts /src/lib/inference/native-provider/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
