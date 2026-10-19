@@ -64,6 +64,8 @@ export function runCommandWithInstalledVersion(
       | "fixed-system"
       | "system";
     legacyInventory?: unknown;
+    retainedRegistry?: string;
+    registryGatewayPort?: string;
     missingCli?: boolean;
     missingNode?: boolean;
     systemGatewayDirectory?: string;
@@ -108,6 +110,17 @@ export function runCommandWithInstalledVersion(
     fs.mkdirSync(driverBin, { recursive: true });
     const configHome = path.join(tmp, "config");
     const retainedFiles = new Map<string, string>();
+    if (options.retainedRegistry !== undefined) {
+      const registry = path.join(
+        tmp,
+        ".nemoclaw",
+        ...(options.registryGatewayPort ? ["gateways", options.registryGatewayPort] : []),
+        "sandboxes.json",
+      );
+      fs.mkdirSync(path.dirname(registry), { recursive: true });
+      fs.writeFileSync(registry, options.retainedRegistry);
+      retainedFiles.set(registry, options.retainedRegistry);
+    }
     if (options.legacyGateway) {
       const gatewayRoot =
         options.legacyGateway === "fixed-system"

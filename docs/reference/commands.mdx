@@ -782,7 +782,10 @@ If neither fallback can verify and stop the process, the installer stops after b
 If any registered sandbox cannot be backed up, the installer aborts before it changes the gateway.
 After the automatic path retires an out-of-range gateway, it forces installation of the OpenShell version pinned by the prepared source before recovery.
 This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement.
-If the forced installation fails, the installer does not stage a gateway service or start recovery, preserves the backups, and tells you to rerun with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1`.
+If the forced installation fails, the installer does not stage a gateway service or start recovery and preserves the backups.
+Retained NemoClaw sandbox records block component replacement even with a `0.1.x` CLI or an empty runtime inventory.
+If the installer reports retained records, stop and preserve those records, gateway registrations, sandbox data, and backups.
+For other failures, resolve the reported failure before retrying with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1`.
 On macOS, if the verified Homebrew installation does not resolve executable OpenShell CLI and gateway binaries, the installer also stops before recovery and preserves the backups and prepared recovery state.
 It does not fall back to a stale user-local OpenShell binary.
 When the registry contains a pre-fingerprint OpenClaw or Hermes entry with no recorded custom-image evidence, an interactive install asks you to confirm that the listed sandbox used a NemoClaw-managed image.
@@ -794,6 +797,7 @@ Use `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the current release CLI c
 Preparation can be completed manually or by the installer.
 The installer checks the installed OpenShell version before it accepts this flag.
 When the selected gateway has registered sandboxes, an OpenShell `0.0.x`, missing, or unreadable version stops the upgrade even when backups exist.
+Passing the version check does not bypass the component installer's retained-record check.
 Do not retire a legacy gateway, delete its registration, or remove sandbox records to bypass that stop.
 Preserve the existing installation, sandbox data, and completed backups.
 Follow [Resume a Manually Prepared Upgrade](../manage-sandboxes/operate-sandboxes/update-sandboxes#resume-a-manually-prepared-upgrade) for the version check and retry command.

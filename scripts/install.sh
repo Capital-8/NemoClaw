@@ -1125,12 +1125,11 @@ usage() {
   printf "                                  Allow automatic upgrade only for eligible gateways\n"
   printf "                                  Registered sandboxes on OpenShell 0.0.x prevent upgrade to 0.1.3\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
-  printf "                                  Continue only after the current CLI completes strict backup and forward retirement:\n"
-  printf "                                  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all --retire-legacy-forwards\n"
-  printf "                                  Then retire the selected gateway process:\n"
-  printf "                                  openshell gateway destroy -g nemoclaw || openshell gateway destroy\n"
-  printf "                                  For NEMOCLAW_GATEWAY_PORT=<port>, destroy nemoclaw-<port> with -g and omit the unnamed fallback\n"
-  printf "                                  Resolve any failure before setting this variable\n"
+  printf "                                  Resume an eligible upgrade after strict backup, forward retirement, and gateway retirement\n"
+  printf "                                  With registered sandboxes, the installed OpenShell version must be verifiable and at least 0.1.0\n"
+  printf "                                  This flag does not migrate registered sandboxes from OpenShell 0.0.x\n"
+  printf "                                  Retained NemoClaw sandbox records still block component replacement, including on OpenShell 0.1.x\n"
+  printf "                                  Preserve the legacy gateway, registrations, sandbox records, and data\n"
   printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
   printf "                                  Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
@@ -3324,7 +3323,7 @@ finish_nemoclaw_install() {
       if [ "$retry_gateway_port" -ne 8080 ]; then
         retry_gateway_port_env="NEMOCLAW_GATEWAY_PORT=${retry_gateway_port} "
       fi
-      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
+      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. If component replacement reports retained NemoClaw sandbox records, stop and preserve those records and all gateway data. Otherwise, verify the installed version and resolve the reported failure before retrying with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1. This flag does not bypass version or registry checks."
     fi
     # The retired gateway registration is intentionally gone. Start the newly
     # installed, identity-checked NemoClaw service before upgrade-sandboxes
@@ -3336,7 +3335,7 @@ finish_nemoclaw_install() {
       info "Starting the current OpenShell gateway before sandbox recovery…"
       restart_selected_openshell_gateway_user_service \
         "systemd:${NEMOCLAW_GATEWAY_SERVICE_NAME}.service" \
-        || error "The current OpenShell gateway service could not start after the legacy gateway was retired. Sandbox backups were preserved; fix the user service and rerun with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1."
+        || error "The current OpenShell gateway service could not start after the legacy gateway was retired. Sandbox backups were preserved; fix the user service and rerun with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1. If component replacement reports retained NemoClaw sandbox records, stop and preserve those records and all gateway data."
     fi
     _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
   else
@@ -4173,6 +4172,11 @@ print_openshell_upgrade_manual_commands() {
     gateway_retire_command="openshell gateway destroy -g ${gateway_name} || openshell gateway destroy"
   fi
   cat <<EOF
+  Do not use these commands for an OpenShell 0.1.x target while NemoClaw sandbox
+  records remain. Those records block component replacement, including when the
+  installed CLI reports 0.1.x. Preserve the gateway, registrations, and sandbox
+  data. NEMOCLAW_OPENSHELL_UPGRADE_PREPARED does not bypass this check.
+
   Manual upgrade path (after installing the current CLI with OpenShell deferred):
     ${gateway_port_env}NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all --retire-legacy-forwards
     ${gateway_retire_command}

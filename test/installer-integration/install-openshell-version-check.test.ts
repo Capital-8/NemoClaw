@@ -43,6 +43,79 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     expect(result.stderr).not.toContain("Node.js is required");
   });
 
+  it.each([
+    { missingCli: true },
+    { missingCli: false, legacyGateway: "empty" as const },
+    { missingCli: true, registryGatewayPort: "8990" },
+    { missingCli: false, version: REQUIRED_OPENSHELL_VERSION, legacyGateway: "empty" as const },
+  ])(
+    "preserves retained sandbox records before replacement %#",
+    ({ version = "0.0.116", ...options }) => {
+      const result = runCommandWithInstalledVersion(
+        version,
+        { NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1" },
+        {
+          ...options,
+          driverBins: false,
+          retainedRegistry: '{"sandboxes":{"retained-box":{"name":"retained-box"}}}',
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("retained NemoClaw sandbox records");
+      expect(result.downloads).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
+  it("requires Node.js when sandbox records remain without the old CLI", () => {
+    const result = runCommandWithInstalledVersion(
+      "",
+      {},
+      {
+        missingCli: true,
+        missingNode: true,
+        driverBins: false,
+        retainedRegistry: '{"sandboxes":{"retained-box":{"name":"retained-box"}}}',
+      },
+    );
+    expect(result.stderr).toContain("Node.js is required");
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
+  it.each(["invalid JSON", '{"sandboxes":[]}'])(
+    "preserves unreadable or malformed retained registry %#",
+    (retainedRegistry) => {
+      const result = runCommandWithInstalledVersion(
+        "",
+        {},
+        {
+          missingCli: true,
+          driverBins: false,
+          retainedRegistry,
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.downloads).toBe("");
+      expect(result.retainedFilesUnchanged).toBe(true);
+    },
+  );
+
+  it("allows a fresh install with a verified empty NemoClaw registry", () => {
+    const result = runCommandWithInstalledVersion(
+      "",
+      {},
+      {
+        missingCli: true,
+        driverBins: false,
+        retainedRegistry: '{"sandboxes":{}}',
+      },
+    );
+    expect(result.downloads, result.stderr).not.toBe("");
+    expect(result.stderr).not.toContain("Cannot replace OpenShell");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
+
   it.each([undefined, true, "system"] as const)(
     "requires Node.js to inspect existing CLI or gateway state %s",
     (legacyGateway) => {

@@ -222,10 +222,12 @@ legacy_openshell_state_is_absent() {
   local config="${XDG_CONFIG_HOME:-${HOME:+$HOME/.config}}"
   local system="${OPENSHELL_SYSTEM_GATEWAY_DIR-/etc/openshell}"
   ! command -v openshell >/dev/null 2>&1 || return 1
-  [[ "$config" = /* && "$system" = /* ]] || return 1
+  [[ "$config" = /* && "$system" = /* && "${HOME:-}" = /* ]] || return 1
   gateway_registration_path_is_absent "$config/openshell/gateways" \
     && gateway_registration_path_is_absent "/etc/openshell/gateways" \
-    && gateway_registration_path_is_absent "$system/gateways"
+    && gateway_registration_path_is_absent "$system/gateways" \
+    && gateway_registration_path_is_absent "$HOME/.nemoclaw/sandboxes.json" \
+    && gateway_registration_path_is_absent "$HOME/.nemoclaw/gateways"
 }
 
 # Every installation entrypoint must verify legacy state before downloading or
@@ -240,7 +242,7 @@ verify_legacy_openshell_state() {
   # shellcheck disable=SC2016 # JavaScript template literals are evaluated by Node.js.
   node --input-type=module -e '
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, fstatSync, openSync, readFileSync, readdirSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync, readdirSync, lstatSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 function deny(reason) {
@@ -315,7 +317,53 @@ function gatewayNames() {
   return [...names.keys()];
 }
 
+function verifyRetainedNemoClawRegistry() {
+  if (!isAbsolute(process.env.HOME || "")) deny("the NemoClaw state path is not absolute");
+  const root = join(process.env.HOME, ".nemoclaw");
+  const roots = [root];
+  // Component replacement affects every gateway, including non-default ports.
+  for (const directory of [root, join(root, "gateways")]) {
+    try {
+      if (!lstatSync(directory).isDirectory()) deny("the NemoClaw state path is not a directory");
+      if (directory !== root) {
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+          if (!/^\d{1,5}$/.test(entry.name) || Number(entry.name) < 1 ||
+              Number(entry.name) > 65535 || Number(entry.name) === 8080) continue;
+          if (!entry.isDirectory()) deny("a NemoClaw gateway state path is not a directory");
+          roots.push(join(directory, entry.name));
+        }
+      }
+    } catch (error) {
+      if (!missing(error)) throw error;
+    }
+  }
+  for (const directory of roots) {
+    let descriptor;
+    try {
+      descriptor = openSync(join(directory, "sandboxes.json"),
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    } catch (error) {
+      if (missing(error)) continue;
+      throw error;
+    }
+    try {
+      if (!fstatSync(descriptor).isFile()) deny("the NemoClaw sandbox registry is not a regular file");
+      const registry = JSON.parse(readFileSync(descriptor, "utf8"));
+      if (!registry || typeof registry !== "object" || Array.isArray(registry) ||
+          !registry.sandboxes || typeof registry.sandboxes !== "object" || Array.isArray(registry.sandboxes)) {
+        deny("the NemoClaw sandbox registry is invalid");
+      }
+      if (Object.keys(registry.sandboxes).length) {
+        deny("retained NemoClaw sandbox records do not prove that legacy state was retired");
+      }
+    } finally {
+      closeSync(descriptor);
+    }
+  }
+}
+
 function verify() {
+  verifyRetainedNemoClawRegistry();
   // Match the component installer PATH selection, not a different CLI override.
   const binary = query("bash", ["-c", "command -v openshell || true"]);
   if (binary) {
@@ -354,7 +402,7 @@ try {
   console.error(
     error instanceof Error && error.message.startsWith("Cannot replace OpenShell:")
       ? error.message
-      : "Cannot replace OpenShell: legacy gateway state is unreadable. Preserve the installed CLI and resolve the registration before retrying.",
+      : "Cannot replace OpenShell: legacy gateway or NemoClaw registry state is unreadable. Preserve the installed CLI and recorded state before retrying.",
   );
   process.exitCode = 1;
 }
