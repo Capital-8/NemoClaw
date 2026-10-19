@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeModelRouterEndpoint } from "../../inference/native-local/model-router";
+import {
+  assertNativeModelRouterOwner,
+  prepareNativeModelRouterSelection,
+} from "../../onboard/routed-inference";
 import { requireNativeProviderPolicy } from "../../adapters/openshell/provider-policy";
 import { InferenceSetError } from "../inference-set-error";
 import type { SandboxEntry } from "../../state/registry";
@@ -33,6 +38,19 @@ export async function prepareNativeLocalSwitch(input: {
   writeAuthority?: Parameters<typeof prepareNativeLocalSelection>[0]["writeAuthority"];
 }) {
   if (input.previous?.provider === input.provider && !input.binding) {
+    if (nativeModelRouterEndpoint(input.provider)) {
+      const runtime = resolveHermesLocalSwitchRuntime(
+        input.provider,
+        null,
+        input.resolveCredentialValue,
+      );
+      if (runtime.endpointUrl !== input.previous.endpointUrl || !runtime.credentialValue)
+        throw new InferenceSetError(
+          "Model Router endpoint ownership changed. Recreate this sandbox before changing inference.",
+          2,
+        );
+      assertNativeModelRouterOwner(runtime.endpointUrl, runtime.credentialValue);
+    }
     return {
       ...(await ensureNativeLocalProviderAttached({
         adapter: input.adapter,
@@ -47,7 +65,12 @@ export async function prepareNativeLocalSwitch(input: {
     input.binding,
     input.resolveCredentialValue,
   );
-  const receipt = await prepareNativeLocalSelection({
+  if (!runtime.endpointUrl) throw new Error("Native local inference endpoint is missing.");
+  const receipt = await (
+    nativeModelRouterEndpoint(input.provider)
+      ? prepareNativeModelRouterSelection
+      : prepareNativeLocalSelection
+  )({
     adapter: input.adapter,
     binding: {
       provider: input.provider as NativeLocalProvider,

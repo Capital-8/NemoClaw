@@ -68,6 +68,9 @@ import * as registry from "../state/registry";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import { resolveRuntimeInferenceApi } from "./inference-route-api";
 import {
+  isModelRouterProvider,
+  nativeModelRouterEndpoint,
+  withRoutedInferencePortLock,
   assertInferenceModelId,
   nativeSelectionConfigCredentials,
   prepareNativeTransitionAuthority,
@@ -427,7 +430,7 @@ async function assertSelectableProvider(
   gatewayName: string,
   deps: Pick<InferenceSetDeps, "providerAdapter" | "log">,
 ): Promise<void> {
-  if (getProviderSelectionConfig(provider, model) || provider === "nvidia-router") return;
+  if (getProviderSelectionConfig(provider, model) || isModelRouterProvider(provider)) return;
   const registeredProviders = await queryRegisteredGatewayProviders(gatewayName, deps);
   if (registeredProviders?.includes(provider)) return;
   const providerGuidance =
@@ -1271,6 +1274,15 @@ async function runInferenceSetWithoutHostLock(
   const hasExplicitCustomRoute = Boolean(
     options.endpointUrl || options.credentialEnv || options.inferenceApi,
   );
+  if (
+    isModelRouterProvider(provider) &&
+    (hasExplicitCustomRoute || !nativeModelRouterEndpoint(provider))
+  ) {
+    throw new InferenceSetError(
+      "Model Router uses its configured endpoint, API, and host credential.",
+      2,
+    );
+  }
   const customRoute = hasExplicitCustomRoute
     ? {
         ...options,
@@ -2244,20 +2256,29 @@ export async function runInferenceSet(
       deps.runtimeProviders,
     );
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
-    const mutation = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
-      await reconcilePreviousOpenClawLocal({
-        entry: lockedSelection.entry,
-        sandboxName: selected.sandboxName,
-        gatewayName,
-        deps,
-      });
-      return await runInferenceSetWithoutHostLock(
-        { ...options, sandboxName: selected.sandboxName },
-        deps,
-        gatewayName,
-        runtimeProvider,
-      );
-    });
+    const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
+      withRoutedInferencePortLock(
+        Boolean(
+          nativeModelRouterEndpoint(options.provider) ||
+          nativeModelRouterEndpoint(lockedSelection.entry.provider),
+        ),
+        async () => {
+          await reconcilePreviousOpenClawLocal({
+            entry: lockedSelection.entry,
+            sandboxName: selected.sandboxName,
+            gatewayName,
+            deps,
+          });
+          return await runInferenceSetWithoutHostLock(
+            { ...options, sandboxName: selected.sandboxName },
+            deps,
+            gatewayName,
+            runtimeProvider,
+          );
+        },
+        {},
+      ),
+    );
     // Retain the outer sandbox lifecycle lock so another process cannot replace
     // this sandbox between the committed write, an optional restart, and
     // device-scope convergence.

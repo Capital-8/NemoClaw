@@ -1978,7 +1978,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       provider: selectedProvider,
       hasHostLocalInference: Boolean(resumeHostLocalInferenceSetupOptions.hostLocalInference),
       forceProviderSelection,
-      forceInferenceSetup,
+      forceInferenceSetup: forceInferenceSetup || deps.isRoutedInferenceProvider(selectedProvider),
       effectiveResume,
       routeReady: () => deps.isInferenceRouteReady(gatewayName, selectedProvider, selectedModel),
     });

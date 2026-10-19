@@ -97,6 +97,18 @@ describe("ensureResumeProviderReady", () => {
     },
   );
 
+  it("recovers native router ownership without looking up the logical provider", async () => {
+    const { deps } = makeDeps({ nonInteractive: true });
+    deps.isRoutedInferenceProvider = (provider) => provider === "nvidia-router";
+    deps.providerExistsInGateway = () => {
+      throw new Error("retired logical provider lookup");
+    };
+    expect(await ensureResumeProviderReady("nvidia-router", "ROUTER_KEY", deps)).toEqual({
+      forceInferenceSetup: true,
+      credentialEnv: "ROUTER_KEY",
+    });
+  });
+
   it("returns false-forced when no provider is set (nothing to recover)", async () => {
     const { deps } = makeDeps({ providerExists: false });
     const result = await ensureResumeProviderReady(null, null, deps);

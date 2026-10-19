@@ -85,6 +85,13 @@ export async function ensureResumeProviderReady(
   credentialEnv: string | null | undefined,
   deps: ResumeProviderRecoveryDeps,
 ): Promise<ResumeProviderRecoveryResult> {
+  if (provider && deps.isRoutedInferenceProvider(provider)) {
+    // The logical routed name is not the sandbox-owned native provider name.
+    return {
+      forceInferenceSetup: true,
+      credentialEnv: credentialEnv || deps.defaultRouteCredentialEnv,
+    };
+  }
   const native = fixedNativeProvider(provider);
   if (
     native &&

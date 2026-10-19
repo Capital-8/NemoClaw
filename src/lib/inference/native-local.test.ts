@@ -23,6 +23,7 @@ import {
   verifyNativeLocalProviderAttachment,
   verifyRecordedNativeLocalProviderAttachment,
   retireNativeLocalProvider,
+  detachNativeLocalProvider,
 } from "./native-local/profile";
 
 vi.mock("../adapters/openshell/provider-policy", () => ({
@@ -123,6 +124,56 @@ function fixture(selectedBinding: NativeLocalBinding = binding) {
 }
 
 describe("native local inference", () => {
+  it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"] as const)(
+    "retains %s Model Router profile, rebuild identity, and retirement ownership",
+    async (agent) => {
+      const routerBinding = {
+        ...binding,
+        ...(agent === "langchain-deepagents-code" ? {} : { agent }),
+        provider: "nvidia-router" as const,
+        endpointUrl: "http://host.openshell.internal:4000/v1",
+        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      };
+      const f = fixture(routerBinding);
+      const receipt = await ensureNativeLocalProvider(f.input);
+      await ensureNativeLocalProviderAttached({
+        adapter: f.adapter,
+        expected: receipt,
+        sandboxName: "alice",
+      });
+      await verifyRecordedNativeLocalProviderAttachment({
+        adapter: f.adapter,
+        expected: receipt,
+        agent,
+        sandboxName: "alice",
+        gatewayName: "nemoclaw",
+        provider: "nvidia-router",
+      });
+      const profile = prepareNativeLocalProfile(routerBinding);
+      expect(profile.document.endpoints[0].rules).toEqual([
+        { allow: { method: "GET", path: "/v1/models" } },
+        { allow: { method: "POST", path: "/v1/chat/completions" } },
+      ]);
+      expect(nativeLocalIdentity({ ...routerBinding, sandboxName: "bob" }).providerName).not.toBe(
+        receipt.providerName,
+      );
+      await detachNativeLocalProvider({
+        adapter: f.adapter,
+        expected: receipt,
+        sandboxName: "alice",
+      });
+      const clearAuthority = vi.fn();
+      await retireNativeLocalProvider({
+        adapter: f.adapter,
+        expected: receipt,
+        sandboxName: "alice",
+        gatewayName: "nemoclaw",
+        clearAuthority,
+      });
+      expect(f.adapter.deleteProvider).toHaveBeenCalledOnce();
+      expect(clearAuthority).toHaveBeenCalledOnce();
+    },
+  );
   it.each([
     ["pi", "http://host.openshell.internal:12345/v1", true],
     ["pi", "http://192.168.1.20:9001/v1", true],

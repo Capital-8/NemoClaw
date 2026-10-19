@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeModelRouterEndpoint } from "../../inference/native-local/model-router";
+import {
+  assertNativeModelRouterOwner,
+  prepareNativeModelRouterSelection,
+} from "../../onboard/routed-inference";
 import type { InferenceSetDeps } from "../inference-set";
 import { InferenceSetError } from "../inference-set-error";
 import {
@@ -65,6 +70,7 @@ export async function resolveOpenClawLocalSwitch(input: {
       expected: previous,
     });
   }
+  const router = Boolean(nativeModelRouterEndpoint(provider));
   if (
     previous &&
     input.endpointUrl &&
@@ -99,7 +105,14 @@ export async function resolveOpenClawLocalSwitch(input: {
   )
     return { previous };
   // A retained OpenClaw row may still own the historical shared route.
-  if (!previous && entry.provider === provider) return {};
+  if (!previous && entry.provider === provider) {
+    if (router)
+      throw new InferenceSetError(
+        "Recreate this legacy Model Router sandbox before changing inference.",
+        2,
+      );
+    return {};
+  }
   if (!previous || entry.provider !== provider) return { previous, prepare: true };
   const expectedEndpoint = usesLoopbackNoAuthProxyRoute(entry, provider)
     ? `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${new URL(entry.endpointUrl!).pathname.replace(/\/+$/, "")}`
@@ -113,6 +126,16 @@ export async function resolveOpenClawLocalSwitch(input: {
     throw new InferenceSetError(
       "Recorded compatible provider API or endpoint does not match its native attachment.",
     );
+  }
+  if (router) {
+    const runtime = deps.resolveLocalSwitchRuntime?.(provider, deps.resolveCredentialValue);
+    if (
+      !runtime?.endpointUrl ||
+      !runtime.credentialValue ||
+      runtime.endpointUrl !== previous.endpointUrl
+    )
+      throw new InferenceSetError("Model Router ownership requires its configured credential.", 2);
+    assertNativeModelRouterOwner(runtime.endpointUrl, runtime.credentialValue);
   }
   return { selected: previous, previous };
 }
@@ -151,7 +174,11 @@ export async function prepareOpenClawLocalSwitch(input: {
       : deps.resolveLocalSwitchRuntime(input.provider, deps.resolveCredentialValue);
   if (!runtime.endpointUrl)
     throw new InferenceSetError("The local runtime endpoint is unavailable.");
-  input.selection.selected = await prepareNativeLocalSelection({
+  input.selection.selected = await (
+    nativeModelRouterEndpoint(input.provider)
+      ? prepareNativeModelRouterSelection
+      : prepareNativeLocalSelection
+  )({
     adapter: deps.providerAdapter,
     binding: {
       agent: "openclaw",

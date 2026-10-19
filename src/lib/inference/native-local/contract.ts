@@ -6,6 +6,7 @@ export {
   usesNativeLocalInferenceForAgent,
   isPersistedPiSharedLocalInferenceRoute,
 } from "./eligibility";
+import { nativeModelRouterEndpoint } from "./model-router";
 import { createHash } from "node:crypto";
 import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
 import { usesNativeLocalInference } from "./eligibility";
@@ -22,7 +23,8 @@ export type NativeLocalProvider =
   | "ollama-local"
   | "vllm-local"
   | "llama-cpp-local"
-  | "compatible-endpoint";
+  | "compatible-endpoint"
+  | (string & {});
 export type NativeLocalBinding = Readonly<{
   provider: NativeLocalProvider;
   /** Tagged agents retain distinct immutable profile identities. */
@@ -45,7 +47,8 @@ export function normalizeNativeLocalBinding(value: unknown): NativeLocalBinding 
   const input = value as Record<string, unknown>;
   if (
     (!isLocalInferenceProvider(input.provider as string) &&
-      input.provider !== "compatible-endpoint") ||
+      input.provider !== "compatible-endpoint" &&
+      !nativeModelRouterEndpoint(input.provider as string, input.endpointUrl as string)) ||
     (input.agent !== undefined &&
       input.agent !== "openclaw" &&
       input.agent !== "pi" &&

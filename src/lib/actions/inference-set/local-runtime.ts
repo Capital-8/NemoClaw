@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeModelRouterEndpoint } from "../../inference/native-local/model-router";
+import { loadBlueprintProfile } from "../../core/model-router-port";
 import {
   getLocalProviderBaseUrl,
   getManagedVllmProviderBinding,
@@ -21,6 +23,21 @@ export function resolveLocalSwitchRuntime(
   provider: string,
   resolveCredential: (name: string) => string | null,
 ) {
+  const routerEndpoint = nativeModelRouterEndpoint(provider);
+  if (routerEndpoint) {
+    const profile = loadBlueprintProfile("routed");
+    const credentialValue = resolveCredential(
+      profile?.router.credential_env || profile?.credential_env || "NVIDIA_INFERENCE_API_KEY",
+    );
+    if (!credentialValue)
+      throw new InferenceSetError("The existing Model Router credential is unavailable.");
+    return {
+      endpointUrl: routerEndpoint,
+      credentialValue,
+      authMode: "authenticated" as const,
+      ownedProxy: false,
+    };
+  }
   if (provider === "vllm-local") {
     const managed = getManagedVllmProviderBinding();
     return {
@@ -66,6 +83,11 @@ export function resolveHermesLocalSwitchRuntime(
   binding: InferenceSetProviderBinding | null,
   resolveCredentialValue: (name: string) => string,
 ) {
+  if (nativeModelRouterEndpoint(provider)) {
+    if (binding)
+      throw new InferenceSetError("Model Router uses its configured endpoint and host credential.");
+    return resolveLocalSwitchRuntime(provider, resolveCredentialValue);
+  }
   const vllm = provider === "vllm-local" ? getManagedVllmProviderBinding() : null;
   const proxy = provider === "ollama-local" && shouldFrontOllamaWithProxy();
   const endpointUrl =

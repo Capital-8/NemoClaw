@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isIP } from "node:net";
+import { nativeModelRouterEndpoint } from "./model-router";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety.ts";
 
 export const NATIVE_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_LOCAL_INFERENCE_TOKEN";
@@ -46,6 +47,7 @@ export function nativeLocalCredentialReference(
   agentName?: string | null,
 ): string | null {
   if (
+    !nativeModelRouterEndpoint(provider, endpointUrl) &&
     !["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"].includes(
       provider ?? "",
     )

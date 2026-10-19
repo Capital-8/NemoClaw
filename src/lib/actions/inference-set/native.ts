@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { nativeModelRouterEndpoint } from "../../inference/native-local/model-router";
+export {
+  nativeModelRouterEndpoint,
+  isModelRouterProvider,
+} from "../../inference/native-local/model-router";
+export { withRoutedInferencePortLock } from "../../onboard/routed-inference";
 import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../../inference-credential";
 import type { InferenceSetDeps } from "../inference-set";
 import type { ConfigObject } from "../../security/credential-filter";
@@ -387,7 +393,7 @@ export function nativeSelectionConfigCredentials(
   return {
     apiKey:
       native?.apiKey ??
-      (isLocalInferenceProvider(provider)
+      (isLocalInferenceProvider(provider) || nativeModelRouterEndpoint(provider, baseUrl)
         ? nativeLocalCredentialReference(provider, baseUrl)
         : null) ??
       managedInferenceApiKey(

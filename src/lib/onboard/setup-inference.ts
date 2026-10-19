@@ -82,6 +82,8 @@ import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import {
+  isModelRouterProvider,
+  prepareNativeModelRouterSelection,
   withRoutedInferencePortLock,
   type RoutedProviderDeps,
   upsertRoutedProvider as upsertRoutedInferenceProvider,
@@ -1336,7 +1338,9 @@ export function createSetupInference(
               gatewayReachableCompatibleEndpointUrl(name, selectedEndpoint);
             if (typeof hostReachableEndpoint !== "string")
               throw new Error("Native local inference endpoint is missing.");
-            nativeLocalProviderAttachment = await prepareNativeLocalSelection({
+            nativeLocalProviderAttachment = await (
+              routedProvider ? prepareNativeModelRouterSelection : prepareNativeLocalSelection
+            )({
               adapter: deps.providerAdapter,
               binding: {
                 provider: name as NativeLocalProvider,
@@ -2019,6 +2023,10 @@ export function createSetupInference(
           provider,
           endpointUrl,
           options.localNimSelected ?? (provider === "vllm-local" && Boolean(recordedNimContainer)),
+        );
+      if (isModelRouterProvider(provider) && !selectingNativeLocal)
+        throw new Error(
+          "Model Router requires a native provider for the selected agent and configured endpoint.",
         );
       const preservingLegacyPiRoute =
         options.preserveLegacyPiSharedLocalRoute === true &&
