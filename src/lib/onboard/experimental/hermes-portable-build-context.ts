@@ -68,6 +68,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/plugin/plugin.yaml",
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/start.sh",
+  "agents/hermes/startup-completion.py",
   "agents/hermes/validate-cli-adapter.py",
   "agents/hermes/validate-env-secret-boundary.py",
   "nemoclaw-blueprint/",

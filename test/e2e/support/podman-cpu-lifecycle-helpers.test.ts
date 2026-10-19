@@ -221,7 +221,7 @@ describe("Podman CPU lifecycle helper", () => {
     await fs.writeFile(
       bootstrapPath,
       [
-        'process.stdout.write("WARN earlier warning\\n".repeat(2_000));',
+        'process.stdout.write(("WARN earlier warning " + ".".repeat(1_024) + "\\n").repeat(40));',
         'process.stdout.write("2026-10-15T00:00:00Z ERROR restart failed OPENAI_API_KEY=nvapi-");',
         'setTimeout(() => process.stdout.write("gateway-secret\\n" + "INFO successful RPC\\n".repeat(8_000)), 20);',
       ].join("\n"),
