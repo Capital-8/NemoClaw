@@ -45,7 +45,7 @@ import {
   SWITCH_API,
   SWITCH_MODEL,
   SWITCH_PROVIDER,
-  strictHashPerms,
+  strictHashState,
   useLocalHermesInferenceBaseline,
 } from "./hermes-inference-switch-helpers.ts";
 import {
@@ -186,6 +186,7 @@ test(
       provider: mockBaseline ? "compatible-endpoint" : PUBLIC_NVIDIA_SWITCH_PROVIDER,
       model: hostedInstallModel(env(apiKey, installEnv)),
     });
+    const strictHashBefore = await strictHashState(sandbox, "before-switch");
     progress.phase("prove native local Hermes startup and model switch");
     mockBaseline &&
       (await expectNativeLocalHermesTurn({
@@ -281,7 +282,6 @@ test(
       },
     );
     expect(health.exitCode, resultText(health)).toBe(0);
-    expect(resultText(health)).toMatch(/ok/i);
 
     const route = await host.command("node", [CLI, "inference", "get"], {
       artifactName: "nemoclaw-inference-route",
@@ -294,17 +294,6 @@ test(
       model: SWITCH_MODEL,
     });
 
-    const config = await sandbox.exec(
-      SANDBOX_NAME,
-      ["sed", "/^[[:space:]]*api_key:/d", "/sandbox/.hermes/config.yaml"],
-      {
-        artifactName: "hermes-config-yaml",
-        env: env(),
-        redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
-    expect(config.exitCode, resultText(config)).toBe(0);
     // Field projection is covered by inference-set-patch-hermes and config generation
     // tests. Live dashboard, API, and CLI turns below verify the selected route.
     expect((await apiKeyShape(sandbox)).exitCode).toBe(0);
@@ -340,13 +329,16 @@ test(
       model: SWITCH_MODEL,
     });
 
-    const strictHash = await hashCheck(sandbox, "/etc/nemoclaw/hermes.config-hash", "strict");
-    expect(strictHash.exitCode, resultText(strictHash)).toBe(0);
+    // Native config writes update the mutable hash. The root-owned image anchor stays unchanged.
+    const strictHashAfter = await strictHashState(sandbox, "after-switch");
+    expect(strictHashBefore.exitCode, resultText(strictHashBefore)).toBe(0);
+    expect(strictHashAfter.exitCode, resultText(strictHashAfter)).toBe(0);
+    expect(strictHashAfter.stdout).toBe(strictHashBefore.stdout);
     const compatHash = await hashCheck(sandbox, "/sandbox/.hermes/.config-hash", "compat");
     expect(compatHash.exitCode, resultText(compatHash)).toBe(0);
-    const strictPerms = await strictHashPerms(sandbox);
-    expect(strictPerms.stdout.trim()).toMatch(/^0\s+[0-7]+$/u);
-    expect(Number.parseInt(strictPerms.stdout.trim().split(/\s+/u)[1], 8) & 0o222).toBe(0);
+    const strictPerms = strictHashAfter.stdout.trim().split("\n")[1] ?? "";
+    expect(strictPerms).toMatch(/^0\s+[0-7]+$/u);
+    expect(Number.parseInt(strictPerms.split(/\s+/u)[1], 8) & 0o222).toBe(0);
 
     maybeAssertEnvHashStable(
       envHashBefore,

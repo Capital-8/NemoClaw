@@ -22,6 +22,8 @@ function transaction(scenario: string, mode = "reload", source = original, repla
     const hash = (text: string) => createHash("sha256").update(text).digest("hex");
     const hashes = `${hash(source)}  ${home}/config.yaml\n${hash("SAFE_SETTING=true\n")}  ${home}/.env\n`;
     fs.writeFileSync(path.join(home, ".config-hash"), hashes, { mode: 0o600 });
+    const strictHashPath = path.join(root, "strict-hash");
+    fs.writeFileSync(strictHashPath, hashes, { mode: 0o444 });
     const lockDir = path.join(root, "lock");
     fs.mkdirSync(lockDir, { mode: 0o755 });
     fs.writeFileSync(path.join(lockDir, "transaction"), "", { mode: 0o444 });
@@ -47,6 +49,7 @@ guard = load("native_guard", ${JSON.stringify(path.resolve("agents/hermes/runtim
 helper = load("native_helper", ${JSON.stringify(path.resolve("agents/hermes/mcp-config-transaction.py"))})
 helper.HERMES_DIR = ${JSON.stringify(home)}
 helper.CONFIG_PATH = helper.HERMES_DIR + "/config.yaml"
+helper.STRICT_HASH_PATH = ${JSON.stringify(strictHashPath)}
 helper.MCP_TRANSACTION_LOCK_PATH = ${JSON.stringify(path.join(lockDir, "transaction"))}
 helper.MCP_TRANSACTION_LOCK_EXPECTED_UID = os.geteuid()
 helper.MCP_TRANSACTION_LOCK_EXPECTED_GID = os.stat(helper.MCP_TRANSACTION_LOCK_PATH).st_gid
@@ -141,6 +144,7 @@ for name, value in vars(helper).items():
       config: fs.readFileSync(path.join(home, "config.yaml"), "utf8"),
       hash: fs.readFileSync(path.join(home, ".config-hash"), "utf8"),
       originalHash: hashes,
+      strictHash: fs.readFileSync(strictHashPath, "utf8"),
       updatedHash: hash(replacement),
       reloads: fs.existsSync(path.join(home, "reloads"))
         ? fs.readFileSync(path.join(home, "reloads"), "utf8")
@@ -156,7 +160,10 @@ describe("native Hermes config transaction", () => {
     const actual = transaction("success");
     expect(actual.result.status, actual.result.stderr).toBe(0);
     expect(actual.config).toBe(updated);
-    expect(actual.hash).toContain(actual.updatedHash);
+    expect(actual).toMatchObject({
+      hash: expect.stringContaining(actual.updatedHash),
+      strictHash: actual.originalHash,
+    });
   });
 
   it.each([

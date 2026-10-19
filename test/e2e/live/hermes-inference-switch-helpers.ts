@@ -850,11 +850,16 @@ export async function hashCheck(
   );
 }
 
-export async function strictHashPerms(sandbox: SandboxClient): Promise<ShellProbeResult> {
+export async function strictHashState(
+  sandbox: SandboxClient,
+  artifact: string,
+): Promise<ShellProbeResult> {
   return await sandbox.execShell(
     SANDBOX_NAME,
-    trustedSandboxShellScript("stat -c '%u %a' /etc/nemoclaw/hermes.config-hash"),
-    { artifactName: "hermes-strict-hash-perms", env: env(), timeoutMs: 30_000 },
+    trustedSandboxShellScript(
+      "set -eu; sha256sum /etc/nemoclaw/hermes.config-hash; stat -c '%u %a' /etc/nemoclaw/hermes.config-hash",
+    ),
+    { artifactName: `hermes-strict-hash-${artifact}`, env: env(), timeoutMs: 30_000 },
   );
 }
 
