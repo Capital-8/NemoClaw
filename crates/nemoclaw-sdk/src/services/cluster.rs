@@ -86,6 +86,11 @@ pub(super) fn spec(
         ServiceDefinition::OllamaProxy(_) => {
             return Err(Error::Conflict("Ollama proxy does not run on Kubernetes"));
         }
+        ServiceDefinition::Container(_) => {
+            return Err(Error::Conflict(
+                "application containers do not run on Kubernetes",
+            ));
+        }
     };
     let generation = |kind: &str| {
         generations
@@ -123,6 +128,11 @@ pub(super) fn spec(
     Ok(spec)
 }
 
+/// The address of a kind's resource named `name`.
+fn address(kind: &str, name: &str) -> String {
+    format!("{}.{name}", crate::compile::resource_type(kind))
+}
+
 pub(super) fn install(
     definition: &ServiceDefinition,
     document: &Document,
@@ -130,8 +140,8 @@ pub(super) fn install(
     generations: &Generations,
 ) -> Result<InstallPlan, Error> {
     let spec = spec(definition, document, name, generations)?;
-    let storage = format!("nemoclaw_{STORAGE_KIND}.{name}");
-    let service = format!("nemoclaw_{SERVICE_KIND}.{name}");
+    let storage = address(STORAGE_KIND, name);
+    let service = address(SERVICE_KIND, name);
     Ok(InstallPlan {
         targets: vec![
             Target {
@@ -149,13 +159,13 @@ pub(super) fn install(
             (
                 storage.clone(),
                 vec![
-                    "nemoclaw_kubernetes_storage.runtime".into(),
-                    "nemoclaw_kubernetes_auth.runtime".into(),
+                    address(crate::kubernetes::STORAGE_KIND, "runtime"),
+                    address(crate::kubernetes::AUTH_KIND, "runtime"),
                 ],
             ),
             (
                 service,
-                vec![storage, "nemoclaw_kubernetes_gateway.runtime".into()],
+                vec![storage, address(crate::kubernetes::GATEWAY_KIND, "runtime")],
             ),
         ]
         .into(),
@@ -163,9 +173,9 @@ pub(super) fn install(
 }
 
 pub(super) fn remove(name: &str) -> RemovePlan {
-    let storage = format!("nemoclaw_{STORAGE_KIND}.{name}");
+    let storage = address(STORAGE_KIND, name);
     RemovePlan {
         retained: vec![storage.clone()],
-        required_storage: vec![(format!("nemoclaw_{SERVICE_KIND}.{name}"), storage)],
+        required_storage: vec![(address(SERVICE_KIND, name), storage)],
     }
 }

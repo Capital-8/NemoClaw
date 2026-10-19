@@ -70,7 +70,7 @@ fn runtime_metadata_verifies_backend_images_without_a_fabric_catalog() {
             kind,
             "arm64",
             json!({
-                "org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.backend":kind
+                "org.nemoclaw.backend":kind
             }),
         );
         let directory = tempfile::tempdir().unwrap();
@@ -116,7 +116,7 @@ fn check_runtime(
 
 #[test]
 fn authenticated_runtime_requires_native_bearer_and_restricted_routes() {
-    let labels = json!({"org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.backend":"vllm"});
+    let labels = json!({"org.nemoclaw.backend":"vllm"});
     let (image, bundle, mut runtime) = runtime_fixture("vllm", "arm64", labels.clone());
     let nemoclaw_runtime::RuntimeSpec::Vllm(service) = &mut runtime else {
         unreachable!()
@@ -164,7 +164,6 @@ fn recipe_runtime_requires_every_declared_image_capability() {
     let runtime = nemoclaw_runtime::RuntimeSpec::Vllm(Box::new(service.runtime.clone()));
     let mut labels =
         serde_json::to_value(&service.recipe.as_ref().unwrap().compatibility.image_labels).unwrap();
-    labels["org.nemoclaw.runtime.spec"] = json!("v1");
     labels["org.nemoclaw.backend"] = json!("vllm");
     let (image, bundle) = runtime_bundle("linux", "arm64", labels.clone());
     assert!(check_runtime(&image, &bundle, &runtime, "arm64").is_ok());
@@ -192,7 +191,7 @@ fn runtime_index_selects_the_explicit_cluster_architecture() {
         "vllm",
         "arm64",
         json!({
-            "org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.backend":"vllm"
+            "org.nemoclaw.backend":"vllm"
         }),
     );
     let manifest = bundle["manifest_digest"].as_str().unwrap();
@@ -226,20 +225,12 @@ fn runtime_index_selects_the_explicit_cluster_architecture() {
 #[test]
 fn runtime_metadata_rejects_wrong_platform_contract_and_changed_bytes() {
     for kind in ["vllm", "ollama"] {
-        let labels = json!({"org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.backend":kind});
+        let labels = json!({"org.nemoclaw.backend":kind});
         let (image, bundle, runtime) = runtime_fixture(kind, "arm64", labels.clone());
         assert!(check_runtime(&image, &bundle, &runtime, "amd64").is_err());
         for (os, labels) in [
             ("windows", labels.clone()),
-            ("linux", json!({"org.nemoclaw.backend":kind})),
-            (
-                "linux",
-                json!({"org.nemoclaw.runtime.spec":"v0", "org.nemoclaw.backend":kind}),
-            ),
-            (
-                "linux",
-                json!({"org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.backend":"unknown"}),
-            ),
+            ("linux", json!({"org.nemoclaw.backend":"unknown"})),
         ] {
             let (image, bundle) = runtime_bundle(os, "arm64", labels);
             assert!(check_runtime(&image, &bundle, &runtime, "arm64").is_err());
@@ -264,7 +255,7 @@ fn runtime_bundle_reads_are_bounded_and_errors_do_not_expose_local_paths() {
         "ollama",
         "arm64",
         json!({
-            "org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.backend":"ollama"
+            "org.nemoclaw.backend":"ollama"
         }),
     );
     let directory = tempfile::tempdir().unwrap();
@@ -316,7 +307,7 @@ fn deployment_preflight_requires_metadata_for_every_declared_cluster_service() {
             "linux",
             "amd64",
             json!({
-                "org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.backend":kind,
+                "org.nemoclaw.backend":kind,
                 "org.nemoclaw.inference.authentication":"bearer-v1",
                 "org.nemoclaw.inference.routes":"openai-v2"
             }),
@@ -341,7 +332,7 @@ fn deployment_preflight_requires_metadata_for_every_declared_cluster_service() {
 #[test]
 fn a_runtime_image_for_another_architecture_is_reported_as_a_platform_mismatch() {
     for kind in ["vllm", "ollama"] {
-        let labels = json!({"org.nemoclaw.runtime.spec":"v1", "org.nemoclaw.backend":kind});
+        let labels = json!({"org.nemoclaw.backend":kind});
         let (image, bundle, runtime) = runtime_fixture(kind, "arm64", labels);
         // An index may list the required platform, but the bundle's selected
         // manifest decides which image the cluster runs.

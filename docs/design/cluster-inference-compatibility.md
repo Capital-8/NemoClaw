@@ -54,7 +54,7 @@ The cluster implementation does not replace those contracts with cluster-specifi
 
 ## OpenClaw Context Budget
 
-The [cluster examples](../kubernetes.md#run-a-managed-model-service) use a `32768`-token service context and matching OpenClaw `model_metadata.contextWindow`.
+The [cluster examples](../kubernetes.md#run-a-managed-model-service) use a `32768`-token service context.
 The operator ran these turns on a kind cluster with one GB300 GPU through OpenShell `ExecSandbox` and `fabric-agent invoke`, using images built from `377912705` and reused unchanged through `1d6b414c1`.
 At `3c94fda7b`, with both limits at `8192`, Ollama `qwen3:0.6b` reported success but the reply ignored the instruction; context truncation is an inference from the changed behavior, not a confirmed truncation log from that run.
 At the same revision, vLLM `Qwen/Qwen3-4B` returned context-overflow HTTP 400 responses at `8192` after OpenClaw's automatic compaction failed, and three HTTP 200 chat-completion responses through the supervisor at `32768`, with `kvCacheGiB: 6` and `maxSequences: 1`.

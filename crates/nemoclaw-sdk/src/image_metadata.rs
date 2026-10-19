@@ -33,7 +33,9 @@ pub fn verify_cluster_runtime_images(
                     .map_err(|_| ObservationError::Incomplete)?,
                 RuntimeSpec::Ollama(Box::new(service.runtime.clone())),
             ),
-            ServiceDefinition::OllamaProxy(_) => return Err(ObservationError::Incomplete),
+            ServiceDefinition::OllamaProxy(_) | ServiceDefinition::Container(_) => {
+                return Err(ObservationError::Incomplete);
+            }
         };
         observe_runtime(
             secrets,
@@ -72,11 +74,7 @@ pub fn observe_runtime(
         }
         nemoclaw_runtime::RuntimeSpec::Ollama(_) => ("ollama", BTreeMap::new()),
     };
-    // Mandatory labels override recipe declarations, matching the Docker installer.
-    required.insert(
-        nemoclaw_runtime::SPEC_VERSION_LABEL.into(),
-        nemoclaw_runtime::SPEC_VERSION.into(),
-    );
+    // The mandatory label overrides recipe declarations, matching the Docker installer.
     required.insert("org.nemoclaw.backend".into(), backend.into());
     nemoclaw_fabric::image_metadata::verify_runtime_labels(
         secrets,

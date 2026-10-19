@@ -57,12 +57,12 @@ fn generations() -> nemoclaw_sdk::compile::Generations {
     .into()
 }
 
-/// The encoded spec of the service's `nemoclaw_kubernetes_service` resource.
+/// The encoded spec of the service's `openshell_kubernetes_service` resource.
 fn compiled_service_spec(document: &Document) -> Value {
     let targets = nemoclaw_sdk::compile::runtime_targets(document, &generations()).unwrap();
     let target = targets
         .iter()
-        .find(|target| target.address == "nemoclaw_kubernetes_service.qwen")
+        .find(|target| target.address == "openshell_kubernetes_service.qwen")
         .expect("cluster service resource");
     serde_json::from_str(&target.values["spec"]).unwrap()
 }

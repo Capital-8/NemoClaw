@@ -59,7 +59,7 @@ fn cluster_services_provision_retained_storage_and_workloads_before_agents() {
     for kind in ["vllm", "ollama"] {
         let document = document(kind);
         let graph = compile::compile_runtime(&document, &generations(), "0.1.0").unwrap();
-        let resource = &graph["resource"]["nemoclaw_kubernetes_service"]["qwen"];
+        let resource = &graph["resource"]["openshell_kubernetes_service"]["qwen"];
         let spec: Value =
             serde_json::from_str(resource["spec"].as_str().expect("cluster service resource"))
                 .unwrap();
@@ -67,12 +67,12 @@ fn cluster_services_provision_retained_storage_and_workloads_before_agents() {
         assert_eq!(
             resource["depends_on"],
             json!([
-                "nemoclaw_kubernetes_service_storage.qwen",
-                "nemoclaw_kubernetes_gateway.runtime"
+                "openshell_kubernetes_service_storage.qwen",
+                "openshell_kubernetes_gateway.runtime"
             ])
         );
         assert_eq!(
-            graph["resource"]["nemoclaw_kubernetes_service_storage"]["qwen"]["lifecycle"]["prevent_destroy"],
+            graph["resource"]["openshell_kubernetes_service_storage"]["qwen"]["lifecycle"]["prevent_destroy"],
             true
         );
         assert!(
@@ -80,13 +80,17 @@ fn cluster_services_provision_retained_storage_and_workloads_before_agents() {
                 .get("docker")
                 .is_none()
         );
-        // Agents apply in a later graph, after the runtime stage provisions the service.
+        // One graph provisions the service and creates agents. Every object
+        // waits on the apply-time gateway read, which waits on the service.
         let main = compile::compile(&document, &generations(), "0.1.0").unwrap();
+        let gates = main["data"]["openshell_gateway"]["apply"]["depends_on"]
+            .as_array()
+            .unwrap();
         for resource in [
-            "nemoclaw_kubernetes_service",
-            "nemoclaw_kubernetes_service_storage",
+            "openshell_kubernetes_service.qwen",
+            "openshell_kubernetes_service_storage.qwen",
         ] {
-            assert!(main["resource"].get(resource).is_none(), "{resource}");
+            assert!(gates.contains(&json!(resource)), "{resource}");
         }
     }
 }
@@ -103,44 +107,42 @@ fn runtime_updates_preserve_model_storage_and_teardown_keeps_only_established_cl
         let changed = Document::parse(changed.to_string().as_bytes()).unwrap();
         let updated = compile::compile_runtime(&changed, &generations(), "0.1.0").unwrap();
         assert_eq!(
-            graph["resource"]["nemoclaw_kubernetes_service_storage"],
-            updated["resource"]["nemoclaw_kubernetes_service_storage"]
+            graph["resource"]["openshell_kubernetes_service_storage"],
+            updated["resource"]["openshell_kubernetes_service_storage"]
         );
         assert_ne!(
-            graph["resource"]["nemoclaw_kubernetes_service"],
-            updated["resource"]["nemoclaw_kubernetes_service"]
+            graph["resource"]["openshell_kubernetes_service"],
+            updated["resource"]["openshell_kubernetes_service"]
         );
         let all = compile::runtime_targets(&document, &generations())
             .unwrap()
             .into_iter()
             .map(|target| target.address)
             .collect();
-        let teardown =
-            compile::compile_teardown(&document, &generations(), "0.1.0", &all, true).unwrap();
+        let teardown = compile::compile_teardown(&document, &generations(), "0.1.0", &all).unwrap();
         assert_eq!(
             teardown.retained,
             [
-                "nemoclaw_kubernetes_service_storage.qwen".into(),
-                "nemoclaw_kubernetes_storage.runtime".into()
+                "openshell_kubernetes_service_storage.qwen".into(),
+                "openshell_kubernetes_storage.runtime".into()
             ]
             .into()
         );
         assert!(
             teardown.graph["resource"]
-                .get("nemoclaw_kubernetes_service")
+                .get("openshell_kubernetes_service")
                 .is_none()
         );
         let partial = compile::compile_teardown(
             &document,
             &generations(),
             "0.1.0",
-            &["nemoclaw_kubernetes_storage.runtime".into()].into(),
-            true,
+            &["openshell_kubernetes_storage.runtime".into()].into(),
         )
         .unwrap();
         assert!(
             partial.graph["resource"]
-                .get("nemoclaw_kubernetes_service_storage")
+                .get("openshell_kubernetes_service_storage")
                 .is_none()
         );
         let exported = serde_json::to_vec(&document).unwrap();

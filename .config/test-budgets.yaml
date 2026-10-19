@@ -43,22 +43,21 @@ live-kind:
   wall_seconds: 270
   test_seconds: 120
 
-# Each provider's contract tests, measured in 14 v1 runs on linux_amd64 and
-# linux_arm64.
+# Each provider's contract tests, measured on linux_amd64 and linux_arm64 in
+# two runs after providers and the fake OpenShell gateway set TCP_NODELAY.
 binaries:
-  # 3 tests: at most 27 s summed; slowest test, the Pi configuration update,
-  # 16.4 s.
+  # 5 tests: at most 17.4 s summed; slowest test 6.2 s.
   fabric-provider::contract:
-    summed_seconds: 40
-    test_seconds: 22
-  # Measured with 29 tests, which only the 3 latest runs had: at most 80 s
-  # summed; slowest test 6.9 s. The 8 cluster model tests added 43.6 s summed
-  # (slowest 7.5 s) in a local linux_arm64 run that took 117.1 s for the 29,
-  # about 30 s at CI speed. The binary now has 37 tests.
-  nemoclaw-provider::contract:
-    summed_seconds: 150
+    summed_seconds: 25
     test_seconds: 10
-  # 44 tests: at most 142 s summed; slowest test 8.1 s.
+  # 26 tests: at most 32.5 s summed; slowest test 4.7 s.
+  nemoclaw-provider::contract:
+    summed_seconds: 45
+    test_seconds: 8
+  # 62 tests: at most 74.6 s summed; slowest test 3.7 s. The 8 cluster model
+  # tests added 23.2 s summed (slowest 3.9 s) in a local linux_arm64 run where
+  # the binary's other tests summed 100.3 s, so about 17 s at CI speed. The
+  # binary now has 71 tests.
   openshell-provider::contract:
-    summed_seconds: 190
-    test_seconds: 12
+    summed_seconds: 130
+    test_seconds: 6

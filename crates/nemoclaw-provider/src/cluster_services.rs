@@ -28,16 +28,16 @@ pub(crate) fn definitions() -> [crate::Definition; 2] {
     let validate = nemoclaw_sdk::services::validate_resource_spec;
     [
         crate::services::schema_definition(STORAGE_KIND)
-            .derived("owner", |row| spec_identity(row, "owner"))
-            .derived("generation", |row| spec_identity(row, "generation"))
+            .derived_input("owner", |row| spec_identity(row, "owner"))
+            .derived_input("generation", |row| spec_identity(row, "generation"))
             .validate_spec(validate)
             .computed("running", rerun_when_stopped)
             .protect(Protection::Always)
             .refuse_replacement()
             .keep_running_during_destroy(),
         crate::services::schema_definition(SERVICE_KIND)
-            .derived("owner", |row| spec_identity(row, "owner"))
-            .derived("generation", |row| spec_identity(row, "generation"))
+            .derived_input("owner", |row| spec_identity(row, "owner"))
+            .derived_input("generation", |row| spec_identity(row, "generation"))
             .validate_spec(validate)
             .computed("running", rerun_when_stopped)
             .refuse_replacement(),
