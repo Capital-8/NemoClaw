@@ -139,7 +139,14 @@ describe("final onboard flow phases", () => {
     },
   );
 
-  it("passes verified sandbox identity authority to external-image route setup (#11932)", async () => {
+  it.each([
+    { name: "custom Dockerfile", fromDockerfile: "/tmp/CustomDockerfile", fromImage: null },
+    {
+      name: "external image",
+      fromDockerfile: null,
+      fromImage: `registry.example.test/openclaw@sha256:${"a".repeat(64)}`,
+    },
+  ])("settles startup and pairing for $name before initial route restart", async (testCase) => {
     const revalidateSandboxIdentity = vi.fn();
     const setupOpenclaw = vi.fn(async (...args) => {
       await args[7]?.();
@@ -152,11 +159,12 @@ describe("final onboard flow phases", () => {
       settleStartedOpenclawGatewayForConfiguration,
     });
     const session = createSession();
-    session.metadata.fromImage = `registry.example.test/openclaw@sha256:${"a".repeat(64)}`;
+    session.metadata.fromImage = testCase.fromImage;
 
     await branchPhase.run(
       context({
         session,
+        fromDockerfile: testCase.fromDockerfile,
         revalidateSandboxIdentity,
       }),
     );
