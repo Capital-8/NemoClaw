@@ -75,7 +75,7 @@ export const RUNTIME_SWITCH_API =
   resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-export const PROXY_RESOLUTION_PROVIDER = "hermes-proxy-resolution-e2e";
+export const PROXY_RESOLUTION_PROVIDER = "compatible-endpoint";
 export const PROXY_RESOLUTION_MODEL = "nvidia/nemotron-proxy-resolution-e2e";
 export const PROXY_FORBIDDEN_MARKERS = [
   "openshell:resolve:env:",
@@ -255,47 +255,29 @@ export async function prepareProxyResolutionRoute({
   const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
   const requestOffset = mockBaseline?.requests().length ?? 0;
 
-  const registered = await host.command(
-    "openshell",
-    [
-      "provider",
-      "create",
-      "-g",
-      "nemoclaw",
-      "--name",
-      PROXY_RESOLUTION_PROVIDER,
-      "--type",
-      "openai",
-      "--credential",
-      "NVIDIA_INFERENCE_API_KEY",
-      "--config",
-      `OPENAI_BASE_URL=${endpoint}`,
-    ],
-    {
-      artifactName: "register-proxy-resolution-provider",
-      env: env(undefined, { NVIDIA_INFERENCE_API_KEY: apiKey }),
-      redactionValues,
-      timeoutMs: 120_000,
-    },
-  );
-  expect(registered.exitCode, resultText(registered)).toBe(0);
-  await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY");
-
   const setRoute = await host.command(
     "node",
     [
       CLI,
       "inference",
       "set",
+      "--sandbox",
+      SANDBOX_NAME,
       "--provider",
       PROXY_RESOLUTION_PROVIDER,
       "--model",
       model,
+      "--endpoint-url",
+      endpoint,
+      "--credential-env",
+      "COMPATIBLE_API_KEY",
+      "--inference-api",
+      "openai-completions",
       "--no-verify",
     ],
     {
       artifactName: "set-proxy-resolution-route",
-      env: env(),
+      env: env(undefined, { COMPATIBLE_API_KEY: apiKey }),
       redactionValues,
       timeoutMs: 180_000,
     },

@@ -32,6 +32,7 @@ import {
   parseInferenceRoute,
   prepareProxyResolutionRoute,
   PROXY_RESOLUTION_PROVIDER,
+  PROXY_RESOLUTION_MODEL,
   runHermesInferenceSetWithRetry,
   runHermesCliPongWithRetry,
   runHermesPongWithRetry,
@@ -299,7 +300,7 @@ describe("Hermes inference switch command shape", () => {
     const command = vi.fn().mockResolvedValue({
       exitCode: 0,
       stderr: "",
-      stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
+      stdout: "route synced",
     });
     await prepareProxyResolutionRoute({
       apiKey: "nvapi-public-fixture-key",
@@ -308,53 +309,65 @@ describe("Hermes inference switch command shape", () => {
       redactionValues: ["nvapi-public-fixture-key"],
     });
     expect(command.mock.calls[0]).toEqual([
-      "openshell",
+      "node",
       expect.arrayContaining([
-        "provider",
-        "create",
-        "--credential",
-        "NVIDIA_INFERENCE_API_KEY",
-        "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
+        "--provider",
+        "compatible-endpoint",
+        "--endpoint-url",
+        "https://integrate.api.nvidia.com/v1",
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
       ]),
       expect.objectContaining({
-        env: expect.objectContaining({ NVIDIA_INFERENCE_API_KEY: "nvapi-public-fixture-key" }),
+        env: expect.objectContaining({ COMPATIBLE_API_KEY: "nvapi-public-fixture-key" }),
         redactionValues: ["nvapi-public-fixture-key"],
       }),
     ]);
   });
 
-  it("keeps proxy-resolution evidence on a dedicated OpenAI provider", async () => {
-    const command = vi
-      .fn()
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "created" })
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        stderr: "",
-        stdout: "Type: openai\nCredentials: NVIDIA_INFERENCE_API_KEY\nConfig: OPENAI_BASE_URL\n",
-      })
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "route synced" });
-
-    await prepareProxyResolutionRoute({
-      apiKey: "hosted-key",
+  it("selects the native local route before testing split provider and namespaced model flags", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "route synced" });
+    const mockBaseline = {
+      baseUrl: "http://host.openshell.internal:11434/v1",
+      requests: () => [{ method: "GET", path: "/v1/models" }],
+    } as Parameters<typeof prepareProxyResolutionRoute>[0]["mockBaseline"];
+    const selected = await prepareProxyResolutionRoute({
+      apiKey: "fixture-key",
       host: { command } as unknown as HostCliClient,
-      mockBaseline: undefined,
-      redactionValues: ["hosted-key"],
+      mockBaseline,
+      redactionValues: ["fixture-key"],
     });
 
-    expect(PROXY_RESOLUTION_PROVIDER).not.toBe("nvidia-prod");
-    expect(command.mock.calls[0]?.[1]).toEqual(
-      expect.arrayContaining([
-        "--name",
+    expect(selected).toEqual({ model: PROXY_RESOLUTION_MODEL, requestOffset: 1 });
+    expect(command).toHaveBeenCalledExactlyOnceWith(
+      "node",
+      [
+        expect.any(String),
+        "inference",
+        "set",
+        "--sandbox",
+        SANDBOX_NAME,
+        "--provider",
         PROXY_RESOLUTION_PROVIDER,
-        "--type",
-        "openai",
-        "--credential",
-        "NVIDIA_INFERENCE_API_KEY",
-      ]),
+        "--model",
+        PROXY_RESOLUTION_MODEL,
+        "--endpoint-url",
+        mockBaseline!.baseUrl,
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
+        "--no-verify",
+      ],
+      expect.objectContaining({
+        env: expect.objectContaining({ COMPATIBLE_API_KEY: "fixture-key" }),
+        redactionValues: ["fixture-key"],
+        timeoutMs: 180_000,
+      }),
     );
-    expect(command.mock.calls[2]?.[1]).toEqual(
-      expect.arrayContaining(["--provider", PROXY_RESOLUTION_PROVIDER]),
-    );
+    expect(JSON.stringify(command.mock.calls[0][1])).not.toContain("fixture-key");
   });
 
   it("uses authenticated model inventory as baseline readiness evidence", () => {

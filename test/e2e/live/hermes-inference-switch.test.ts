@@ -484,12 +484,16 @@ test(
       mockBaseline,
       redactionValues,
     });
-    const persistedProxyRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-      artifactName: "proxy-resolution-route-after-set",
-      env: env(),
-      redactionValues,
-      timeoutMs: 30_000,
-    });
+    const persistedProxyRoute = await host.command(
+      "node",
+      [CLI, SANDBOX_NAME, "inference", "get"],
+      {
+        artifactName: "proxy-resolution-route-after-set",
+        env: env(),
+        redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
     expect(persistedProxyRoute.exitCode, resultText(persistedProxyRoute)).toBe(0);
     expect(parseInferenceRoute(persistedProxyRoute.stdout)).toEqual({
       provider: PROXY_RESOLUTION_PROVIDER,
