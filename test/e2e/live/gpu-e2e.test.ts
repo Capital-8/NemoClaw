@@ -4,12 +4,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
 import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
 import { HOST_LOCAL_VLLM_CONTAINER_NAME } from "../../../src/lib/inference/serving/vllm-host-local-lifecycle.ts";
 import { loadManagedVllmApiKey } from "../../../src/lib/inference/vllm-api-key.ts";
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -96,7 +96,7 @@ test(
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
-        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + native inference",
+        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + sandbox-owned native provider",
       credentialBoundary:
         "The proxy token remains host/OpenShell-owned and is absent from sandbox env.",
       remoteInstallerBoundary:
@@ -197,7 +197,9 @@ test(
     expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
 
     const route = await readGpuOllamaRoute(sandbox, getSandbox(SANDBOX_NAME), env());
-    expect(route, "native Ollama provider identity and attachment must match").not.toBeNull();
+    expect(route, "native Ollama provider identity and attachment must match").toMatchObject({
+      endpointUrl: `http://host.openshell.internal:${PROXY_PORT}/v1`,
+    });
 
     progress.phase("validate Ollama proxy credential boundary");
     const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
