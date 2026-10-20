@@ -272,20 +272,22 @@ describe("isPolicyDenialLine (#5978)", () => {
     ],
     ["unrelated log line", "[123.0] [sandbox] [INFO ] flushed activity summary", false],
     ["empty line", "", false],
-  ])("classifies %s", (_label, line, expected) => {
+  ] as const)("classifies %s", (_label, line, expected) => {
     expect(isPolicyDenialLine(line)).toBe(expected);
   });
 });
 
 describe("extractDeniedEndpoint (#5978)", () => {
   it.each([
-    ...[
-      ["host.openshell.internal", 4318, "host.openshell.internal:4318"],
-      [undefined, undefined, null],
-      ["unsafe\nhost", 4318, null],
-      ["host.openshell.internal", 99999, null],
-      ["host.openshell.internal", "4318", null],
-    ].map(
+    ...(
+      [
+        ["host.openshell.internal", 4318, "host.openshell.internal:4318"],
+        [undefined, undefined, null],
+        ["unsafe\nhost", 4318, null],
+        ["host.openshell.internal", 99999, null],
+        ["host.openshell.internal", "4318", null],
+      ] as const
+    ).map(
       ([host, port, endpoint]) =>
         [
           `REST endpoint fields ${String(host)}:${String(port)} with unrelated remediation URLs`,
@@ -327,7 +329,7 @@ describe("extractDeniedEndpoint (#5978)", () => {
       "2026-07-03T04:00:00Z proxy CONNECT [2001:db8::1]:443 policy_denied",
       "[2001:db8::1]:443",
     ],
-  ])("extracts the safe host:port from %s", (_label, line, expected) => {
+  ] as const)("extracts the safe host:port from %s", (_label, line, expected) => {
     expect(extractDeniedEndpoint(line)).toBe(expected);
   });
 
