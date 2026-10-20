@@ -278,8 +278,41 @@ runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
 
     progress.phase("verify agent security boundary");
     switch (agent) {
-      case "hermes":
+      case "hermes": {
+        const apiHealth = await host.command(
+          "curl",
+          [
+            "--noproxy",
+            "*",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "10",
+            `http://127.0.0.1:${apiPort}/health`,
+          ],
+          {
+            artifactName: "dashboard-remote-bind-hermes-api-loopback-after-restart",
+            env: testEnv(),
+            timeoutMs: 15_000,
+          },
+        );
+        expect(apiHealth.exitCode, resultText(apiHealth)).toBe(0);
+        const remoteApi = await host.command(
+          process.execPath,
+          ["-e", REMOTE_API_REFUSAL_PROBE, remoteHost, apiPort],
+          {
+            artifactName: "dashboard-remote-bind-hermes-api-remote-refusal-after-restart",
+            env: testEnv(),
+            timeoutMs: 10_000,
+          },
+        );
+        expect(
+          remoteApi.exitCode,
+          "Hermes API must refuse non-loopback TCP connections after restart",
+        ).toBe(0);
         return;
+      }
       case "openclaw":
         break;
     }

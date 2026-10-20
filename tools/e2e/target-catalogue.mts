@@ -721,7 +721,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: [...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS, "test/e2e/live/json-envelope.ts"],
+    owningPaths: [
+      ...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS,
+      "src/lib/onboard/agent-dashboard-forward.ts",
+      "src/lib/onboard/dashboard.ts",
+      "src/lib/onboard/dashboard-runtime.ts",
+      "test/e2e/live/json-envelope.ts",
+    ],
     environment: {
       ...hostedInference,
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",
