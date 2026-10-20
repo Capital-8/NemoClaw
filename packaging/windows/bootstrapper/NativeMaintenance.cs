@@ -235,10 +235,10 @@ internal static class NativeMaintenance
         if (!File.Exists(launcher) || (!SupportsFinishedRuntime(root, launcher) && !File.Exists(Path.Combine(root, "qualification", "native-inference-cli.mts")))) return;
         reportProgress?.Invoke();
         await RunOwnedHelperAsync(launcher, new[] { "--native-inference", "stop" },
-            "The shared local model could not stop safely. Close its active sessions before continuing maintenance.", cancellation);
+            "The local-model maintenance check failed. Setup has not started a new installer transaction.", cancellation);
     }
 
-    private static async Task RunOwnedHelperAsync(string launcher, string[] arguments, string failure, CancellationToken cancellation)
+    internal static async Task RunOwnedHelperAsync(string launcher, string[] arguments, string failure, CancellationToken cancellation)
     {
         var start = new ProcessStartInfo { FileName = launcher, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -248,10 +248,13 @@ internal static class NativeMaintenance
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         Exception? operationError = null;
         Exception? cleanupError = null;
+        var runtimeUnavailable = false;
         try
         {
             child.StandardInput.Close();
-            await Task.WhenAll(DiscardBoundedAsync(child.StandardOutput, timeout.Token), DiscardBoundedAsync(child.StandardError, timeout.Token), child.WaitForExitAsync(timeout.Token));
+            var diagnostic = ReadRuntimeUnavailableAsync(child.StandardError, timeout.Token);
+            await Task.WhenAll(DiscardBoundedAsync(child.StandardOutput, timeout.Token), diagnostic, child.WaitForExitAsync(timeout.Token));
+            runtimeUnavailable = child.ExitCode == 2 && await diagnostic;
             if (child.ExitCode != 0) throw new InvalidOperationException(failure);
         }
         catch (Exception error) { operationError = error; }
@@ -269,12 +272,30 @@ internal static class NativeMaintenance
             catch (Exception error) { cleanupError = error; }
         }
         if (operationError is not null || cleanupError is not null)
-            throw new InvalidOperationException(failure +
+            throw new InvalidOperationException((runtimeUnavailable
+                ? "The installed runtime is unavailable (runtime-unavailable). Maintenance cannot continue until the runtime is restored."
+                : failure) +
                 (operationError is OperationCanceledException ? " The operation timed out." : string.Empty) +
                 (cleanupError is not null ? " Helper shutdown could not be confirmed." : string.Empty), operationError ?? cleanupError);
         // Let an already-started data removal or service stop finish safely.
         // Cancellation prevents the next helper or installer transaction.
         cancellation.ThrowIfCancellationRequested();
+    }
+
+    private static async Task<bool> ReadRuntimeUnavailableAsync(StreamReader reader, CancellationToken cancellation)
+    {
+        var buffer = new char[512];
+        var diagnostic = new StringBuilder();
+        int count;
+        while ((count = await reader.ReadAsync(buffer.AsMemory(), cancellation)) != 0)
+        {
+            if (diagnostic.Length + count > 4096)
+                throw new InvalidOperationException("The native data owner exceeded its output bound.");
+            diagnostic.Append(buffer, 0, count);
+            Array.Clear(buffer);
+        }
+        // Never put arbitrary helper output, paths, or credentials in the UI.
+        return diagnostic.ToString().Trim() == "runtime-unavailable";
     }
 
     private static async Task DiscardBoundedAsync(StreamReader reader, CancellationToken cancellation)

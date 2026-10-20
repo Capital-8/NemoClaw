@@ -3,6 +3,10 @@
 
 use super::runtime_transaction::Error;
 
+// WinSDK virtdisk.h: READ_ONLY | NO_DRIVE_LETTER | PERMANENT_LIFETIME | AT_BOOT.
+// Handle-independent lifetime alone does not request reattachment after reboot.
+pub(super) const INSTALLED_IMAGE_ATTACH_FLAGS: u32 = 0x1 | 0x2 | 0x4 | 0x400;
+
 // Called only after attachment succeeds. A verified mount stays attached for
 // the transaction; every failed verification must attempt owner cleanup.
 pub(super) fn finish_attachment(
@@ -25,6 +29,7 @@ mod tests {
 
     #[test]
     fn verified_mount_remains_attached() {
+        assert_eq!(INSTALLED_IMAGE_ATTACH_FLAGS, 0x407);
         assert_eq!(
             finish_attachment(|| Ok(()), || panic!("unexpected detach")),
             Ok(())

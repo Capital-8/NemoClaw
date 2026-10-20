@@ -53,6 +53,11 @@ internal static class Program
 
     internal static async Task<int> Main(string[] args)
     {
+        if (args is ["--diagnostic-exit", var code, var stream, var diagnostic])
+        {
+            await (stream == "stderr" ? Console.Error : Console.Out).WriteAsync(diagnostic);
+            return int.Parse(code);
+        }
         if (args is ["--exit", var exitCode]) return int.Parse(exitCode);
         if (args is ["--child"])
         {
@@ -71,6 +76,7 @@ internal static class Program
                 throw new InvalidOperationException("Completed maintenance lost its exit code or returned before process termination.");
         }
         await AssertHeadlessRoutingAsync();
+        await AssertHelperDiagnosticsAsync();
         AssertRelatedCompletion();
         AssertApplyRestartResult();
         AssertInspectionControls();
@@ -92,6 +98,45 @@ internal static class Program
         }
         Console.WriteLine("Maintenance controls passed; headless repair and uninstall select the registered product, and unconfirmed completion cannot start another transaction.");
         return 0;
+    }
+
+    private static async Task AssertHelperDiagnosticsAsync()
+    {
+        const string failure = "The maintenance safety check failed.";
+        foreach (var scenario in new[] {
+            (Code: 2, Stream: "stderr", Text: "runtime-unavailable\r\n", Missing: true, Passed: false),
+            (Code: 0, Stream: "stderr", Text: "runtime-unavailable", Missing: false, Passed: true),
+            (Code: 1, Stream: "stderr", Text: "runtime-unavailable", Missing: false, Passed: false),
+            (Code: 2, Stream: "stdout", Text: "runtime-unavailable", Missing: false, Passed: false),
+            (Code: 2, Stream: "stderr", Text: "private-value runtime-unavailable", Missing: false, Passed: false),
+            (Code: 2, Stream: "stderr", Text: "runtime-busy", Missing: false, Passed: false),
+            (Code: 0, Stream: "stderr", Text: new string('x', 4097), Missing: false, Passed: false),
+            (Code: 0, Stream: "stdout", Text: new string('x', 4097), Missing: false, Passed: false),
+        })
+        {
+            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("The test executable is unavailable.");
+            var arguments = new List<string>();
+            if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
+                arguments.Add(Assembly.GetExecutingAssembly().Location);
+            arguments.AddRange(["--diagnostic-exit", scenario.Code.ToString(), scenario.Stream, scenario.Text]);
+            string? error = null;
+            try { await NativeMaintenance.RunOwnedHelperAsync(executable, arguments.ToArray(), failure, CancellationToken.None); }
+            catch (InvalidOperationException observed) { error = observed.Message; }
+            if (scenario.Passed)
+            {
+                if (error is not null) throw new InvalidOperationException("A successful maintenance helper was rejected.");
+                continue;
+            }
+            if (error is null) throw new InvalidOperationException("A failed or over-bound helper was accepted.");
+            if (scenario.Missing)
+            {
+                if (!error.Contains("runtime-unavailable", StringComparison.Ordinal) ||
+                    !error.Contains("cannot continue", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Unavailable runtime was misreported as an active model session.");
+            }
+            else if (error != failure)
+                throw new InvalidOperationException("Unrecognized helper output escaped into the maintenance UI.");
+        }
     }
 
     private static void AssertRelatedCompletion()

@@ -389,9 +389,18 @@ fn attach_virtual_disk(image: &Path) -> Result<(), Error> {
         return Err(Error::Native("runtime-image-host-compression"));
     }
     let disk = open_virtual_disk(image, ATTACH_RO)?;
-    // Read-only, no automatic drive letter, and persistent beyond this helper
-    // handle. The explicit transaction detach remains the sole owner cleanup.
-    let status = unsafe { AttachVirtualDisk(disk.0, null(), 0x1 | 0x2 | 0x4, 0, &PARAMETERS, null_mut()) };
+    // Keep the verified image read-only across helper exit and Windows restart.
+    // The explicit transaction detach remains the owner cleanup.
+    let status = unsafe {
+        AttachVirtualDisk(
+            disk.0,
+            null(),
+            super::runtime_image_attachment::INSTALLED_IMAGE_ATTACH_FLAGS,
+            0,
+            &PARAMETERS,
+            null_mut(),
+        )
+    };
     LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
     if status != 0 {
         return Err(Error::Native("runtime-image-attach"));
