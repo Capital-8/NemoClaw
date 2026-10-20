@@ -504,7 +504,7 @@ mod tests {
         );
         for image in ["vllm", "ollama"] {
             let dockerfile = std::fs::read_to_string(format!(
-                "{}/../../runtimes/{image}/Dockerfile",
+                "{}/../../image/{image}/Dockerfile",
                 env!("CARGO_MANIFEST_DIR")
             ))
             .unwrap();
