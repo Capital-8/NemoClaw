@@ -14,6 +14,7 @@ import { OPERATOR_SWITCH_API_KEY } from "../fixtures/registered-inference.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
+  createOpenClawInferenceSwitchCleanup,
   getRouteOutput,
   readOpenClawConfig,
   httpStatusFromResponse,
@@ -584,4 +585,82 @@ it("reads the final curl status while preserving only the response body", () => 
   expect(httpStatusFromResponse(response)).toBe("200");
   expect(httpBodyFromResponse(response)).toBe('{"model":"selected"}');
   expect(httpStatusFromResponse("no status")).toBe("");
+});
+
+function switchCleanupFixture() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "switch-cleanup-"));
+  disposables.push(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(home, "ownership-record"), "retained fixture state");
+  const cleanupSandbox = vi.fn().mockResolvedValue(undefined);
+  const verifyGatewayRemoved = vi.fn().mockResolvedValue(undefined);
+  return {
+    home,
+    cleanupSandbox,
+    verifyGatewayRemoved,
+    input: {
+      host: { cleanupSandbox } as unknown as HostCliClient,
+      verifyGatewayRemoved,
+      home,
+      sandboxName: "switch-owner",
+      env: { HOME: home },
+      retain: false,
+    },
+  };
+}
+
+it("removes private state only after owned destroy and gateway absence, once", async () => {
+  const fixture = switchCleanupFixture();
+  fixture.verifyGatewayRemoved.mockImplementation(async () => {
+    expect(fs.existsSync(path.join(fixture.home, "ownership-record"))).toBe(true);
+  });
+  const cleanup = createOpenClawInferenceSwitchCleanup(fixture.input);
+  await cleanup();
+  await cleanup();
+  expect(fixture.cleanupSandbox).toHaveBeenCalledExactlyOnceWith("switch-owner", {
+    cleanupGateway: true,
+    artifactName: "cleanup-inference-switch-sandbox-and-gateway",
+    env: { HOME: fixture.home },
+    timeoutMs: 120_000,
+  });
+  expect(fixture.verifyGatewayRemoved).toHaveBeenCalledOnce();
+  expect(fs.existsSync(fixture.home)).toBe(false);
+});
+
+it.each([
+  "failed before registry publication",
+  "ownership record is incomplete",
+  "owned destroy failed after onboarding",
+])("preserves partial-onboard state after %s without raw-name fallback", async (message) => {
+  const fixture = switchCleanupFixture();
+  fixture.cleanupSandbox.mockRejectedValue(new Error(message));
+  const cleanup = createOpenClawInferenceSwitchCleanup(fixture.input);
+  await expect(cleanup()).rejects.toThrow(message);
+  await expect(cleanup()).rejects.toThrow(message);
+  expect(fixture.cleanupSandbox).toHaveBeenCalledOnce();
+  expect(fixture.verifyGatewayRemoved).not.toHaveBeenCalled();
+  expect(fs.readFileSync(path.join(fixture.home, "ownership-record"), "utf8")).toBe(
+    "retained fixture state",
+  );
+});
+
+it.each(["status remains connected", "listener still exists", "runtime observation failed"])(
+  "preserves private state when the gateway proof rejects: %s",
+  async (message) => {
+    const fixture = switchCleanupFixture();
+    fixture.verifyGatewayRemoved.mockRejectedValue(new Error(message));
+    const cleanup = createOpenClawInferenceSwitchCleanup(fixture.input);
+    await expect(cleanup()).rejects.toThrow(message);
+    await expect(cleanup()).rejects.toThrow(message);
+    expect(fixture.cleanupSandbox).toHaveBeenCalledOnce();
+    expect(fixture.verifyGatewayRemoved).toHaveBeenCalledOnce();
+    expect(fs.existsSync(path.join(fixture.home, "ownership-record"))).toBe(true);
+  },
+);
+
+it("retains the owned runtime and private state when sandbox retention is requested", async () => {
+  const fixture = switchCleanupFixture();
+  await createOpenClawInferenceSwitchCleanup({ ...fixture.input, retain: true })();
+  expect(fixture.cleanupSandbox).not.toHaveBeenCalled();
+  expect(fixture.verifyGatewayRemoved).not.toHaveBeenCalled();
+  expect(fs.existsSync(fixture.home)).toBe(true);
 });

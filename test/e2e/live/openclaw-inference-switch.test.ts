@@ -54,6 +54,7 @@ import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  createOpenClawInferenceSwitchCleanup,
   getRouteOutput,
   httpStatusFromResponse,
   httpBodyFromResponse,
@@ -200,15 +201,6 @@ function writeCustomOpenClawDockerfile(home: string): string {
   return dockerfilePath;
 }
 
-async function bestEffortStateReset(run: () => Promise<unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Cleanup probes are intentionally best-effort so early setup failures do
-    // not hide the primary assertion or install failure.
-  }
-}
-
 async function runNemoclaw(
   host: HostCliClient,
   home: string,
@@ -242,34 +234,6 @@ async function sandboxShell(
     timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
     redactionValues: options.redactionValues,
   });
-}
-
-async function resetOpenClawInferenceSwitchState(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  home: string,
-  artifactPrefix: string,
-): Promise<void> {
-  await bestEffortStateReset(() =>
-    runNemoclaw(host, home, [SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: `${artifactPrefix}-nemoclaw-destroy-openclaw-inference-switch`,
-      timeoutMs: 120_000,
-    }),
-  );
-  await bestEffortStateReset(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-      artifactName: `${artifactPrefix}-openshell-sandbox-delete-openclaw-inference-switch`,
-      env: commandEnv(home),
-      timeoutMs: 60_000,
-    }),
-  );
-  await bestEffortStateReset(() =>
-    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: `${artifactPrefix}-openshell-gateway-destroy-openclaw-inference-switch`,
-      env: commandEnv(home),
-      timeoutMs: 120_000,
-    }),
-  );
 }
 
 function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
@@ -441,19 +405,6 @@ async function prepareCompatibleAnthropicSwitchBinding(
     env: commandEnv(home),
   });
   return binding;
-}
-
-async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise<string> {
-  const result = await sandboxShell(
-    sandbox,
-    home,
-    'ps -eo pid=,comm=,args= 2>/dev/null | awk \'$2 != "sh" && $2 != "bash" && $2 != "awk" && $0 ~ /openclaw/ && $0 ~ /gateway run/ { print $1; exit }\' || true',
-    {
-      artifactName: "openclaw-gateway-pid",
-      timeoutMs: 30_000,
-    },
-  );
-  return result.stdout.trim();
 }
 
 async function verifyNativeAttachmentAfterSwitch(
@@ -879,7 +830,6 @@ test(
     meta: {
       e2ePhases: [
         "confirm the selected runtime and choose the baseline provider",
-        "clear existing inference-switch state",
         "onboard a custom-image baseline OpenClaw",
         "prove the selected route after custom-image onboarding",
         "prove the selected route after gateway restart",
@@ -892,7 +842,17 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+  async ({
+    artifacts,
+    cleanup,
+    gateway,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+    skip,
+  }) => {
     await artifacts.target.declare({
       id: "openclaw-inference-switch",
       boundary: "install-sh-openclaw-inference-set-and-live-gateway-model-run",
@@ -956,36 +916,23 @@ test(
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
     let mockProvider: MockAnthropicProvider | undefined;
-    cleanup.trackDisposable(
-      `remove OpenClaw inference switch test home for ${SANDBOX_NAME}`,
-      () => {
-        fs.rmSync(home, { recursive: true, force: true });
-      },
-    );
+    const cleanupState = createOpenClawInferenceSwitchCleanup({
+      host,
+      verifyGatewayRemoved: () =>
+        gateway.expectRemoved("nemoclaw", {
+          artifactName: "cleanup-inference-switch-gateway-absent",
+          env: commandEnv(home),
+        }),
+      sandboxName: SANDBOX_NAME,
+      home,
+      env: commandEnv(home),
+      retain: process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1",
+    });
+    cleanup.trackDisposable("clean up inference-switch sandbox and gateway", cleanupState);
     cleanup.trackDisposable("close switched Anthropic provider", async () => {
       await mockProvider?.close();
     });
     const customDockerfile = writeCustomOpenClawDockerfile(home);
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-openshell-gateway-destroy-openclaw-inference-switch",
-      env: commandEnv(home),
-      timeoutMs: 120_000,
-    });
-    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-      sandbox.cleanupSandbox(SANDBOX_NAME, {
-        artifactName: "cleanup-openshell-sandbox-delete-openclaw-inference-switch",
-        env: commandEnv(home),
-        timeoutMs: 60_000,
-      }),
-    );
-    cleanup.trackSandbox(host, SANDBOX_NAME, {
-      artifactName: "cleanup-nemoclaw-destroy-openclaw-inference-switch",
-      env: commandEnv(home),
-      timeoutMs: 120_000,
-    });
-
-    progress.phase("clear existing inference-switch state");
-    await resetOpenClawInferenceSwitchState(host, sandbox, home, "pre-cleanup");
 
     progress.phase("onboard a custom-image baseline OpenClaw");
     const onboard = await host.nemoclaw(
@@ -1113,7 +1060,10 @@ test(
       redactionValues,
       false,
     );
-    const pidBefore = await openclawGatewayPid(sandbox, home);
+    const pidBefore = await gateway.resolveGatewayIdentity(
+      { sandboxName: SANDBOX_NAME },
+      { env: commandEnv(home), artifactName: "gateway-identity-before-inference-switch" },
+    );
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
       home,
@@ -1124,14 +1074,18 @@ test(
     );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
 
-    const pidAfter = await openclawGatewayPid(sandbox, home);
-    const gatewayPidStable = pidBefore && pidAfter ? pidBefore === pidAfter : null;
-    if (gatewayPidStable !== null) {
-      expect(
-        gatewayPidStable,
-        `OpenClaw gateway process did not change after the config switch (${pidBefore} -> ${pidAfter})`,
-      ).toBe(false);
-    }
+    const pidAfter = await gateway.resolveGatewayIdentity(
+      { sandboxName: SANDBOX_NAME },
+      { env: commandEnv(home), artifactName: "gateway-identity-after-inference-switch" },
+    );
+    const gatewayPidStable =
+      pidBefore && pidAfter
+        ? pidBefore.pid === pidAfter.pid && pidBefore.startIdentity === pidAfter.startIdentity
+        : null;
+    expect(
+      gatewayPidStable,
+      "OpenClaw gateway needs valid, changed supervisor PID/start identities after the config switch",
+    ).toBe(false);
 
     progress.phase("inspect route configuration and recorded state");
     await getRouteOutput(host, {
@@ -1231,12 +1185,7 @@ test(
       }
     }
     progress.phase("apply sandbox retention and record the result");
-    if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
-      await resetOpenClawInferenceSwitchState(host, sandbox, home, "final");
-      const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
-      const registryText = fs.existsSync(registryPath) ? fs.readFileSync(registryPath, "utf8") : "";
-      expect(registryText).not.toContain(`"${SANDBOX_NAME}"`);
-    }
+    await cleanupState();
 
     await artifacts.target.complete({
       id: "openclaw-inference-switch",

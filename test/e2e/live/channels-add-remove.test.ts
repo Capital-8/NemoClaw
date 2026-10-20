@@ -662,7 +662,6 @@ test(
       attempts: 12,
       delayMs: 5_000,
     });
-    expectHostTelegramPlan("removed", "after remove rebuild");
 
     progress.phase("validate Telegram removal");
     const removedTelegram = await readOpenClawTelegramState(

@@ -4,6 +4,7 @@
 // Fixture and response helpers shared by the openclaw-inference-switch live
 // target and fast e2e-support tests without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
+import fs from "node:fs";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -264,4 +265,32 @@ export function httpBodyFromResponse(response: string): string {
     .split("\n")
     .filter((line) => !line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
     .join("\n");
+}
+
+// Keep ownership records until the CLI teardown and its runtime absence check finish.
+// Cache failure as well as success: cleanup registration must not repeat a failed destroy.
+export function createOpenClawInferenceSwitchCleanup(input: {
+  host: HostCliClient;
+  verifyGatewayRemoved: () => Promise<void>;
+  sandboxName: string;
+  home: string;
+  env: NodeJS.ProcessEnv;
+  retain: boolean;
+}): () => Promise<void> {
+  let cleanup: Promise<void> | undefined;
+  return () => {
+    cleanup ??= input.retain
+      ? Promise.resolve()
+      : (async () => {
+          await input.host.cleanupSandbox(input.sandboxName, {
+            cleanupGateway: true,
+            artifactName: "cleanup-inference-switch-sandbox-and-gateway",
+            env: input.env,
+            timeoutMs: 120_000,
+          });
+          await input.verifyGatewayRemoved();
+          fs.rmSync(input.home, { recursive: true, force: true });
+        })();
+    return cleanup;
+  };
 }

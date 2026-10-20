@@ -102,7 +102,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(80);
+    expect(plan.coverageMatrix).toHaveLength(81);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-github-read",
       "catalogue-nvidia-api",
@@ -155,7 +155,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(49);
+    expect(catalogueIds).toHaveLength(50);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining([
         "bootstrap-install-smoke",
@@ -327,6 +327,8 @@ describe("E2E workflow plan", () => {
       "openclaw-compatible-anthropic-inference-switch-anthropic-podman",
       "openclaw-inference-switch-default-docker",
       "openclaw-inference-switch-default-podman",
+      "openclaw-registered-provider-inference-switch-registered-docker",
+      "openclaw-registered-provider-inference-switch-registered-podman",
       "openclaw-skill-cli-default-docker",
       "openclaw-skill-cli-default-podman",
     ]);
