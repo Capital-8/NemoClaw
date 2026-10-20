@@ -250,8 +250,10 @@ Use these details when your first-run path needs more control.
     Hermes rejects an external HTTP URL when the sandbox starts.
     NemoClaw preserves an external browser URL across rebuild and clone operations.
 
-    For direct dashboard or API access to a non-WSL host, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before onboarding.
+    For direct dashboard access to a non-WSL host, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before onboarding.
     Use the same setting for later `nemohermes <sandbox> connect` calls.
+    The API forward stays on `127.0.0.1`, including on WSL and with this setting enabled.
+    Use SSH port forwarding for remote API access, as shown below.
 
     ```bash
     export NEMOCLAW_AGENT=hermes
