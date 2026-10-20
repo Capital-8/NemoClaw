@@ -178,7 +178,7 @@ async fn run() -> Result<bool> {
     if !directory.is_absolute() {
         return Err("artifact directory must be absolute".into());
     }
-    let mut builder = fs::DirBuilder::new();
+    let builder = &mut fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -253,9 +253,7 @@ mod tests {
                             serde_json::from_slice::<Value>(&call.body).unwrap(),
                             status["request"]
                         );
-                        if outcome.is_none() {
-                            return None;
-                        }
+                        outcome?;
                         status.clone()
                     }
                     "GET" => json!({"status":status,"log":"test result"}),

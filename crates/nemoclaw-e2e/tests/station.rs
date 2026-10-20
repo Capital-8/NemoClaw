@@ -131,7 +131,7 @@ async fn station_example_components_are_running() -> Result<()> {
         (1, 1)
     );
     let run = path("NEMOCLAW_LIVE_STATION_RUN");
-    let mut directory = fs::DirBuilder::new();
+    let directory = &mut fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
