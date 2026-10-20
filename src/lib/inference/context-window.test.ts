@@ -32,6 +32,11 @@ const llamaCpp = require("./llama-cpp") as {
     options?: { requestedModel?: string | null },
   ) => { ok: boolean; contextWindow?: number };
 };
+const managedState = require("./llama-cpp/managed-state") as {
+  loadManagedLlamaCppApiKey: () => string | null;
+  loadManagedLlamaCppOwner: () => unknown;
+  loadManagedLlamaCppReceipt: () => unknown;
+};
 
 /** Build a captured command result with an optional timeout. */
 function captured(timedOut = false): CaptureStub {
@@ -136,10 +141,16 @@ describe("resolveContextWindowForModel", () => {
 describe("resolveContextWindowForModel default dependencies (#8974)", () => {
   const originalRunCaptureEx = runner.runCaptureEx;
   const originalProbeLlamaCppAttachment = llamaCpp.probeLlamaCppAttachment;
+  const originalLoadManagedApiKey = managedState.loadManagedLlamaCppApiKey;
+  const originalLoadManagedOwner = managedState.loadManagedLlamaCppOwner;
+  const originalLoadManagedReceipt = managedState.loadManagedLlamaCppReceipt;
 
   afterEach(() => {
     runner.runCaptureEx = originalRunCaptureEx;
     llamaCpp.probeLlamaCppAttachment = originalProbeLlamaCppAttachment;
+    managedState.loadManagedLlamaCppApiKey = originalLoadManagedApiKey;
+    managedState.loadManagedLlamaCppOwner = originalLoadManagedOwner;
+    managedState.loadManagedLlamaCppReceipt = originalLoadManagedReceipt;
     vi.mocked(createOllamaApiCaptureEx).mockImplementation((capture) => capture!);
     vi.unstubAllEnvs();
   });
@@ -158,6 +169,57 @@ describe("resolveContextWindowForModel default dependencies (#8974)", () => {
       requestedModel: "team/model-alias",
     });
   });
+
+  it.each([
+    {
+      caseName: "matching authority",
+      managedKey: "secret-token",
+      owner: true,
+      receipt: true,
+      managedRuntime: true,
+    },
+    {
+      caseName: "different credential",
+      managedKey: "another-token",
+      owner: true,
+      receipt: true,
+      managedRuntime: false,
+    },
+    {
+      caseName: "missing owner",
+      managedKey: "secret-token",
+      owner: false,
+      receipt: true,
+      managedRuntime: false,
+    },
+    {
+      caseName: "missing receipt",
+      managedKey: "secret-token",
+      owner: true,
+      receipt: false,
+      managedRuntime: false,
+    },
+  ])(
+    "llama-cpp-local: selects probe timing for $caseName (#12285)",
+    ({ managedKey, owner, receipt, managedRuntime }) => {
+      vi.stubEnv("NEMOCLAW_LLAMACPP_LOCAL_TOKEN", "secret-token");
+      managedState.loadManagedLlamaCppApiKey = vi.fn(() => managedKey);
+      managedState.loadManagedLlamaCppOwner = vi.fn(() => (owner ? {} : null));
+      managedState.loadManagedLlamaCppReceipt = vi.fn(() => (receipt ? {} : null));
+      const probeLlamaCppAttachment = vi.fn(() => ({
+        ok: true as const,
+        model: "team/model-alias",
+        contextWindow: 65536,
+      }));
+      llamaCpp.probeLlamaCppAttachment = probeLlamaCppAttachment;
+
+      expect(resolveContextWindowForModel("llama-cpp-local", "team/model-alias")).toBe(65536);
+      expect(probeLlamaCppAttachment).toHaveBeenCalledWith("secret-token", {
+        requestedModel: "team/model-alias",
+        ...(managedRuntime ? { managedRuntime: true } : {}),
+      });
+    },
+  );
 
   it("ollama-local: runs the blocking probe command, not a backgrounded warm-up", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});

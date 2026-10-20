@@ -101,16 +101,28 @@ describe("probeLlamaCppAttachment", () => {
     );
   });
 
-  it("keeps a managed fingerprint timeout as a failure", () => {
+  it.each([
+    { phase: "anonymous /v1/models", timeoutAt: 0 },
+    { phase: "anonymous /props", timeoutAt: 1 },
+    { phase: "authenticated /v1/models", timeoutAt: 1 },
+    { phase: "authenticated /health", timeoutAt: 2 },
+    { phase: "authenticated /props", timeoutAt: 3 },
+    { phase: "authenticated /metrics", timeoutAt: 4 },
+  ])("identifies a managed fingerprint timeout at $phase (#12285)", ({ phase, timeoutAt }) => {
     const responses = nativeResponses();
-    responses[2] = curlFailure(28);
+    responses[0] = phase === "anonymous /props" ? response(200, '{"data":[]}') : responses[0]!;
+    responses[timeoutAt] = curlFailure(28);
 
     expect(
       probeLlamaCppAttachment("secret-token", {
         managedRuntime: true,
         runCurlProbeImpl: scriptedProbe(responses),
       }),
-    ).toMatchObject({ ok: false, reason: "probe-timeout" });
+    ).toMatchObject({
+      ok: false,
+      reason: "probe-timeout",
+      message: expect.stringContaining(phase),
+    });
   });
 
   it("still rejects an invalid managed API key", () => {

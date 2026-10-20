@@ -11,6 +11,7 @@
  */
 
 import { getScopedCredentialOverride } from "../credentials/scoped-overrides";
+import os from "node:os";
 import { DEFAULT_CONTEXT_WINDOW } from "./config";
 import {
   createOllamaApiCaptureEx,
@@ -23,6 +24,21 @@ import {
   resolveOllamaRuntimeContextWindow,
 } from "./local";
 import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
+
+function hasManagedLlamaCppCredential(apiKey: string): boolean {
+  try {
+    const state =
+      require("./llama-cpp/managed-state") as typeof import("./llama-cpp/managed-state");
+    const paths = state.managedLlamaCppStatePaths(os.homedir());
+    return (
+      state.loadManagedLlamaCppOwner(paths) !== null &&
+      state.loadManagedLlamaCppReceipt(paths) !== null &&
+      state.loadManagedLlamaCppApiKey(paths) === apiKey
+    );
+  } catch {
+    return false;
+  }
+}
 
 export interface ContextWindowDeps {
   /** Load the model and wait for the load to finish, so the probe finds it resident. */
@@ -99,7 +115,7 @@ const defaultContextWindowDeps: ContextWindowDeps = {
       LLAMA_CPP_CREDENTIAL_ENV: string;
       probeLlamaCppAttachment: (
         apiKey: string,
-        options?: { requestedModel?: string | null },
+        options?: { requestedModel?: string | null; managedRuntime?: true },
       ) => { ok: boolean; contextWindow?: number };
     };
     const apiKey =
@@ -107,7 +123,10 @@ const defaultContextWindowDeps: ContextWindowDeps = {
       process.env[LLAMA_CPP_CREDENTIAL_ENV]?.replace(/\r/g, "").trim() ??
       null;
     if (!apiKey) return null;
-    const result = probeLlamaCppAttachment(apiKey, { requestedModel: model });
+    const result = probeLlamaCppAttachment(apiKey, {
+      requestedModel: model,
+      ...(hasManagedLlamaCppCredential(apiKey) ? { managedRuntime: true as const } : {}),
+    });
     return result.ok ? (result.contextWindow ?? null) : null;
   },
 };

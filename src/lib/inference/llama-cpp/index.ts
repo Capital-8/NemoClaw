@@ -197,15 +197,18 @@ function probeModelEndpoint(
   return probe(probeArgs(authArgs, `${baseUrl}${path}`, timeoutSeconds), options);
 }
 
-function boundedProbeFailure(result: CurlProbeResult): LlamaCppAttachmentResult | null {
+function boundedProbeFailure(
+  result: CurlProbeResult,
+  phase: string,
+): LlamaCppAttachmentResult | null {
   if (result.curlStatus === 63) {
     return failure(
       "oversized-response",
-      "A llama.cpp fingerprint response exceeded the 256 KiB probe limit.",
+      `The llama.cpp fingerprint ${phase} response exceeded the 256 KiB probe limit.`,
     );
   }
   if (result.curlStatus === 28) {
-    return failure("probe-timeout", "A llama.cpp fingerprint probe exceeded its time limit.");
+    return failure("probe-timeout", `The llama.cpp fingerprint ${phase} request timed out.`);
   }
   return null;
 }
@@ -265,7 +268,7 @@ export function probeLlamaCppAttachment(
     probeArgs([], `${baseUrl}/v1/models`, timeoutSeconds),
     anonymousProbeOptions,
   );
-  const anonymousBoundFailure = boundedProbeFailure(anonymousModels);
+  const anonymousBoundFailure = boundedProbeFailure(anonymousModels, "anonymous /v1/models");
   if (anonymousBoundFailure) return anonymousBoundFailure;
   if (anonymousModels.curlStatus !== 0 || anonymousModels.httpStatus === 0) {
     return failure("unreachable", `No llama.cpp server responded on fixed port ${LLAMA_CPP_PORT}.`);
@@ -285,7 +288,7 @@ export function probeLlamaCppAttachment(
       probeArgs([], `${baseUrl}/props`, timeoutSeconds),
       anonymousProbeOptions,
     );
-    const anonymousPropsBoundFailure = boundedProbeFailure(anonymousProps);
+    const anonymousPropsBoundFailure = boundedProbeFailure(anonymousProps, "anonymous /props");
     if (anonymousPropsBoundFailure) return anonymousPropsBoundFailure;
     if (anonymousProps.curlStatus !== 0 || anonymousProps.httpStatus === 0) {
       return failure(
@@ -326,7 +329,10 @@ export function probeLlamaCppAttachment(
       probeArgs(auth.args, `${baseUrl}/v1/models`, timeoutSeconds),
       probeOptions,
     );
-    const authenticatedBoundFailure = boundedProbeFailure(authenticatedModels);
+    const authenticatedBoundFailure = boundedProbeFailure(
+      authenticatedModels,
+      "authenticated /v1/models",
+    );
     if (authenticatedBoundFailure) return authenticatedBoundFailure;
     if (authenticatedModels.httpStatus === 401 || authenticatedModels.httpStatus === 403) {
       return failure("authentication-rejected", "The llama.cpp API key was rejected.");
@@ -403,8 +409,12 @@ export function probeLlamaCppAttachment(
       probeOptions,
       timeoutSeconds,
     );
-    for (const result of [health, props, metrics]) {
-      const boundFailure = boundedProbeFailure(result);
+    for (const [result, phase] of [
+      [health, "authenticated /health"],
+      [props, "authenticated /props"],
+      [metrics, "authenticated /metrics"],
+    ] as const) {
+      const boundFailure = boundedProbeFailure(result, phase);
       if (boundFailure) return boundFailure;
     }
     if (!hasHealthyNativeResponse(health)) {
