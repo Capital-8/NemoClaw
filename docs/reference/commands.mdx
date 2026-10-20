@@ -3799,8 +3799,11 @@ For other selections, follow the printed `$$nemoclaw <name> rebuild` hint.
 
 <AgentOnly variant="openclaw,hermes">
 
-Canonical supported provider IDs are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
+Canonical supported provider IDs are `nvidia-prod`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `llama-cpp-local`, `ollama-local`, and `vllm-local`.
 The installer alias `llama-cpp` is accepted and normalized to `llama-cpp-local`.
+The legacy hosted alias `nvidia-nim`, including `nvidia_nim`, normalizes to `nvidia-prod` for NVIDIA Endpoints.
+The installer names `nim`, `nim-local`, and `nim_local` select Local NVIDIA NIM through `vllm-local` and require matching recorded NIM state.
+See [Find a Registered Provider](../inference/manage-inference/switch-providers#find-a-registered-provider) for NIM prerequisites and recovery when that state is missing or inconsistent.
 Recognized underscore spellings of canonical provider IDs and hyphenated installer aliases are also accepted.
 For example, `ollama_local` normalizes to `ollama-local`, `nvidia_prod` normalizes to `nvidia-prod`, and `open_router` normalizes to `openrouter-api`.
 NemoClaw preserves an unrecognized underscore spelling for normal provider validation.

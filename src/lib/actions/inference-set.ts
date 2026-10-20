@@ -283,7 +283,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
 
 const SUPPORTED_PROVIDER_NAMES = [
   "nvidia-prod",
-  "nvidia-nim",
   "nvidia-router",
   "openai-api",
   "openrouter-api",
@@ -334,8 +333,9 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   "llama-cpp": "llama-cpp-local",
   ollama: "ollama-local",
   vllm: "vllm-local",
-  nim: "nvidia-nim",
-  "nim-local": "nvidia-nim",
+  nim: "vllm-local",
+  "nim-local": "vllm-local",
+  "nvidia-nim": "nvidia-prod",
   routed: "nvidia-router",
 };
 
@@ -1482,6 +1482,13 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
+  const nimSelection = verifyNimSwitchSelection(
+    provider,
+    model,
+    preparedRoute.preliminaryRegistryMetadata,
+    localSwitch.selected ?? previousNativeLocalAttachment,
+    ["nim", "nim-local"].includes(options.provider.trim().toLowerCase().replaceAll("_", "-")),
+  );
   const preMutationRoute = await observeInferenceRouteForSelection({
     nativeProvider: selectingNative,
     gatewayName: preparedRoute.gatewayName,
@@ -1541,13 +1548,6 @@ async function runInferenceSetWithoutHostLock(
       preferredInferenceApi: registered.inferenceApi,
     });
   const explicitPreferredInferenceApi = registered?.inferenceApi ?? finalizedPreferredInferenceApi;
-
-  const nimSelection = verifyNimSwitchSelection(
-    provider,
-    model,
-    registryMetadata,
-    localSwitch.selected ?? previousNativeLocalAttachment,
-  );
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
   // host.openshell.internal hostname, which the host-side `openshell inference set`

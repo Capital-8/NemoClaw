@@ -133,6 +133,64 @@ function fixture(
 }
 
 describe.each(["openclaw", "hermes"] as const)("%s NIM inference set", (agent) => {
+  it.each(["nim", "nim-local", "nim_local"])(
+    "selects the recorded native NIM route through alias %s",
+    async (provider) => {
+      const f = fixture(agent, "unreadable");
+      await expect(runInferenceSet({ ...selected, provider }, f.deps)).resolves.toMatchObject({
+        provider: "vllm-local",
+      });
+      expect(f.entry.nativeLocalProviderAttachment).toEqual(f.receipt);
+      expect(f.deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+        expect.objectContaining({ nativeEndpointUrl: f.receipt.endpointUrl }),
+      );
+      expect(f.managed).not.toHaveBeenCalled();
+      expect(
+        f.deps.calls.captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference"),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(["nvidia-nim", "nvidia_nim"])(
+    "selects native NVIDIA Endpoints through legacy hosted alias %s",
+    async (provider) => {
+      const f = fixture(agent);
+      await expect(
+        runInferenceSet({ ...selected, provider, model: "hosted-model" }, f.deps),
+      ).resolves.toMatchObject({ provider: "nvidia-prod" });
+      expect(f.entry).toMatchObject({
+        provider: "nvidia-prod",
+        nativeNvidiaProviderAttachment: { providerName: hosted.providerName },
+      });
+      expect(f.deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
+        expect.objectContaining({ nativeProvider: true, provider: "nvidia-prod" }),
+      );
+      expect(
+        f.deps.calls.captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference"),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(["nim", "nim-local", "nim_local"])(
+    "refuses local alias %s without its NIM record before shared route access or mutation",
+    async (provider) => {
+      const f = fixture(agent);
+      f.entry.nimContainer = null;
+      f.deps.loadSession = () => null;
+      await expect(runInferenceSet({ ...selected, provider }, f.deps)).rejects.toThrow(
+        "Local NVIDIA NIM requires its recorded container and endpoint",
+      );
+      expect(f.create).not.toHaveBeenCalled();
+      expect(f.update).not.toHaveBeenCalled();
+      expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+      expect(f.deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+      expect(
+        f.deps.calls.captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference"),
+      ).toEqual([]);
+      expect(f.managed).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["conflicting", "unreadable"] as const)(
     "reuses NIM with %s managed vLLM state",
     async (managedState) => {
@@ -163,9 +221,15 @@ describe.each(["openclaw", "hermes"] as const)("%s NIM inference set", (agent) =
     },
   );
 
-  it.each(["conflicting", "unreadable"] as const)(
-    "restores NIM from its matching session after a hosted switch with %s vLLM state",
-    async (managedState) => {
+  it.each([
+    { managedState: "conflicting", provider: "vllm-local" },
+    { managedState: "unreadable", provider: "vllm-local" },
+    { managedState: "conflicting", provider: "nim" },
+    { managedState: "unreadable", provider: "nim-local" },
+    { managedState: "unreadable", provider: "nim_local" },
+  ] as const)(
+    "restores NIM through $provider from its matching session with $managedState vLLM state",
+    async ({ managedState, provider }) => {
       const f = fixture(agent, managedState);
       await runInferenceSet(
         { provider: "nvidia-prod", model: "hosted-model", sandboxName: "alpha" },
@@ -175,7 +239,7 @@ describe.each(["openclaw", "hermes"] as const)("%s NIM inference set", (agent) =
       expect(f.entry.nimContainer).toBeNull();
       // Restore the matching onboarding record, the existing authority for a provider switch back.
       f.deps.loadSession = () => f.session;
-      await expect(runInferenceSet(selected, f.deps)).resolves.toMatchObject({
+      await expect(runInferenceSet({ ...selected, provider }, f.deps)).resolves.toMatchObject({
         provider: "vllm-local",
       });
       expect(f.entry).toMatchObject({
@@ -214,6 +278,24 @@ describe.each(["openclaw", "hermes"] as const)("%s NIM inference set", (agent) =
       ).toBe(false);
     },
   );
+
+  it("refuses a local NIM alias when the retained session belongs to a different model", async () => {
+    const f = fixture(agent);
+    await runInferenceSet({ ...selected, provider: "nvidia-prod", model: "hosted-model" }, f.deps);
+    f.deps.loadSession = () => ({ ...f.session, model: "other-nim-model" });
+    vi.clearAllMocks();
+    await expect(runInferenceSet({ ...selected, provider: "nim-local" }, f.deps)).rejects.toThrow(
+      "Local NVIDIA NIM requires its recorded container and endpoint",
+    );
+    expect(f.create).not.toHaveBeenCalled();
+    expect(f.update).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(f.deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(f.deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+    expect(
+      f.deps.calls.captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference"),
+    ).toEqual([]);
+  });
 
   it("rejects a different recorded NIM endpoint before probing or changing state", async () => {
     const f = fixture(agent);

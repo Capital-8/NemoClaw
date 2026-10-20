@@ -92,7 +92,7 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
 
   it("normalizes underscore spellings of installer alias keys", () => {
     expect(normalizeInferenceSetProvider("open_router")).toBe("openrouter-api");
-    expect(normalizeInferenceSetProvider("nim_local")).toBe("nvidia-nim");
+    expect(normalizeInferenceSetProvider("nim_local")).toBe("vllm-local");
     expect(normalizeInferenceSetProvider("llama_cpp")).toBe("llama-cpp-local");
     expect(normalizeInferenceSetProvider("nous_portal")).toBe("hermes-provider");
   });

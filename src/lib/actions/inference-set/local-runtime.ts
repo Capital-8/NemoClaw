@@ -37,7 +37,13 @@ export function verifyNimSwitchSelection(
   model: string,
   metadata: RegistryInferenceMetadata,
   previous?: NativeLocalProviderAttachment,
+  requireNimSelection = false,
 ): NimSwitchSelection | undefined {
+  if (requireNimSelection && !metadata.nimContainer)
+    throw new InferenceSetError(
+      "Local NVIDIA NIM requires its recorded container and endpoint. Re-run onboarding with NEMOCLAW_PROVIDER=nim-local for this sandbox.",
+      2,
+    );
   if (provider !== "vllm-local" || !metadata.nimContainer) return;
   const endpointUrl = getNimInferenceEndpoints().baseUrl;
   if (

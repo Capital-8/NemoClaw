@@ -240,7 +240,7 @@ function getEffectiveProviderName(providerKey) {
   }
   switch (providerKey) {
     case "nim-local":
-      return "nvidia-nim";
+      return "vllm-local";
     case "ollama":
       return "ollama-local";
     case "vllm":

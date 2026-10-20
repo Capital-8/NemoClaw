@@ -27,6 +27,14 @@ $$nemoclaw credentials list
 It accepts recognized underscore spellings of canonical provider IDs and hyphenated aliases, such as `ollama_local`, `nvidia_prod`, and `open_router`.
 NemoClaw normalizes an accepted alias or underscore spelling to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
 
+The legacy hosted alias `nvidia-nim`, including `nvidia_nim`, selects NVIDIA Endpoints and normalizes to `nvidia-prod`.
+The installer names `nim`, `nim-local`, and `nim_local` select Local NVIDIA NIM through `vllm-local`.
+This local selection requires the NIM container and endpoint recorded for the sandbox or a matching onboarding session.
+The endpoint must match the NIM runtime, and that runtime must serve the requested model.
+Missing or inconsistent NIM state stops the switch before mutation; it does not select hosted NVIDIA Endpoints or standalone vLLM.
+Rerun onboarding for the affected sandbox with `NEMOCLAW_PROVIDER=nim-local` to repair its recorded selection, then retry the switch.
+Endpoint, API-family, and credential overrides do not apply to this local selection.
+
 If the requested provider is unsupported, NemoClaw lists selectable supported provider IDs registered on the selected gateway.
 If it cannot read the gateway list, it lists every supported provider ID instead.
 
