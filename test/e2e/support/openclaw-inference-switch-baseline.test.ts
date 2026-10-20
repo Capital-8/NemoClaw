@@ -15,8 +15,11 @@ vi.mock("../fixtures/managed-image-receipt.ts", () => ({
 }));
 
 const disposables: Array<() => unknown> = [];
-afterEach(async () => {
+async function disposeResources(): Promise<void> {
   for (const dispose of disposables.splice(0).reverse()) await dispose();
+}
+afterEach(async () => {
+  await disposeResources();
   vi.doUnmock("../live/openclaw-inference-switch-helpers.ts");
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -62,6 +65,8 @@ it.each([false, true])(
       expect(name).toBe("NVIDIA_API_KEY");
       return "nvapi-public-fixture-key";
     });
+    const cleanupSandbox = vi.fn(async () => undefined);
+    const expectRemoved = vi.fn(async () => undefined);
     await expect(
       run({
         artifacts: { target: { declare: vi.fn() } },
@@ -72,6 +77,7 @@ it.each([false, true])(
         },
         host: {
           nemoclaw,
+          cleanupSandbox,
           command: vi.fn(async (_cmd, _args, options) =>
             options?.artifactName === "native-baseline-endpoint-address"
               ? { ...result, stdout: "route 10.20.30.40" }
@@ -79,6 +85,7 @@ it.each([false, true])(
           ),
         },
         progress,
+        gateway: { expectRemoved },
         runtimeProvider: { requireAvailable: vi.fn() },
         sandbox: { openshell: vi.fn(async () => result), cleanupSandbox: vi.fn() },
         secrets: { required },
@@ -99,6 +106,15 @@ it.each([false, true])(
     expect(environment.NVIDIA_API_KEY).toBeUndefined();
     expect(options.redactionValues.includes("nvapi-public-fixture-key")).toBe(!nativeCustom);
     expect(options.redactionValues).toContain("openclaw-switch-baseline-credential");
+    await disposeResources();
+    expect(cleanupSandbox).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String),
+      expect.objectContaining({ cleanupGateway: true }),
+    );
+    expect(expectRemoved).toHaveBeenCalledExactlyOnceWith(
+      "nemoclaw",
+      expect.objectContaining({ artifactName: "cleanup-inference-switch-gateway-absent" }),
+    );
   },
 );
 

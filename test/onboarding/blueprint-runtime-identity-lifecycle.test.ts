@@ -295,3 +295,18 @@ describe("blueprint runtime identity lifecycle integration", () => {
     expect(state.profiles).toEqual(["okta-runtime-v1"]);
   });
 });
+
+it("loads the host native inference observer through the TSX CommonJS boundary", async () => {
+  const root = path.resolve(import.meta.dirname, "../..");
+  const result = await execa(
+    process.execPath,
+    [
+      path.join(root, "node_modules/tsx/dist/cli.mjs"),
+      "--input-type=module",
+      "--eval",
+      `const { default: hostRunner } = await import(${JSON.stringify(path.join(root, "src/lib/blueprint-runner.ts"))}); const { observeBlueprintNativeInference } = hostRunner; if (typeof observeBlueprintNativeInference !== "function") throw new Error("Host native observer missing"); process.stdout.write("observer-loaded");`,
+    ],
+    { cwd: root, timeout: 30_000 },
+  );
+  expect(result.stdout).toBe("observer-loaded");
+});

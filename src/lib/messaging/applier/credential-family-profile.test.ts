@@ -119,9 +119,14 @@ describe("additional provider credential declarations", () => {
 });
 
 describe("additional credential provider lifecycle", () => {
-  it.each([false, true])(
-    "preserves legacy extra credentials when the missing key is declared: %s",
-    async (declareMissing) => {
+  it.each([
+    [false, "nemoclaw-mcp-v1"],
+    [true, "nemoclaw-mcp-v1"],
+    [false, "nemoclaw-mcp-v1-0123456789abcdef0123456789abcdef"],
+    [true, "nemoclaw-mcp-v1-0123456789abcdef0123456789abcdef"],
+  ] as const)(
+    "preserves stored MCP credentials when the missing key is declared: %s, profile: %s",
+    async (declareMissing, providerType) => {
       const requested = definition({
         profile: {
           profilePath: path.join(
@@ -137,7 +142,7 @@ describe("additional credential provider lifecycle", () => {
       ];
       const existing = metadata({
         ...requested,
-        providerType: "nemoclaw-mcp-v1",
+        providerType,
         credentials: completeCredentials,
       });
       const adapter = providerAdapter({

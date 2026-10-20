@@ -59,6 +59,7 @@ import {
   httpStatusFromResponse,
   httpBodyFromResponse,
   readOpenClawConfig,
+  readOpenClawBootId,
   agentReplyContainsToken,
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
@@ -1064,6 +1065,10 @@ test(
       { sandboxName: SANDBOX_NAME },
       { env: commandEnv(home), artifactName: "gateway-identity-before-inference-switch" },
     );
+    const bootBefore = await readOpenClawBootId(sandbox, SANDBOX_NAME, {
+      env: commandEnv(home),
+      artifactName: "gateway-boot-before-inference-switch",
+    });
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
       home,
@@ -1078,14 +1083,14 @@ test(
       { sandboxName: SANDBOX_NAME },
       { env: commandEnv(home), artifactName: "gateway-identity-after-inference-switch" },
     );
-    const gatewayPidStable =
-      pidBefore && pidAfter
-        ? pidBefore.pid === pidAfter.pid && pidBefore.startIdentity === pidAfter.startIdentity
-        : null;
+    const bootAfter = await readOpenClawBootId(sandbox, SANDBOX_NAME, {
+      env: commandEnv(home),
+      artifactName: "gateway-boot-after-inference-switch",
+    });
     expect(
-      gatewayPidStable,
-      "OpenClaw gateway needs valid, changed supervisor PID/start identities after the config switch",
-    ).toBe(false);
+      Boolean(pidBefore && pidAfter && bootBefore && bootAfter && bootBefore !== bootAfter),
+      "OpenClaw needs valid supervisor identities and a new authenticated boot after the config switch",
+    ).toBe(true);
 
     progress.phase("inspect route configuration and recorded state");
     await getRouteOutput(host, {
@@ -1199,7 +1204,9 @@ test(
         customImageGatewayReachedBaselineFixture: baselineProvider ? true : null,
         inferenceSetCompleted: switchResult.exitCode === 0,
         gatewayRestartExpected: true,
-        gatewayPidStable,
+        gatewayBootChanged: bootBefore !== bootAfter,
+        gatewayProcessBefore: pidBefore,
+        gatewayProcessAfter: pidAfter,
         routeChecked: true,
         inferenceLocalPong: true,
         inferenceLocalModelMatched: true,

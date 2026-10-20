@@ -518,13 +518,29 @@ it.each(["openclaw", "hermes", "pi", "langchain-deepagents-code"])(
 
 describe("published native route backup boundary", () => {
   it.each([
-    { model: "old-model", staged: false },
-    { model: "new-model", staged: true },
-  ])(
+    {
+      agent: "openclaw",
+      model: "old-model",
+      staged: false,
+      key: "fixture-only-host-key",
+      reuse: false,
+    },
+    {
+      agent: "openclaw",
+      model: "new-model",
+      staged: true,
+      key: "fixture-only-host-key",
+      reuse: false,
+    },
+    { agent: "openclaw", model: "old-model", staged: false, key: null, reuse: true },
+    { agent: "openclaw", model: "new-model", staged: true, key: null, reuse: true },
+    { agent: "hermes", model: "old-model", staged: false, key: null, reuse: true },
+    { agent: "hermes", model: "new-model", staged: true, key: null, reuse: true },
+  ] as const)(
     "preserves the source and provider credential when selecting $model",
-    async ({ model, staged }) => {
+    async ({ agent, model, staged, key, reuse }) => {
       const attachment = nativeLocalSetupReceipt({
-        agent: "openclaw",
+        agent,
         provider: "compatible-endpoint",
         sandboxName: "test-box",
         gatewayName: "nemoclaw",
@@ -533,7 +549,7 @@ describe("published native route backup boundary", () => {
       });
       const row = {
         name: "test-box",
-        agent: "openclaw",
+        agent,
         provider: "compatible-endpoint",
         model: "old-model",
         gatewayName: "nemoclaw",
@@ -546,7 +562,7 @@ describe("published native route backup boundary", () => {
       const harness = createDirectSetupInferenceHarness({
         overrides: {
           getSandbox: () => row,
-          hydrateCredentialEnv: () => "fixture-only-host-key",
+          hydrateCredentialEnv: () => key,
           isNonInteractive: () => true,
         },
       });
@@ -561,10 +577,12 @@ describe("published native route backup boundary", () => {
         null,
         [],
         {
-          agentName: "openclaw",
+          agentName: agent,
           preferredInferenceApi: "openai-completions",
           deferPublishedRouteReservation: true,
           reservationSessionId: "session",
+          reuseGatewayCredentialWithoutLocalKey: reuse,
+          skipHostInferenceSmoke: reuse,
         },
       );
       expect(result).toEqual(

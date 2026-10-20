@@ -289,6 +289,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       forceInferenceSetup: boolean;
       credentialEnv: string | null;
       nativeCustomSetup?: boolean;
+      nativeLocalSetup?: boolean;
       registeredNativeSetup?: boolean;
     }>;
     ensureManagedLlamaCppResumeReady(
@@ -1687,6 +1688,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         { sandboxName: reusableResumeSandboxName, endpointUrl },
       );
       registeredResumeVerified = recovery.registeredNativeSetup === true;
+      reuseGatewayCredentialWithoutLocalKey ||= recovery.nativeLocalSetup === true;
+      skipHostInferenceSmoke ||= recovery.nativeLocalSetup === true;
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never

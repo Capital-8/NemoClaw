@@ -16,6 +16,10 @@ import {
 import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
+  INFERENCE_CURL_DIAGNOSTIC_SCRIPT,
+  INFERENCE_CURL_HTTP_CODE_MARKER,
+} from "../fixtures/curl-policy-denial.ts";
+import {
   operatorInferenceSwitchFixture,
   OPERATOR_SWITCH_PROVIDER,
   OPERATOR_SWITCH_CREDENTIAL_ENV,
@@ -67,7 +71,13 @@ afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
 function run(command: [string, ...string[]], env: Record<string, string>) {
   return spawnSync(command[0], command.slice(1), {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, ...env },
+    env: {
+      ...process.env,
+      HOME: directory,
+      TMPDIR: directory,
+      PATH: `${directory}:${process.env.PATH}`,
+      ...env,
+    },
   });
 }
 
@@ -156,6 +166,11 @@ it.each([false, true])(
     );
     expect(result.status).toBe(0);
     expect(result.stdout.split("\n")).toEqual([
+      "--verbose",
+      "--write-out",
+      "",
+      `${INFERENCE_CURL_HTTP_CODE_MARKER}%{http_code}`,
+      "",
       "-sS",
       "--include",
       ...(follow ? ["--location", "--post302", "--max-redirs", "3"] : []),
@@ -172,6 +187,34 @@ it.each([false, true])(
     ]);
   },
 );
+
+it.each([0, 7, 56, 127])("retains curl status %s and only connect diagnostics", (status) => {
+  fs.writeFileSync(
+    path.join(directory, "curl"),
+    `#!/bin/sh
+printf '\nNEMOCLAW_INFERENCE_CURL_HTTP_CODE=000\n'
+printf '%s\n' '> Authorization: Bearer scoped-handle' '> Cookie: private-cookie' '* Server auth using Basic with user secret-user' '* Immediate connect fail for 198.18.0.1: Permission denied' 'curl: (7) Failed to connect' >&2
+exit ${status}
+`,
+    { mode: 0o755 },
+  );
+  const result = run(
+    [
+      "/bin/bash",
+      "--noprofile",
+      "--norc",
+      "-c",
+      `${INFERENCE_CURL_DIAGNOSTIC_SCRIPT}; curl -sS https://example.com/v1/models`,
+    ],
+    {},
+  );
+  expect(result.status).toBe(status);
+  expect(result.stdout).toBe("\nNEMOCLAW_INFERENCE_CURL_HTTP_CODE=000\n");
+  expect(result.stderr).toBe(
+    "* Immediate connect fail for 198.18.0.1: Permission denied\ncurl: (7) Failed to connect\n",
+  );
+  expect(fs.readdirSync(directory)).toEqual(["curl"]);
+});
 
 function readback(providerId = local.providerId, attached = local.providerName) {
   return vi

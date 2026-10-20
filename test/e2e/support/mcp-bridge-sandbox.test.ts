@@ -291,6 +291,31 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
   });
 
   it.each([
+    ["000", 7, "* Immediate connect fail for 198.18.0.1: Permission denied", false],
+    ["302", 7, "* Immediate connect fail for 198.18.0.1: Permission denied", true],
+    ["302", 7, "* Immediate connect fail for 198.18.0.1: Connection refused", false],
+    ["302", 7, "curl: (7) Permission denied", false],
+    ["302", 0, "", false],
+    ["302", 28, "* Immediate connect fail for 198.18.0.1: Permission denied", false],
+  ] as const)(
+    "requires explicit redirect evidence %s/%s/%s",
+    (expectedCode, exitCode, stderr, expected) => {
+      expect(
+        isExpectedMcpCurlPolicyDenial(
+          denialResult({
+            exitCode,
+            stdout:
+              "HTTP/1.1 302 Found\r\nlocation: http://host.openshell.internal:8000/v1/chat/completions\r\n\r\nNEMOCLAW_MCP_CURL_HTTP_CODE=302\n",
+            stderr,
+          }),
+          "NEMOCLAW_MCP_CURL_HTTP_CODE=",
+          expectedCode,
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it.each([
     "NEMOCLAW_MCP_CURL_HTTP_CODE=403\nNEMOCLAW_MCP_CURL_HTTP_CODE=200\npolicy_denied",
     "NEMOCLAW_MCP_CURL_HTTP_CODE=403\nNEMOCLAW_MCP_CURL_HTTP_CODE=403\npolicy_denied",
     "NEMOCLAW_MCP_CURL_HTTP_CODE=403\ncredential_endpoint_mismatch",

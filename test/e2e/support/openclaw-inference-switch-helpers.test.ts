@@ -15,6 +15,7 @@ import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
   createOpenClawInferenceSwitchCleanup,
+  readOpenClawBootId,
   getRouteOutput,
   readOpenClawConfig,
   httpStatusFromResponse,
@@ -30,6 +31,83 @@ import {
   parseOpenClawGatewayModelRun,
   startMockOpenClawBaselineProvider,
 } from "../live/openclaw-inference-switch-helpers.ts";
+
+describe("OpenClaw authenticated restart identity", () => {
+  const bootId = "0ad13a83-485c-427c-a6ba-a64e7d86621a";
+  const valid = {
+    exitCode: 0,
+    timedOut: false,
+    signal: null,
+    stderr: "",
+    stdout: JSON.stringify({ rpc: { ok: true, kind: "read", server: { bootId } } }),
+  };
+
+  it.each([
+    [valid, bootId],
+    [{ ...valid, exitCode: 1 }, null],
+    [{ ...valid, timedOut: true }, null],
+    [{ ...valid, signal: "SIGTERM" }, null],
+    [{ ...valid, stderr: "observation failed" }, null],
+    [{ ...valid, stdout: "{}" }, null],
+    [{ ...valid, stdout: "null" }, null],
+    [
+      {
+        ...valid,
+        stdout: JSON.stringify({ rpc: { ok: false, kind: "read", server: { bootId } } }),
+      },
+      null,
+    ],
+    [
+      {
+        ...valid,
+        stdout: JSON.stringify({ rpc: { ok: true, kind: "connect", server: { bootId } } }),
+      },
+      null,
+    ],
+    [
+      {
+        ...valid,
+        stdout: JSON.stringify({ rpc: { ok: true, kind: "read", server: { bootId: 42 } } }),
+      },
+      null,
+    ],
+    [
+      {
+        ...valid,
+        stdout: '{"rpc":{"ok":true,"kind":"read","server":{"bootId":"untrusted text"}}}',
+      },
+      null,
+    ],
+    [{ ...valid, stdout: "not json" }, null],
+  ])("accepts only a successful, complete boot observation %#", async (result, expected) => {
+    const exec = vi.fn().mockResolvedValue(result);
+    await expect(
+      readOpenClawBootId({ exec } as never, "alpha", {
+        env: { HOME: "/private-home" },
+        artifactName: "boot-before",
+      }),
+    ).resolves.toBe(expected);
+    expect(exec).toHaveBeenCalledWith(
+      "alpha",
+      [
+        "openclaw",
+        "gateway",
+        "status",
+        "--port",
+        "18789",
+        "--require-rpc",
+        "--json",
+        "--timeout",
+        "10000",
+      ],
+      {
+        env: { HOME: "/private-home" },
+        artifactName: "boot-before",
+        timeoutMs: 20_000,
+      },
+    );
+  });
+});
 
 describe("openclaw-inference-switch post-switch retry classification", () => {
   const attempt = {

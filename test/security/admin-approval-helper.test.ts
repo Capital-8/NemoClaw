@@ -817,6 +817,10 @@ describe("prepared connect-shell administrative approval", () => {
 
   it.each([
     ["LLM request timed out.", "message-llm-timeout"],
+    ["cron isolated agent run aborted", "message-agent-aborted"],
+    ["cron: job execution timed out", "message-cron-deadline"],
+    ["cron isolated agent run aborted PRIVATE_SUFFIX", "unavailable"],
+    ["PRIVATE_PREFIX cron: job execution timed out", "unavailable"],
     ["LLM request failed.", "message-llm-failed"],
     ["LLM request failed with an unknown error.", "message-llm-unknown"],
     ["LLM request failed: provider returned an internal error.", "message-llm-provider-internal"],
@@ -880,6 +884,38 @@ describe("prepared connect-shell administrative approval", () => {
       /PRIVATE_|test-gateway-token|cron-1|run-1/,
     );
     expect(privateCaptureCount).toBe(8);
+    expect(privateCapturesRemaining).toEqual([]);
+    expect(stagedScriptRetained).toBe(false);
+  });
+
+  it.each([
+    [0, "ADMIN_CRON_DURATION_MS=0\n"],
+    [120001, "ADMIN_CRON_DURATION_MS=120001\n"],
+    [86400000, "ADMIN_CRON_DURATION_MS=86400000\n"],
+    [-1, ""],
+    [86400001, ""],
+    [1.5, ""],
+    [true, ""],
+    [null, ""],
+    ["PRIVATE_DURATION test-gateway-token", ""],
+    [{ value: 120001 }, ""],
+  ])("retains only bounded terminal cron duration %j", (durationMs, expected) => {
+    const response = {
+      ...FAILED_CRON_RUN,
+      run: { ...FAILED_CRON_RUN.run, durationMs, error: "PRIVATE_ERROR test-gateway-token" },
+    };
+    const { result, commands, privateCapturesRemaining, stagedScriptRetained } =
+      runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+        cronRunOutput: JSON.stringify(response),
+        cronRunExitCode: 1,
+        removeCaptures: true,
+      });
+    expect(result.status).toBe(29);
+    expect(result.stderr.match(/^ADMIN_CRON_DURATION_MS=.*\n/gm)?.join("") ?? "").toBe(expected);
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
+      /PRIVATE_|test-gateway-token|cron-1|run-1/,
+    );
+    expect(commands.filter((command) => command.startsWith("cron run "))).toHaveLength(1);
     expect(privateCapturesRemaining).toEqual([]);
     expect(stagedScriptRetained).toBe(false);
   });

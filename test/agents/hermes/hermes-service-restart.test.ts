@@ -215,33 +215,36 @@ describe("Hermes native service restart supervision", () => {
     expect(result.stderr).not.toContain("relaunching");
   });
 
-  it("stops when no gated recovery request arrives before the deadline", () => {
-    const script = [
-      "set -uo pipefail",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
-      "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=2",
-      "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
-      "sleep_count=0",
-      'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; }',
-      'hermes_gateway_recovery_request_value() { printf "%s\\n" absent; }',
-      "hermes_recovery_requester_start_time() { return 1; }",
-      "sleep() { sleep_count=$((sleep_count + 1)); }",
-      extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
-      extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
-      "status=0",
-      "wait_for_hermes_gateway_recovery_request || status=$?",
-      'printf "status=%s sleeps=%s\\n" "$status" "$sleep_count"',
-    ].join("\n");
+  it.each(["absent", `v2 ${"d".repeat(64)} 321 654`])(
+    "stops when a current gated recovery request never arrives (%s)",
+    (request) => {
+      const script = [
+        "set -uo pipefail",
+        "readonly HERMES_GATEWAY_RECOVERY_REQUESTER_EXIT_ATTEMPTS=30",
+        "readonly HERMES_GATEWAY_RECOVERY_REQUEST_WAIT_SECONDS=2",
+        "readonly HERMES_GATEWAY_RECOVERY_TRANSPORT_SETTLE_SECONDS=1",
+        "sleep_count=0",
+        'publish_hermes_gateway_recovery_generation() { HERMES_GATEWAY_RECOVERY_GENERATION="$(printf c%.0s {1..64})"; }',
+        `hermes_gateway_recovery_request_value() { printf "%s\\n" '${request}'; }`,
+        "hermes_recovery_requester_start_time() { return 1; }",
+        "sleep() { sleep_count=$((sleep_count + 1)); }",
+        extractShellFunction(source, "wait_for_hermes_recovery_requester_exit"),
+        extractShellFunction(source, "wait_for_hermes_gateway_recovery_request"),
+        "status=0",
+        "wait_for_hermes_gateway_recovery_request || status=$?",
+        'printf "status=%s sleeps=%s\\n" "$status" "$sleep_count"',
+      ].join("\n");
 
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5_000 });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("status=1 sleeps=2");
-    expect(result.stderr).toContain("recovery request timed out after 2 seconds");
-    expect(result.stderr).toContain("nemoclaw <name> stop");
-    expect(result.stderr).toContain("nemoclaw <name> start");
-    expect(result.stderr).not.toContain("relaunching");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("status=1 sleeps=2");
+      expect(result.stderr).toContain("recovery request timed out after 2 seconds");
+      expect(result.stderr).toContain("nemoclaw <name> stop");
+      expect(result.stderr).toContain("nemoclaw <name> start");
+      expect(result.stderr).not.toContain("relaunching");
+    },
+  );
 
   it("rejects an untrusted recovery request marker", () => {
     const script = [

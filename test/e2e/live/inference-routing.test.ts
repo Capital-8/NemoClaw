@@ -3,6 +3,10 @@
 
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { registeredCompatibleResponseCommand } from "../fixtures/registered-inference.ts";
+import {
+  INFERENCE_CURL_HTTP_CODE_MARKER,
+  isExpectedMcpCurlPolicyDenial,
+} from "../fixtures/curl-policy-denial.ts";
 import fs from "node:fs";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { hostedCredentialScanCommand } from "./inference-routing-credential-scan.ts";
@@ -483,7 +487,7 @@ async function runRuntimeIdentityE2EScenario(
       tsxPath,
       "--input-type=module",
       "--eval",
-      `const { main } = await import(${JSON.stringify(runnerPath)}); const { observeBlueprintNativeInference } = await import(${JSON.stringify(path.join(REPO_ROOT, "src/lib/blueprint-runner.ts"))}); await main(["apply"], { runtimeIdentityProfilePolicy: ${JSON.stringify(runtimeIdentityProfilePolicy)}, nativeInferenceObserver: observeBlueprintNativeInference });`,
+      `const { main } = await import(${JSON.stringify(runnerPath)}); const { default: hostRunner } = await import(${JSON.stringify(path.join(REPO_ROOT, "src/lib/blueprint-runner.ts"))}); const { observeBlueprintNativeInference } = hostRunner; await main(["apply"], { runtimeIdentityProfilePolicy: ${JSON.stringify(runtimeIdentityProfilePolicy)}, nativeInferenceObserver: observeBlueprintNativeInference });`,
     ],
     {
       artifactName: `${artifactPrefix}-runtime-identity-apply`,
@@ -986,10 +990,10 @@ test(
         timeoutMs: 90_000,
       },
     );
-    expect(rebind.exitCode, resultText(rebind)).toBe(56);
-    expect(resultText(rebind)).toMatch(
-      /(?:HTTP\/1\.[01] 403|CONNECT tunnel failed, response 403)/u,
-    );
+    expect(
+      isExpectedMcpCurlPolicyDenial(rebind, INFERENCE_CURL_HTTP_CODE_MARKER),
+      resultText(rebind),
+    ).toBe(true);
     expect(fake.requests()).toHaveLength(rebindRequestOffset);
     await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
     progress.phase("verify private redirect rejection");
@@ -1014,9 +1018,11 @@ test(
       },
     );
     const redirectText = resultText(redirect);
-    expect(redirect.exitCode, redirectText).toBe(0);
-    expect(redirectText).toMatch(/HTTP\/1\.[01] 302[\s\S]*HTTP\/1\.[01] 403/u);
-    expect(redirectText).toContain("policy_denied");
+    expect(
+      isExpectedMcpCurlPolicyDenial(redirect, INFERENCE_CURL_HTTP_CODE_MARKER, "302"),
+      redirectText,
+    ).toBe(true);
+    expect(redirectText).toMatch(/HTTP\/1\.[01] 302/u);
     expect(redirectText.toLowerCase()).toContain(`location: ${redirectTarget}`.toLowerCase());
     expect(placeholder.requests()).toHaveLength(privateTargetRequestOffset);
   },

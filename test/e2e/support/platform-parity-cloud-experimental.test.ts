@@ -222,7 +222,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
             "HOSTILE_PROFILE_MARKER=/fixture-marker",
             "fail() { exit 1; }",
             'privileged_exec() { printf "%s\\n" "$ROOT_OUTPUT"; return "$ROOT_STATUS"; }',
-            'openshell() { return "$USER_STATUS"; }',
+            'openshell() { test "$5" = --no-login-shell || return 63; return "$USER_STATUS"; }',
             block,
           ].join("\n"),
         ],

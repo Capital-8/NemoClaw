@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restorationScript } from "../live/openclaw-restoration.ts";
+import * as fakeInference from "../fixtures/fake-openai-compatible.ts";
 
 const captured = vi.hoisted(() => ({ test: vi.fn() }));
 vi.mock("../fixtures/e2e-test.ts", async () => ({
@@ -283,4 +284,184 @@ exit 2
   ])("rejects plugin %s despite command success", (_name, pluginJson) => {
     expect(runRestoration({ PLUGIN_JSON: pluginJson })).toEqual({ status: 1, stdout: "" });
   });
+});
+
+describe("GPU double-onboard gateway cleanup", () => {
+  it.each([
+    {
+      stopFails: false,
+      cliAvailable: true,
+      expected: "install boundary",
+      order: ["stop", "remove", "install"],
+    },
+    { stopFails: true, cliAvailable: true, expected: "owned stop failed", order: ["stop"] },
+    {
+      stopFails: false,
+      cliAvailable: false,
+      expected: "install boundary",
+      order: ["stop", "install"],
+    },
+  ])(
+    "preserves cleanup order and stop failure (failure=$stopFails)",
+    async ({ stopFails, cliAvailable, expected, order }) => {
+      vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "e2e-gpu-cleanup");
+      vi.stubEnv("NEMOCLAW_CLI_BIN", "fixture-cli");
+      vi.resetModules();
+      captured.test.mockClear();
+      await import("../live/gpu-double-onboard.test.ts");
+      const run = captured.test.mock.calls[0]![2] as (fixtures: object) => Promise<void>;
+      const observed: string[] = [];
+      const success = { exitCode: 0, stdout: "", stderr: "", signal: null, timedOut: false };
+      const stopGatewayRuntime = vi.fn(async () => {
+        observed.push("stop");
+        await (stopFails ? Promise.reject(new Error("owned stop failed")) : Promise.resolve());
+      });
+      const cleanupGatewayRegistration = vi.fn(async () => {
+        observed.push("remove");
+      });
+      const command = vi.fn(
+        async (_command: string, _args: string[], options: { artifactName: string }) => {
+          const actions: Record<string, () => never> = {
+            "phase-1-install-ollama": () => {
+              observed.push("install");
+              throw new Error("install boundary");
+            },
+          };
+          return actions[options.artifactName]?.() ?? success;
+        },
+      );
+      const openshell = vi.fn(async () => success);
+      const trackDisposable = vi.fn((_name: string, _cleanup: () => Promise<void>) => undefined);
+      await expect(
+        run({
+          artifacts: { target: { declare: vi.fn() } },
+          cleanup: { trackDisposable, trackSandbox: vi.fn() },
+          host: {
+            command,
+            cleanupGatewayRegistration,
+            openshellCommandPath: "openshell",
+            isCommandAvailable: vi.fn(async () => cliAvailable),
+          },
+          lifecycle: { stopGatewayRuntime },
+          progress: { phase: vi.fn() },
+          runtimeProvider: { requireAvailable: vi.fn() },
+          sandbox: { openshell },
+          skip: vi.fn(),
+        }),
+      ).rejects.toThrow(expected);
+      expect(observed).toEqual(order);
+      expect(stopGatewayRuntime).toHaveBeenCalledExactlyOnceWith({
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw",
+          NEMOCLAW_SANDBOX_NAME: "e2e-gpu-cleanup",
+        }),
+        userServiceMode: "permanent",
+      });
+      expect(cleanupGatewayRegistration.mock.calls).toHaveLength(
+        Number(!stopFails && cliAvailable),
+      );
+      expect(openshell.mock.calls).toEqual([
+        [["sandbox", "delete", "e2e-gpu-cleanup"], expect.any(Object)],
+      ]);
+      observed.length = 0;
+      const terminalCleanup = trackDisposable.mock.calls.find(
+        ([name]) => name === "stop GPU gateway runtime before removing its state",
+      )![1];
+      const outcomes = await Promise.allSettled([terminalCleanup()]);
+      expect(outcomes[0]!.status).toBe(stopFails ? "rejected" : "fulfilled");
+      expect(observed).toEqual(order.filter((step) => step !== "install"));
+    },
+  );
+});
+
+describe("Messaging token rotation gateway cleanup", () => {
+  it.each([
+    {
+      stopFails: false,
+      cliAvailable: true,
+      expected: "install boundary",
+      order: ["stop", "remove", "install"],
+    },
+    { stopFails: true, cliAvailable: true, expected: "owned stop failed", order: ["stop"] },
+    {
+      stopFails: false,
+      cliAvailable: false,
+      expected: "install boundary",
+      order: ["stop", "install"],
+    },
+  ])(
+    "preserves runtime cleanup before registration (failure=$stopFails, CLI=$cliAvailable)",
+    async ({ stopFails, cliAvailable, expected, order }) => {
+      vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "e2e-token-cleanup");
+      vi.resetModules();
+      captured.test.mockClear();
+      const server = await import("../fixtures/fake-openai-compatible.ts");
+      vi.spyOn(server, "startFakeOpenAiCompatibleServer").mockResolvedValue({
+        baseUrl: "http://host.openshell.internal:19000/v1",
+        logFile: "/fixture/fake-server.log",
+        requestsFile: "/fixture/fake-requests.json",
+        requests: () => [],
+        environmentKeys: () => [],
+        close: async () => undefined,
+      } satisfies Awaited<ReturnType<typeof fakeInference.startFakeOpenAiCompatibleServer>>);
+      await import("../live/token-rotation.test.ts");
+      const run = captured.test.mock.calls[0]![2] as (fixtures: object) => Promise<void>;
+      const observed: string[] = [];
+      const success = { exitCode: 0, stdout: "", stderr: "", signal: null, timedOut: false };
+      const stopGatewayRuntime = vi.fn(async () => {
+        observed.push("stop");
+        await (stopFails ? Promise.reject(new Error("owned stop failed")) : Promise.resolve());
+      });
+      const cleanupGatewayRegistration = vi.fn(async () => {
+        observed.push("remove");
+      });
+      const command = vi.fn(
+        async (_command: string, _args: string[], options: { artifactName: string }) => {
+          const actions: Record<string, () => never> = {
+            "phase-0-install-token-a": () => {
+              observed.push("install");
+              throw new Error("install boundary");
+            },
+          };
+          return actions[options.artifactName]?.() ?? success;
+        },
+      );
+      const trackGateway = vi.fn(
+        (
+          _owner: { cleanupGatewayRegistration: () => Promise<void> },
+          _name: string,
+          _options: object,
+        ) => undefined,
+      );
+      await expect(
+        run({
+          artifacts: { target: { declare: vi.fn() } },
+          cleanup: { trackGateway, trackDisposable: vi.fn(), trackSandbox: vi.fn() },
+          host: {
+            command,
+            cleanupGatewayRegistration,
+            openshellCommandPath: "openshell",
+            isCommandAvailable: vi.fn(async () => cliAvailable),
+          },
+          lifecycle: { stopGatewayRuntime },
+          progress: { phase: vi.fn() },
+          runtimeProvider: { requireAvailable: vi.fn() },
+          sandbox: {},
+        }),
+      ).rejects.toThrow(expected);
+      expect(observed).toEqual(order);
+      expect(stopGatewayRuntime).toHaveBeenCalledExactlyOnceWith({
+        env: expect.any(Object),
+        userServiceMode: "permanent",
+      });
+      expect(cleanupGatewayRegistration.mock.calls).toHaveLength(
+        Number(!stopFails && cliAvailable),
+      );
+      observed.length = 0;
+      const terminal = trackGateway.mock.calls[0]![0].cleanupGatewayRegistration;
+      const outcomes = await Promise.allSettled([terminal()]);
+      expect(outcomes[0]!.status).toBe(stopFails ? "rejected" : "fulfilled");
+      expect(observed).toEqual(order.filter((step) => step !== "install"));
+    },
+  );
 });

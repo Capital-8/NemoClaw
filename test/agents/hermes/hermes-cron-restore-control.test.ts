@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  chownSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -26,6 +27,9 @@ const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
 const CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:";
 const LIFECYCLE_HARNESS = String.raw`
 import importlib.util
+import contextlib
+import io
+import json
 import os
 import sys
 import threading
@@ -387,6 +391,42 @@ try:
         module._wait_for_release_disposition = fail_release
         fail_directory_sync_on(3)
         module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario.startswith("owner-observation-"):
+        original_open = module.os.open
+        def deny_generation(path, *args, **kwargs):
+            if Path(path) == module.GATEWAY_RECOVERY_WAITING_PATH:
+                raise PermissionError(13, "simulated root without DAC override")
+            return original_open(path, *args, **kwargs)
+        module.os.open = deny_generation
+        try:
+            module.prepare_recovery()
+            raise AssertionError("root read unexpectedly succeeded")
+        except module.ControlError as error:
+            assert error.code == "gateway-generation-owner-read-required"
+        finally:
+            module.os.open = original_open
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            module.observe_recovery_generation()
+        assert not module.GATEWAY_RECOVERY_REQUEST_PATH.exists()
+        observation = output.getvalue()
+        def replace_generation():
+            staged = module.GATEWAY_RECOVERY_WAITING_PATH.with_suffix(".new")
+            staged.write_text("v1 " + "c" * 64 + "\n")
+            os.chmod(staged, 0o600)
+            staged.replace(module.GATEWAY_RECOVERY_WAITING_PATH)
+        mutations = {
+            "owner-observation-valid": lambda: None,
+            "owner-observation-replaced": replace_generation,
+            "owner-observation-modified": lambda: module.GATEWAY_RECOVERY_WAITING_PATH.write_text("v1 " + "d" * 64 + "\n"),
+            "owner-observation-mode": lambda: os.chmod(module.GATEWAY_RECOVERY_WAITING_PATH, 0o644),
+            "owner-observation-missing": lambda: module.GATEWAY_RECOVERY_WAITING_PATH.unlink(),
+            "owner-observation-invalid-nonce": lambda: None,
+        }
+        mutations[scenario]()
+        observation = observation.replace('"generation":"c', '"generation":"Z') if scenario == "owner-observation-invalid-nonce" else observation
+        module.os.open = deny_generation
+        module.prepare_recovery(observation)
     elif scenario == "prepare-handoff-world-writable":
         module._write_release_recovery("a" * 32, RECOVERY_STARTED_AT_NS)
         handoff = module.GATEWAY_RECOVERY_REQUEST_PATH.parent
@@ -594,6 +634,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
 
   beforeEach(() => {
     root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-cron-helper-"));
+    // macOS inherits the temp parent's group; controller fixtures require the executing identity.
+    chownSync(root, process.getuid!(), process.getgid!());
     hermesHome = path.join(root, ".hermes");
     mkdirSync(hermesHome);
   });
@@ -648,6 +690,12 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "drain-unlink-sync-failure"
       | "recovery-unlink-sync-failure"
       | "rollback-publication-sync-failure"
+      | "owner-observation-valid"
+      | "owner-observation-replaced"
+      | "owner-observation-modified"
+      | "owner-observation-mode"
+      | "owner-observation-missing"
+      | "owner-observation-invalid-nonce"
       | "prepare-handoff-world-writable"
       | "prepare-handoff-symlink"
       | "prepare-recovery-only"
@@ -1155,6 +1203,30 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain('"disposition":"not-required"');
     const requestPath = path.join(root, "recovery-run", "hermes-gateway-recovery-request");
     expect(readFileSync(requestPath, "utf8")).toBe(`v2 ${"e".repeat(64)} 321 654\n`);
+  });
+
+  it("reads recovery as its owner while keeping request publication with the root controller", () => {
+    const result = runLifecycle("owner-observation-valid");
+    expect(result.status, result.stderr).toBe(0);
+    expect(
+      readFileSync(path.join(root, "recovery-run", "hermes-gateway-recovery-request"), "utf8"),
+    ).toBe(`v2 ${"c".repeat(64)} 321 654\n`);
+    expect(lstatSync(path.join(root, "run", "hermes-gateway-recovery-waiting")).mode & 0o777).toBe(
+      0o600,
+    );
+  });
+
+  it.each([
+    "owner-observation-replaced",
+    "owner-observation-modified",
+    "owner-observation-mode",
+    "owner-observation-missing",
+    "owner-observation-invalid-nonce",
+  ] as const)("refuses %s before publishing recovery authority", (scenario) => {
+    const result = runLifecycle(scenario);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("generation changed after observation");
+    expect(result.stdout).toContain("RECOVERY_REQUEST:absent");
   });
 
   it("reports false when no gateway recovery generation appears", () => {

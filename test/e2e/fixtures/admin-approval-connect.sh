@@ -69,11 +69,17 @@ if sys.argv[2] == 'cron-run':
             reason=run.get('errorReason')
             reason=reason if isinstance(reason, str) and reason in reasons else 'unavailable'
             print(f'ADMIN_CRON_ERROR_REASON={reason}', file=sys.stderr)
+            duration=run.get('durationMs')
+            # Bound the terminal runtime only; exclude booleans and arbitrary metadata.
+            if type(duration) is int and 0 <= duration <= 86400000:
+                print(f'ADMIN_CRON_DURATION_MS={duration}', file=sys.stderr)
             diagnostics=run.get('diagnostics')
             entries=diagnostics.get('entries') if isinstance(diagnostics, dict) else None
             sources=('cron-preflight', 'cron-setup', 'model-preflight', 'agent-run', 'tool', 'exec', 'delivery')
             # Observe fixed error-text signatures, not provider or tool causality.
             messages={
+                'cron isolated agent run aborted': 'message-agent-aborted',
+                'cron: job execution timed out': 'message-cron-deadline',
                 'LLM request timed out.': 'message-llm-timeout',
                 'LLM request failed.': 'message-llm-failed',
                 'LLM request failed with an unknown error.': 'message-llm-unknown',

@@ -5,6 +5,8 @@ import {
   recordedRegisteredInferenceProviderAttachment,
   registeredInferenceProviderRevision,
 } from "../../inference/native-provider/registered";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/profile";
+import { gatewayReachableCompatibleEndpointUrl } from "../../inference/native-local/eligibility";
 import type { SandboxEntry } from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import {
@@ -67,6 +69,36 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
     ): Promise<ResumeProviderRecoveryResult> {
       const recorded =
         provider && selection?.sandboxName ? deps.getSandbox?.(selection.sandboxName) : undefined;
+      if (
+        provider === "compatible-endpoint" &&
+        recorded?.nativeLocalProviderAttachment !== undefined
+      ) {
+        const expected = normalizeNativeLocalProviderAttachment(
+          recorded.nativeLocalProviderAttachment,
+        );
+        if (
+          !expected ||
+          expected.gatewayName !== gatewayName ||
+          expected.sandboxName !== selection?.sandboxName ||
+          expected.provider !== provider ||
+          expected.provider !== recorded.provider ||
+          (expected.agent ?? "langchain-deepagents-code") !== recorded.agent ||
+          expected.endpointUrl !==
+            gatewayReachableCompatibleEndpointUrl(provider, selection?.endpointUrl) ||
+          (recorded.credentialEnv ?? null) !== (credentialEnv ?? null)
+        )
+          throw new Error(
+            "Native local provider resume selection does not match its recorded binding.",
+          );
+        // Native setup verifies the immutable gateway provider and retained credential.
+        // The logical provider name is not the sandbox-owned provider name.
+        return {
+          forceInferenceSetup: true,
+          credentialEnv: credentialEnv ?? null,
+          nativeCustomSetup: true,
+          nativeLocalSetup: true,
+        };
+      }
       if (recorded?.registeredInferenceProviderAttachment !== undefined) {
         const expected = recordedRegisteredInferenceProviderAttachment(recorded);
         if (

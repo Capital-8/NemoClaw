@@ -24,6 +24,10 @@ const {
   setNativeNvidiaProviderAuthority,
 } = require("../state/registry/native-provider-authority");
 const {
+  getNativeLocalProviderAuthority,
+  setNativeLocalProviderAuthority,
+} = require("../state/registry/native-local-provider-authority");
+const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
@@ -399,6 +403,8 @@ function setupInferenceProviderDeps(runOpenshell) {
   return {
     providerExistsInGateway,
     providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeLocalProviderAuthority,
+    setNativeLocalProviderAuthority,
     getNativeNvidiaProviderAuthority,
     getNativeHostedProviderAuthority,
     setNativeHostedProviderAuthority,

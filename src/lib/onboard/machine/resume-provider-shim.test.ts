@@ -7,6 +7,7 @@ vi.mock("../../credentials/store", () => ({
   resolveProviderCredential: vi.fn(() => null),
 }));
 
+import { nativeLocalSetupReceipt } from "../../../../test/support/native-local-setup-harness";
 import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import { customNativeProvider } from "../../inference/native-provider/custom";
 import { createResumeProviderShim } from "./resume-provider-shim";
@@ -301,5 +302,122 @@ it.each(["retained", "recreated", "replaced", "wrong-endpoint"] as const)(
     expect(f.adapter.attachProvider).not.toHaveBeenCalled();
     expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
     expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["openclaw", "hermes"] as const)(
+  "resumes %s native local credentials through the exact recorded provider",
+  async (agent) => {
+    const receipt = nativeLocalSetupReceipt({
+      agent,
+      provider: "compatible-endpoint",
+      gatewayName: "gateway-west",
+      sandboxName: "alpha",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      authMode: "authenticated",
+    });
+    const providerExistsInGateway = vi.fn(() => false);
+    const replaceNamedCredential = vi.fn();
+    const shim = createResumeProviderShim({
+      getSandbox: () => ({
+        agent,
+        provider: receipt.provider,
+        credentialEnv: "TEAM_KEY",
+        nativeLocalProviderAttachment: receipt,
+      }),
+      isNonInteractive: () => true,
+      providerExistsInGateway,
+      isRoutedInferenceProvider: () => false,
+      replaceNamedCredential,
+    });
+    await expect(
+      shim.ensureResumeProviderReady("gateway-west", "compatible-endpoint", "TEAM_KEY", undefined, {
+        sandboxName: "alpha",
+        endpointUrl: "http://localhost:8000/v1",
+      }),
+    ).resolves.toEqual({
+      forceInferenceSetup: true,
+      credentialEnv: "TEAM_KEY",
+      nativeCustomSetup: true,
+      nativeLocalSetup: true,
+    });
+    expect(providerExistsInGateway).not.toHaveBeenCalled();
+    expect(replaceNamedCredential).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  {
+    gatewayName: "other",
+    sandboxName: "alpha",
+    provider: "compatible-endpoint",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "TEAM_KEY",
+  },
+  {
+    gatewayName: "gateway-west",
+    sandboxName: "other",
+    provider: "compatible-endpoint",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "TEAM_KEY",
+  },
+  {
+    gatewayName: "gateway-west",
+    sandboxName: "alpha",
+    provider: "compatible-endpoint",
+    recordedProvider: "vllm-local",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "TEAM_KEY",
+  },
+  {
+    gatewayName: "gateway-west",
+    sandboxName: "alpha",
+    provider: "compatible-endpoint",
+    endpointUrl: "http://host.openshell.internal:8001/v1",
+    credentialEnv: "TEAM_KEY",
+  },
+  {
+    gatewayName: "gateway-west",
+    sandboxName: "alpha",
+    provider: "compatible-endpoint",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    credentialEnv: "OTHER_KEY",
+  },
+])(
+  "refuses changed native local resume selection before legacy recovery: %j",
+  async (selection) => {
+    const receipt = nativeLocalSetupReceipt({
+      agent: "openclaw",
+      provider: "compatible-endpoint",
+      gatewayName: "gateway-west",
+      sandboxName: "alpha",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      authMode: "authenticated",
+    });
+    const providerExistsInGateway = vi.fn(() => true);
+    const replaceNamedCredential = vi.fn();
+    const shim = createResumeProviderShim({
+      getSandbox: () => ({
+        agent: "openclaw",
+        provider: selection.recordedProvider ?? receipt.provider,
+        credentialEnv: "TEAM_KEY",
+        nativeLocalProviderAttachment: receipt,
+      }),
+      isNonInteractive: () => true,
+      providerExistsInGateway,
+      isRoutedInferenceProvider: () => false,
+      replaceNamedCredential,
+    });
+    await expect(
+      shim.ensureResumeProviderReady(
+        selection.gatewayName,
+        selection.provider,
+        selection.credentialEnv,
+        undefined,
+        selection,
+      ),
+    ).rejects.toThrow("does not match its recorded binding");
+    expect(providerExistsInGateway).not.toHaveBeenCalled();
+    expect(replaceNamedCredential).not.toHaveBeenCalled();
   },
 );

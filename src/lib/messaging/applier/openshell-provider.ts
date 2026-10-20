@@ -137,7 +137,7 @@ export async function applyCredentialsAtOpenShell(
       state === "collision" &&
       observed.ok &&
       (definition.profile?.credentialFamily ||
-        (observed.value.type === "nemoclaw-mcp-v1" &&
+        (/^nemoclaw-mcp-v1(?:-[a-f0-9]{32})?$/u.test(observed.value.type) &&
           requested.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) ||
         (observed.value.type !== requested.providerType &&
           matchesCredentialFamilyProfileType(

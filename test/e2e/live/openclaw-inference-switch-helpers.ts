@@ -15,6 +15,51 @@ import {
   type FakeOpenAiCompatibleServerOptions,
 } from "../fixtures/fake-openai-compatible.ts";
 
+// PID/start time survives execve. Native RPC status includes the authenticated hello boot ID.
+export async function readOpenClawBootId(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  options: { env: NodeJS.ProcessEnv; artifactName: string },
+): Promise<string | null> {
+  const result = await sandbox.exec(
+    sandboxName,
+    [
+      "openclaw",
+      "gateway",
+      "status",
+      "--port",
+      "18789",
+      "--require-rpc",
+      "--json",
+      "--timeout",
+      "10000",
+    ],
+    { ...options, timeoutMs: 20_000 },
+  );
+  if (
+    result.exitCode !== 0 ||
+    result.timedOut ||
+    result.signal !== null ||
+    result.stderr.trim() !== ""
+  )
+    return null;
+  try {
+    const document = JSON.parse(result.stdout) as {
+      rpc?: { ok?: unknown; kind?: unknown; server?: { bootId?: unknown } };
+    } | null;
+    const rpc = document?.rpc;
+    const bootId = rpc?.server?.bootId;
+    return rpc?.ok === true &&
+      rpc.kind === "read" &&
+      typeof bootId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(bootId)
+      ? bootId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface OpenClawPostSwitchInferenceAttempt {
   exitCode: number | null;
   httpStatus: string;

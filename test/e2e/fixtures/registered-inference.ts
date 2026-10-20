@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { INFERENCE_CURL_DIAGNOSTIC_SCRIPT } from "./curl-policy-denial.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -51,7 +52,7 @@ export function registeredCompatibleChatCommand(
   );
 }
 
-/** Keep HTTP error responses visible for the DNS and redirect denial checks. */
+/** Keep HTTP responses and native connect denials visible without outgoing headers. */
 export function registeredCompatibleResponseCommand(
   sandboxName: string,
   model: string,
@@ -60,8 +61,8 @@ export function registeredCompatibleResponseCommand(
 ): [string, ...string[]] {
   const command = registeredCompatibleChatCommand(sandboxName, model, payload);
   command[2] = command[2].replace(
-    "curl -fsS",
-    `curl -sS --include${followRedirect ? " --location --post302 --max-redirs 3" : ""}`,
+    "exec curl -fsS",
+    `${INFERENCE_CURL_DIAGNOSTIC_SCRIPT}; curl -sS --include${followRedirect ? " --location --post302 --max-redirs 3" : ""}`,
   );
   return command;
 }

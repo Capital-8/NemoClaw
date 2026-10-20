@@ -14,7 +14,12 @@ import {
   createInitialHermesInferenceRoute,
   type InitialHermesInferenceRouteDeps,
 } from "../../onboard/hermes/initial-inference-route";
-import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privileged-exec";
+import {
+  isDirectSandboxFallbackUnavailableError,
+  executePrivilegedSandboxCommand as executeProviderCommand,
+  resolvePrivilegedSandboxTarget,
+} from "../../sandbox/privileged-exec";
+import { managedImageRuntimeIdentity } from "../../onboard/managed-image/agents";
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
   checkAndRecoverSandboxProcesses,
@@ -701,6 +706,65 @@ function isAmbiguousPrepareRecoveryTransportFailure(error: unknown): boolean {
   );
 }
 
+function prepareHermesRecoveryWithOwnerObservation(sandboxName: string): string {
+  const expectedResourceHandle = resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+  const owner = managedImageRuntimeIdentity("hermes");
+  const command = [HERMES_PYTHON, "-I", HERMES_CRON_CONTROL];
+  const options = {
+    expectedResourceHandle,
+    sanitizeEnvironment: true,
+    timeout: CONTROL_TIMEOUT_MS,
+    maxOutputBytes: 2048,
+  } as const;
+  // Container root has no DAC override in the native workload. Keep the read
+  // with the home owner and the drain/request authority with the root controller.
+  const observed = executeProviderCommand(
+    sandboxName,
+    [...command, "observe-recovery-generation"],
+    { ...options, sandboxUser: `${owner.uid}:${owner.gid}` },
+  );
+  if (
+    observed.status !== 0 ||
+    observed.error ||
+    observed.signal ||
+    observed.stdout.length === 0 ||
+    observed.stdout.length > 2048 ||
+    observed.stderr.length > 0
+  ) {
+    throw new Error("Hermes gateway recovery generation could not be observed by its owner");
+  }
+  // The opaque observation stays off argv. The controller rechecks the inode
+  // metadata; the supervisor still requires its current nonce and requester PID.
+  let prepared = executeProviderCommand(
+    sandboxName,
+    [...command, "prepare-recover", "--generation-observation-stdin"],
+    { ...options, input: observed.stdout },
+  );
+  if (
+    prepared.status === 1 &&
+    !prepared.error &&
+    !prepared.signal &&
+    prepared.stdout.length === 0 &&
+    prepared.stderr.length === 0
+  ) {
+    // Publication can finish before Docker delivers its receipt. Reconcile once
+    // through the idempotent root action, without replaying an old observation.
+    prepared = executeProviderCommand(sandboxName, [...command, "prepare-recover"], options);
+  }
+  if (prepared.error || prepared.signal) {
+    throw new Error("Hermes cron prepare-recover transport was unavailable");
+  }
+  if (prepared.status !== 0) {
+    throw new HermesCronRestoreControlFailure(
+      "prepare-recover",
+      prepared.status ?? 1,
+      prepared.stdout.toString("utf8"),
+      prepared.stderr.toString("utf8"),
+    );
+  }
+  return prepared.stdout.toString("utf8");
+}
+
 export function prepareHermesCronRestoreRecovery(
   sandboxName: string,
 ): HermesCronRestorePreparationOutcome {
@@ -709,6 +773,14 @@ export function prepareHermesCronRestoreRecovery(
     stdout = executeCronRestoreControl(sandboxName, "prepare-recover");
   } catch (error) {
     if (isLegacyCronRestoreControl(error, "prepare-recover")) return "unsupported";
+    if (
+      error instanceof HermesCronRestoreControlFailure &&
+      error.controlCode === "gateway-generation-owner-read-required"
+    ) {
+      return parseCronRestorePreparationReceipt(
+        prepareHermesRecoveryWithOwnerObservation(sandboxName),
+      );
+    }
     if (!isAmbiguousPrepareRecoveryTransportFailure(error)) throw error;
 
     // The controller publishes its recovery request before it exits. Under

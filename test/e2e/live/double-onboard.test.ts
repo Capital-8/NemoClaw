@@ -17,6 +17,11 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  INFERENCE_CURL_DIAGNOSTIC_SCRIPT,
+  INFERENCE_CURL_HTTP_CODE_MARKER,
+  isExpectedMcpCurlPolicyDenial,
+} from "../fixtures/curl-policy-denial.ts";
 
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SANDBOX_A = process.env.NEMOCLAW_DOUBLE_ONBOARD_SANDBOX_A ?? "e2e-double-a";
@@ -534,7 +539,11 @@ test(
     const denied = siblingInference
       ? await sandbox.exec(
           SANDBOX_A,
-          ["curl", "-sS", "--max-time", "15", "http://host.openshell.internal:11434/v1/models"],
+          [
+            "sh",
+            "-c",
+            `${INFERENCE_CURL_DIAGNOSTIC_SCRIPT}; curl -sS --max-time 15 http://host.openshell.internal:11434/v1/models`,
+          ],
           {
             artifactName: "phase-4-sibling-native-endpoint-denial",
             env: commandEnv(),
@@ -542,7 +551,11 @@ test(
           },
         )
       : null;
-    denied && expect(JSON.parse(denied.stdout)).toMatchObject({ error: "policy_denied" });
+    denied &&
+      expect(
+        isExpectedMcpCurlPolicyDenial(denied, INFERENCE_CURL_HTTP_CODE_MARKER),
+        resultText(denied),
+      ).toBe(true);
 
     siblingInference &&
       progress.phase("verify sibling native endpoint accepts authenticated requests");
@@ -553,7 +566,7 @@ test(
           [
             "sh",
             "-lc",
-            `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; curl -fsS --max-time 15 http://host.openshell.internal:11434/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '{"model":"test-model","messages":[{"role":"user","content":"ping"}]}'`,
+            `${NATIVE_LOCAL_AUTH_HEADER_SCRIPT}; ${INFERENCE_CURL_DIAGNOSTIC_SCRIPT}; curl -fsS --max-time 15 http://host.openshell.internal:11434/v1/chat/completions -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data '{"model":"test-model","messages":[{"role":"user","content":"ping"}]}'`,
           ],
           {
             artifactName: "phase-4-sibling-native-endpoint-authenticated-post",

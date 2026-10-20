@@ -78,10 +78,8 @@ NODE
 }
 
 dcode_identity() {
-  # Invoke dcode by absolute path: `openshell sandbox exec -- dcode ...` runs
-  # without a login shell, so /usr/local/bin is not on PATH and a bare `dcode`
-  # resolves to "command not found". The image installs the launcher at
-  # /usr/local/bin/dcode (see agents/langchain-deepagents-code/Dockerfile).
+  # Use the image-owned absolute launcher path so identity checks do not
+  # depend on the shell PATH.
   openshell sandbox exec --name "$SANDBOX_NAME" -- /usr/local/bin/dcode identity 2>&1
 }
 
@@ -272,7 +270,9 @@ for login_profile in "$PERSONAL_LOGIN_PROFILE" "$HOSTILE_LOGIN_FALLBACK"; do
   fi
   printf '%s\n' "$root_output" | grep -Fq 'setpriv: setresuid failed: Operation not permitted' \
     || fail "root entrypoint failed without the expected UID-transition denial"
-  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+  # The runtime entrypoint has no login shell. Preserve that boundary here so
+  # a transport login cannot run the hostile profile before the entrypoint.
+  openshell sandbox exec --name "$SANDBOX_NAME" --no-login-shell -- \
     /usr/bin/env HOME=/sandbox BASH_ENV="$HOSTILE_SHELL_ENV" ENV="$HOSTILE_SHELL_ENV" \
     /usr/local/bin/nemoclaw-start /bin/sh -c \
     "test \"\$(id -un)\" = sandbox && test ! -e \"\$1\"" sh "$HOSTILE_PROFILE_MARKER" \

@@ -202,6 +202,8 @@
     {
       "live": "test/e2e/live/inference-routing.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/curl-policy-denial.ts",
+        "test/e2e/fixtures/registered-inference.ts",
         "test/e2e/live/cloudflared-prerequisite.ts",
         "test/e2e/live/https-pin-compatible-server.ts",
         "test/e2e/live/runtime-identity-oauth-server.ts",
@@ -211,6 +213,7 @@
         "test/e2e/fixtures/admin-approval-connect.sh"
       ],
       "fast": [
+        "test/e2e/support/mcp-bridge-sandbox.test.ts",
         "src/lib/inference/native-local.test.ts",
         "test/onboarding/onboard-host-local-inference-routing.test.ts",
         "test/agents/deepagents/langchain-deepagents-code-config.test.ts",
@@ -615,7 +618,10 @@
     },
     {
       "live": "test/e2e/live/double-onboard.test.ts",
+      "liveSources": ["test/e2e/fixtures/curl-policy-denial.ts"],
       "fast": [
+        "test/e2e/support/mcp-bridge-sandbox.test.ts",
+        "test/e2e/support/registered-inference.test.ts",
         "test/cli/sandbox-status-text.test.ts",
         "src/lib/onboard/created-sandbox-finalization.test.ts",
         "src/lib/onboard/gateway-reuse.test.ts",
@@ -765,6 +771,7 @@
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/curl-policy-denial.ts",
         "test/e2e/fixtures/owned-sandbox-cleanup.ts",
         "test/e2e/fixtures/routed-private-relay.ts",
         "test/e2e/live/dns-rebinding-hosts-fixture.ts",

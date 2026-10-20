@@ -15,28 +15,28 @@
     "testFileCount": 77,
     "liveFileCount": 186,
     "direct": {
-      "expectCalls": 1242,
-      "matcherAssertions": 1225,
+      "expectCalls": 1240,
+      "matcherAssertions": 1223,
       "nodeAssertions": 108,
       "namedAssertionHelpers": 417,
       "failCalls": 0,
       "throwGuards": 50,
       "objectFieldAssertions": 182,
-      "assertionPoints": 1982,
-      "generatedProbeBlocks": 83,
-      "generatedProbeConditions": 212
+      "assertionPoints": 1980,
+      "generatedProbeBlocks": 82,
+      "generatedProbeConditions": 211
     },
     "unique": {
-      "expectCalls": 1661,
-      "matcherAssertions": 1639,
+      "expectCalls": 1659,
+      "matcherAssertions": 1637,
       "nodeAssertions": 131,
       "namedAssertionHelpers": 659,
       "failCalls": 1,
       "throwGuards": 519,
       "objectFieldAssertions": 254,
-      "assertionPoints": 3203,
-      "generatedProbeBlocks": 194,
-      "generatedProbeConditions": 703
+      "assertionPoints": 3201,
+      "generatedProbeBlocks": 193,
+      "generatedProbeConditions": 701
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -73,7 +73,7 @@
       "test/e2e/live/hermes-sandbox-secret-boundary.test.ts": [16,23,16,23,3],
       "test/e2e/live/hermes-slack-e2e.test.ts": [0,0,29,84,14],
       "test/e2e/live/inference-routing-provider-smoke.test.ts": [27,40,36,57,1],
-      "test/e2e/live/inference-routing.test.ts": [44,65,54,104,13],
+      "test/e2e/live/inference-routing.test.ts": [42,63,52,102,13],
       "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts": [28,32,28,32,0],
       "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts": [8,18,8,18,0],
       "test/e2e/live/issue-9880-staging-launchable.test.ts": [0,0,0,0,0],
@@ -119,7 +119,7 @@
       "test/e2e/live/spark-install.test.ts": [11,13,11,15,6],
       "test/e2e/live/state-backup-restore.test.ts": [1,5,1,5,0],
       "test/e2e/live/telegram-injection.test.ts": [19,28,26,64,12],
-      "test/e2e/live/token-rotation.test.ts": [28,36,28,36,2],
+      "test/e2e/live/token-rotation.test.ts": [28,36,28,36,1],
       "test/e2e/live/tunnel-lifecycle.test.ts": [0,0,8,17,4],
       "test/e2e/live/whatsapp-qr-compact.test.ts": [29,35,29,35,1],
       "test/e2e/live/windows-mxc-openclaw-process-container.test.ts": [7,11,7,73,4]
