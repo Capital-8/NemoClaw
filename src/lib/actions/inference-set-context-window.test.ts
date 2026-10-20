@@ -56,6 +56,30 @@ describe("runInferenceSet context window", () => {
     expect(logged).toMatch(/Context window for 'qwen2\.5:7b': 16384 tokens/);
   });
 
+  it("rejects a conflicting persisted gateway identity before committing a route", async () => {
+    const deps = createDeps({
+      config: ollamaConfig(),
+      entry: {
+        ...legacyLocalEntry,
+        gatewayName: "nemoclaw-18081",
+        gatewayPort: 18080,
+      },
+      session: baseSession(),
+      contextWindow: 16384,
+    });
+
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps),
+    ).rejects.toThrow(/conflicting gateway identity/);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(([args]) =>
+        (args as string[]).join(" ").includes("inference set"),
+      ),
+    ).toBe(false);
+    expect(deps.calls.resolveContextWindowForModel).not.toHaveBeenCalled();
+  });
+
   it("drops another model's window and warns when the selected window is unknown (#12033)", async () => {
     const config = ollamaConfig();
     const deps = createDeps({

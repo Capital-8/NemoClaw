@@ -101,6 +101,64 @@ describe("probeLlamaCppAttachment", () => {
     );
   });
 
+  it("allows the measured slow bridge to complete within one managed fingerprint deadline", () => {
+    let elapsedMs = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => elapsedMs);
+    const scripted = scriptedProbe(nativeResponses());
+    const probe = vi.fn((argv: string[], options?: CurlProbeOptions) => {
+      const result = scripted(argv, options);
+      elapsedMs += 16_000;
+      return result;
+    });
+    try {
+      expect(
+        probeLlamaCppAttachment("secret-token", {
+          managedRuntime: true,
+          runCurlProbeImpl: probe,
+        }),
+      ).toMatchObject({ ok: true, model: "team/model-alias" });
+      expect(probe).toHaveBeenCalledTimes(5);
+      expect(probe.mock.calls.map(([args]) => args[args.indexOf("--max-time") + 1])).toEqual([
+        "30",
+        "30",
+        "30",
+        "30",
+        "26",
+      ]);
+      expect(probe.mock.calls.map(([, options]) => options?.timeoutMs)).toEqual([
+        35_000, 35_000, 35_000, 35_000, 26_000,
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("stops the managed fingerprint at the request that exhausts its shared deadline", () => {
+    let elapsedMs = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => elapsedMs);
+    const scripted = scriptedProbe(nativeResponses());
+    const probe = vi.fn((argv: string[], options?: CurlProbeOptions) => {
+      const result = scripted(argv, options);
+      elapsedMs += 30_000;
+      return result;
+    });
+    try {
+      expect(
+        probeLlamaCppAttachment("secret-token", {
+          managedRuntime: true,
+          runCurlProbeImpl: probe,
+        }),
+      ).toMatchObject({
+        ok: false,
+        reason: "probe-timeout",
+        message: expect.stringContaining("authenticated /health"),
+      });
+      expect(probe).toHaveBeenCalledTimes(3);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it.each([
     { phase: "anonymous /v1/models", timeoutAt: 0 },
     { phase: "anonymous /props", timeoutAt: 1 },

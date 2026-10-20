@@ -1265,6 +1265,9 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
+  // Reject conflicting persisted gateway identity before committing a route.
+  // The later context-window lookup must use this same validated port.
+  const gatewayPort = registryEntryGatewayPort(entry);
   const session = deps.loadSession();
   const explicitInferenceApi =
     typeof options.inferenceApi === "string" && options.inferenceApi.trim()
@@ -1945,12 +1948,7 @@ async function runInferenceSetWithoutHostLock(
 
     let patched: { changed: boolean; route: SandboxInferenceConfig };
     if (agentName === "hermes") {
-      const contextWindow = resolveHermesContextWindowForSwitch(
-        provider,
-        model,
-        registryEntryGatewayPort(entry),
-        deps,
-      );
+      const contextWindow = resolveHermesContextWindowForSwitch(provider, model, gatewayPort, deps);
       patched = patchHermesInferenceConfig(
         config,
         provider,
@@ -1971,7 +1969,7 @@ async function runInferenceSetWithoutHostLock(
           provider,
           model,
           sandboxName,
-          gatewayPort: registryEntryGatewayPort(entry),
+          gatewayPort,
           routeChanged: openClawConfigSyncPending,
         },
         deps,
