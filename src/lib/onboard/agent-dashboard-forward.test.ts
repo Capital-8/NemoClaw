@@ -25,6 +25,7 @@ describe("ensureAgentDashboardForward", () => {
   });
 
   it.each([false, true])("forwards Hermes ports with reuse=%s", async (reuseExistingForward) => {
+    const ensureLoopbackForward = vi.fn();
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "http://127.0.0.1:18789") => {
       const parsed = new URL(chatUiUrl);
       return Number(parsed.port);
@@ -38,6 +39,7 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [18789, 8642],
         },
         ensureDashboardForward,
+        ensureLoopbackForward,
         hermesApiPort: 8642,
         reuseExistingForward,
       }),
@@ -47,13 +49,11 @@ describe("ensureAgentDashboardForward", () => {
       allowPortReallocation: false,
       ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
     });
-    expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
-      allowPortReallocation: false,
-      ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
-    });
+    expect(ensureLoopbackForward).toHaveBeenCalledWith("hm", 8642, undefined);
   });
 
   it("forwards the sandbox's per-sandbox API port instead of the manifest default (#8543)", async () => {
+    const ensureLoopbackForward = vi.fn();
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "http://127.0.0.1:18789") => {
       const parsed = new URL(chatUiUrl);
       return Number(parsed.port);
@@ -67,6 +67,7 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [18789, 8642],
         },
         ensureDashboardForward,
+        ensureLoopbackForward,
         hermesApiPort: 8643,
       }),
     ).toBe(18789);
@@ -74,9 +75,7 @@ describe("ensureAgentDashboardForward", () => {
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
       allowPortReallocation: false,
     });
-    expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8643", {
-      allowPortReallocation: false,
-    });
+    expect(ensureLoopbackForward).toHaveBeenCalledWith("hm", 8643, undefined);
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
       "hm",
       "http://127.0.0.1:8642",
@@ -99,6 +98,9 @@ describe("ensureAgentDashboardForward", () => {
         forward_ports: [18789, 8642],
       },
       ensureDashboardForward,
+      ensureLoopbackForward: (_name, port) => {
+        events.push(`forward:${port}`);
+      },
       hermesApiPort: 8643,
       beforeForwardPort: (port) => {
         events.push(`before:${port}`);
@@ -109,6 +111,7 @@ describe("ensureAgentDashboardForward", () => {
   });
 
   it("keeps an explicit effective port and omits the replaced manifest default (#6277)", async () => {
+    const ensureLoopbackForward = vi.fn();
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
@@ -121,6 +124,7 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [18789, 8642],
         },
         ensureDashboardForward,
+        ensureLoopbackForward,
         hermesApiPort: 8642,
         controlUiPort: 9120,
       }),
@@ -129,9 +133,7 @@ describe("ensureAgentDashboardForward", () => {
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:9120", {
       allowPortReallocation: false,
     });
-    expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
-      allowPortReallocation: false,
-    });
+    expect(ensureLoopbackForward).toHaveBeenCalledWith("hm", 8642, undefined);
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
       "hm",
       "http://127.0.0.1:18789",
@@ -141,6 +143,7 @@ describe("ensureAgentDashboardForward", () => {
   });
 
   it("preserves a remote dashboard URL while refreshing its effective port (#6277)", async () => {
+    const ensureLoopbackForward = vi.fn();
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
@@ -154,6 +157,7 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [18789, 8642],
         },
         ensureDashboardForward,
+        ensureLoopbackForward,
         hermesApiPort: 8642,
         chatUiUrl: "https://hermes.example.test:9120/ui",
         controlUiPort: 9120,
@@ -170,6 +174,7 @@ describe("ensureAgentDashboardForward", () => {
   });
 
   it("forwards an API-kind agent on the sandbox-owned primary port", async () => {
+    const ensureLoopbackForward = vi.fn();
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
@@ -183,15 +188,15 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [8642],
         },
         ensureDashboardForward,
+        ensureLoopbackForward,
         hermesApiPort: 8647,
         chatUiUrl: "http://127.0.0.1:9120",
         controlUiPort: 9120,
       }),
     ).toBe(8647);
 
-    expect(ensureDashboardForward).toHaveBeenCalledWith("api-agent", "http://127.0.0.1:8647", {
-      allowPortReallocation: false,
-    });
+    expect(ensureLoopbackForward).toHaveBeenCalledWith("api-agent", 8647, undefined);
+    expect(ensureDashboardForward).not.toHaveBeenCalled();
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
       "api-agent",
       "http://127.0.0.1:8642",
@@ -202,6 +207,7 @@ describe("ensureAgentDashboardForward", () => {
 
   it("preserves the canonical WebUI forward for an API-kind agent with an optional dashboard", async () => {
     process.env.CHAT_UI_URL = "https://hermes.example.test:9120/ui";
+    const ensureLoopbackForward = vi.fn();
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
@@ -216,20 +222,16 @@ describe("ensureAgentDashboardForward", () => {
           forward_ports: [8642],
         },
         ensureDashboardForward,
+        ensureLoopbackForward,
         hermesApiPort: 8642,
         chatUiUrl: process.env.CHAT_UI_URL,
         controlUiPort: 9120,
       }),
     ).toBe(8642);
 
+    expect(ensureLoopbackForward).toHaveBeenCalledWith("legacy-hermes", 8642, undefined);
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(
       1,
-      "legacy-hermes",
-      "http://127.0.0.1:8642",
-      { allowPortReallocation: false },
-    );
-    expect(ensureDashboardForward).toHaveBeenNthCalledWith(
-      2,
       "legacy-hermes",
       "https://hermes.example.test:9120/ui",
       {
@@ -242,17 +244,16 @@ describe("ensureAgentDashboardForward", () => {
   it("fails reuse and restores the dashboard URL when the Hermes API forward fails", async () => {
     process.env.CHAT_UI_URL = "http://127.0.0.1:18790";
     const warn = vi.fn();
-    const ensureDashboardForward = vi
-      .fn()
-      .mockReturnValueOnce(18790)
-      .mockImplementationOnce(() => {
-        throw new Error("API forward ownership is unknown");
-      });
+    const ensureLoopbackForward = vi.fn(() => {
+      throw new Error("API forward ownership is unknown");
+    });
+    const ensureDashboardForward = vi.fn(() => 18790);
     await expect(
       ensureAgentDashboardForward({
         sandboxName: "hm",
         agent: { forwardPort: 18789, forward_ports: [18789, 8642] },
         ensureDashboardForward,
+        ensureLoopbackForward,
         hermesApiPort: 8643,
         reuseExistingForward: true,
         warn,

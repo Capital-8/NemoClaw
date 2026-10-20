@@ -156,6 +156,67 @@ afterEach(() => {
 });
 
 describe("finalization dashboard ForwardTcp reconciliation", () => {
+  it.each(
+    [
+      { exposure: "WSL", isWsl: true, dashboardBind: undefined, persistedRemoteBind: false },
+      {
+        exposure: "explicit remote bind",
+        isWsl: false,
+        dashboardBind: "0.0.0.0",
+        persistedRemoteBind: false,
+      },
+      {
+        exposure: "persisted remote bind",
+        isWsl: false,
+        dashboardBind: undefined,
+        persistedRemoteBind: true,
+      },
+    ].flatMap((exposure) =>
+      [false, true].flatMap((resume) =>
+        [8_642, 8_643].map((apiPort) => ({ ...exposure, resume, apiPort })),
+      ),
+    ),
+  )(
+    "keeps Hermes API $apiPort on loopback with $exposure and resume=$resume (#13441)",
+    async ({ isWsl, dashboardBind, persistedRemoteBind, resume, apiPort }) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", dashboardBind);
+      const test = harness({
+        isWsl,
+        listSandboxes: () => ({
+          sandboxes: [
+            {
+              name: "hermes-test",
+              dashboardPort: 18_790,
+              hermesApiPort: apiPort,
+              dashboardRemoteBindPrepared: persistedRemoteBind,
+            },
+          ],
+        }),
+        initialStates: resume
+          ? new Map([
+              [18_790, "owned"],
+              [apiPort, "owned"],
+            ])
+          : undefined,
+      });
+
+      await expect(
+        test.helpers.ensureFinalizationAgentDashboardForward("hermes-test", loadAgent("hermes")),
+      ).resolves.toBe(18_790);
+      const started = test.startForward.mock.calls.map(([request]) => request.forward);
+      expect(started).toMatchObject([
+        { sandboxName: "hermes-test", localHost: "0.0.0.0", port: 18_790 },
+        { sandboxName: "hermes-test", localHost: "127.0.0.1", port: apiPort },
+      ]);
+      await expect(
+        test.helpers.createForwardPortObserver("hermes-test", "loopback")([apiPort]),
+      ).resolves.toMatchObject([{ state: "owned", forward: started[1] }]);
+      expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+      expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    },
+  );
+
   it("proves exact ownership for pre-delete port reservation", async () => {
     const test = harness({
       listSandboxes: () => ({
@@ -175,6 +236,61 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
       localHost: "127.0.0.1",
       port: 8_643,
     });
+  });
+
+  it.each(["foreign", "indeterminate"] as const)(
+    "refuses a %s auxiliary listener without retiring or replacing it (#13441)",
+    async (state) => {
+      vi.stubEnv("CHAT_UI_URL", undefined);
+      const test = harness({
+        isWsl: true,
+        listSandboxes: () => ({
+          sandboxes: [{ name: "hermes-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
+        }),
+        initialStates: new Map([
+          [18_790, "owned"],
+          [8_643, state],
+        ]),
+      });
+
+      await expect(
+        test.helpers.ensureFinalizationAgentDashboardForward("hermes-test", loadAgent("hermes")),
+      ).rejects.toThrow(/foreign listener|could not prove/u);
+      expect(test.states.get(8_643)).toBe(state);
+      expect(test.retireLegacyForward).not.toHaveBeenCalled();
+      expect(
+        test.startForward.mock.calls.filter(([request]) => request.forward.port === 8_643),
+      ).toHaveLength(1);
+      expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+    },
+  );
+
+  it("rejects a changed sandbox identity before starting the API forward (#13441)", async () => {
+    vi.stubEnv("CHAT_UI_URL", "http://127.0.0.1:18790");
+    const test = harness({
+      isWsl: true,
+      listSandboxes: () => ({
+        sandboxes: [{ name: "hermes-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
+      }),
+    });
+    let changed = false;
+    await expect(
+      test.helpers.ensureFinalizationAgentDashboardForward(
+        "hermes-test",
+        loadAgent("hermes"),
+        () => {
+          expect(changed, "sandbox identity changed").toBe(false);
+        },
+        {
+          releaseBeforeForward: (_name, port) => {
+            changed = port === 8_643;
+          },
+        },
+      ),
+    ).rejects.toThrow("sandbox identity changed");
+    expect(test.startForward.mock.calls.map(([request]) => request.forward.port)).toEqual([18_790]);
+    expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
 
   it.each([

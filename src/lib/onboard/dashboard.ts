@@ -619,6 +619,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       sandboxName,
       agent,
       ensureDashboardForward,
+      ensureLoopbackForward: async (name, port, revalidateIdentity) => {
+        await ensureAgentFixedForward(name, port, "agent API", revalidateIdentity, true);
+      },
       chatUiUrl,
       controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
       hermesApiPort: getSandbox?.(sandboxName)?.hermesApiPort,
@@ -660,6 +663,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     port: number,
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
+    throwOnFailure = false,
   ): Promise<boolean> {
     const gatewayName = resolveForwardServiceGateway(sandboxName, {
       revalidateSandboxIdentity,
@@ -681,6 +685,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       );
       return true;
     } catch (error) {
+      if (throwOnFailure) throw error;
       const diagnostic = error instanceof Error ? error.message : String(error);
       console.warn(`! ${label} forward on port ${port} did not start: ${diagnostic.slice(0, 240)}`);
       console.warn(
