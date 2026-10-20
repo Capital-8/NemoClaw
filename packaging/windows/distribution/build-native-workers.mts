@@ -140,6 +140,7 @@ export function renderFactory(root: string, file: string, name: string) {
     configurationJs + "\nreturn nativeHermesConfiguration;",
   )();
   let nativeHermesMessagingArguments;
+  let nativeConsoleFailureCode;
   if (name === "interactiveWorkloadSource") {
     const messaging = all(source, ts.isFunctionDeclaration).filter(
       (node) => node.name?.text === "nativeHermesMessagingArguments",
@@ -155,6 +156,15 @@ export function renderFactory(root: string, file: string, name: string) {
     nativeHermesMessagingArguments = Function(
       messagingJs + "\nreturn nativeHermesMessagingArguments;",
     )();
+    const failure = all(source, ts.isFunctionDeclaration).filter(
+      (node) => node.name?.text === "nativeConsoleFailureCode",
+    );
+    if (failure.length !== 1)
+      throw new Error("The reviewed Hermes failure classifier is missing or ambiguous.");
+    const failureJs = ts.transpileModule(failure[0].getText(source).replace(/^export\s+/u, ""), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+    nativeConsoleFailureCode = Function(failureJs + "\nreturn nativeConsoleFailureCode;")();
   }
   const value = evaluateBuildExpression("(" + code + ")()", {
     hermesDashboardPythonSource,
@@ -164,6 +174,7 @@ export function renderFactory(root: string, file: string, name: string) {
     hermesBrowserIpcPythonSource,
     nativeHermesConfiguration,
     nativeHermesMessagingArguments,
+    nativeConsoleFailureCode,
   });
   if (typeof value !== "string" || Buffer.byteLength(value) > 256 * 1024)
     throw new Error("Invalid build-time worker source.");

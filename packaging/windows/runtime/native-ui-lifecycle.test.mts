@@ -11,7 +11,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { NativeGatewaySession } from "./native-gateway-session.mts";
-import { waitForConsoleAgentExit } from "./run-installed-native-console-agent.mts";
+import {
+  nativeConsoleFailureCode,
+  waitForConsoleAgentExit,
+} from "./run-installed-native-console-agent.mts";
 import {
   nativeMxcCompletion,
   waitForNativeMxcCompletion,
@@ -458,6 +461,106 @@ for (const revoked of ["lease", "gateway-exit", "gateway-signal"] as const) {
 }
 
 const listArgs = ["sandbox", "list", "-o", "json"];
+
+test("console diagnostics retain bounded failure codes without child text", () => {
+  for (const code of [
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "EPIPE",
+    "ETIMEDOUT",
+    "EACCES",
+    "EPERM",
+    "ENOENT",
+    "EBUSY",
+    "ABORT_ERR",
+  ]) {
+    assert.equal(
+      nativeConsoleFailureCode(
+        new Error(`The contained native UI connection failed before opening (${code}).`),
+      ),
+      `UI_CONNECT_${code}`,
+    );
+    assert.equal(
+      nativeConsoleFailureCode(Object.assign(new Error("private-message-canary"), { code })),
+      `AGENT_IO_${code}`,
+    );
+  }
+  assert.equal(
+    nativeConsoleFailureCode(
+      new Error("The native UI relay frame remained locked after 27 bounded attempts."),
+    ),
+    "UI_FRAME_LOCKED",
+  );
+  for (const error of [
+    null,
+    undefined,
+    "private-message-canary",
+    new Error("private-message-canary"),
+    Object.assign(new Error("private-message-canary"), { code: "private-message-canary" }),
+  ])
+    assert.equal(nativeConsoleFailureCode(error), "AGENT_FAILED");
+});
+
+for (const scenario of [
+  "published",
+  "missing",
+  "wrong-agent",
+  "invalid-code",
+  "contradictory-code",
+  "failed",
+] as const) {
+  test(`console completion reconciles the receipt after its status request: ${scenario}`, async () => {
+    const failed = scenario === "failed";
+    const status = failed ? mainExit(1, "Error", "MainProcessFailed") : mainExit(0);
+    const fixture = cliFixture([status, status]);
+    let reads = 0;
+    try {
+      const receipt = {
+        schemaVersion: 1,
+        agent: scenario === "wrong-agent" ? "other" : "hermes",
+        exitCode: failed ? 1 : 0,
+        ...(failed
+          ? { failureCode: "UI_CONNECT_EBUSY" }
+          : scenario === "invalid-code"
+            ? { failureCode: "private-message-canary" }
+            : scenario === "contradictory-code"
+              ? { failureCode: "AGENT_FAILED" }
+              : {}),
+      };
+      const pending = waitForConsoleAgentExit(
+        process.execPath,
+        fixture.environment,
+        sandboxName,
+        { exitCode: null, signalCode: null },
+        async () =>
+          ++reads === 1 || scenario === "missing" ? null : JSON.stringify(receipt) + "\n",
+        "hermes",
+        { assertHeld() {} },
+        undefined,
+        fixture.ownProcess,
+      );
+      if (scenario === "published") assert.equal(await pending, 0);
+      else
+        await assert.rejects(pending, (error: unknown) => {
+          assert(error instanceof Error);
+          assert.match(
+            error.message,
+            failed
+              ? /UI_CONNECT_EBUSY; exit 1/u
+              : scenario === "missing"
+                ? /before it published an exit receipt/u
+                : /exit receipt is invalid/u,
+          );
+          assert(!error.message.includes("private-message-canary"));
+          return true;
+        });
+      assert.equal(reads, 2);
+      assert.equal(fixture.calls().length, scenario === "published" || failed ? 2 : 1);
+    } finally {
+      fixture.close();
+    }
+  });
+}
 
 for (const failed of [false, true]) {
   test(`console completion binds its command owner and rejects contradictory exit evidence: ${failed}`, async () => {

@@ -69,6 +69,30 @@ function fail(message) {
   throw new Error(`NemoClaw native terminal launch failed: ${message}`);
 }
 
+export function nativeConsoleFailureCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  const connection =
+    /^The contained native UI connection failed before opening \(([A-Z0-9_]+)\)\.$/u.exec(message);
+  const code = connection?.[1] ?? (error as NodeJS.ErrnoException | null)?.code;
+  if (
+    [
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "EPIPE",
+      "ETIMEDOUT",
+      "EACCES",
+      "EPERM",
+      "ENOENT",
+      "EBUSY",
+      "ABORT_ERR",
+    ].includes(code ?? "")
+  )
+    return `${connection ? "UI_CONNECT" : "AGENT_IO"}_${code}`;
+  if (/^The native UI relay frame remained locked after [0-9]+ bounded attempts\.$/u.test(message))
+    return "UI_FRAME_LOCKED";
+  return "AGENT_FAILED";
+}
+
 export async function waitForConsoleAgentExit(
   openshell,
   environment,
@@ -82,35 +106,44 @@ export async function waitForConsoleAgentExit(
 ) {
   const deadline = Date.now() + 24 * 60 * 60_000;
   let nextStatusCheck = 0;
+  const complete = async (text: string) => {
+    const receipt = JSON.parse(text);
+    if (
+      receipt.schemaVersion !== 1 ||
+      receipt.agent !== agentId ||
+      !Number.isInteger(receipt.exitCode) ||
+      (receipt.failureCode !== undefined &&
+        (receipt.exitCode === 0 ||
+          typeof receipt.failureCode !== "string" ||
+          !/^(?:AGENT_FAILED|UI_FRAME_LOCKED|(?:UI_CONNECT|AGENT_IO)_(?:ECONNREFUSED|ECONNRESET|EPIPE|ETIMEDOUT|EACCES|EPERM|ENOENT|EBUSY|ABORT_ERR))$/u.test(
+            receipt.failureCode,
+          )))
+    )
+      fail("the native agent exit receipt is invalid");
+    const completion = await waitForNativeMxcCompletion(
+      openshell,
+      environment,
+      sandboxName,
+      gateway,
+      stateSession,
+      undefined,
+      ownProcess,
+      signal,
+    );
+    if (
+      (completion === "ExecFailed" || completion === "MainProcessFailed") &&
+      receipt.exitCode === 0
+    )
+      fail("MXC failed after the agent reported its exit status");
+    if (receipt.exitCode !== 0 && receipt.failureCode !== undefined)
+      fail(`the contained agent failed (${receipt.failureCode}; exit ${receipt.exitCode})`);
+    return receipt.exitCode;
+  };
   while (Date.now() < deadline) {
     if (signal?.aborted) return 0;
     stateSession.assertHeld();
     const text = await readExitReceipt();
-    if (text?.endsWith("\n")) {
-      const receipt = JSON.parse(text);
-      if (
-        receipt.schemaVersion !== 1 ||
-        receipt.agent !== agentId ||
-        !Number.isInteger(receipt.exitCode)
-      )
-        fail("the native agent exit receipt is invalid");
-      const completion = await waitForNativeMxcCompletion(
-        openshell,
-        environment,
-        sandboxName,
-        gateway,
-        stateSession,
-        undefined,
-        ownProcess,
-        signal,
-      );
-      if (
-        (completion === "ExecFailed" || completion === "MainProcessFailed") &&
-        receipt.exitCode === 0
-      )
-        fail("MXC failed after the agent reported its exit status");
-      return receipt.exitCode;
-    }
+    if (text?.endsWith("\n")) return await complete(text);
     if (gateway.exitCode !== null || gateway.signalCode !== null)
       fail("the native gateway stopped before the agent published its exit status");
     if (Date.now() >= nextStatusCheck) {
@@ -132,8 +165,14 @@ export async function waitForConsoleAgentExit(
       }
       if (status?.name !== sandboxName || typeof status?.phase !== "string")
         fail("the native agent status did not match its sandbox");
-      if (["Completed", "Error", "Stopped", "Stopping", "Deleting"].includes(status.phase))
+      if (["Completed", "Error", "Stopped", "Stopping", "Deleting"].includes(status.phase)) {
+        // The child can publish its receipt while the status command is in flight.
+        // Reconcile that newer observation without extending any shutdown deadline.
+        stateSession.assertHeld();
+        const finalText = await readExitReceipt();
+        if (finalText?.endsWith("\n")) return await complete(finalText);
         fail("the contained agent stopped before it published an exit receipt");
+      }
       nextStatusCheck = Date.now() + 5000;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -177,6 +216,7 @@ import { StringDecoder } from "node:string_decoder";
 
 const nativeHermesConfiguration = ${nativeHermesConfiguration.toString()};
 const nativeHermesMessagingArguments = ${nativeHermesMessagingArguments.toString()};
+const nativeConsoleFailureCode = ${nativeConsoleFailureCode.toString()};
 
 const required = (name) => {
   const value = process.env[name];
@@ -486,6 +526,7 @@ let messagingFailure = false;
 let child;
 let childStopped;
 let exitCode = 1;
+let failureCode;
 const selectedChannels = Object.keys(nativeServices.options.messaging || {});
 try {
   stopWatcher.signal.throwIfAborted();
@@ -553,6 +594,7 @@ try {
     exitCode = 0;
   } else exitCode = await childExit;
 } catch (error) {
+  failureCode = nativeConsoleFailureCode(error);
   console.error(error instanceof Error ? error.message : "The selected agent could not start.");
 } finally {
   if (!(await stopOwnedNativeAgent(child, childStopped))) {
@@ -583,7 +625,7 @@ try {
   }
 }
 if (messagingFailure) exitCode = 1;
-writeFileSync(exitReceipt, JSON.stringify({ schemaVersion: 1, agent, exitCode }) + "\n", "utf8");
+writeFileSync(exitReceipt, JSON.stringify({ schemaVersion: 1, agent, exitCode, ...(failureCode ? { failureCode } : {}) }) + "\n", "utf8");
 process.exitCode = exitCode;
 } catch (error) {
   if (!bootstrapWritten) {
