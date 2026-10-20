@@ -80,6 +80,9 @@ if sys.argv[2] == 'cron-run':
             messages={
                 'cron isolated agent run aborted': 'message-agent-aborted',
                 'cron: job execution timed out': 'message-cron-deadline',
+                # Pinned incomplete-turn texts: the reply budget ended without visible output.
+                "Agent couldn't generate a response.": 'message-agent-incomplete-turn',
+                "\u26a0\ufe0f Agent couldn't generate a response. Please try again.": 'message-agent-incomplete-turn',
                 'LLM request timed out.': 'message-llm-timeout',
                 'LLM request failed.': 'message-llm-failed',
                 'LLM request failed with an unknown error.': 'message-llm-unknown',
@@ -212,7 +215,8 @@ if [ "$verify_cron" = 0 ]; then
   echo "ISSUE_5324_ADMIN_APPROVAL_OK"
   exit
 fi
-if ! run_with_bounded_output "$cron_output" openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" --no-deliver; then
+# An explicit task keeps the unattended cron turn within the model's reply budget.
+if ! run_with_bounded_output "$cron_output" openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "Respond with a short greeting." --no-deliver; then
   echo "ADMIN_CRON_RETRY_FAILED" >&2
   emit_admin_diagnostic "$cron_output"
   exit 28

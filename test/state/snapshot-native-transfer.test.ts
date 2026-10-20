@@ -77,7 +77,7 @@ describe("native restore transfer", () => {
     expect(fs.readFileSync(path.join(backupPath, "native-home.tar"), "utf8")).toBe(
       "replaced after validation",
     );
-    expect(fs.readFileSync(path.join(nativeRoot, "payload"))).toEqual(payload);
+    expect(fs.readFileSync(path.join(nativeRoot, "payload")).equals(payload)).toBe(true);
     expect(
       fs.readdirSync(nativeRoot).filter((name) => name.startsWith(".nemoclaw-native-restore")),
     ).toEqual([]);
@@ -101,7 +101,9 @@ describe("native restore transfer", () => {
     expect(
       fs.readdirSync(nativeRoot).filter((name) => name.startsWith(".nemoclaw-native-restore")),
     ).toEqual([]);
-    expect(fs.readFileSync(path.join(backupPath, "native-home.tar"))).toEqual(originalArchive);
+    expect(fs.readFileSync(path.join(backupPath, "native-home.tar")).equals(originalArchive)).toBe(
+      true,
+    );
   });
 
   it("rechecks authority after upload and removes staging when authority changes", async () => {
