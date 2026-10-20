@@ -7,7 +7,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { lockedArchives } from "../../../scripts/checks/materialize-locked-npm-cache-seed.mts";
+import {
+  exactRootOverrides,
+  lockedArchives,
+} from "../../../scripts/checks/materialize-locked-npm-cache-seed.mts";
 import { parseAuditExceptionRegistry } from "../../../scripts/lib/reviewed-npm-audit.mts";
 import { createBuiltInChannelManifestRegistry } from "../../../src/lib/messaging";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
@@ -666,9 +669,13 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
   describe("OpenClaw npm integrity pins", () => {
     if (group === "contract") {
       it("keeps NemoClaw's direct tar dependency above the reviewed advisory floor", () => {
-        const packageJson = JSON.parse(
-          fs.readFileSync(path.join(REPO_ROOT, "nemoclaw", "package.json"), "utf-8"),
-        ) as { dependencies?: Record<string, string> };
+        const packageJsonSource = fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw", "package.json"),
+          "utf-8",
+        );
+        const packageJson = JSON.parse(packageJsonSource) as {
+          dependencies?: Record<string, string>;
+        };
         const packageLockSource = fs.readFileSync(NEMOCLAW_PLUGIN_LOCKFILE);
         const packageLock = JSON.parse(packageLockSource.toString("utf-8")) as {
           packages?: Record<string, { integrity?: string; resolved?: string; version?: string }>;
@@ -704,11 +711,15 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           }),
         );
         expect(
-          lockedArchives(packageLockSource.toString("utf-8"), {
-            cpu: "x64",
-            libc: "glibc",
-            os: "linux",
-          }).some(({ archive }) => archive.includes("linux-x64-musl")),
+          lockedArchives(
+            packageLockSource.toString("utf-8"),
+            {
+              cpu: "x64",
+              libc: "glibc",
+              os: "linux",
+            },
+            exactRootOverrides(packageJsonSource),
+          ).some(({ archive }) => archive.includes("linux-x64-musl")),
         ).toBe(false);
       });
 
