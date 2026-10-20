@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { captureGpuInstallFailure } from "../fixtures/gpu-install-failure.ts";
 import { ChildProcess, execFileSync } from "node:child_process";
 import { once } from "node:events";
@@ -63,7 +64,7 @@ describe("GPU install failure evidence", () => {
     timedOut: false,
     artifacts: { stdout: "", stderr: "", result: "" },
   };
-  const attempt = "a".repeat(64);
+  const attempt = "a".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
   const marker = `Create-attempt label: ai.nvidia.nemoclaw.create-attempt=${attempt}`;
   const status = {
     name: SANDBOX_NAME,
@@ -123,7 +124,7 @@ describe("GPU install failure evidence", () => {
     [
       "ambiguous attempt",
       1,
-      `${marker}\nai.nvidia.nemoclaw.create-attempt=${"b".repeat(64)}`,
+      `${marker}\nai.nvidia.nemoclaw.create-attempt=${"b".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH)}`,
       status,
     ],
     ["renamed sandbox", 1, marker, { ...status, name: "other" }],
@@ -152,6 +153,22 @@ describe("GPU install failure evidence", () => {
     );
     expect(artifacts.writeJson).not.toHaveBeenCalled();
     expect(artifacts.writeText).not.toHaveBeenCalled();
+  });
+
+  it.each([61, 63, 64])("refuses a %i-character attempt before querying status", async (length) => {
+    const invalidAttempt = "a".repeat(length);
+    const openshell = vi.fn();
+    const artifacts = { writeText: vi.fn(), writeJson: vi.fn() };
+    await captureGpuInstallFailure(
+      { exitCode: 1, stdout: `ai.nvidia.nemoclaw.create-attempt=${invalidAttempt}`, stderr: "" },
+      { openshell },
+      artifacts,
+      {},
+      SANDBOX_NAME,
+    );
+    expect(openshell).not.toHaveBeenCalled();
+    expect(artifacts.writeText).not.toHaveBeenCalled();
+    expect(artifacts.writeJson).not.toHaveBeenCalled();
   });
 
   it.each([

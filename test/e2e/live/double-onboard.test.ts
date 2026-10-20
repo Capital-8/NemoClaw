@@ -324,6 +324,7 @@ test(
     );
 
     const fake = await startFakeOpenAiCompatibleServer({
+      additionalModels: ["changed-model"],
       host: "0.0.0.0",
       port: Number(process.env.NEMOCLAW_FAKE_PORT ?? 0),
       progress,

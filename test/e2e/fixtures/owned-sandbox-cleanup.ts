@@ -28,6 +28,14 @@ function buildOwnedSandboxCleanupEnv(
   };
 }
 
+/** Avoid named CLI recovery when this job has no recorded sandbox to destroy. */
+export function cleanupRegisteredSandbox(
+  sandboxName: string,
+  cleanup: () => Promise<void>,
+): Promise<void> {
+  return cleanupAcquiredResource(getSandbox(sandboxName) !== null, cleanup);
+}
+
 /** Prepare a sandbox name exclusively owned by this isolated qualification job. */
 export async function prepareOwnedSandboxForOnboard(
   host: Pick<HostCliClient, "cleanupSandbox" | "command">,
@@ -37,8 +45,8 @@ export async function prepareOwnedSandboxForOnboard(
   orphanGatewayName?: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
-  const cleanupRegisteredSandbox = (artifactName: string) =>
-    cleanupAcquiredResource(getSandbox(sandboxName) !== null, () =>
+  const cleanupRegistered = (artifactName: string) =>
+    cleanupRegisteredSandbox(sandboxName, () =>
       host.cleanupSandbox(sandboxName, {
         artifactName,
         env: buildOwnedSandboxCleanupEnv(sandboxName, orphanGatewayName, baseEnv),
@@ -46,7 +54,7 @@ export async function prepareOwnedSandboxForOnboard(
       }),
     );
   cleanup.trackDisposable(`destroy sandbox ${sandboxName}`, () =>
-    cleanupRegisteredSandbox("cleanup-destroy-sandbox"),
+    cleanupRegistered("cleanup-destroy-sandbox"),
   );
   const cleanupOwnedSandbox = async (artifactName: string) => {
     const openshellCleanupEnv = buildOwnedSandboxCleanupEnv(
@@ -74,5 +82,5 @@ export async function prepareOwnedSandboxForOnboard(
     cleanupOwnedSandbox("cleanup-delete-openshell-sandbox"),
   );
   await cleanupOwnedSandbox("precleanup-delete-openshell-sandbox");
-  await cleanupRegisteredSandbox("precleanup-destroy-sandbox");
+  await cleanupRegistered("precleanup-destroy-sandbox");
 }

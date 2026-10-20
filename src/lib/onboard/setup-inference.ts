@@ -254,6 +254,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   withSandboxMutationLock: typeof withSandboxMutationLock;
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
+  getInstalledOpenshellVersion?: () => string | null;
   runOpenshell: import("./openshell-cli").OpenshellCliHelpers["runOpenshell"];
   inferenceRouteMutator: OpenShellInferenceRouteMutator;
   inferenceRouteObserver: OpenShellInferenceRouteObserver;
@@ -2092,6 +2093,13 @@ export function createSetupInference(
         );
       if (options.preserveLegacyPiSharedLocalRoute && !preservingLegacyPiRoute)
         throw new Error("Recorded Pi shared local inference route changed before setup.");
+      if (
+        preservingLegacyPiRoute &&
+        !/^0\.0\.\d+$/.test(deps.getInstalledOpenshellVersion?.() ?? "")
+      )
+        throw new Error(
+          "Cannot resume a legacy Pi shared inference route on this OpenShell runtime. Back up the sandbox and recreate it with native inference; existing data was not changed.",
+        );
       selectingNativeLocal = selectingNativeLocal && !preservingLegacyPiRoute;
       if (selectingNativeLocal)
         await (deps.requireNativeProviderPolicy ?? requireNativeProviderPolicy)(gatewayName);

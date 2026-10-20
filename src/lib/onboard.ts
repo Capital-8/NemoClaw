@@ -2267,6 +2267,7 @@ function getSetupNimDeps(): SetupNimDeps {
 const setupNim = setupNimFlow.createSetupNim(getSetupNimDeps());
 // ── Step 4: Inference provider ───────────────────────────────────
 const getSetupInferenceDeps = (): SetupInferenceDeps => ({
+  getInstalledOpenshellVersion,
   checkGatewayRouteCompatibility,
   withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
   withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
@@ -2956,8 +2957,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
-            toSessionUpdates: (updates) =>
-              toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+            toSessionUpdates,
             skippedStepMessage,
             recordStateSkipped,
             recordRepairEvent,
@@ -2967,6 +2967,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             repairLocalInferenceSystemdOverrideOrExit,
             isNonInteractive,
             getOpenshellBinary,
+            getInstalledOpenshellVersion,
             needsBedrockRuntimeAdapter: (providerName, url) =>
               providerName === "compatible-anthropic-endpoint" &&
               bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
@@ -3216,8 +3217,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   executeSandboxCommandForVerification(sandbox, script, sandboxExec),
                 probeHostPort: onboardDashboard.probeVerificationHostPort,
                 getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
-                providerExistsInGateway: (providerName: string) =>
-                  providerExistsInGateway(providerName),
+                providerExistsInGateway,
                 probeInferenceInvocation: () =>
                   verifyDeploymentModule.probeOnboardInferenceInvocation(inference.invocation),
               },

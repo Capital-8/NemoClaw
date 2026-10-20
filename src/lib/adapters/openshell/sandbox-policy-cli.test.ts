@@ -295,6 +295,70 @@ describe("CLI OpenShell sandbox policy writer", () => {
     ]);
   });
 
+  it.each([
+    { code: "ETIMEDOUT", status: null, category: "timeout", exit: "unknown" },
+    { code: "ENOENT", status: null, category: "missing-executable", exit: "unknown" },
+    { code: "EACCES", status: 1, category: "permission", exit: "nonzero" },
+    { code: "EPERM", status: 1, category: "permission", exit: "nonzero" },
+    { code: "ENOBUFS", status: null, category: "output-limit", exit: "unknown" },
+    { code: "credential-value", status: 0, category: "other", exit: "zero" },
+    { code: "credential-value", status: Number.NaN, category: "other", exit: "unknown" },
+    { code: "credential-value", status: -1, category: "other", exit: "unknown" },
+    { code: "credential-value", status: 256, category: "other", exit: "unknown" },
+  ])(
+    "reports only fixed policy capture metadata for $code / $status",
+    async ({ code, status, category, exit }) => {
+      const capture = vi.fn(() =>
+        captured({
+          status,
+          output: "credential-value",
+          stdout: "credential-value",
+          stderr: "credential-value",
+          error: Object.assign(new Error("credential-value"), { code }),
+          signal: "SIGTERM",
+        }),
+      );
+      const result = await createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        document: POLICY,
+      });
+      expect(result.outcome).toEqual({
+        kind: "ambiguous",
+        detail: `OpenShell did not confirm the policy submission (status=${exit}; signal=present; capture=${category}; stdout=present; stderr=present)`,
+      });
+      expect(JSON.stringify(result)).not.toContain("credential-value");
+      expect(capture).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    { streams: {}, expected: "stdout=unavailable; stderr=unavailable" },
+    { streams: { stdout: "", stderr: "" }, expected: "stdout=empty; stderr=empty" },
+    {
+      streams: { stdout: "credential-value", stderr: "denied credential-value" },
+      expected: "stdout=present; stderr=present",
+    },
+  ])(
+    "retains ambiguity without printing unrecognized output: $expected",
+    async ({ streams, expected }) => {
+      const capture = vi.fn(() => captured({ status: 1, output: "credential-value", ...streams }));
+      const result = await createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        document: POLICY,
+      });
+      expect(result).toEqual({
+        status: 1,
+        outcome: {
+          kind: "ambiguous",
+          detail: `OpenShell did not confirm the policy submission (status=nonzero; signal=none; capture=none; ${expected})`,
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("credential-value");
+    },
+  );
+
   it("rejects an invalid sandbox name before invoking OpenShell", async () => {
     const capture = vi.fn(() => captured({ output: "" }));
     const writer = createCliOpenShellSandboxPolicyWriter({ capture });

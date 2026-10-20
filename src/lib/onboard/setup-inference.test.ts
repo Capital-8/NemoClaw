@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { getInstalledOpenshellVersion } from "./openshell-version";
+
+import { cliOpenShellInstalledVersionObserver } from "../adapters/openshell/installed-version-cli";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
@@ -49,6 +52,46 @@ describe("recorded Pi local inference route", () => {
     expect(requireNativeProviderPolicy).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  { label: "0.1.3", observation: { ok: true, version: "0.1.3" } },
+  { label: "unknown", observation: { ok: false, error: { kind: "timeout", message: "timeout" } } },
+] as const)(
+  "rejects direct retained Pi setup before route mutation on OpenShell $label",
+  async ({ observation }) => {
+    vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue(
+      observation,
+    );
+    const recorded = {
+      agent: "pi",
+      provider: "ollama-local",
+      model: "qwen3:8b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      createdAt: "2026-09-01T00:00:00Z",
+    };
+    const withGatewayRouteMutationLock = vi.fn();
+    const requireNativeProviderPolicy = vi.fn();
+    const updateSandbox = vi.fn();
+    const setup = createSetupInference({
+      getGatewayName: () => "nemoclaw",
+      getSandbox: () => recorded,
+      getInstalledOpenshellVersion,
+      withSandboxMutationLock: (_name: string, operation: () => unknown) => operation(),
+      withGatewayRouteMutationLock,
+      requireNativeProviderPolicy,
+      updateSandbox,
+    } as unknown as SetupInferenceDeps);
+    await expect(
+      setup("alpha", recorded.model, recorded.provider, recorded.endpointUrl, null, null, [], {
+        agentName: "pi",
+        preserveLegacyPiSharedLocalRoute: true,
+      }),
+    ).rejects.toThrow("Cannot resume a legacy Pi shared inference route");
+    expect(withGatewayRouteMutationLock).not.toHaveBeenCalled();
+    expect(requireNativeProviderPolicy).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+  },
+);
 
 describe("createProviderReviewDeps", () => {
   it("prepares the Ollama proxy after review acceptance", async () => {

@@ -503,9 +503,9 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     return kwargs
 '''
 
-# Deep Agents Code 0.1.71 pins DNS locally. OpenShell 0.1.3 provides mediated
-# DNS and validates destinations itself, including every redirect. In managed
-# images, requests uses fixed TLS trust and ignores ambient proxies and netrc.
+# Reuse Deep Agents Code 0.1.71 connection pinning on every redirect. Managed
+# validation permits OpenShell synthetic DNS but rejects local socket bypasses.
+# Requests uses fixed TLS trust and ignores ambient proxies and netrc.
 # Outside managed images, the upstream transport remains authoritative.
 TOOLS_PATCH = r'''
 
@@ -523,6 +523,8 @@ def _fetch_with_redirects(url: str, *, timeout: int):
         max_redirects=_MAX_FETCH_REDIRECTS,
         original_fetch=_nemoclaw_original_fetch_with_redirects,
         validation_error=_UrlValidationError,
+        pin_dns=_pinned_dns,
+        is_blocked_ip=_is_blocked_ip,
     )
 '''
 
@@ -1980,7 +1982,7 @@ def main() -> None:
         },
     )
     tools_tree = _require_functions(
-        paths["tools"], texts["tools"], {"_fetch_with_redirects"}
+        paths["tools"], texts["tools"], {"_fetch_with_redirects", "_pinned_dns", "_is_blocked_ip"}
     )
     _require_symbols(
         paths["tools"], tools_tree, {"_MAX_FETCH_REDIRECTS", "_UrlValidationError"}

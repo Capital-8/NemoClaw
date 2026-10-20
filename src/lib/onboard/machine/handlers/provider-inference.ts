@@ -331,6 +331,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ): void;
     isNonInteractive(): boolean;
     getOpenshellBinary(): string;
+    getInstalledOpenshellVersion?(): string | null;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
     isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean;
     getSandboxRegistryEntry?(sandboxName: string): Partial<SandboxEntry> | null;
@@ -1366,7 +1367,7 @@ function nativeLocalAgentOptions(
 function assertNoLegacySharedLocalResume(
   deps: Pick<
     ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
-    "getSandboxRegistryEntry"
+    "getSandboxRegistryEntry" | "getInstalledOpenshellVersion"
   >,
   effectiveResume: boolean,
   sandboxName: string | null,
@@ -1377,7 +1378,7 @@ function assertNoLegacySharedLocalResume(
     recorded &&
     recorded.pendingRouteReservation !== true &&
     hasLegacySharedLocalInferenceRoute(recorded) &&
-    recorded.agent !== "pi"
+    (recorded.agent !== "pi" || !/^0\.0\.\d+$/.test(deps.getInstalledOpenshellVersion?.() ?? ""))
   ) {
     throw new Error(
       `Sandbox ${sandboxName} uses a legacy shared local inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider before upgrading OpenShell.`,
@@ -1496,6 +1497,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
+  assertNoLegacySharedLocalResume(deps, effectiveResume, sandboxName);
   const preservesLegacyPiRoute = createPersistedPiRouteSelector(
     deps.getSandboxRegistryEntry,
     effectiveResume,

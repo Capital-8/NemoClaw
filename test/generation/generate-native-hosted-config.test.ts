@@ -131,3 +131,44 @@ it("projects the attached Router credential into OpenClaw without loading a host
     }),
   );
 });
+
+it.each(["openai-completions", "openai-responses"])(
+  "projects the attached local compatible credential for %s instead of a hosted key",
+  (api) => {
+    const handle = "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN";
+    const config = buildConfig({
+      ...baseOpenClawGenerationEnv(),
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:45173/v1",
+      NEMOCLAW_INFERENCE_API: api,
+      NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle,
+      COMPATIBLE_API_KEY: "host-secret-must-not-appear",
+    });
+    expect(config.models.providers.inference).toEqual(
+      expect.objectContaining({
+        baseUrl: "http://host.openshell.internal:45173/v1",
+        api,
+        apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+      }),
+    );
+    expect(JSON.stringify(config)).not.toContain("COMPATIBLE_API_KEY");
+    expect(JSON.stringify(config)).not.toContain("host-secret-must-not-appear");
+    expect(JSON.stringify(config)).not.toContain(handle);
+  },
+);
+
+it.each([
+  ["http://host.openshell.internal:45173/v1", undefined],
+  ["https://custom.example/team/v1", "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN"],
+])("keeps the hosted credential when no local projection applies at %s", (endpoint, handle) => {
+  const config = buildConfig({
+    ...baseOpenClawGenerationEnv(),
+    NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+    NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+    NEMOCLAW_INFERENCE_BASE_URL: endpoint,
+    NEMOCLAW_INFERENCE_API: "openai-completions",
+    ...(handle ? { NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle } : {}),
+  });
+  expect(config.models.providers.inference.apiKey).toBe("openshell:resolve:env:COMPATIBLE_API_KEY");
+});

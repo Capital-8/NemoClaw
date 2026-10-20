@@ -21,7 +21,7 @@ export async function captureGpuInstallFailure(
   if (install.exitCode === 0) return;
   const output = stripAnsi(resultText(install));
   const attempts = new Set(
-    [...output.matchAll(/ai\.nvidia\.nemoclaw\.create-attempt=([a-f0-9]{64})(?![a-f0-9])/gu)].map(
+    [...output.matchAll(/ai\.nvidia\.nemoclaw\.create-attempt=([a-f0-9]{62})(?![a-f0-9])/gu)].map(
       (match) => match[1],
     ),
   );

@@ -22,8 +22,8 @@ The sandbox receives a credential reference; OpenShell supplies the host-managed
 Remaining custom shared selections use `inference.local` on OpenShell `0.0.x`.
 OpenShell forwards that traffic to the endpoint configured during onboarding.
 </AgentOnly>
-<AgentOnly variant="hermes,deepagents">
-New Deep Agents Code and Hermes sandboxes use sandbox-attached OpenShell providers for qualified host-local endpoints.
+<AgentOnly variant="hermes,deepagents,pi">
+New Deep Agents Code, Hermes, and Pi sandboxes use sandbox-attached OpenShell providers for qualified host-local endpoints.
 The agent uses the recorded endpoint and a credential reference; OpenShell supplies the credential at egress.
 Remaining custom shared selections retain `inference.local` on OpenShell `0.0.x`.
 </AgentOnly>
@@ -87,7 +87,7 @@ For qualifying custom hosted endpoints, the attached provider profile authorizes
 For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint, selected API, and OpenClaw runtime binaries.
 Remaining custom shared selections use the base `inference.local` policy on OpenShell `0.0.x`.
 </AgentOnly>
-<AgentOnly variant="hermes,deepagents">
+<AgentOnly variant="hermes,deepagents,pi">
 For qualified host-local endpoints, the attached provider profile authorizes the recorded endpoint and the selected agent runtime binaries.
 Remaining custom shared selections use the base `inference.local` policy on OpenShell `0.0.x`.
 </AgentOnly>

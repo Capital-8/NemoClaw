@@ -65,6 +65,9 @@ Qualifying custom hosted endpoints also use sandbox-attached providers.
 OpenShell supplies the issued credential at egress; Pi receives only an opaque reference.
 Remaining custom shared selections and unchanged published Pi shared-route selections retain `inference.local`.
 Those shared routes require OpenShell `0.0.x`; OpenShell `0.1.3` removes `inference.local`.
+On OpenShell `0.1.3`, NemoClaw refuses to resume or rebuild a retained Pi local selection without a native attachment.
+Back up required state before recreating the sandbox with `nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox`.
+NemoClaw preserves legacy volumes and does not automatically copy their data.
 Pi native local onboarding on `0.1.3` remains unqualified for this upgrade.
 A failed native selection stops without falling back to the shared route. Direct unmanaged provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
 

@@ -3,18 +3,23 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
-import { prepareOwnedSandboxForOnboard } from "../fixtures/owned-sandbox-cleanup.ts";
+import {
+  cleanupRegisteredSandbox,
+  prepareOwnedSandboxForOnboard,
+} from "../fixtures/owned-sandbox-cleanup.ts";
 
 const state = vi.hoisted(() => ({
   registered: false,
   gatewayPort: undefined as number | undefined,
 }));
 vi.mock("../../../src/lib/state/registry.ts", () => ({
-  getSandbox: () =>
+  getSandbox: vi.fn(() =>
     state.registered ? { name: "e2e-mcp-bridge", gatewayPort: state.gatewayPort } : null,
+  ),
 }));
 
 function fixture() {
@@ -78,6 +83,62 @@ describe("owned-sandbox cleanup", () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw");
     state.registered = false;
     state.gatewayPort = undefined;
+  });
+
+  it.each([false, true])(
+    "preserves Pi cleanup ordering with a registered sandbox: %s",
+    async (registered) => {
+      state.registered = registered;
+      const events: string[] = [];
+      const cleanup = new CleanupRegistry();
+      const host = {
+        cleanupGatewayRegistration: vi.fn(async () => {
+          events.push("registration");
+        }),
+        cleanupSandbox: vi.fn(async (_name: string, _options: ShellProbeRunOptions) => {
+          events.push("CLI destroy");
+        }),
+      };
+      const env = { HOME: "/owned-job-home", OPENSHELL_GATEWAY: "nemoclaw" };
+      cleanup.trackDisposable("guard", () => {
+        events.push("guard");
+      });
+      cleanup.trackGateway(host, "nemoclaw", { env });
+      cleanup.trackDisposable("OpenShell delete", () => {
+        events.push("OpenShell delete");
+      });
+      cleanup.trackDisposable("CLI destroy", () =>
+        cleanupRegisteredSandbox("e2e-pi-qual", () =>
+          host.cleanupSandbox("e2e-pi-qual", { env, timeoutMs: 300_000 }),
+        ),
+      );
+      expect((await cleanup.runAll()).failures).toEqual([]);
+      expect(events).toEqual(
+        registered
+          ? ["CLI destroy", "OpenShell delete", "registration", "guard"]
+          : ["OpenShell delete", "registration", "guard"],
+      );
+      expect(host.cleanupSandbox.mock.calls).toEqual(
+        registered ? [["e2e-pi-qual", { env, timeoutMs: 300_000 }]] : [],
+      );
+      expect(getSandbox).toHaveBeenCalledWith("e2e-pi-qual");
+    },
+  );
+
+  it("retains a registry failure while later Pi cleanup callbacks still run", async () => {
+    const cleanup = new CleanupRegistry();
+    const later = vi.fn();
+    const destroy = vi.fn(async () => {});
+    vi.mocked(getSandbox).mockImplementationOnce(() => {
+      throw new Error("invalid registry");
+    });
+    cleanup.trackDisposable("remaining cleanup", later);
+    cleanup.trackDisposable("CLI destroy", () => cleanupRegisteredSandbox("e2e-pi-qual", destroy));
+    expect((await cleanup.runAll()).failures).toEqual([
+      { name: "CLI destroy", message: "invalid registry" },
+    ]);
+    expect(destroy).not.toHaveBeenCalled();
+    expect(later).toHaveBeenCalledOnce();
   });
 
   it("does not start a gateway or run CLI recovery when fresh resources are absent", async () => {

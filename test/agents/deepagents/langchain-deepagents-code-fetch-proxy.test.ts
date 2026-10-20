@@ -34,6 +34,18 @@ function readAgentFile(name: string): string {
 afterEach(cleanupPackageFixtures);
 
 describe("LangChain Deep Agents Code managed fetch transport", () => {
+  it.each(["_pinned_dns", "_is_blocked_ip"])(
+    "refuses an upstream package missing the %s fetch guard",
+    (symbol) => {
+      const tempDir = createPackageFixture();
+      const toolsPath = path.join(tempDir, "deepagents_code", "tools.py");
+      fs.writeFileSync(
+        toolsPath,
+        fs.readFileSync(toolsPath, "utf8").replace(`def ${symbol}(`, `def removed${symbol}(`),
+      );
+      expect(() => patchFixture(tempDir)).toThrow(symbol);
+    },
+  );
   it("clears obsolete proxy delegation in startup and sourced shell environments", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-fetch-proxy-"));
     try {
@@ -84,7 +96,7 @@ identity.chmod(0o644)
 try:
     runtime.managed_fetch_with_redirects("https://example.com", timeout=3, max_redirects=5,
         original_fetch=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unsafe fallback")),
-        validation_error=ValueError)
+        validation_error=ValueError, pin_dns=None, is_blocked_ip=None)
 except ValueError as exc:
     assert str(exc) == "managed upstream provider file has unsafe ownership or mode"
 else:
@@ -223,12 +235,8 @@ class Session:
         self.closed = True
 
     def get(self, _url, **kwargs):
-        global pinned_transport_count
-        with state_lock:
-            pinned_transport_count += 1
-            if pinned_transport_count == PINNED_FETCH_COUNT:
-                pinned_ready.set()
-        assert release_pinned.wait(10), "timed out waiting for concurrent CA bundle mutation"
+        target = urlparse(_url)
+        urllib3_connection.create_connection((target.hostname, target.port or 443))
         ca_contents = Path(kwargs["verify"]).read_text(encoding="utf-8")
         with state_lock:
             successful_ca_contents.append(ca_contents)
@@ -238,6 +246,32 @@ requests = types.ModuleType("requests")
 requests.Session = Session
 requests.exceptions = types.SimpleNamespace(TooManyRedirects=RuntimeError)
 sys.modules["requests"] = requests
+
+import ipaddress
+import socket
+from urllib.parse import urlparse
+socket_calls = []
+dns_answers = {}
+def managed_dns(host, _port, **_kwargs):
+    values = dns_answers.get(host, ["198.18.0.2"])
+    if isinstance(values, Exception):
+        raise values
+    return [(socket.AF_INET6 if ":" in ip else socket.AF_INET,
+             socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0)) for ip in values]
+socket.getaddrinfo = managed_dns
+urllib3_connection = types.ModuleType("urllib3.util.connection")
+def socket_boundary(address, *_args, **_kwargs):
+    # The pinned upstream owner must pass a vetted numeric address, never a
+    # hostname that could resolve again between validation and connection.
+    ipaddress.ip_address(address[0])
+    socket_calls.append(address)
+    return object()
+urllib3_connection.create_connection = socket_boundary
+urllib3_util = types.ModuleType("urllib3.util")
+urllib3_util.connection = urllib3_connection
+sys.modules["urllib3"] = types.ModuleType("urllib3")
+sys.modules["urllib3.util"] = urllib3_util
+sys.modules["urllib3.util.connection"] = urllib3_connection
 
 from deepagents_code import _nemoclaw_managed, tools
 
@@ -259,7 +293,14 @@ _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
 original_open = os.open
 def open_projected_trust(path, flags, *args, **kwargs):
     assert Path(path) == Path("/run/openshell-supervisor-ca/material/ca-bundle.crt")
-    return original_open(managed_ca_file, flags, *args, **kwargs)
+    global pinned_transport_count
+    descriptor = original_open(managed_ca_file, flags, *args, **kwargs)
+    with state_lock:
+        pinned_transport_count += 1
+        if pinned_transport_count == PINNED_FETCH_COUNT:
+            pinned_ready.set()
+    assert release_pinned.wait(10), "timed out waiting for concurrent CA bundle mutation"
+    return descriptor
 os.open = open_projected_trust
 
 for name in (
@@ -398,6 +439,8 @@ class Session:
         self.closed = True
 
     def get(self, url, **kwargs):
+        target = urlparse(url)
+        urllib3_connection.create_connection((target.hostname, target.port or 443))
         global ca_swap_thread
         if ca_swap_thread is not None:
             thread = ca_swap_thread
@@ -415,6 +458,32 @@ requests = types.ModuleType("requests")
 requests.Session = Session
 requests.exceptions = types.SimpleNamespace(HTTPError=ProxyPolicyDenied, TooManyRedirects=RuntimeError)
 sys.modules["requests"] = requests
+
+import ipaddress
+import socket
+from urllib.parse import urlparse
+socket_calls = []
+dns_answers = {}
+def managed_dns(host, _port, **_kwargs):
+    values = dns_answers.get(host, ["198.18.0.2"])
+    if isinstance(values, Exception):
+        raise values
+    return [(socket.AF_INET6 if ":" in ip else socket.AF_INET,
+             socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 0)) for ip in values]
+socket.getaddrinfo = managed_dns
+urllib3_connection = types.ModuleType("urllib3.util.connection")
+def socket_boundary(address, *_args, **_kwargs):
+    # The pinned upstream owner must pass a vetted numeric address, never a
+    # hostname that could resolve again between validation and connection.
+    ipaddress.ip_address(address[0])
+    socket_calls.append(address)
+    return object()
+urllib3_connection.create_connection = socket_boundary
+urllib3_util = types.ModuleType("urllib3.util")
+urllib3_util.connection = urllib3_connection
+sys.modules["urllib3"] = types.ModuleType("urllib3")
+sys.modules["urllib3.util"] = urllib3_util
+sys.modules["urllib3.util.connection"] = urllib3_connection
 
 from deepagents_code import _nemoclaw_managed, tools
 
@@ -439,10 +508,10 @@ os.environ["REQUESTS_CA_BUNDLE"] = "relative/../hostile-requests-ca.pem"
 os.environ["CURL_CA_BUNDLE"] = "/missing/hostile-curl-ca.pem"
 os.environ["SSL_CERT_FILE"] = "/missing/hostile-ssl-ca.pem"
 
-def forbidden_direct_dns(*_args, **_kwargs):
-    raise AssertionError("managed fetch attempted direct DNS validation")
+def forbidden_public_only_dns(*_args, **_kwargs):
+    raise AssertionError("managed fetch used the public-only upstream DNS guard")
 
-tools._validate_url = forbidden_direct_dns
+tools._validate_url = forbidden_public_only_dns
 expected_proxies = {}
 
 def assert_fd_ca_path(candidate):
@@ -523,32 +592,119 @@ assert_managed_hops([
     "https://raw.githubusercontent.com/example/main/README.md",
 ])
 
-# Cross-host redirects remain behind the same explicit proxy. The adapter does
-# not locally authorize IMDS; it propagates the policy proxy's denial. The live
-# egress check separately proves that OpenShell denies the IMDS destination.
-metadata_url = "https://169.254.169.254/latest/meta-data/"
-expect_redirect_policy_denial(
-    "https://raw.githubusercontent.com/example/redirect-to-imds",
-    metadata_url,
-    "cross-host metadata",
-)
+# Literal non-public destinations and resolved local sockets stop before a
+# request. Each redirect receives the same admission and connection pinning.
+for denied_url in (
+    "https://127.0.0.1/", "https://127.1/", "https://2130706433/",
+    "https://0x7f000001/", "https://0177.0.0.1/", "https://127.0.0.1./",
+    "https://[::1]/", "https://[::ffff:127.0.0.1]/", "https://[2002:7f00:1::]/",
+    "http://0.0.0.0/", "http://[::]/", "https://10.0.0.1/",
+    "https://169.254.169.254/latest/meta-data/", "https://[fe80::1]/",
+    "https://[fc00::1]/", "https://198.18.0.2/",
+):
+    for redirect in (False, True):
+        calls.clear()
+        socket_calls.clear()
+        responses.clear()
+        initial = "https://raw.githubusercontent.com/redirect" if redirect else denied_url
+        if redirect:
+            responses.append(Response(302, denied_url))
+        try:
+            tools._fetch_with_redirects(initial, timeout=8)
+        except tools._UrlValidationError as exc:
+            assert str(exc) == "URL destination is blocked"
+        else:
+            raise AssertionError("non-public literal reached transport")
+        assert len(calls) == int(redirect)
+        assert len(socket_calls) == int(redirect)
+        assert all(address[0] == "198.18.0.2" for address in socket_calls)
 
-# DNS and resolved-IP policy belong to OpenShell. A rebinding candidate must be
-# passed by hostname through the explicit proxy without local DNS, and the
-# proxy's denial must propagate rather than triggering a direct retry.
-rebind_url = "https://rebind.internal/private"
-original_getaddrinfo = socket.getaddrinfo
-def forbidden_local_dns(*_args, **_kwargs):
-    raise AssertionError("managed redirect attempted local DNS")
-socket.getaddrinfo = forbidden_local_dns
+for answers in (["127.0.0.1"], ["::1"], ["::ffff:127.0.0.1"], ["0.0.0.0"],
+                ["::"], ["198.18.0.2", "127.0.0.1"]):
+    dns_answers["loopback-alias.example"] = answers
+    for redirect in (False, True):
+        calls.clear()
+        socket_calls.clear()
+        responses.clear()
+        denied_url = "https://loopback-alias.example/private"
+        initial = "https://raw.githubusercontent.com/redirect" if redirect else denied_url
+        if redirect:
+            responses.append(Response(302, denied_url))
+        try:
+            tools._fetch_with_redirects(initial, timeout=8)
+        except tools._UrlValidationError as exc:
+            assert str(exc) == "URL destination is blocked"
+        else:
+            raise AssertionError("resolved local address reached transport")
+        assert len(calls) == int(redirect)
+        assert len(socket_calls) == int(redirect)
+
+# A synthetic address is not an upstream destination. The runtime still owns
+# its policy decision, including rejection after a hostname redirect.
+expect_redirect_policy_denial(
+    "https://raw.githubusercontent.com/example/redirect-to-rebind",
+    "https://rebind.internal/private", "DNS-rebinding hostname",
+)
+assert all(address[0] == "198.18.0.2" for address in socket_calls)
+
+# A second hostname lookup would return loopback. The actual connection owner
+# receives the first vetted address and cannot perform that second lookup.
+original_dns = socket.getaddrinfo
+dns_lookups = []
+def rebind_dns(host, port, **kwargs):
+    dns_lookups.append(host)
+    return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+             ("198.18.0.2" if len(dns_lookups) == 1 else "127.0.0.1", 0))]
+socket.getaddrinfo = rebind_dns
+calls.clear()
+socket_calls.clear()
+responses.clear()
 try:
-    expect_redirect_policy_denial(
-        "https://raw.githubusercontent.com/example/redirect-to-rebind",
-        rebind_url,
-        "DNS-rebinding hostname",
-    )
+    assert tools._fetch_with_redirects("https://rebind.example/", timeout=8).status_code == 200
+    assert dns_lookups == ["rebind.example"]
+    assert socket_calls == [("198.18.0.2", 443)]
 finally:
-    socket.getaddrinfo = original_getaddrinfo
+    socket.getaddrinfo = original_dns
+
+# Valid public literals and synthetic IPv6 answers retain their supported route.
+for candidate, answer, expected_host in (
+    ("https://8.8.8.8/", "8.8.8.8", "8.8.8.8"),
+    ("https://[2606:4700:4700::1111]/", "2606:4700:4700::1111", "2606:4700:4700::1111"),
+    ("https://synthetic.example/", "fd00::1234", "synthetic.example"),
+    ("https://täst.example/", "198.18.0.3", "xn--tst-qla.example"),
+    ("https://raw.githubusercontent.com./", "198.18.0.4", "raw.githubusercontent.com."),
+):
+    dns_answers[expected_host] = [answer]
+    socket_calls.clear()
+    assert tools._fetch_with_redirects(candidate, timeout=8).status_code == 200
+    assert socket_calls == [(answer, 443)]
+    del dns_answers[expected_host]
+
+for answer, error in (
+    ([], "URL hostname resolved to no addresses"),
+    (["not-an-address"], "URL hostname returned an invalid address"),
+    (socket.gaierror("sensitive resolver detail"), "URL hostname could not be resolved"),
+):
+    dns_answers["unresolved.example"] = answer
+    calls.clear()
+    socket_calls.clear()
+    try:
+        tools._fetch_with_redirects("https://unresolved.example/", timeout=8)
+    except tools._UrlValidationError as exc:
+        assert str(exc) == error
+    else:
+        raise AssertionError("invalid DNS result reached transport")
+    assert calls == [] and socket_calls == []
+
+calls.clear()
+socket_calls.clear()
+try:
+    tools._fetch_with_redirects("https://127%2e0%2e0%2e1/", timeout=8)
+except tools._UrlValidationError as exc:
+    assert str(exc) == "URL hostname is invalid"
+else:
+    raise AssertionError("encoded authority escaped admission")
+assert calls == [] and socket_calls == []
 
 calls.clear()
 responses.append(Response(302))
@@ -722,9 +878,8 @@ for mode in (0o644, 0o544, 0o400):
         raise AssertionError("CA bundle with a non-projected mode was accepted")
 managed_ca_file.chmod(0o444)
 
-# The proxy and CA are fixed process-wide runtime inputs. Per-call isolation
-# therefore means a fresh Session and explicit proxy mapping for each fetch,
-# including concurrent calls, rather than unsupported mutable configurations.
+# Each fetch keeps its own Session and CA descriptor. The upstream connection
+# lock serializes transport without sharing environment-derived credentials.
 calls.clear()
 session_start = len(sessions)
 concurrent_urls = [

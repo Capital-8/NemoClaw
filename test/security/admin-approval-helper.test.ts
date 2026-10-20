@@ -848,6 +848,18 @@ describe("prepared connect-shell administrative approval", () => {
     ["HTTP 599: PRIVATE_BODY", "error-text-http-599"],
     ["HTTP 408: PRIVATE_BODY", "error-text-http-408"],
     ["HTTP 429: PRIVATE_BODY", "error-text-http-429"],
+    [
+      "\u26a0\ufe0f inference/PRIVATE_MODEL request failed (provider internal error, HTTP 500). This is usually temporary — try again shortly.",
+      "error-text-http-500",
+    ],
+    [
+      "PRIVATE_PREFIX \u26a0\ufe0f inference/PRIVATE_MODEL request failed (provider internal error, HTTP 500). This is usually temporary — try again shortly.",
+      "unavailable",
+    ],
+    [
+      "\u26a0\ufe0f inference/PRIVATE_MODEL request failed (provider internal error, HTTP 500). This is usually temporary — try again shortly. PRIVATE_SUFFIX",
+      "unavailable",
+    ],
     ["PRIVATE_PREFIX LLM request timed out.", "unavailable"],
     ["LLM request timed out. PRIVATE_SUFFIX", "unavailable"],
     ["PRIVATE_BODY contains 503", "unavailable"],

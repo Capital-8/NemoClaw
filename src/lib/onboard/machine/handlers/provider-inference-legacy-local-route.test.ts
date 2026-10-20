@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { getInstalledOpenshellVersion } from "../../openshell-version";
 
 // The reservation helper must not inspect the operator's real registry.
 vi.mock("../../../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../state/registry")>()),
   getSandbox: vi.fn(() => null),
 }));
+
+import { cliOpenShellInstalledVersionObserver } from "../../../adapters/openshell/installed-version-cli";
 
 import { createSession } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
@@ -56,6 +59,10 @@ describe("legacy local inference resume", () => {
   ])(
     "resumes an unchanged published Pi $provider selection through its shared route",
     async (selection) => {
+      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+        ok: true,
+        version: "0.0.116",
+      });
       const session = createSession({
         agent: "pi",
         sandboxName: "my-assistant",
@@ -76,7 +83,10 @@ describe("legacy local inference resume", () => {
         credentialEnv: session.credentialEnv,
         preferredInferenceApi: session.preferredInferenceApi,
       } as SandboxEntry;
-      const { deps, calls } = createDeps({ getSandboxRegistryEntry: () => recorded });
+      const { deps, calls } = createDeps({
+        getSandboxRegistryEntry: () => recorded,
+        getInstalledOpenshellVersion,
+      });
 
       await handleProviderInferenceState({
         ...baseOptions(deps, session),
@@ -125,7 +135,10 @@ it("blocks resume of a legacy OpenClaw compatible route before inference setup",
     credentialEnv: session.credentialEnv,
     preferredInferenceApi: session.preferredInferenceApi,
   } as SandboxEntry;
-  const { deps, calls } = createDeps({ getSandboxRegistryEntry: () => recorded });
+  const { deps, calls } = createDeps({
+    getSandboxRegistryEntry: () => recorded,
+    getInstalledOpenshellVersion,
+  });
   await expect(
     handleProviderInferenceState({
       ...baseOptions(deps, session),
@@ -136,3 +149,58 @@ it("blocks resume of a legacy OpenClaw compatible route before inference setup",
   ).rejects.toThrow(/Back up|back up/);
   expect(calls.setupInference).not.toHaveBeenCalled();
 });
+
+it.each([
+  { label: "0.1.3", observation: { ok: true, version: "0.1.3" } },
+  { label: "0.1.0", observation: { ok: true, version: "0.1.0" } },
+  {
+    label: "unknown",
+    observation: { ok: false, error: { kind: "unavailable", message: "unavailable" } },
+  },
+] as const)(
+  "refuses retained Pi shared inference before mutation on OpenShell $label",
+  async ({ observation }) => {
+    vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue(
+      observation,
+    );
+    const session = createSession({
+      agent: "pi",
+      sandboxName: "my-assistant",
+      provider: "ollama-local",
+      model: "qwen3:8b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    });
+    session.steps.provider_selection.status = "complete";
+    const recorded = {
+      name: "my-assistant",
+      agent: "pi",
+      gatewayName: "nemoclaw",
+      createdAt: "2026-09-01T00:00:00Z",
+      provider: session.provider,
+      model: session.model,
+      endpointUrl: session.endpointUrl,
+      credentialEnv: session.credentialEnv,
+    } as SandboxEntry;
+    const before = structuredClone({ session, recorded });
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: () => recorded,
+      getInstalledOpenshellVersion,
+    });
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        agent: { name: "pi" },
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("Back up");
+    expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.startStep).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+    expect({ session, recorded }).toEqual(before);
+  },
+);

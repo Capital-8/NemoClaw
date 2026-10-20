@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureSandboxFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
+import {
+  captureLifecycleInstallFailureDiagnostics,
+  captureSandboxFailureDiagnostics,
+} from "../fixtures/sandbox-failure-diagnostics.ts";
 import {
   withPodmanOwnerDiagnostic,
   captureBoundedPodmanOwnerDiagnostic,
@@ -96,9 +99,9 @@ interface SessionStateComplete {
 }
 
 interface SessionStateRetryableFailure {
-  status: "failed" | "in_progress";
+  status: "failed";
   resumable: true;
-  machine: { state: "failed" | "post_verify" };
+  machine: { state: "failed" };
 }
 
 interface MutableSessionState extends Record<string, unknown> {
@@ -211,7 +214,7 @@ test(
         "resume sandbox recreation filters stale extra providers while preserving live attachments",
         "resume proves recreated sandbox provider attachments are selectively reconciled",
         "host trust-store anchor corporate CA source is baked and merged after resume",
-        "an unreachable committed route pauses at final verification and completes after repair",
+        "an unreachable committed route leaves a resumable failure and completes after repair",
         "non-recreate resume retains the Ready sandbox, dashboard port, and exact forward listener",
         "implicit resume is detected and --fresh suppresses that auto-resume",
       ],
@@ -375,6 +378,13 @@ test(
       env: firstRunEnv,
       redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
       timeoutMs: execTimeout(ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS),
+    });
+    await captureLifecycleInstallFailureDiagnostics(host, runtimeProvider, firstRun, {
+      sandboxName: SANDBOX_NAME,
+      gatewayName: "nemoclaw",
+      artifactPrefix: "phase-2-initial-onboard-failure",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
     });
     const firstText = `${firstRun.stdout}\n${firstRun.stderr}`;
 
@@ -580,7 +590,7 @@ test(
     expect(containsExactJsonToken(registry, SANDBOX_NAME)).toBe(true);
 
     // ──────────────────────────────────────────────────────────────────
-    // Phase 3.5: a committed route that goes offline leaves final
+    // Phase 3.5: a committed route that goes offline leaves native inference
     // verification retryable; restoring the same endpoint lets a later resume
     // re-probe and complete without recreating the sandbox.
     // ──────────────────────────────────────────────────────────────────
@@ -630,25 +640,22 @@ test(
       `${unavailableResumeRun.exitCode !== 0}:${listenerBeforeRouteFailure.valid}:${listenerAfterRouteFailure.valid}:${listenerBeforeRouteFailure.identity === listenerAfterRouteFailure.identity}`,
       `${unavailableResumeText}\n${listenerBeforeRouteFailure.output}\n${listenerAfterRouteFailure.output}`,
     ).toBe("true:true:true:true");
-    expect(
-      hasHermesApi ||
-        unavailableResumeText.includes("Provider-neutral sandbox inference smoke check failed"),
-    ).toBe(true);
+    expect(unavailableResumeText).toContain(
+      "Provider-neutral sandbox inference smoke check failed.",
+    );
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );
 
     const paused = readSession<SessionStateRetryableFailure>(SESSION_FILE);
-    const expectedPausedStatus = hasHermesApi ? "in_progress" : "failed";
-    const expectedPausedMachineState = hasHermesApi ? "post_verify" : "failed";
     await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
       status: paused.status,
       resumable: paused.resumable,
       machineState: paused.machine.state,
     });
-    expect(paused.status).toBe(expectedPausedStatus);
+    expect(paused.status).toBe("failed");
     expect(paused.resumable).toBe(true);
-    expect(paused.machine.state).toBe(expectedPausedMachineState);
+    expect(paused.machine.state).toBe("failed");
 
     fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,

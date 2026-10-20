@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { cliOpenShellInstalledVersionObserver } from "../../adapters/openshell/installed-version-cli";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
@@ -172,6 +173,34 @@ describe("rebuildSandbox flow: target session", () => {
       restoreEnv();
     }
   });
+
+  it.each(["ollama-local", "vllm-local"])(
+    "refuses a retained Pi %s rebuild before state changes on OpenShell 0.1.3",
+    async (provider) => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          agent: "pi",
+          provider,
+          model: "local-model",
+          createdAt: "2026-09-01T00:00:00Z",
+          nativeLocalProviderAttachment: undefined,
+        },
+      });
+      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+        ok: true,
+        version: "0.1.3",
+      });
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Legacy shared local inference cannot be rebuilt safely");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+    },
+  );
 
   it("uses the exact preflighted agent base image only for the recreate", async () => {
     const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";

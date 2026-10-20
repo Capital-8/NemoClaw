@@ -25,6 +25,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertNoDockerfileBuild, createDockerBuildGuard } from "../fixtures/docker-build-guard.ts";
+import { cleanupRegisteredSandbox } from "../fixtures/owned-sandbox-cleanup.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -332,7 +333,11 @@ test(
     cleanup.trackDisposable("remove Pi OpenShell sandbox", () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, { env, timeoutMs: 60_000 }),
     );
-    cleanup.trackSandbox(host, SANDBOX_NAME, { env, timeoutMs: 5 * 60_000 });
+    cleanup.trackDisposable(`destroy sandbox ${SANDBOX_NAME}`, () =>
+      cleanupRegisteredSandbox(SANDBOX_NAME, () =>
+        host.cleanupSandbox(SANDBOX_NAME, { env, timeoutMs: 5 * 60_000 }),
+      ),
+    );
 
     await artifacts.target.declare({
       id: "pi-agent-qualification",

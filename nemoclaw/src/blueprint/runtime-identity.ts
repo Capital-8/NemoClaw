@@ -436,6 +436,22 @@ function parseRuntimeIdentityProfile(
         if (!isPlainObject(credential.refresh) || !Array.isArray(credential.refresh.material)) {
           continue;
         }
+        // OpenShell 0.1.3 exports protobuf durations instead of legacy seconds.
+        // Only whole-second values can match the reviewed imported profile.
+        for (const field of ["refresh_before", "max_lifetime"]) {
+          if (!(field in credential.refresh)) continue;
+          const duration = credential.refresh[field];
+          const secondsField = `${field}_seconds`;
+          if (
+            typeof duration !== "string" ||
+            !/^[1-9][0-9]*s$/u.test(duration) ||
+            secondsField in credential.refresh
+          ) {
+            throw new Error(`${label} has an unsupported refresh duration`);
+          }
+          credential.refresh[secondsField] = Number(duration.slice(0, -1));
+          delete credential.refresh[field];
+        }
         for (const material of credential.refresh.material) {
           if (
             isPlainObject(material) &&

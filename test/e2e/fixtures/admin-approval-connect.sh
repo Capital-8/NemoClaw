@@ -93,6 +93,7 @@ if sys.argv[2] == 'cron-run':
             http_signatures={str(code): f'error-text-http-{code}' for code in range(400, 600)}
             # Anchored subset of the pinned assistant-error-format HTTP grammar.
             http_patterns=(
+                r'\u26a0\ufe0f [A-Za-z0-9_./:-]+ request failed \(provider internal error, HTTP ([45][0-9]{2})\)\. This is usually temporary \u2014 try again shortly\.',
                 r'(?:http\s*)?([45][0-9]{2})(?:(?:\s*:\s*|\s+)[\s\S]+)?',
                 r'api\s*error\s*\(([45][0-9]{2})\)(?:\s*:\s*[\s\S]*)?',
                 r'(?:status code|unexpected status|http status)\s*[:=]?\s*([45][0-9]{2})\b(?:\s*[:,]?\s*(?:message\s*:\s*)?[\s\S]*)?',

@@ -161,6 +161,7 @@ test(
     });
 
     const fake = await startFakeOpenAiCompatibleServer({
+      additionalModels: ["changed-test-model"],
       host: "0.0.0.0",
       progress,
       publicHost: "host.openshell.internal",

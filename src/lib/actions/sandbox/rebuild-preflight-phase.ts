@@ -10,6 +10,7 @@ import {
 } from "../../inference/selection";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
+import { getInstalledOpenshellVersion } from "../../onboard/openshell-version";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
 import {
@@ -144,7 +145,8 @@ export function blockRebuildOnLegacySharedLocalRoute(
 ): boolean {
   if (
     !hasLegacySharedLocalInferenceRoute(sandboxEntry) ||
-    isPersistedPiSharedLocalInferenceRoute(sandboxEntry)
+    (isPersistedPiSharedLocalInferenceRoute(sandboxEntry) &&
+      /^0\.0\.\d+$/.test(getInstalledOpenshellVersion() ?? ""))
   )
     return false;
   printRebuildPreflightFailure(

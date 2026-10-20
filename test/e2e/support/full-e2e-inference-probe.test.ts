@@ -193,6 +193,7 @@ describe("full E2E sandbox inference probe", () => {
   it.each([
     ["nvidia-prod", "NVIDIA_INFERENCE_API_KEY", "https://integrate.api.nvidia.com/v1", undefined],
     ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1", undefined],
+    ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://inference-api.nvidia.com/v1", undefined],
     ["compatible-endpoint", "COMPATIBLE_API_KEY", "https://custom.example/team/v1", 60],
     [
       "compatible-endpoint",

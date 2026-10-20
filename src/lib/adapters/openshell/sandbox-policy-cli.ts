@@ -185,6 +185,35 @@ function capturedOutput(captured: CapturedOpenShellCommandResult): string {
 
 export const classifyCliOpenShellSandboxPolicySetResult = classifyOpenShellSandboxPolicySetResult;
 
+const POLICY_CAPTURE_ERROR_CLASSES = new Map([
+  ["ETIMEDOUT", "timeout"],
+  ["ENOENT", "missing-executable"],
+  ["EACCES", "permission"],
+  ["EPERM", "permission"],
+  ["ENOBUFS", "output-limit"],
+]);
+
+function policySubmissionStatus(captured: CapturedOpenShellCommandResult): string {
+  const status = captured.status;
+  let exit = "unknown";
+  if (status !== null && Number.isInteger(status) && status >= 0 && status <= 255) {
+    exit = status === 0 ? "zero" : "nonzero";
+  }
+  const code = (captured.error as NodeJS.ErrnoException | undefined)?.code;
+  const error = captured.error ? (POLICY_CAPTURE_ERROR_CLASSES.get(code ?? "") ?? "other") : "none";
+  const presence = (stream: unknown) => {
+    if (typeof stream === "string" || Buffer.isBuffer(stream)) {
+      return stream.length > 0 ? "present" : "empty";
+    }
+    return "unavailable";
+  };
+  // Fixed categories only: policy commands can echo credentials and submitted documents.
+  return (
+    `status=${exit}; signal=${captured.signal ? "present" : "none"}; capture=${error}; ` +
+    `stdout=${presence(captured.stdout)}; stderr=${presence(captured.stderr)}`
+  );
+}
+
 function parsePolicySet(
   captured: CapturedOpenShellCommandResult,
 ): OpenShellSandboxPolicySetSubmission {
@@ -192,7 +221,10 @@ function parsePolicySet(
   if (outcome.kind === "rejected") {
     outcome = { ...outcome, message: redactCredentialText(outcome.message) };
   } else if (outcome.kind === "ambiguous") {
-    outcome = { kind: "ambiguous", detail: "OpenShell did not confirm the policy submission" };
+    outcome = {
+      kind: "ambiguous",
+      detail: `OpenShell did not confirm the policy submission (${policySubmissionStatus(captured)})`,
+    };
   }
   return { status: captured.status, outcome };
 }

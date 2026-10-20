@@ -211,8 +211,6 @@ test(
     const hosted = requireHostedInferenceConfig(secrets);
     const apiKey = hosted.apiKey;
 
-    expect(fs.existsSync(BOOTSTRAP_SCRIPT), `${BOOTSTRAP_SCRIPT} missing`).toBe(true);
-
     const sudo = await host.command("sudo", ["-n", "true"], {
       artifactName: "prereq-passwordless-sudo",
       env: runEnv(),

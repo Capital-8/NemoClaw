@@ -12,6 +12,7 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import stat
 import sys
 from collections.abc import Callable
@@ -1245,11 +1246,14 @@ def managed_fetch_with_redirects(
     max_redirects: int,
     original_fetch: Callable[..., Any],
     validation_error: type[ValueError],
+    pin_dns: Callable[..., Any],
+    is_blocked_ip: Callable[..., bool],
 ) -> Any:
     """Fetch through OpenShell's mediated network with fixed TLS trust.
 
     Outside the managed image, preserve the pinned upstream transport.
-    OpenShell validates destinations on every hop; requests ignores ambient
+    Reject local destinations before connection and pin each DNS result.
+    OpenShell applies policy to mediated destinations; requests ignores ambient
     proxies, netrc credentials, and CA overrides.
     """
     try:
@@ -1272,7 +1276,7 @@ def managed_fetch_with_redirects(
     except RuntimeError as exc:
         raise validation_error(str(exc)) from None
 
-    def validate_url(candidate: str) -> None:
+    def validate_url(candidate: str) -> tuple[str, str, list[str]]:
         try:
             parsed = urlparse(candidate)
             hostname = parsed.hostname
@@ -1291,14 +1295,52 @@ def managed_fetch_with_redirects(
         # password. An `@` or `:` after the authority is ordinary path data
         # (including valid repository refs/files), never authentication;
         # rejecting that shape would create false positives. These validation
-        # errors never echo the candidate URL, and OpenShell's mediated network
-        # remains the destination-policy and SSRF authority for every hop.
+        # errors never echo the candidate URL.
         if parsed.username is not None or parsed.password is not None:
             raise validation_error("URL credentials are not allowed")
         try:
-            hostname.encode("idna").decode("ascii")
+            hostname = hostname.encode("idna").decode("ascii")
         except UnicodeError:
             raise validation_error("URL hostname is not valid IDNA") from None
+        if "%" in hostname:
+            raise validation_error("URL hostname is invalid")
+        try:
+            literal = ipaddress.ip_address(hostname.rstrip("."))
+        except ValueError:
+            try:
+                literal = ipaddress.IPv4Address(socket.inet_aton(hostname.rstrip(".")))
+            except OSError:
+                literal = None
+        if literal is not None and is_blocked_ip(literal):
+            raise validation_error("URL destination is blocked")
+        try:
+            answers = socket.getaddrinfo(
+                hostname, None, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+            )
+        except socket.gaierror:
+            raise validation_error("URL hostname could not be resolved") from None
+        addresses = []
+        for answer in answers:
+            raw_ip = str(answer[4][0]).split("%", 1)[0]
+            try:
+                address = ipaddress.ip_address(raw_ip)
+            except ValueError:
+                raise validation_error("URL hostname returned an invalid address") from None
+            if isinstance(address, ipaddress.IPv6Address):
+                address = address.ipv4_mapped or address.sixtofour or address
+            # OpenShell admits synthetic DNS addresses through its policy broker.
+            # Ordinary loopback sockets bypass that broker and must stop here.
+            if address.is_loopback or address.is_unspecified:
+                raise validation_error("URL destination is blocked")
+            addresses.append(raw_ip)
+        if not addresses:
+            raise validation_error("URL hostname resolved to no addresses")
+        # Send the same ASCII hostname that was resolved and pinned. This avoids
+        # a different IDNA interpretation in the HTTP client's URL preparation.
+        authority = f"[{hostname}]" if ":" in hostname else hostname
+        if parsed.port is not None:
+            authority += f":{parsed.port}"
+        return parsed._replace(netloc=authority).geturl(), hostname, addresses
 
     current_url = url
     proxies: dict[str, str] = {}
@@ -1311,19 +1353,20 @@ def managed_fetch_with_redirects(
             # choose a proxy or authorize a destination under OpenShell policy.
             session.trust_env = False
             for _hop in range(max_redirects + 1):
-                validate_url(current_url)
+                current_url, hostname, addresses = validate_url(current_url)
                 try:
                     _rewind_managed_fetch_ca_bundle(ca_descriptor)
                 except RuntimeError as exc:
                     raise validation_error(str(exc)) from None
-                response = session.get(
-                    current_url,
-                    timeout=timeout,
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
-                    allow_redirects=False,
-                    proxies=proxies,
-                    verify=ca_bundle,
-                )
+                with pin_dns(hostname, addresses):
+                    response = session.get(
+                        current_url,
+                        timeout=timeout,
+                        headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAgents/1.0)"},
+                        allow_redirects=False,
+                        proxies=proxies,
+                        verify=ca_bundle,
+                    )
                 if 300 <= response.status_code < 400:
                     location = response.headers.get("Location")
                     if not location:

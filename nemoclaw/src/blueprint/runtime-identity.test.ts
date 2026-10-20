@@ -125,6 +125,9 @@ const gatewayExportDocument = profileDocument
     "        - name: client_id\n          required: true",
     "        - name: client_id\n          required: true\n          secret: false",
   );
+const gatewayDurationExportDocument = gatewayExportDocument
+  .replace(/refresh_before_seconds: (\d+)/u, 'refresh_before: "$1s"')
+  .replace(/max_lifetime_seconds: (\d+)/u, 'max_lifetime: "$1s"');
 const entraProfileDocument = readFileSync(
   new URL("../../../nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml", import.meta.url),
   "utf8",
@@ -419,19 +422,34 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
   });
 
-  it("accepts OpenShell's catalog metadata and explicit default fields without a false post-mutation warning", async () => {
-    responses.set("provider get acme-okta-runtime", [missingProvider]);
-    responses.set("provider profile export okta-runtime-v1 --output yaml", [
-      { exitCode: 0, stdout: gatewayExportDocument, stderr: "" },
-      { exitCode: 0, stdout: gatewayExportDocument, stderr: "" },
-    ]);
+  it.each([gatewayExportDocument, gatewayDurationExportDocument])(
+    "accepts equivalent exported metadata and durations without a post-mutation warning",
+    async (exported) => {
+      responses.set("provider get acme-okta-runtime", [missingProvider]);
+      responses.set("provider profile export okta-runtime-v1 --output yaml", [
+        { exitCode: 0, stdout: exported, stderr: "" },
+        { exitCode: 0, stdout: exported, stderr: "" },
+      ]);
 
-    await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
-    expect(warnings).toEqual([]);
-    expect(persistedReceipts).toHaveLength(1);
-  });
+      await expect(prepareRuntimeIdentity(config, deps)).resolves.toMatchObject(createdReceipt);
+      expect(warnings).toEqual([]);
+      expect(persistedReceipts).toHaveLength(1);
+    },
+  );
 
   it.each([
+    ...["0s", "-1s", "60.5s", "1e2s", "999999999999999999999s", "60"].map((duration) =>
+      gatewayDurationExportDocument.replace(
+        /refresh_before: "[0-9]+s"/u,
+        `refresh_before: "${duration}"`,
+      ),
+    ),
+    gatewayDurationExportDocument.replace(/refresh_before: "[0-9]+s"/u, 'refresh_before: "61s"'),
+    gatewayDurationExportDocument.replace(/max_lifetime: "[0-9]+s"/u, 'max_lifetime: "61s"'),
+    gatewayDurationExportDocument.replace(
+      "refresh_before:",
+      "refresh_before_seconds: 60\n      refresh_before:",
+    ),
     gatewayExportDocument.replace("source: user", "source: builtin"),
     gatewayExportDocument.replace("scope: workspace", "scope: platform"),
     gatewayExportDocument.replace("query_param: ''", "query_param: credential"),

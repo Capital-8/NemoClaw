@@ -3,6 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { cliOpenShellInstalledVersionObserver } from "../../adapters/openshell/installed-version-cli";
+
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { blockRebuildOnLegacySharedLocalRoute } from "./rebuild-preflight-phase";
 
@@ -346,7 +348,11 @@ describe("rebuild legacy local route preflight", () => {
 });
 
 describe("Pi shared local rebuild compatibility", () => {
-  it("keeps a published Pi shared route eligible for rebuild (#12975)", () => {
+  it("keeps a published Pi shared route eligible for rebuild on OpenShell 0.0.116 (#12975)", () => {
+    vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+      ok: true,
+      version: "0.0.116",
+    });
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
     });

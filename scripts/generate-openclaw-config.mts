@@ -984,7 +984,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
       apiKey:
-        nativeHosted?.apiKey ?? nativeLocal ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
+        nativeLocal ?? nativeHosted?.apiKey ?? managedInferenceApiKey(inferenceBaseUrl, "unused"),
       ...(nativeHosted?.headers ? { headers: nativeHosted.headers } : {}),
       api: inferenceApi,
       timeoutSeconds: agentTimeout,
