@@ -398,10 +398,11 @@ async function readPolicyStatus(
   return parseExactMainPolicyStatus(result.stdout);
 }
 
-async function waitForRestartedPolicy(
+export async function waitForRestartedPolicy(
   sandbox: SandboxClient,
   sandboxName: string,
   expected: ExactMainPolicyStatus,
+  expectedRevision: ExactMainPolicyStatus,
 ): Promise<{ effective: ExactMainPolicyStatus; revision: ExactMainPolicyStatus }> {
   const deadline = Date.now() + POLICY_TIMEOUT_MS;
   let last = "no status response";
@@ -421,7 +422,7 @@ async function waitForRestartedPolicy(
       );
       if (
         revision.status === "loaded" &&
-        revision.hash === expected.hash &&
+        revision.hash === expectedRevision.hash &&
         revision.activeVersion === expected.version &&
         effective.status === "effective" &&
         effective.hash === expected.hash &&
@@ -592,11 +593,12 @@ export async function assertExactMainPolicyAndIdentityContracts(options: {
     );
     expect(revision).toMatchObject({
       activeVersion: effective.version,
-      hash: effective.hash,
       sandbox: options.sandboxName,
       status: "loaded",
       version: effective.version,
     });
+    // Effective policy includes attached provider rules. Its hash and the
+    // stored base revision hash each remain stable across the restart.
 
     const containerId = await findSandboxContainer(
       options.host,
@@ -628,6 +630,7 @@ export async function assertExactMainPolicyAndIdentityContracts(options: {
       options.sandbox,
       options.sandboxName,
       effective,
+      revision,
     );
     const acknowledgement = await waitForInitialPolicyAcknowledgement(
       options.sandbox,

@@ -252,8 +252,15 @@ for trusted_file in (provider_file, managed_ca_file, attacker_ca_file):
     trusted_file.chmod(0o444)
 
 _nemoclaw_managed._UPSTREAM_PROVIDER_FILE = provider_file
-_nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
 _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
+
+# Exercise the installed path without replacing the runtime's trust selector.
+# Redirect only that root-owned runtime path into this test's isolated filesystem.
+original_open = os.open
+def open_projected_trust(path, flags, *args, **kwargs):
+    assert Path(path) == Path("/run/openshell-supervisor-ca/material/ca-bundle.crt")
+    return original_open(managed_ca_file, flags, *args, **kwargs)
+os.open = open_projected_trust
 
 for name in (
     "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL",

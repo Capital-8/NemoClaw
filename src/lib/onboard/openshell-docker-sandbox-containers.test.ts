@@ -283,6 +283,39 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     expect(dockerLogs).not.toHaveBeenCalled();
   });
 
+  it("retains bounded role state with empty logs without copying inspect secrets", () => {
+    const supervisor = "e".repeat(64);
+    const output = captureOpenShellDockerSandboxFailureOutput("my-assistant", null, {
+      dockerRun: () =>
+        dockerResult(
+          [identity(CONTAINER_ID, "sandbox"), identity(supervisor, "supervisor")].join("\n"),
+        ),
+      dockerCapture: () =>
+        JSON.stringify([
+          {
+            Id: CONTAINER_ID,
+            Config: { Env: ["TOKEN=private-inspect-secret"] },
+            State: {
+              Running: false,
+              ExitCode: 7,
+              OOMKilled: true,
+              Error: "private-inspect-secret",
+            },
+          },
+          {
+            Id: supervisor,
+            Config: { Env: [] },
+            State: { Running: true, ExitCode: "private-inspect-secret", OOMKilled: false },
+          },
+        ]),
+      dockerLogs: () => "",
+    });
+    expect(output).toBe(
+      `== sandbox ${CONTAINER_ID} ==\nrunning=false exit_code=7 oom_killed=true\n` +
+        `== supervisor ${supervisor} ==\nrunning=true oom_killed=false`,
+    );
+  });
+
   it("reads no role logs when the complete inspect inventory exceeds the shared deadline", () => {
     let clock = 0;
     const dockerLogs = vi.fn();

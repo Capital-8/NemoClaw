@@ -36,13 +36,8 @@ export async function readOpenClawBootId(
     ],
     { ...options, timeoutMs: 20_000 },
   );
-  if (
-    result.exitCode !== 0 ||
-    result.timedOut ||
-    result.signal !== null ||
-    result.stderr.trim() !== ""
-  )
-    return null;
+  // Launcher diagnostics use stderr even when the authenticated RPC succeeds.
+  if (result.exitCode !== 0 || result.timedOut || result.signal !== null) return null;
   try {
     const document = JSON.parse(result.stdout) as {
       rpc?: { ok?: unknown; kind?: unknown; server?: { bootId?: unknown } };

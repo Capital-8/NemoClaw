@@ -47,7 +47,8 @@ describe("OpenClaw authenticated restart identity", () => {
     [{ ...valid, exitCode: 1 }, null],
     [{ ...valid, timedOut: true }, null],
     [{ ...valid, signal: "SIGTERM" }, null],
-    [{ ...valid, stderr: "observation failed" }, null],
+    [{ ...valid, stderr: "[sandbox-safety-net] loaded (launcher)\n" }, bootId],
+    [{ ...valid, exitCode: 1, stderr: "observation failed" }, null],
     [{ ...valid, stdout: "{}" }, null],
     [{ ...valid, stdout: "null" }, null],
     [

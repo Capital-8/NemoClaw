@@ -15,6 +15,7 @@ import {
   DIRECT_BYPASS_PROBE_CODE,
   inspectExactMainIsolation,
   parseExactMainPolicyStatus,
+  waitForRestartedPolicy,
 } from "../live/openshell-exact-main-runtime-contracts.ts";
 
 function completeIsolation(): Record<string, unknown> {
@@ -25,6 +26,54 @@ function completeIsolation(): Record<string, unknown> {
 }
 
 describe("OpenShell exact-main policy, native isolation, and process-identity proof helpers", () => {
+  it.each([
+    { label: "composed effective policy", revisionHash: "base", effectiveHash: "changed" },
+    { label: "stored base revision", revisionHash: "changed", effectiveHash: "composed" },
+  ])("waits for the same $label hash after restart", async ({ revisionHash, effectiveHash }) => {
+    vi.useFakeTimers();
+    const status = (hash: string, state: string) => ({
+      activeVersion: 4,
+      hash,
+      sandbox: "exact-main-proof",
+      status: state,
+      version: 4,
+    });
+    const effective = status("composed", "effective");
+    const revision = status("base", "loaded");
+    const result = (value: ReturnType<typeof status>) => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ ...value, active_version: value.activeVersion }),
+      stderr: "",
+      timedOut: false,
+      signal: null,
+    });
+    const openshell = vi
+      .fn()
+      .mockResolvedValueOnce(result(status(revisionHash, "loaded")))
+      .mockResolvedValueOnce(result(status(effectiveHash, "effective")))
+      .mockResolvedValueOnce(result(revision))
+      .mockResolvedValueOnce(result(effective));
+    try {
+      const pending = waitForRestartedPolicy(
+        { openshell } as never,
+        "exact-main-proof",
+        effective,
+        revision,
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(pending).resolves.toEqual({ effective, revision });
+      expect(openshell).toHaveBeenCalledTimes(4);
+      expect(openshell.mock.calls.map(([args]) => args)).toEqual([
+        ["policy", "get", "--rev", "4", "exact-main-proof", "--output", "json"],
+        ["policy", "get", "exact-main-proof", "--output", "json"],
+        ["policy", "get", "--rev", "4", "exact-main-proof", "--output", "json"],
+        ["policy", "get", "exact-main-proof", "--output", "json"],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     {
       label: "stop fails",
@@ -67,7 +116,7 @@ describe("OpenShell exact-main policy, native isolation, and process-identity pr
           JSON.stringify({
             active_version: version,
             config_revision: version,
-            hash: `sha256:policy-${version}`,
+            hash: `sha256:${state}-policy-${version}`,
             policy_source: "sandbox",
             sandbox: "exact-main-proof",
             status: state,

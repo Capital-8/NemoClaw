@@ -9,16 +9,48 @@ import {
 } from "../../../test/helpers/inference-set-openclaw-native-local";
 import { createDeps, nativeLocalTestReceipt } from "../../../test/helpers/inference-set";
 import { resolveOpenClawLocalSwitch } from "./inference-set/native-local";
-import { runInferenceSet } from "./inference-set";
+import { patchOpenClawInferenceConfig, runInferenceSet } from "./inference-set";
 import { nativeLocalIdentity } from "../inference/native-local/contract";
 import * as routerBlueprint from "../core/model-router-port";
 import * as routerProcess from "../onboard/model-router-process";
 import * as onboardSession from "../state/onboard-session";
+import type { ConfigObject } from "../security/credential-filter";
 import { hashCredential } from "../security/credential-hash";
 
 vi.mock("../adapters/openshell/provider-policy", () => ({
   requireNativeProviderPolicy: vi.fn(async () => {}),
 }));
+
+it.each([
+  ["http://host.openshell.internal:11434/v1", "NEMOCLAW_LOCAL_INFERENCE_TOKEN"],
+  ["http://host.docker.internal:11434/v1", "NEMOCLAW_LOCAL_INFERENCE_TOKEN"],
+  ["https://fixture.example/v1", "COMPATIBLE_API_KEY"],
+  ["http://10.1.1.225:8123/v1", "COMPATIBLE_API_KEY"],
+])("restores compatible inference at %s with its selected credential family", (endpoint, key) => {
+  const config: ConfigObject = {
+    models: { providers: { inference: { apiKey: "openshell:resolve:env:v1_OTHER_API_KEY" } } },
+  };
+  patchOpenClawInferenceConfig(
+    config,
+    "compatible-endpoint",
+    "changed-model",
+    "openai-completions",
+    undefined,
+    "compatible-endpoint",
+    { effort: null, explicit: false },
+    false,
+    endpoint,
+    true,
+  );
+  expect(config).toMatchObject({
+    agents: { defaults: { model: { primary: "inference/changed-model" } } },
+    models: {
+      providers: {
+        inference: { baseUrl: endpoint, apiKey: `openshell:resolve:env:${key}` },
+      },
+    },
+  });
+});
 
 describe("OpenClaw native local live selection", () => {
   it.each([

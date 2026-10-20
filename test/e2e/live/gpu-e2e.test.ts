@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { captureGpuInstallFailure } from "../fixtures/gpu-install-failure.ts";
 import { EXPORTED_VLLM_PROFILE_ID } from "../../../src/lib/config/model.ts";
 import type { V1Alpha1OllamaProxyService } from "../../../src/lib/config/v1alpha1-export.ts";
 import { cleanupLocalModelRuntimes } from "../../../src/lib/inference/local-model-profile/cleanup.ts";
@@ -390,6 +391,7 @@ test(
         timeoutMs: execTimeout(60 * 60_000),
       },
     );
+    await captureGpuInstallFailure(install, sandbox, artifacts, hermesResponseEnv(), SANDBOX_NAME);
     expect(install.exitCode, resultText(install)).toBe(0);
 
     progress.phase("run Hermes initial, resumed, and continued replies");

@@ -85,6 +85,7 @@ import {
 } from "./mcp-bridge-sandbox.ts";
 import {
   startCompatibleMock,
+  withCompatibleMockFailureDiagnostics,
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
@@ -721,12 +722,11 @@ test(
       ...bridge,
       artifactName: "onboard-openclaw-mcp-bridge",
     });
-    await approveOpenClawAdminScope(
-      host,
-      sandbox,
-      OPENCLAW_SANDBOX_NAME,
-      buildAvailabilityProbeEnv(),
-      [COMPATIBLE_KEY, HOST_SECRET],
+    await withCompatibleMockFailureDiagnostics(compatibleMock, artifacts, () =>
+      approveOpenClawAdminScope(host, sandbox, OPENCLAW_SANDBOX_NAME, buildAvailabilityProbeEnv(), [
+        COMPATIBLE_KEY,
+        HOST_SECRET,
+      ]),
     );
     await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
       assertRawOpenShellAllowedIpsRebindingDenied({

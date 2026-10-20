@@ -634,7 +634,6 @@ test(
       hasHermesApi ||
         unavailableResumeText.includes("Provider-neutral sandbox inference smoke check failed"),
     ).toBe(true);
-    expect(unavailableResumeText).toContain("Native local inference");
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );

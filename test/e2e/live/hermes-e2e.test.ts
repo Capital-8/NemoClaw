@@ -18,6 +18,7 @@ import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-co
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -276,12 +277,16 @@ test(
           timeoutMs: 60_000,
         }),
       );
-      await preCleanBestEffort(() =>
-        sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: `${label}-openshell-gateway-destroy`,
-          env: commandEnv(),
-          timeoutMs: 60_000,
-        }),
+      await lifecycle.stopGatewayRuntime({ env: commandEnv(), userServiceMode: "permanent" });
+      await cleanupWhenOpenShellAvailable(
+        host,
+        { artifactName: `${label}-probe-openshell-gateway`, env: commandEnv(), timeoutMs: 30_000 },
+        () =>
+          host.cleanupGatewayRegistration("nemoclaw", {
+            artifactName: `${label}-openshell-gateway`,
+            env: commandEnv(),
+            timeoutMs: 60_000,
+          }),
       );
     };
 

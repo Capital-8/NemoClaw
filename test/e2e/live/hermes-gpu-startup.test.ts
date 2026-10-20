@@ -53,6 +53,8 @@ const { route: GPU_ROUTE, scenario: GPU_STARTUP_SCENARIO } = resolveHermesGpuSta
   process.env.E2E_HERMES_GPU_STARTUP_SCENARIO,
   process.env.NEMOCLAW_DOCKER_GPU_PATCH === "1",
 );
+import { captureGpuInstallFailure } from "../fixtures/gpu-install-failure.ts";
+
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
   (GPU_STARTUP_SCENARIO === "fallback"
@@ -485,6 +487,7 @@ test(
       redactionValues: [FAKE_API_KEY],
       timeoutMs: execTimeout(60 * 60_000),
     });
+    await captureGpuInstallFailure(install, sandbox, artifacts, env, SANDBOX_NAME);
     const gpuDiagnosticsDir = extractHermesGpuDiagnosticsDirectory(resultText(install));
     await (install.exitCode !== 0
       ? captureFailedGpuContainer(host, runtimeProvider, gpuDiagnosticsDir)

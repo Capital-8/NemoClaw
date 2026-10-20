@@ -483,7 +483,7 @@ const localBinding = {
   provider: "compatible-endpoint",
   agent: "openclaw" as const,
   endpointUrl: "http://host.openshell.internal:8000/v1",
-  credentialEnv: "COMPATIBLE_API_KEY",
+  credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
   authMode: "authenticated" as const,
   gatewayName: "nemoclaw",
   sandboxName: "alpha",
@@ -495,8 +495,8 @@ const nativeEntry = {
   provider: "compatible-endpoint",
   model: "test-model",
   preferredInferenceApi: "openai-completions",
-  endpointUrl: localBinding.endpointUrl,
-  credentialEnv: localBinding.credentialEnv,
+  endpointUrl: "http://localhost:8000/v1",
+  credentialEnv: "COMPATIBLE_API_KEY",
   lifecycleGeneration: "generation-one",
   lifecycleLiveIdentityFingerprint: "identity-one",
   nativeLocalProviderAttachment: {
@@ -531,7 +531,17 @@ describe("blueprint native inference authority", () => {
       .mockReturnValue({ state: "ready", liveIdentityFingerprint: "identity-one" });
   });
 
-  it("verifies the actual recorded attachment through the host observer", async () => {
+  it.each([
+    "http://localhost:8000/v1",
+    "http://127.0.0.1:8000/v1/",
+    "http://[::1]:8000/v1",
+    "http://host.openshell.internal:8000/v1",
+  ])("verifies the recorded native attachment for selected URL %s", async (endpointUrl) => {
+    vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue({
+      entry: { ...nativeEntry, endpointUrl },
+      registryFile: "/test-state/sandboxes.json",
+      gatewayPort: 8080,
+    } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
     const identity = await observeBlueprintNativeInference(nativeRequest);
     expect(JSON.parse(identity)).toMatchObject({
       provider: "compatible-endpoint",
@@ -579,7 +589,13 @@ describe("blueprint native inference authority", () => {
     { nativeHostedProviderAttachment: {} },
     { agent: "hermes" },
     { endpointUrl: "http://host.openshell.internal:9000/v1" },
-    { credentialEnv: "OTHER_KEY" },
+    {
+      nativeLocalProviderAttachment: {
+        ...nativeEntry.nativeLocalProviderAttachment,
+        credentialEnv: "OTHER_KEY",
+        ...nativeLocalIdentity({ ...localBinding, credentialEnv: "OTHER_KEY" }),
+      },
+    },
     {
       nativeLocalProviderAttachment: {
         ...nativeEntry.nativeLocalProviderAttachment,
@@ -626,17 +642,20 @@ describe("blueprint native inference authority", () => {
     expect(verifyRecordedNativeLocalProviderAttachment).not.toHaveBeenCalled();
   });
 
-  it("refuses selection changes during provider verification", async () => {
-    vi.mocked(verifyRecordedNativeLocalProviderAttachment).mockImplementation(async () => {
-      vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue({
-        entry: { ...nativeEntry, model: "replacement" },
-        registryFile: "/test-state/sandboxes.json",
-        gatewayPort: 8080,
-      } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
-      return nativeEntry.nativeLocalProviderAttachment;
-    });
-    await expect(observeBlueprintNativeInference(nativeRequest)).rejects.toThrow(
-      /matching registered native inference/,
-    );
-  });
+  it.each([{ model: "replacement" }, { credentialEnv: "OTHER_KEY" }])(
+    "refuses selection changes during provider verification %j",
+    async (change) => {
+      vi.mocked(verifyRecordedNativeLocalProviderAttachment).mockImplementation(async () => {
+        vi.mocked(findSandboxAcrossGatewayRoots).mockReturnValue({
+          entry: { ...nativeEntry, ...change },
+          registryFile: "/test-state/sandboxes.json",
+          gatewayPort: 8080,
+        } as ReturnType<typeof findSandboxAcrossGatewayRoots>);
+        return nativeEntry.nativeLocalProviderAttachment;
+      });
+      await expect(observeBlueprintNativeInference(nativeRequest)).rejects.toThrow(
+        /matching registered native inference|selection changed/,
+      );
+    },
+  );
 });

@@ -21,6 +21,7 @@ import { prepareOwnedSandboxForOnboard } from "../fixtures/owned-sandbox-cleanup
 import {
   type FakeMcpHttpsServer,
   startCompatibleMock,
+  withCompatibleMockFailureDiagnostics,
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
@@ -422,10 +423,12 @@ test(
       },
     );
     expectExitZero(onboard, "onboard credential-window sandbox");
-    await approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, buildAvailabilityProbeEnv(), [
-      COMPATIBLE_KEY,
-      ...allSecrets,
-    ]);
+    await withCompatibleMockFailureDiagnostics(compatibleMock, artifacts, () =>
+      approveOpenClawAdminScope(host, sandbox, SANDBOX_NAME, buildAvailabilityProbeEnv(), [
+        COMPATIBLE_KEY,
+        ...allSecrets,
+      ]),
+    );
     const sourceSandboxId = await sandboxIdentity(
       sandbox,
       "credential-window-source-sandbox-before-expiry",

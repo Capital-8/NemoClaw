@@ -88,12 +88,7 @@ if ! verify_resource_limits_exact; then
 fi
 unset _NEMOCLAW_SANDBOX_RLIMITS
 
-if [ -e /etc/openshell-tls/ca-bundle.pem ] \
-  || [ -L /etc/openshell-tls/ca-bundle.pem ]; then
-  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
-else
-  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/tmp/nemoclaw-managed-startup-ca-bundle.pem"
-fi
+readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/openshell-supervisor-ca/material/ca-bundle.crt"
 readonly MANAGED_CA_OWNER_UID=0
 
 managed_fetch_ca_bundle_metadata() {

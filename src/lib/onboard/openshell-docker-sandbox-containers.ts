@@ -197,11 +197,20 @@ export function captureOpenShellDockerSandboxFailureOutput(
       );
       // Inspect must identify opaque environment values before any output is retained.
       if (!evidence.inspectRedactionApplied) return null;
-      if (evidence.redactedLogTail) {
+      const state = evidence.state;
+      const stateFields = Object.entries({
+        running: typeof state?.Running === "boolean" ? state.Running : undefined,
+        exit_code: Number.isSafeInteger(state?.ExitCode) ? state?.ExitCode : undefined,
+        oom_killed: typeof state?.OOMKilled === "boolean" ? state.OOMKilled : undefined,
+      }).filter(([, value]) => value !== undefined);
+      const stateText = stateFields.map(([key, value]) => `${key}=${value}`).join(" ");
+      const output = [stateText, evidence.redactedLogTail]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 1200);
+      if (output) {
         outputs.push(
-          container.role
-            ? `== ${container.role} ${container.id} ==\n${evidence.redactedLogTail}`
-            : evidence.redactedLogTail,
+          container.role ? `== ${container.role} ${container.id} ==\n${output}` : output,
         );
       }
     }

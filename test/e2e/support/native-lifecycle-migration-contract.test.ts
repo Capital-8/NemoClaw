@@ -465,3 +465,77 @@ describe("Messaging token rotation gateway cleanup", () => {
     },
   );
 });
+
+describe("Hermes fresh runner gateway cleanup", () => {
+  it.each([
+    {
+      stopFails: false,
+      cliAvailable: true,
+      expected: "prerequisite boundary",
+      order: ["stop", "remove", "prerequisite"],
+    },
+    { stopFails: true, cliAvailable: true, expected: "owned stop failed", order: ["stop"] },
+    {
+      stopFails: false,
+      cliAvailable: false,
+      expected: "prerequisite boundary",
+      order: ["stop", "prerequisite"],
+    },
+  ])(
+    "preserves owned cleanup before prerequisites ($stopFails/$cliAvailable)",
+    async ({ stopFails, cliAvailable, expected, order }) => {
+      vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "e2e-hermes-cleanup");
+      vi.resetModules();
+      captured.test.mockClear();
+      await import("../live/hermes-e2e.test.ts");
+      const run = captured.test.mock.calls[0]![2] as (fixtures: object) => Promise<void>;
+      const observed: string[] = [];
+      const success = { exitCode: 0, stdout: "", stderr: "", signal: null, timedOut: false };
+      const openshell = vi.fn(async () => success);
+      const stopGatewayRuntime = vi.fn(async () => {
+        observed.push("stop");
+        await (stopFails ? Promise.reject(new Error("owned stop failed")) : Promise.resolve());
+      });
+      const cleanupGatewayRegistration = vi.fn(async () => {
+        observed.push("remove");
+      });
+      await expect(
+        run({
+          artifacts: { target: { declare: vi.fn() } },
+          cleanup: { trackGateway: vi.fn(), trackDisposable: vi.fn(), trackSandbox: vi.fn() },
+          host: {
+            command: vi.fn(async () => success),
+            openshellCommandPath: "openshell",
+            isCommandAvailable: vi.fn(async () => cliAvailable),
+            cleanupGatewayRegistration,
+          },
+          lifecycle: { stopGatewayRuntime, trackInstallerGatewayUserService: vi.fn() },
+          inference: { env: () => ({}), redactionValues: () => [], mode: "mock" },
+          progress: { phase: vi.fn() },
+          runtimeProvider: {
+            requireAvailable: vi.fn(async () => {
+              observed.push("prerequisite");
+              throw new Error("prerequisite boundary");
+            }),
+          },
+          sandbox: { openshell },
+        }),
+      ).rejects.toThrow(expected);
+      expect(observed).toEqual(order);
+      expect(openshell).toHaveBeenCalledExactlyOnceWith(
+        ["sandbox", "delete", "e2e-hermes-cleanup"],
+        expect.any(Object),
+      );
+      expect(stopGatewayRuntime).toHaveBeenCalledExactlyOnceWith({
+        env: expect.objectContaining({
+          NEMOCLAW_AGENT: "hermes",
+          NEMOCLAW_SANDBOX_NAME: "e2e-hermes-cleanup",
+        }),
+        userServiceMode: "permanent",
+      });
+      expect(cleanupGatewayRegistration.mock.calls).toHaveLength(
+        Number(!stopFails && cliAvailable),
+      );
+    },
+  );
+});

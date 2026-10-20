@@ -11,12 +11,11 @@ const ENTRYPOINT_ENV_WRAPPER = path.join(repoRoot, "scripts", "lib", "entrypoint
 
 export type ManagedScriptOptions = {
   installRlimitHelper?: (rlimitLib: string) => void;
+  caFile?: string;
 };
 
 export type StartScriptFixtureOptions = ManagedScriptOptions & {
   envDir?: string;
-  fallbackCaFile?: string;
-  liveCaFile?: string;
   markerDir?: string;
 };
 
@@ -45,16 +44,15 @@ export function prepareManagedScriptFixture(
 ): string {
   const installRlimitHelper = options.installRlimitHelper ?? writeRlimitStub;
   const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
-  const caFile = path.join(tempDir, "trusted-ca-bundle.pem");
-  writeReadOnlyFile(caFile, "trusted CA bundle\n");
+  const caFile = options.caFile ?? path.join(tempDir, "trusted-ca-bundle.pem");
+  if (options.caFile === undefined) writeReadOnlyFile(caFile, "trusted CA bundle\n");
   installRlimitHelper(rlimitLib);
   return source
     .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENTRYPOINT_ENV_WRAPPER)
     .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
     .replace("../../scripts/lib/sandbox-rlimits.sh", "missing-dev-sandbox-rlimits.sh")
-    .replaceAll("/tmp/nemoclaw-managed-startup-ca-bundle.pem", caFile)
     .replace(
-      'readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"',
+      'readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/openshell-supervisor-ca/material/ca-bundle.crt"',
       `readonly MANAGED_FETCH_CA_BUNDLE_FILE="${caFile}"`,
     )
     .replace(
@@ -74,16 +72,7 @@ export function makeStartScriptFixture(
   const envFile = path.join(envDir, "proxy-env.sh");
   const scriptPath = path.join(tempDir, "start.sh");
   const markerDir = options.markerDir;
-  const original = fs
-    .readFileSync(START_SCRIPT, "utf8")
-    .replaceAll(
-      "/etc/openshell-tls/ca-bundle.pem",
-      options.liveCaFile ?? "/etc/openshell-tls/ca-bundle.pem",
-    )
-    .replaceAll(
-      "/tmp/nemoclaw-managed-startup-ca-bundle.pem",
-      options.fallbackCaFile ?? "/tmp/nemoclaw-managed-startup-ca-bundle.pem",
-    );
+  const original = fs.readFileSync(START_SCRIPT, "utf8");
   assert.ok(original.includes("local target=/tmp/nemoclaw-proxy-env.sh"));
   assert.ok(original.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));
   assert.ok(original.includes("local marker_dir=/sandbox/.deepagents"));

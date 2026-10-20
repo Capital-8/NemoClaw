@@ -7,6 +7,9 @@ import {
   type RegisteredInferenceProviderAttachment,
 } from "../../inference/native-provider/registered";
 import {
+  gatewayReachableCompatibleEndpointUrl,
+  NATIVE_LOCAL_CREDENTIAL_ENV,
+  normalizeNativeLocalBinding,
   normalizeNativeLocalProviderAttachment,
   type NativeLocalProviderAttachment,
 } from "../../inference/native-local/contract";
@@ -666,6 +669,14 @@ export async function verifyBlueprintNativeInferenceSelection(
     entry.nativeLocalProviderAttachment === undefined
       ? undefined
       : normalizeNativeLocalProviderAttachment(entry.nativeLocalProviderAttachment);
+  // The selection keeps the user's URL and source credential name. The
+  // attachment uses the admitted host bridge and the sandbox credential handle.
+  const selectedLocal = local
+    ? normalizeNativeLocalBinding({
+        ...local,
+        endpointUrl: gatewayReachableCompatibleEndpointUrl(entry.provider ?? "", entry.endpointUrl),
+      })
+    : undefined;
   if (
     entry.name !== requested.sandboxName ||
     entry.gatewayName !== requested.gatewayName ||
@@ -678,8 +689,8 @@ export async function verifyBlueprintNativeInferenceSelection(
     selection.failure ||
     (local &&
       ((local.api ?? "openai-completions") !== requested.api ||
-        local.endpointUrl !== entry.endpointUrl?.replace(/\/+$/, "") ||
-        local.credentialEnv !== entry.credentialEnv)) ||
+        local.endpointUrl !== selectedLocal?.endpointUrl ||
+        local.credentialEnv !== NATIVE_LOCAL_CREDENTIAL_ENV)) ||
     !attachment ||
     [
       entry.nativeLocalProviderAttachment,

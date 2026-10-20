@@ -94,8 +94,9 @@ _OPENSHELL_SUPERVISOR_ONLY_ENV_NAMES = frozenset(
     {"OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"}
 )
 _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
+# OpenShell installs its mediation CA and upstream roots before starting the workload.
 _MANAGED_FETCH_CA_BUNDLE_FILE = Path(
-    "/etc/openshell-tls/ca-bundle.pem"
+    "/run/openshell-supervisor-ca/material/ca-bundle.crt"
 )
 # Keep this managed adapter allow-list in sync with generate-config.ts and the
 # patch-managed-deepagents-code.py provider guards injected into Deep Agents Code.

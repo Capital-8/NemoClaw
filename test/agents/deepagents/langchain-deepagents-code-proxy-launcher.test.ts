@@ -121,16 +121,13 @@ function runLauncher(
 }
 
 describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
-  it("uses the live OpenShell CA bundle before the pre-resume fallback (#9360)", async () => {
+  it("exports OpenShell projected trust for startup and sourced shells", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-live-ca-"));
     try {
-      const liveCaFile = path.join(tempDir, "openshell-live-ca.pem");
-      const fallbackCaFile = path.join(tempDir, "managed-startup-ca.pem");
-      fs.writeFileSync(liveCaFile, "live OpenShell CA\n", { mode: 0o444 });
-      fs.writeFileSync(fallbackCaFile, "pre-resume fallback CA\n", { mode: 0o444 });
+      const caFile = path.join(tempDir, "openshell-ca-bundle.crt");
+      fs.writeFileSync(caFile, "OpenShell mediation CA and system roots\n", { mode: 0o444 });
       const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
-        liveCaFile,
-        fallbackCaFile,
+        caFile,
       });
 
       const liveResult = await runCommand("bash", [scriptPath, "true"], {
@@ -143,21 +140,20 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
       });
       expect(liveResult.status, liveResult.stderr).toBe(0);
       const liveEnvironment = fs.readFileSync(envFile, "utf8");
-      expect(liveEnvironment).toContain(`_nemoclaw_dcode_ca_bundle=${liveCaFile}`);
+      expect(liveEnvironment).toContain(`_nemoclaw_dcode_ca_bundle=${caFile}`);
       expect(liveEnvironment).toContain("export SSL_CERT_FILE=/ambient-live-ca.pem");
       expect(liveEnvironment).toContain("export REQUESTS_CA_BUNDLE=/ambient-live-ca.pem");
       expect(liveEnvironment).toContain("export NODE_EXTRA_CA_CERTS=/ambient-live-ca.pem");
 
-      fs.rmSync(liveCaFile);
-      const fallbackResult = await runCommand("bash", [scriptPath, "true"], {
+      const projectedResult = await runCommand("bash", [scriptPath, "true"], {
         env: { PATH: DEFAULT_TEST_PATH },
       });
-      expect(fallbackResult.status, fallbackResult.stderr).toBe(0);
-      const fallbackEnvironment = fs.readFileSync(envFile, "utf8");
-      expect(fallbackEnvironment).toContain(`_nemoclaw_dcode_ca_bundle=${fallbackCaFile}`);
-      expect(fallbackEnvironment).toContain(`export SSL_CERT_FILE=${fallbackCaFile}`);
-      expect(fallbackEnvironment).toContain(`export REQUESTS_CA_BUNDLE=${fallbackCaFile}`);
-      expect(fallbackEnvironment).toContain(`export NODE_EXTRA_CA_CERTS=${fallbackCaFile}`);
+      expect(projectedResult.status, projectedResult.stderr).toBe(0);
+      const projectedEnvironment = fs.readFileSync(envFile, "utf8");
+      expect(projectedEnvironment).toContain(`_nemoclaw_dcode_ca_bundle=${caFile}`);
+      expect(projectedEnvironment).toContain(`export SSL_CERT_FILE=${caFile}`);
+      expect(projectedEnvironment).toContain(`export REQUESTS_CA_BUNDLE=${caFile}`);
+      expect(projectedEnvironment).toContain(`export NODE_EXTRA_CA_CERTS=${caFile}`);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

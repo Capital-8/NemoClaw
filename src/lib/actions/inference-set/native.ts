@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  nativeModelRouterEndpoint,
-  nativeLocalCredentialReference,
-} from "../../inference/native-local/model-router";
+import { nativeLocalCredentialReference } from "../../inference/native-local/model-router";
 export {
   nativeModelRouterEndpoint,
   isModelRouterProvider,
@@ -14,7 +11,11 @@ import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../../infe
 import type { InferenceSetDeps } from "../inference-set";
 import type { ConfigObject } from "../../security/credential-filter";
 import { nativeHostedAgentConfig } from "../../inference/native-provider/agent-config";
-import { isLocalInferenceProvider } from "../../inference/native-local/agent-config";
+import {
+  isLocalInferenceProvider,
+  usesNativeLocalInference,
+} from "../../inference/native-local/eligibility";
+import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/profile";
 export { isLocalInferenceProvider };
 export {
   resolveOpenClawLocalSwitch,
@@ -58,7 +59,6 @@ import {
   isCustomHostedProvider,
   customNativeCredentialEnv,
 } from "../../inference/native-provider/hosted";
-import { normalizeNativeLocalProviderAttachment } from "../../inference/native-local/profile";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
 import { prepareCustomNativeProvider } from "../../inference/native-provider/custom-setup";
@@ -435,13 +435,14 @@ export function nativeSelectionConfigCredentials(
   existingApiKey: unknown,
   existingHeaders: ConfigObject,
 ) {
-  const native = nativeHostedAgentConfig(provider, baseUrl);
+  const local = usesNativeLocalInference(provider, baseUrl)
+    ? nativeLocalCredentialReference(provider, baseUrl)
+    : null;
+  const native = local ? undefined : nativeHostedAgentConfig(provider, baseUrl);
   return {
     apiKey:
+      local ??
       native?.apiKey ??
-      (isLocalInferenceProvider(provider) || nativeModelRouterEndpoint(provider, baseUrl)
-        ? nativeLocalCredentialReference(provider, baseUrl)
-        : null) ??
       managedInferenceApiKey(
         baseUrl,
         typeof existingApiKey === "string" &&
