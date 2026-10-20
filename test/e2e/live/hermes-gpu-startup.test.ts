@@ -315,7 +315,7 @@ for id in $ids; do
   [ "$role" = sandbox ] || continue
   # Capture numeric guard inputs after startup fails; argv and environment can contain credentials.
   "${"${runtime_command[@]}"}" exec -i "$id" /usr/bin/python3 -I - <<'PYIDENTITY' || true
-import json, os, re
+import itertools, json, os, re, stat
 fields = {"Uid", "Gid", "Groups", "PPid", "NSpid", "NoNewPrivs", "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"}
 try:
     metadata = os.stat("/proc/1/status", follow_symlinks=False)
@@ -331,6 +331,20 @@ try:
     print(json.dumps({"pid1_status_owner": [metadata.st_uid, metadata.st_gid], "pid1_status": observed}))
 except (OSError, UnicodeError, ValueError):
     print("PID 1 identity diagnostics unavailable")
+try:
+    with os.scandir("/dev/dri") as entries:
+        recognized = filter(lambda entry: re.fullmatch(r"(?:card|renderD)[0-9]+", entry.name),
+                            itertools.islice(entries, 256))
+        device_paths = {entry.name: entry.path for entry in recognized}
+    paths = {"/dev": "/dev", "/dev/dri": "/dev/dri", **device_paths}
+    devices = {}
+    for name, path in paths.items():
+        info = os.stat(path, follow_symlinks=False)
+        devices[name] = {"uid": info.st_uid, "gid": info.st_gid, "mode": info.st_mode,
+            "device": [os.major(info.st_rdev), os.minor(info.st_rdev)] if stat.S_ISCHR(info.st_mode) else None}
+    print(json.dumps({"drm_devices": devices}))
+except (OSError, ValueError):
+    print("DRM device diagnostics unavailable")
 PYIDENTITY
 done`;
   await captureDiagnosticsBestEffort(() =>

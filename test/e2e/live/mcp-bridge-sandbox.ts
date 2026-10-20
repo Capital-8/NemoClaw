@@ -144,7 +144,18 @@ export function buildMcpDnsRebindingProbeScript(
   const responsePath = `${fileStem}.body`;
   const stdoutPath = `${fileStem}.stdout`;
   const stderrPath = `${fileStem}.stderr`;
-  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+  // One initialize proves authenticated reachability without inventing a session.
+  // The caller separately verifies full tool discovery before this control.
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: "rebinding-probe", version: "1" },
+    },
+  });
   const curlArgs = [
     "curl",
     "-sS",
@@ -160,8 +171,6 @@ export function buildMcpDnsRebindingProbeScript(
     targetUrl,
     "-H",
     "content-type: application/json",
-    "-H",
-    "mcp-protocol-version: 2025-11-25",
     "-H",
     adapter === null
       ? `authorization: Bearer openshell:resolve:env:${credentialKey}`

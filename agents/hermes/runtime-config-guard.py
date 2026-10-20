@@ -512,6 +512,44 @@ def _startup_process_identity_is_live(
             os.close(proc_root_fd)
 
 
+def _runtime_drm_groups(expected_uid: int) -> set[str]:
+    # NVIDIA CDI adds nonzero groups for device nodes that are not world read/write.
+    # Only the runtime can create DRM character nodes under these pinned directories.
+    descriptors: list[int] = []
+    try:
+        descriptors.append(_open_directory("/dev"))
+        for name in (None, "dri"):
+            if name is not None:
+                descriptors.append(_open_child_directory(descriptors[-1], name, "/dev/dri"))
+            directory = os.fstat(descriptors[-1])
+            if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
+                return set()
+        groups: set[str] = set()
+        with os.scandir(descriptors[-1]) as entries:
+            for index, entry in enumerate(entries):
+                if index >= 256:
+                    return set()
+                match = re.fullmatch(r"(?:card|renderD)([0-9]+)", entry.name)
+                if not match:
+                    continue
+                device = entry.stat(follow_symlinks=False)
+                if (
+                    stat.S_ISCHR(device.st_mode)
+                    and os.major(device.st_rdev) == 226
+                    and os.minor(device.st_rdev) == int(match[1])
+                    and device.st_uid in (0, expected_uid)
+                    and device.st_gid > 0
+                    and device.st_mode & 0o006 != 0o006
+                ):
+                    groups.add(str(device.st_gid))
+        return groups
+    except (OSError, UnsafePathError):
+        return set()
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
 def _capability_free_supervisor_matches(
     cmdline: bytes,
     status_bytes: bytes,
@@ -573,15 +611,15 @@ def _capability_free_supervisor_matches(
                 observed[name] = value.split()
     except UnicodeDecodeError:
         return False
-    # The 0.1.2 Docker driver preserves the named OCI user's primary group
-    # membership. The trusted rootless launcher instead clears supplementary
-    # groups. A duplicate primary group grants no authority beyond the exact
-    # Gid already required; do not admit other groups or relax launcher checks.
-    if (
-        cmdline != b"\0".join(rootless_argv) + b"\0"
-        and observed.get("Groups") == [str(sandbox.pw_gid)]
-    ):
-        expected_fields["Groups"] = [str(sandbox.pw_gid)]
+    # Docker preserves the primary group and CDI device groups. The rootless
+    # launcher still must clear supplementary groups. Reject unexplained groups.
+    if cmdline != b"\0".join(rootless_argv) + b"\0":
+        groups = observed.get("Groups", [])
+        allowed = {str(sandbox.pw_gid)}
+        if set(groups) - allowed:
+            allowed |= _runtime_drm_groups(expected_uid)
+        if len(set(groups)) == len(groups) and set(groups) <= allowed:
+            expected_fields["Groups"] = groups
     return observed == expected_fields
 
 

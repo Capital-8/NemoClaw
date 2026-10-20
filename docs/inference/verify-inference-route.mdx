@@ -57,6 +57,12 @@ When the live provider differs, `status` does not carry the recorded API family 
 The row reports `healthy` only when the route returns a structurally valid result for the selected API family.
 An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status.
 Status diagnostics do not include the response body.
+<AgentOnly variant="openclaw,hermes">
+If the check reports that the native inference credential handle is `missing` or `invalid`, it stopped before sending the model request.
+OpenShell supplies this handle; do not copy a provider API key into the sandbox to replace it.
+Check the recorded provider with `$$nemoclaw inference get` and retain the diagnostic for investigation.
+The diagnostic does not include the credential value.
+</AgentOnly>
 An ordinary HTTP `404` from `/v1/models` reports an unhealthy route because the model catalog is absent.
 A legacy shared-route `openrouter-api` selection uses NemoClaw's Chat Completions-only OpenRouter adapter.
 Its models route returns `404` by design, so `status` requires a successful inference request before it reports the route as healthy.

@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as policyDenialNamespace from "../../../src/lib/actions/sandbox/exec-policy-hint-detection.ts";
+import * as curlDenialNamespace from "../fixtures/curl-policy-denial.ts";
 import type { DecodedOtlpSpan } from "./otlp-trace-decoder.ts";
 import * as decoderNamespace from "./otlp-trace-decoder.ts";
 import * as policyStateNamespace from "./policy-list-state.ts";
@@ -15,6 +16,7 @@ function moduleExports<T>(namespace: T & { default?: T }): T {
 }
 
 const { isPolicyDenialLine } = moduleExports(policyDenialNamespace);
+const { isExpectedMcpCurlPolicyDenial } = moduleExports(curlDenialNamespace);
 const { decodeExportTraceServiceRequest, otlpValueContains } = moduleExports(decoderNamespace);
 const { parsePolicyPresetState } = moduleExports(policyStateNamespace);
 
@@ -145,8 +147,17 @@ export function assertDeepAgentsTraceContract(
   return { requestCount: bodies.length, spanCount: spans.length };
 }
 
-export function hasConfirmedOpenShellPolicyDenial(output: string): boolean {
+export function hasConfirmedOpenShellPolicyDenial(output: string, curlExitCode?: number): boolean {
   if (output.split(/\r?\n/u).some(isPolicyDenialLine) || CONFIRMED_EXEC_HINT.test(output)) {
+    return true;
+  }
+  if (
+    curlExitCode === 7 &&
+    isExpectedMcpCurlPolicyDenial(
+      { exitCode: curlExitCode, stdout: output, stderr: output, timedOut: false },
+      "NEMOCLAW_OTLP_CURL_HTTP_CODE=",
+    )
+  ) {
     return true;
   }
   // curl writes the response body to stdout and its error to stderr. Once the
@@ -264,7 +275,7 @@ async function main(): Promise<void> {
   }
   if (command === "denial-state") {
     process.stdout.write(
-      `${hasConfirmedOpenShellPolicyDenial(input) ? "policy-denied" : "other-failure"}\n`,
+      `${hasConfirmedOpenShellPolicyDenial(input, Number(argument)) ? "policy-denied" : "other-failure"}\n`,
     );
     return;
   }

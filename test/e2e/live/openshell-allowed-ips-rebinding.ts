@@ -15,9 +15,8 @@ import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { isExpectedMcpCurlPolicyDenial } from "./mcp-bridge-sandbox.ts";
 import { discoverHostAddress } from "../fixtures/host-address.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { waitForMcpCurlPolicyDenial } from "../fixtures/curl-policy-denial.ts";
 import {
   type DnsRebindingHostsFixture,
   remapDnsRebindingHostname,
@@ -116,7 +115,7 @@ export function buildRawOpenShellAllowedIpsRebindingPolicy(
 }
 
 /**
- * Exercise OpenShell directly; the caller verifies a policy response or connect denial.
+ * Exercise OpenShell directly; the caller verifies an HTTP, connect, or audited DNS denial.
  * This intentionally bypasses every NemoClaw MCP command and agent adapter.
  *
  * OpenShell 0.1.3 also reports native TCP destination denial as connect EACCES;
@@ -299,6 +298,12 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
       "raw-openshell-rebinding-map-private-unpinned",
     );
 
+    const readDnsAudit = (suffix: string) =>
+      options.sandbox.openshell(
+        ["logs", options.sandboxName, "-n", "500", "--source", "sandbox", "--since", "2m"],
+        { artifactName: `raw-openshell-rebinding-dns-audit-${suffix}`, env, timeoutMs: 30_000 },
+      );
+    const dnsAuditBefore = await readDnsAudit("before");
     const denial = await options.sandbox.execShell(
       options.sandboxName,
       trustedSandboxShellScript(buildRawOpenShellAllowedIpsRebindingProbeScript(targetUrl)),
@@ -308,10 +313,14 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
         timeoutMs: 60_000,
       },
     );
-    expect(
-      isExpectedMcpCurlPolicyDenial(denial, RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER),
-      resultText(denial),
-    ).toBe(true);
+    const policyDenied = await waitForMcpCurlPolicyDenial(
+      denial,
+      dnsAuditBefore,
+      readDnsAudit,
+      RAW_OPENSHELL_REBIND_HOSTNAME,
+      RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER,
+    );
+    expect(policyDenied, resultText(denial)).toBe(true);
     expect(
       server.requestCount(),
       "raw OpenShell allowed_ips denial must record no additional upstream requests",

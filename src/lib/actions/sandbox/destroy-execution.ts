@@ -11,7 +11,7 @@ import { isDeepStrictEqual } from "node:util";
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
-import { DEEP_AGENTS_CODE_SANDBOX_USER } from "../../agent/deep-agents-code-runtime-identity";
+import { managedImageRuntimeIdentity } from "../../onboard/managed-image/agents";
 import {
   createCliOpenShellSandboxLifecycleFromRunner,
   createCliOpenShellSandboxLookupFromRunner,
@@ -265,12 +265,10 @@ export function wipeAgentNativeHome(
       }
       throw error;
     }
-    // Deep Agents' native tree contains both sandbox-owned state and root-owned
-    // managed files. Capability-free engines cannot remove owner-private state
-    // as root. The root pass must still visit all entries before reporting failure.
-    // Complete the same validated wipe as the image's pinned sandbox user.
+    // Without capabilities, root cannot remove owner-private state or entries
+    // in Hermes's sticky native home. Finish the wipe as the pinned home owner.
     if (
-      agentName === "langchain-deepagents-code" &&
+      (agentName === "langchain-deepagents-code" || agentName === "hermes") &&
       result.status === 1 &&
       !result.error &&
       runAsSandboxUser
@@ -853,13 +851,17 @@ export async function executeSandboxDestroy({
                 ? { expectedResourceHandle: expectedRuntimeProviderIdentity.resourceHandle }
                 : {}),
             });
-          if (sandbox.agent === "langchain-deepagents-code" && control.executeAsSandboxUser) {
+          if (
+            (sandbox.agent === "langchain-deepagents-code" || sandbox.agent === "hermes") &&
+            control.executeAsSandboxUser
+          ) {
+            const identity = managedImageRuntimeIdentity(sandbox.agent);
             runAsSandboxUser = (command) =>
               control.executeAsSandboxUser!({
                 sandbox,
                 sandboxName,
                 registeredSandboxNames: [...registeredSandboxNames],
-                sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+                sandboxUser: `${identity.uid}:${identity.gid}`,
                 command,
                 sanitizeEnvironment: true,
                 timeoutMs: SANDBOX_DESTROY_TIMEOUT_MS,

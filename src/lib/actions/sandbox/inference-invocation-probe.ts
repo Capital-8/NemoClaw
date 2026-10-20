@@ -7,7 +7,11 @@ import {
 } from "../../inference/config";
 
 import { managedDcodeRequiresNonemptyContent } from "../../inference/managed-dcode/identity";
-import { nativeHostedAuthHeaderScript } from "../../inference/native-provider/contract";
+import {
+  nativeHostedAuthHeaderScript,
+  NATIVE_HOSTED_CREDENTIAL_MISSING,
+  NATIVE_HOSTED_CREDENTIAL_INVALID,
+} from "../../inference/native-provider/contract";
 import { NATIVE_LOCAL_AUTH_HEADER_SCRIPT } from "../../inference/native-local/agent-config";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../inference/native-nvidia/contract";
 import {
@@ -406,6 +410,22 @@ export async function probeSandboxInferenceInvocation(
   const detail = httpStatus
     ? `sandbox inference invocation probe returned HTTP ${httpStatus}`
     : `sandbox inference invocation probe exited with status ${result.status}`;
+  if (result.status === 2 && !result.stdout && input.nativeProvider === true) {
+    const credentialError =
+      result.stderr.trim() === NATIVE_HOSTED_CREDENTIAL_MISSING
+        ? "the native inference credential handle is missing"
+        : result.stderr.trim() === NATIVE_HOSTED_CREDENTIAL_INVALID
+          ? "the native inference credential handle is invalid"
+          : null;
+    if (credentialError) {
+      return {
+        ok: false,
+        detail: `${detail}: ${credentialError}`,
+        httpStatus: null,
+        endpoint: resolveSandboxInferenceInvocationEndpoint(input),
+      };
+    }
+  }
   const legacyDnsFailure =
     input.nativeProvider !== true &&
     result.stdout.split("\n").some((line) => line.trim() === "curl-error:6") &&

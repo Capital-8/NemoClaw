@@ -6,6 +6,7 @@ import { registeredCompatibleResponseCommand } from "../fixtures/registered-infe
 import {
   INFERENCE_CURL_HTTP_CODE_MARKER,
   isExpectedMcpCurlPolicyDenial,
+  waitForMcpCurlPolicyDenial,
 } from "../fixtures/curl-policy-denial.ts";
 import fs from "node:fs";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
@@ -971,6 +972,17 @@ test(
       "tc-inf-11-dns-rebind-after-inference-set",
     );
     const rebindRequestOffset = fake.requests().length;
+    const readDnsAudit = (suffix: string) =>
+      sandbox.openshell(
+        ["logs", sandboxName, "-n", "500", "--source", "sandbox", "--since", "2m"],
+        {
+          artifactName: `tc-inf-11-dns-rebinding-audit-${suffix}`,
+          env: buildAvailabilityProbeEnv(),
+          redactionValues: [apiKey],
+          timeoutMs: 30_000,
+        },
+      );
+    const dnsAuditBefore = await readDnsAudit("before");
     const rebind = await sandbox.exec(
       sandboxName,
       registeredCompatibleResponseCommand(
@@ -990,10 +1002,14 @@ test(
         timeoutMs: 90_000,
       },
     );
-    expect(
-      isExpectedMcpCurlPolicyDenial(rebind, INFERENCE_CURL_HTTP_CODE_MARKER),
-      resultText(rebind),
-    ).toBe(true);
+    const policyDenied = await waitForMcpCurlPolicyDenial(
+      rebind,
+      dnsAuditBefore,
+      readDnsAudit,
+      endpointHostname,
+      INFERENCE_CURL_HTTP_CODE_MARKER,
+    );
+    expect(policyDenied, resultText(rebind)).toBe(true);
     expect(fake.requests()).toHaveLength(rebindRequestOffset);
     await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
     progress.phase("verify private redirect rejection");

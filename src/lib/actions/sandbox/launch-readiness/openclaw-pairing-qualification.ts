@@ -712,6 +712,18 @@ try:
         or auth_operator.get('token') != paired_operator.get('token')
         or any(alias in auth_operator for alias in ('requestedScopes', 'approvedScopes', 'roles'))
     ):
+        # Report only fixed categories after the unchanged credential checks fail.
+        client_token_failures = (
+            ('missing-operator', not isinstance(auth_tokens, dict) or 'operator' not in auth_tokens),
+            ('role-set', isinstance(auth_tokens, dict) and set(auth_tokens) != {'operator'}),
+            ('token-mismatch', isinstance(auth_operator, dict)
+                and isinstance(auth_operator.get('token'), str)
+                and auth_operator.get('token') != paired_operator.get('token')),
+        )
+        incompatible_reason += ':' + next(
+            filter(lambda failure: failure[1], client_token_failures),
+            ('metadata', True),
+        )[0]
         reject()
 
     incompatible_pairing = False
@@ -936,7 +948,7 @@ function runOpenClawPairingObservation(
     const reason = String(result.stdout ?? "")
       .trim()
       .match(
-        /^__NEMOCLAW_PAIRING_INCOMPATIBLE__=(local-record-count|paired-metadata|paired-token|client-token|scope-set)$/,
+        /^__NEMOCLAW_PAIRING_INCOMPATIBLE__=(local-record-count|paired-metadata|paired-token|client-token(?::(?:missing-operator|role-set|token-mismatch|metadata))?|scope-set)$/,
       )?.[1];
     console.error(`OpenClaw CLI pairing incompatible: ${reason ?? "unclassified"}.`);
     throw new OpenClawPairingIncompatibleError();

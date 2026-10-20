@@ -5,7 +5,10 @@ import fs from "node:fs";
 import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
-import { credentialWindowHttpFixture } from "../helpers/credential-window-http-fixture.ts";
+import {
+  credentialWindowHttpFixture,
+  runCredentialWindowSessionFixture,
+} from "../helpers/credential-window-http-fixture.ts";
 
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../e2e/fixtures/mcp-bridge-credentials.ts";
 import {
@@ -23,6 +26,39 @@ import {
 } from "../e2e/live/openshell-credential-generation-window.ts";
 
 describe("OpenShell exact-main credential generation-window proof", () => {
+  it.each(["retained", "fresh"] as const)(
+    "negotiates the real MCP fixture session for the %s credential probe",
+    async (scenario) => {
+      const result = await runCredentialWindowSessionFixture(scenario);
+      expect(result.exitCode).toBe(0);
+      expect(result.requests.map((request) => JSON.parse(request.body).method)).toEqual([
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+      ]);
+      expect(result.requests.slice(1)).toMatchObject([
+        { sessionId: "fake-session-1", protocolVersion: "2025-11-25", responseStatus: 202 },
+        { sessionId: "fake-session-1", protocolVersion: "2025-11-25", responseStatus: 200 },
+      ]);
+      expect(JSON.parse(result.summary)).toMatchObject(
+        scenario === "fresh"
+          ? { revision: "v42", status: 200 }
+          : { revision: "v42", outcomes: [{ step: "allowed-before-expiry", outcome: "allowed" }] },
+      );
+    },
+  );
+
+  it("does not signal credential readiness when MCP initialization rejects authentication", async () => {
+    const result = await runCredentialWindowSessionFixture("retained", "wrong");
+    expect(result.exitCode).toBe(1);
+    expect(result.writes.has(CREDENTIAL_WINDOW_PATHS.ready)).toBe(false);
+    expect(result.summary).toBe("");
+    expect(result.diagnostic).toContain("MCP session negotiation failed");
+    expect(result.requests.map((request) => JSON.parse(request.body).method)).toEqual([
+      "initialize",
+    ]);
+  });
+
   it.each([200, 401, "ECONNRESET", "private-error-secret"])(
     "records bounded request evidence for %s without changing the acknowledgement",
     async (result) => {
@@ -70,8 +106,11 @@ describe("OpenShell exact-main credential generation-window proof", () => {
       const outcome = result === 200 ? "allowed" : "denied";
       const expected = { step: CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry, outcome };
       expect(http.requests).toMatchObject([
+        { headers: { authorization: "Bearer openshell:resolve:env:v42_FAKE_MCP_SECRET" } },
+        { headers: { "mcp-session-id": "fixture-session", "mcp-protocol-version": "2025-11-25" } },
         {
           headers: {
+            "mcp-session-id": "fixture-session",
             "mcp-protocol-version": "2025-11-25",
             authorization: "Bearer openshell:resolve:env:v42_FAKE_MCP_SECRET",
           },
@@ -111,9 +150,9 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script.split(snapshot)).toHaveLength(2);
     expect(script.indexOf(snapshot)).toBeLessThan(script.indexOf("while (Date.now() < deadline"));
     expect(script).toContain('"^openshell:resolve:env:(v[0-9]{1,20})_" + config.envName + "$"');
-    expect(script).toContain('response.statusCode === 200 ? "allowed" : "denied"');
+    expect(script).toContain('response.status === 200 ? "allowed" : "denied"');
     expect(script).toContain('transportCode: knownCodes.has(error.code) ? error.code : "OTHER"');
-    expect(script).toContain("outbound.setTimeout(30_000");
+    expect(script).toContain("request.setTimeout(30_000");
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_PATHS.acknowledgement));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry));
@@ -157,6 +196,7 @@ describe("OpenShell exact-main credential generation-window proof", () => {
       process: {
         argv: ["node", "https://credential-window.example.test/mcp", "fresh-request"],
         env: { FAKE_MCP_SECRET: "openshell:resolve:env:v43_FAKE_MCP_SECRET" },
+        stderr: { write: () => {} },
         stdout: {
           write: (value: string) => {
             summary += value;
@@ -166,8 +206,11 @@ describe("OpenShell exact-main credential generation-window proof", () => {
       require: (name: string) => (name === "node:https" ? http : undefined),
     });
     expect(http.requests).toMatchObject([
+      { headers: { authorization: "Bearer openshell:resolve:env:v43_FAKE_MCP_SECRET" } },
+      { headers: { "mcp-session-id": "fixture-session", "mcp-protocol-version": "2025-11-25" } },
       {
         headers: {
+          "mcp-session-id": "fixture-session",
           "mcp-protocol-version": "2025-11-25",
           authorization: "Bearer openshell:resolve:env:v43_FAKE_MCP_SECRET",
         },
@@ -185,6 +228,42 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     );
     expect(script).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
   });
+
+  it.each([401, "private-error-secret"])(
+    "fails the fresh request with bounded diagnostics for %s",
+    async (result) => {
+      const http = credentialWindowHttpFixture(result);
+      let summary = "";
+      let diagnostic = "";
+      const child = {
+        argv: ["node", "https://credential-window.example.test/mcp", "fresh-request"],
+        env: { FAKE_MCP_SECRET: "openshell:resolve:env:v43_FAKE_MCP_SECRET" },
+        stdout: {
+          write: (value: string) => {
+            summary += value;
+          },
+        },
+        stderr: {
+          write: (value: string) => {
+            diagnostic += value;
+          },
+        },
+        exitCode: 0,
+      };
+      await runInNewContext(buildCredentialWindowOneShotScript(), {
+        Buffer,
+        URL,
+        process: child,
+        require: () => http,
+      });
+      expect(child.exitCode).toBe(1);
+      expect(http.requests).toHaveLength(3);
+      expect(summary).toBe(typeof result === "number" ? '{"revision":"v43","status":401}\n' : "");
+      expect(diagnostic).toBe(typeof result === "number" ? "" : "MCP credential request failed\n");
+      expect(diagnostic).not.toContain("private-error-secret");
+      expect(diagnostic).not.toContain("openshell:resolve:");
+    },
+  );
 
   it("keeps the live target on the reviewed agent and mutation boundaries", () => {
     const liveTarget = fs.readFileSync(

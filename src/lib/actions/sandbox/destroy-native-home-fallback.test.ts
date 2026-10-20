@@ -38,6 +38,7 @@ const unavailablePrivilegedExecutions = [
 describe("native-home destroy fallback", () => {
   it.each([
     {
+      agent: "langchain-deepagents-code",
       initial: "owner permission failure",
       openshellResult: {
         status: 1,
@@ -46,41 +47,54 @@ describe("native-home destroy fallback", () => {
       },
     },
     {
+      agent: "langchain-deepagents-code",
       initial: "unavailable OpenShell execution",
       openshellResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
     },
-  ])("completes Deep Agents cleanup as the sandbox owner after $initial", ({ openshellResult }) => {
-    const runOpenshell = vi.fn(() => openshellResult);
-    const runPrivileged = vi.fn((_command: readonly string[]) => ({
-      status: 1,
-      signal: null,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.from("rm: cannot remove sandbox-owned POLICY.md: Permission denied"),
-    }));
-    const clearStoppedNativeHome = vi.fn();
-    const runAsSandboxUser = vi.fn(() => ({
-      status: 0,
-      signal: null,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.alloc(0),
-    }));
+    {
+      agent: "hermes",
+      initial: "sticky native-home permission failure",
+      openshellResult: {
+        status: 1,
+        stdout: "",
+        stderr: "rm: cannot remove '/sandbox/.hermes/runtime': Operation not permitted",
+      },
+    },
+  ])(
+    "completes $agent cleanup as the sandbox owner after $initial",
+    ({ agent, openshellResult }) => {
+      const runOpenshell = vi.fn(() => openshellResult);
+      const runPrivileged = vi.fn((_command: readonly string[]) => ({
+        status: 1,
+        signal: null,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.from("rm: cannot remove sandbox-owned POLICY.md: Permission denied"),
+      }));
+      const clearStoppedNativeHome = vi.fn();
+      const runAsSandboxUser = vi.fn(() => ({
+        status: 0,
+        signal: null,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+      }));
 
-    expect(() =>
-      wipeAgentNativeHome(
-        "alpha",
-        "langchain-deepagents-code",
-        runOpenshell,
-        undefined,
-        runPrivileged,
-        clearStoppedNativeHome,
-        runAsSandboxUser,
-      ),
-    ).not.toThrow();
-    expect(runOpenshell).toHaveBeenCalledOnce();
-    expect(runPrivileged).toHaveBeenCalledOnce();
-    expect(runAsSandboxUser).toHaveBeenCalledExactlyOnceWith(runPrivileged.mock.calls[0]![0]);
-    expect(clearStoppedNativeHome).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        wipeAgentNativeHome(
+          "alpha",
+          agent,
+          runOpenshell,
+          undefined,
+          runPrivileged,
+          clearStoppedNativeHome,
+          runAsSandboxUser,
+        ),
+      ).not.toThrow();
+      expect(runOpenshell).toHaveBeenCalledOnce();
+      expect(runPrivileged).toHaveBeenCalledOnce();
+      expect(runAsSandboxUser).toHaveBeenCalledExactlyOnceWith(runPrivileged.mock.calls[0]![0]);
+      expect(clearStoppedNativeHome).not.toHaveBeenCalled();
+    },
+  );
 
   it("retains the registry when no verified sandbox-user execution is available", () => {
     const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "permission denied" }));
@@ -104,21 +118,24 @@ describe("native-home destroy fallback", () => {
     expect(runPrivileged).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when the pinned sandbox user cannot finish the wipe", () => {
+  it.each([
+    ["langchain-deepagents-code", "LangChain Deep Agents Code"],
+    ["hermes", "Hermes Agent"],
+  ])("fails closed when the pinned %s user cannot finish the wipe", (agent, displayName) => {
     const failure = { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     const runAsSandboxUser = vi.fn(() => failure);
 
     expect(() =>
       wipeAgentNativeHome(
         "alpha",
-        "langchain-deepagents-code",
+        agent,
         () => ({ status: 1, stdout: "", stderr: "permission denied" }),
         undefined,
         () => failure,
         undefined,
         runAsSandboxUser,
       ),
-    ).toThrow("Could not remove the sandbox-owned LangChain Deep Agents Code native home");
+    ).toThrow(`Could not remove the sandbox-owned ${displayName} native home`);
     expect(runAsSandboxUser).toHaveBeenCalledOnce();
   });
 
@@ -195,11 +212,23 @@ describe("native-home destroy fallback", () => {
   });
 
   it.each([
-    { state: "registered", openshellDriver: "mxc" },
-    { state: "pending", openshellDriver: undefined },
+    {
+      agent: "langchain-deepagents-code",
+      sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+      state: "registered",
+      openshellDriver: "mxc",
+    },
+    {
+      agent: "langchain-deepagents-code",
+      sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+      state: "pending",
+      openshellDriver: undefined,
+    },
+    { agent: "hermes", sandboxUser: "998:999", state: "registered", openshellDriver: "mxc" },
+    { agent: "hermes", sandboxUser: "998:999", state: "pending", openshellDriver: undefined },
   ])(
-    "destroys a $state sandbox through its provider's pinned sandbox user",
-    async ({ openshellDriver }) => {
+    "destroys a $state $agent sandbox through its provider's pinned sandbox user",
+    async ({ agent, sandboxUser, openshellDriver }) => {
       const events: string[] = [];
       const base = createInMemoryRuntimeProviderBundle({
         providerId: "mxc",
@@ -240,7 +269,7 @@ describe("native-home destroy fallback", () => {
       };
       const sandbox: SandboxEntry = {
         name: "alpha",
-        agent: "langchain-deepagents-code",
+        agent,
         openshellDriver,
         ...(openshellDriver === undefined ? { pendingRouteReservation: true as const } : {}),
         gatewayName: "nemoclaw",
@@ -296,7 +325,7 @@ describe("native-home destroy fallback", () => {
       expect(executeAsSandboxUser).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           sandboxName: "alpha",
-          sandboxUser: DEEP_AGENTS_CODE_SANDBOX_USER,
+          sandboxUser,
           expectedResourceHandle: "in-memory:alpha",
           command: execute.mock.calls[0]![0].command,
         }),

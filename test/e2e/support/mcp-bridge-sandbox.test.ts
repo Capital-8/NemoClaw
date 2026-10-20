@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,12 @@ import YAML from "yaml";
 
 import * as policy from "../../../src/lib/policy";
 import { testTimeout } from "../../helpers/timeouts";
+import {
+  isExpectedMcpDnsPolicyDenial,
+  waitForMcpCurlPolicyDenial,
+} from "../fixtures/curl-policy-denial.ts";
+import { createMcpFixtureTls } from "../fixtures/mcp-fixture-tls.ts";
+import { startFakeMcpHttpsServer } from "../live/mcp-bridge-servers.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
@@ -54,6 +61,7 @@ function resolverRecord(id: string, role: string | null, name = "test-sandbox") 
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const tempDir of tempDirs.splice(0)) {
     fs.rmSync(tempDir, { force: true, recursive: true });
   }
@@ -80,6 +88,7 @@ function denialResult(
   } = {},
 ) {
   return {
+    signal: null,
     exitCode: overrides.exitCode ?? 0,
     stderr: overrides.stderr ?? "",
     stdout: overrides.stdout ?? "",
@@ -360,9 +369,67 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
           ? "authorization: Bearer openshell:resolve:env:REBIND_MCP_SECRET"
           : "authorization: Bearer openshell:resolve:env:v1_REBIND_MCP_SECRET",
       );
-      expect(fs.readFileSync(capture, "utf8")).toContain("mcp-protocol-version: 2025-11-25");
+      const argumentsCaptured = fs.readFileSync(capture, "utf8").trim().split("\n");
+      expect(JSON.parse(argumentsCaptured.at(-1)!)).toMatchObject({
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25" },
+      });
+      expect(argumentsCaptured).not.toContain("mcp-protocol-version: 2025-11-25");
       expect(result.stderr).not.toContain("authorization:");
       expect(result.stderr).toContain("Immediate connect fail");
+    },
+  );
+
+  it.each([true, false])(
+    "sends one initialization control with accepted credential=%s",
+    async (accepted) => {
+      const tls = createMcpFixtureTls();
+      const server = await startFakeMcpHttpsServer({
+        tls: tls.tls,
+        secret: accepted ? "openshell:resolve:env:REBIND_MCP_SECRET" : "different-credential",
+      });
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-rebind-initialize-"));
+      tempDirs.push(directory);
+      const caPath = path.join(directory, "ca.pem");
+      fs.writeFileSync(caPath, tls.tls.cert);
+      try {
+        const script = buildMcpDnsRebindingProbeScript(
+          null,
+          `https://127.0.0.1:${server.port}/mcp`,
+          "REBIND_MCP_SECRET",
+        ).replaceAll("/tmp/nemoclaw-mcp-rebinding", path.join(directory, "probe"));
+        const result = await promisify(execFile)("/bin/bash", ["-c", script], {
+          env: { ...process.env, CURL_CA_BUNDLE: caPath },
+          timeout: 10_000,
+        });
+        expect(result.stdout).toContain(`NEMOCLAW_MCP_CURL_HTTP_CODE=${accepted ? 200 : 401}`);
+        expect(
+          server.requests.map((request) => ({
+            method: request.method,
+            path: request.path,
+            rpcMethod: request.rpcMethod,
+            id: JSON.parse(request.body).id,
+            auth: request.auth,
+            sessionId: request.sessionId,
+            protocolVersion: request.protocolVersion,
+          })),
+        ).toEqual([
+          {
+            method: "POST",
+            path: "/mcp",
+            rpcMethod: "initialize",
+            id: 1,
+            auth: "Bearer openshell:resolve:env:REBIND_MCP_SECRET",
+            sessionId: "",
+            protocolVersion: "",
+          },
+        ]);
+        expect(result.stderr).not.toContain("authorization:");
+      } finally {
+        await server.close();
+        tls.close();
+      }
     },
   );
 
@@ -506,93 +573,257 @@ network_policies:
     expect(transportFailure.status).toBe(7);
   });
 
-  it("applies and restores the raw proof through live OpenShell policy authority", async () => {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-raw-policy-proof-"));
-    tempDirs.push(rootDir);
-    const artifacts = new ArtifactSink(path.join(rootDir, "artifacts"));
-    await artifacts.ensureRoot();
-    const basePolicy = "version: 1\nnetwork_policies: {}\n";
-    let currentPolicy = basePolicy;
-    const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
-    const setPolicy = vi
-      .spyOn(policy, "setPolicyDocument")
-      .mockImplementation(async (_sandboxName, document, options) => {
-        currentPolicy = document;
-        policyMutations.push({ document, operation: options?.operation });
-        return true;
-      });
-    const host = {
-      command: async (_command: string, _args: string[], options?: { artifactName?: string }) => ({
-        ...denialResult(),
-        stdout:
-          {
-            "host-address-for-sandbox": "route 10.20.30.40\n",
-            "dns-rebinding-workload-resource": `${WORKLOAD_ID}\n`,
-            "dns-rebinding-resolver-identity": JSON.stringify(
-              resolverRecord(WORKLOAD_ID, null, "raw-proof"),
-            ),
-          }[options?.artifactName ?? ""] ?? "",
-      }),
-    } as unknown as HostCliClient;
-    const openshellCalls: string[][] = [];
-    const sandbox = {
-      openshell: async (args: string[]) => {
-        openshellCalls.push(args);
-        return {
+  it.each(["http", "dns"])(
+    "applies and restores the raw proof after %s policy denial",
+    async (transport) => {
+      const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-raw-policy-proof-"));
+      tempDirs.push(rootDir);
+      const artifacts = new ArtifactSink(path.join(rootDir, "artifacts"));
+      await artifacts.ensureRoot();
+      const basePolicy = "version: 1\nnetwork_policies: {}\n";
+      let currentPolicy = basePolicy;
+      const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
+      const setPolicy = vi
+        .spyOn(policy, "setPolicyDocument")
+        .mockImplementation(async (_sandboxName, document, options) => {
+          currentPolicy = document;
+          policyMutations.push({ document, operation: options?.operation });
+          return true;
+        });
+      const host = {
+        command: async (
+          _command: string,
+          _args: string[],
+          options?: { artifactName?: string },
+        ) => ({
           ...denialResult(),
-          stdout: args.includes("--full") ? currentPolicy : basePolicy,
-        };
-      },
-      execShell: async (
-        _name: string,
-        _script: unknown,
-        options: {
-          artifactName:
-            | "raw-openshell-rebinding-allowed-control"
-            | "raw-openshell-rebinding-policy-denial";
-        },
-      ) =>
-        ({
-          "raw-openshell-rebinding-allowed-control": async () => {
-            const port =
-              YAML.parse(currentPolicy).network_policies[RAW_OPENSHELL_REBIND_POLICY_KEY]
-                .endpoints[0].port;
-            const response = await fetch(`http://127.0.0.1:${port}/mcp`);
-            await response.text();
-            return {
-              ...denialResult(),
-              stdout: `${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}${response.status}\n`,
-            };
-          },
-          "raw-openshell-rebinding-policy-denial": async () => ({
+          stdout:
+            {
+              "host-address-for-sandbox": "route 10.20.30.40\n",
+              "dns-rebinding-workload-resource": `${WORKLOAD_ID}\n`,
+              "dns-rebinding-resolver-identity": JSON.stringify(
+                resolverRecord(WORKLOAD_ID, null, "raw-proof"),
+              ),
+            }[options?.artifactName ?? ""] ?? "",
+        }),
+      } as unknown as HostCliClient;
+      const openshellCalls: string[][] = [];
+      let denialExecuted = false;
+      const sandbox = {
+        openshell: async (args: string[]) => {
+          openshellCalls.push(args);
+          return {
             ...denialResult(),
-            stdout: `{"error":"policy_denied"}\n${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}403\n`,
-          }),
-        })[options.artifactName]!(),
-    } as never;
+            stdout:
+              args[0] === "logs"
+                ? denialExecuted
+                  ? `2026-10-20T20:41:43.600Z OCSF NET:REFUSE [MED] DENIED ${RAW_OPENSHELL_REBIND_HOSTNAME} [reason:policy_dns_no_valid_address]\n`
+                  : ""
+                : args.includes("--full")
+                  ? currentPolicy
+                  : basePolicy,
+          };
+        },
+        execShell: async (
+          _name: string,
+          _script: unknown,
+          options: {
+            artifactName:
+              | "raw-openshell-rebinding-allowed-control"
+              | "raw-openshell-rebinding-policy-denial";
+          },
+        ) =>
+          ({
+            "raw-openshell-rebinding-allowed-control": async () => {
+              const port =
+                YAML.parse(currentPolicy).network_policies[RAW_OPENSHELL_REBIND_POLICY_KEY]
+                  .endpoints[0].port;
+              const response = await fetch(`http://127.0.0.1:${port}/mcp`);
+              await response.text();
+              return {
+                ...denialResult(),
+                stdout: `${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}${response.status}\n`,
+              };
+            },
+            "raw-openshell-rebinding-policy-denial": async () => {
+              denialExecuted = true;
+              return transport === "dns"
+                ? denialResult({
+                    exitCode: 6,
+                    stdout: `${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}000\n`,
+                    stderr: `curl: (6) Could not resolve host: ${RAW_OPENSHELL_REBIND_HOSTNAME}\n`,
+                  })
+                : denialResult({
+                    stdout: `{"error":"policy_denied"}\n${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}403\n`,
+                  });
+            },
+          })[options.artifactName]!(),
+      } as never;
 
-    try {
-      await assertRawOpenShellAllowedIpsRebindingDenied({
-        artifacts,
-        host,
-        policySettleMs: 0,
-        sandbox,
-        sandboxName: "raw-proof",
-        timeoutMs: 1_000,
+      try {
+        await assertRawOpenShellAllowedIpsRebindingDenied({
+          artifacts,
+          host,
+          policySettleMs: 0,
+          sandbox,
+          sandboxName: "raw-proof",
+          timeoutMs: 1_000,
+        });
+      } finally {
+        setPolicy.mockRestore();
+      }
+
+      expect(policyMutations).toHaveLength(3);
+      expect(policyMutations[0]?.document).toContain(RAW_OPENSHELL_REBIND_POLICY_KEY);
+      expect(policyMutations[0]?.operation).toBe("allow the raw OpenShell rebinding control");
+      expect(policyMutations[1]?.operation).toBe(
+        "run the raw OpenShell allowed_ips rebinding proof",
+      );
+      expect(policyMutations[2]?.document).toBe(basePolicy.trim());
+      expect(policyMutations[2]?.operation).toBe(
+        "restore the raw OpenShell allowed_ips rebinding proof policy",
+      );
+      expect(openshellCalls.some((args) => args[0] === "policy" && args[1] === "set")).toBe(false);
+    },
+  );
+
+  it.each([
+    [RAW_OPENSHELL_REBIND_HOSTNAME, RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER],
+    ["mcp-rebind.example.test", "NEMOCLAW_MCP_CURL_HTTP_CODE="],
+    ["inference-rebind.trycloudflare.com", "NEMOCLAW_INFERENCE_CURL_HTTP_CODE="],
+  ])("accepts only a fresh exact policy DNS refusal for %s", (hostname, marker) => {
+    const result = denialResult({
+      exitCode: 6,
+      stdout: `${marker}000\n`,
+      stderr: `curl: (6) Could not resolve host: ${hostname}\n`,
+    });
+    const event = `2026-10-20T20:41:43.600Z OCSF NET:REFUSE [MED] DENIED ${hostname} [reason:policy_dns_no_valid_address]\n`;
+    expect(
+      isExpectedMcpDnsPolicyDenial(
+        result,
+        denialResult(),
+        denialResult({ stdout: event }),
+        hostname,
+        marker,
+      ),
+    ).toBe(true);
+    expect(
+      isExpectedMcpDnsPolicyDenial(
+        result,
+        denialResult({ exitCode: 1 }),
+        denialResult({ stdout: event }),
+        hostname,
+        marker,
+      ),
+    ).toBe(false);
+    expect(
+      isExpectedMcpDnsPolicyDenial(
+        result,
+        denialResult(),
+        denialResult({ stdout: event }),
+        "other.example.test",
+        marker,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["first read", "after-1", [0], true],
+    ["delayed third read", "after-3", [0, 250, 500], true],
+    ["exhausted reads", null, [0, 250, 500, 750, 1000], false],
+  ] as const)(
+    "confirms DNS denial with bounded audit polling: %s",
+    async (_name, freshAt, times, expected) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      const hostname = "inference-rebind.trycloudflare.com";
+      const marker = "NEMOCLAW_INFERENCE_CURL_HTTP_CODE=";
+      const result = denialResult({
+        exitCode: 6,
+        stdout: `${marker}000\n`,
+        stderr: `curl: (6) Could not resolve host: ${hostname}\n`,
       });
-    } finally {
-      setPolicy.mockRestore();
-    }
+      const before = denialResult();
+      const after = denialResult({
+        stdout: `fresh OCSF NET:REFUSE [MED] DENIED ${hostname} [reason:policy_dns_no_valid_address]\n`,
+      });
+      const observedTimes: number[] = [];
+      const readAudit = vi.fn(async (suffix: string) => {
+        observedTimes.push(Date.now());
+        return suffix === freshAt ? after : before;
+      });
+      const confirmation = waitForMcpCurlPolicyDenial(result, before, readAudit, hostname, marker);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await confirmation).toBe(expected);
+      expect(observedTimes).toEqual(times);
+      expect(readAudit.mock.calls.at(-1)).toEqual([`after-${times.length}`]);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
-    expect(policyMutations).toHaveLength(3);
-    expect(policyMutations[0]?.document).toContain(RAW_OPENSHELL_REBIND_POLICY_KEY);
-    expect(policyMutations[0]?.operation).toBe("allow the raw OpenShell rebinding control");
-    expect(policyMutations[1]?.operation).toBe("run the raw OpenShell allowed_ips rebinding proof");
-    expect(policyMutations[2]?.document).toBe(basePolicy.trim());
-    expect(policyMutations[2]?.operation).toBe(
-      "restore the raw OpenShell allowed_ips rebinding proof policy",
-    );
-    expect(openshellCalls.some((args) => args[0] === "policy" && args[1] === "set")).toBe(false);
+  it.each([
+    [
+      7,
+      "NEMOCLAW_MCP_CURL_HTTP_CODE=000\n",
+      "* Immediate connect fail for 192.0.2.1: Permission denied\n",
+      true,
+    ],
+    [
+      7,
+      "NEMOCLAW_MCP_CURL_HTTP_CODE=000\n",
+      "* connect to 192.0.2.1 port 443 failed: Connection refused\n",
+      false,
+    ],
+    [0, "policy_denied\nNEMOCLAW_MCP_CURL_HTTP_CODE=403\n", "", true],
+  ] as const)(
+    "does not read DNS logs for a completed non-DNS result [case %#]",
+    async (exitCode, stdout, stderr, expected) => {
+      const readAudit = vi.fn(async () => denialResult());
+      const result = denialResult({ exitCode, stdout, stderr });
+      expect(
+        await waitForMcpCurlPolicyDenial(result, denialResult(), readAudit, "mcp.example.test"),
+      ).toBe(expected);
+      expect(readAudit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "missing",
+    "stale",
+    "other-host",
+    "upstream-nxdomain",
+    "audit-failed",
+    "timeout",
+    "http-success",
+  ])("rejects a raw DNS denial with %s evidence", (condition) => {
+    const event = `2026-10-20T20:41:43.600Z OCSF NET:REFUSE [MED] DENIED ${RAW_OPENSHELL_REBIND_HOSTNAME} [reason:policy_dns_no_valid_address]\n`;
+    const result = denialResult({
+      exitCode: 6,
+      stdout: `${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}${condition === "http-success" ? "200" : "000"}\n`,
+      stderr: `curl: (6) Could not resolve host: ${RAW_OPENSHELL_REBIND_HOSTNAME}\n`,
+      timedOut: condition === "timeout",
+    });
+    const before = denialResult({ stdout: condition === "stale" ? event : "" });
+    const after = denialResult({
+      exitCode: condition === "audit-failed" ? 1 : 0,
+      stdout:
+        condition === "missing"
+          ? ""
+          : condition === "other-host"
+            ? event.replace(RAW_OPENSHELL_REBIND_HOSTNAME, "other.example.test")
+            : condition === "upstream-nxdomain"
+              ? event.replace("policy_dns_no_valid_address", "policy_dns_upstream_nxdomain")
+              : event,
+    });
+    expect(
+      isExpectedMcpDnsPolicyDenial(
+        result,
+        before,
+        after,
+        RAW_OPENSHELL_REBIND_HOSTNAME,
+        RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER,
+      ),
+    ).toBe(false);
   });
 
   it("accepts an unchanged surviving policy only after the unrelated policy is absent", () => {

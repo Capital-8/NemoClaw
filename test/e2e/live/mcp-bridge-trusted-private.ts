@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { waitForMcpCurlPolicyDenial } from "../fixtures/curl-policy-denial.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { MCP_PROBE_CONTROL_BEARER } from "../../../src/lib/actions/sandbox/mcp-bridge-resolution-probe.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -16,7 +17,6 @@ import {
   buildMcpDnsRebindingProbeScript,
   captureManagedMcpPolicy,
   hostPrivateAddressForSandbox,
-  isExpectedMcpCurlPolicyDenial,
   type McpDnsRebindingAdapter,
   remapDnsRebindingHostname,
   restoreDnsRebindingHostsFixture,
@@ -267,6 +267,17 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     },
   });
   expect(driftInspection.trustedPrivateTarget.currentPins).toBeUndefined();
+  const readDnsAudit = (suffix: string) =>
+    sandbox.openshell(
+      ["logs", options.sandboxName, "-n", "500", "--source", "sandbox", "--since", "2m"],
+      {
+        artifactName: `${options.artifactPrefix}-mcp-rebinding-dns-audit-${suffix}`,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [REBIND_HOST_SECRET],
+        timeoutMs: 30_000,
+      },
+    );
+  const dnsAuditBefore = await readDnsAudit("before");
   const denial = await sandbox.execShell(
     options.sandboxName,
     trustedSandboxShellScript(
@@ -279,8 +290,14 @@ export async function assertTrustedPrivateMcpRebindingDenied(
       timeoutMs: 90_000,
     },
   );
+  const policyDenied = await waitForMcpCurlPolicyDenial(
+    denial,
+    dnsAuditBefore,
+    readDnsAudit,
+    REBIND_HOSTNAME,
+  );
   expect(
-    isExpectedMcpCurlPolicyDenial(denial) &&
+    policyDenied &&
       curlControl.exitCode === 0 &&
       !curlControl.timedOut &&
       curlControl.stdout.includes("NEMOCLAW_MCP_CURL_HTTP_CODE=200") &&

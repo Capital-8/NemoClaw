@@ -204,9 +204,8 @@ import sys
 import urllib.error
 import urllib.request
 
-# NemoClaw's exec wrapper sources the managed, credential-free OpenShell proxy
-# route. Keep it intact so this probe exercises the same enforcement path
-# as managed DCode and Relay instead of attempting an unsupported direct socket.
+# Preserve the managed exec environment so this probe uses the same OpenShell
+# enforcement path as managed DCode and Relay.
 method, url, body = sys.argv[1:]
 data = body.encode("utf-8") if method != "GET" else None
 request = urllib.request.Request(
@@ -302,18 +301,27 @@ openshell sandbox exec --name "$SANDBOX_NAME" -- test -x /usr/bin/curl >/dev/nul
   || fail "/usr/bin/curl is absent or not executable in the sandbox"
 before_binary="$(request_count)"
 set +e
+# Native connect denials need curl's errno diagnostic; omit outgoing headers.
+# shellcheck disable=SC2016 # Probe variables expand inside the sandbox shell.
 binary_output="$("$CLI" "$SANDBOX_NAME" exec -- \
-  /usr/bin/curl --fail-with-body -sS --max-time 10 -X POST \
-  -H 'content-type: application/x-protobuf' \
-  --data-binary 'NEMOCLAW_OTLP_DENIED_BINARY_PROBE' \
-  "http://${COLLECTOR_HOST}:${COLLECTOR_PORT}/v1/traces" 2>&1)"
+  sh -c '
+    probe_stderr=$(mktemp) || exit 2
+    trap '\''rm -f "$probe_stderr"'\'' EXIT
+    LC_ALL=C /usr/bin/curl --verbose --fail-with-body -sS --max-time 10 -X POST \
+      --write-out "\nNEMOCLAW_OTLP_CURL_HTTP_CODE=%{http_code}\n" \
+      -H "content-type: application/x-protobuf" \
+      --data-binary "NEMOCLAW_OTLP_DENIED_BINARY_PROBE" "$1" 2>"$probe_stderr"
+    probe_status=$?
+    sed -n "/^\\* Immediate connect fail for /p; /^\\* connect to .* failed: /p; /^curl: /p" "$probe_stderr" >&2
+    exit "$probe_status"
+  ' sh "$OTLP_TRACE_URL" 2>&1)"
 binary_status=$?
 set -e
 sleep 1
 after_binary="$(request_count)"
 [ "$binary_status" -ne 0 ] || fail "unmanaged curl binary unexpectedly reached OTLP: $binary_output"
 [ "$after_binary" = "$before_binary" ] || fail "unmanaged curl binary reached the host collector"
-binary_denial_state="$(printf '%s\n' "$binary_output" | "$TSX" "$CONTRACT_HELPER" denial-state)" \
+binary_denial_state="$(printf '%s\n' "$binary_output" | "$TSX" "$CONTRACT_HELPER" denial-state "$binary_status")" \
   || fail "unmanaged curl denial classifier failed: $binary_output"
 [ "$binary_denial_state" = "policy-denied" ] \
   || fail "unmanaged curl failed without confirmed OpenShell policy-denial evidence: $binary_output"

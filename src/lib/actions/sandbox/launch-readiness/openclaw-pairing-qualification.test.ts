@@ -342,6 +342,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     ).toContain(adapter);
   });
 
+  function readFixture<T>(directory: string, name: string): [string, T] {
+    const file = path.join(stateDirectory, directory, name);
+    return [file, JSON.parse(fs.readFileSync(file, "utf8")) as T];
+  }
+
   function writePairingOnlyState(): void {
     const pairedPath = path.join(stateDirectory, "devices", "paired.json");
     const authPath = path.join(stateDirectory, "identity", "device-auth.json");
@@ -776,8 +781,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
 
       writeJson(path.join(stateDirectory, "devices", "pending.json"), {});
-      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
       paired[deviceId]!.scopes = ["operator.pairing", "operator.read"];
       writeJson(pairedPath, paired);
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
@@ -812,8 +816,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       "rejects a probe baseline with inconsistent %s permissions (#13100)",
       (scope) => {
         writePairingOnlyState();
-        const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-        const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+        const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
         paired[deviceId]!.clientMode = "probe";
         paired[deviceId]!.scopes.push(scope);
         writeJson(pairedPath, paired);
@@ -824,8 +827,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     );
 
     it.each(["ui", "unknown"])("rejects %s metadata on the local device (#13100)", (clientMode) => {
-      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
       paired[deviceId]!.clientMode = clientMode;
       writeJson(pairedPath, paired);
       const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -843,9 +845,42 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     });
 
     it.each([
+      ["missing-operator", [], {}],
+      ["role-set", ["operator", "observer"], {}],
+      ["token-mismatch", ["operator"], { token: `${TOKEN}-mismatch` }],
+      ["metadata", ["operator"], { role: "observer" }],
+    ] as const)("reports only the fixed client-token %s category", (reason, roles, fields) => {
+      const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
+      const invalidAuth = {
+        ...auth,
+        tokens: Object.fromEntries(
+          roles.map((role) => [role, { ...auth.tokens.operator, ...fields }]),
+        ),
+      };
+      writeJson(authPath, invalidAuth);
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+      const spawn = vi.fn(localScriptSpawn);
+      expect(() => observeOrdinarySettlement(POLICY, spawn)).toThrow(
+        OpenClawPairingIncompatibleError,
+      );
+      expect({
+        status: spawn.mock.results[0]?.value.status,
+        stdout: spawn.mock.results[0]?.value.stdout,
+        diagnostic: diagnostic.mock.calls,
+        auth: JSON.parse(fs.readFileSync(authPath, "utf8")),
+      }).toEqual({
+        status: 4,
+        stdout: `__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token:${reason}\n`,
+        diagnostic: [[`OpenClaw CLI pairing incompatible: client-token:${reason}.`]],
+        auth: invalidAuth,
+      });
+    });
+
+    it.each([
       TOKEN,
       "__NEMOCLAW_PAIRING_INCOMPATIBLE__=" + TOKEN,
       "__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token\n" + TOKEN,
+      "__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token:" + TOKEN,
     ])("does not log unrecognized pairing output %j", (stdout) => {
       const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
       const spawn = vi.fn(() => ({ status: 4, stdout })) as unknown as typeof localScriptSpawn;
@@ -858,8 +893,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     it.each(
       [OPENCLAW_PAIRING_REQUEST_SCOPES, OPENCLAW_PAIRING_REQUIRED_SCOPES].map((scopes) => [scopes]),
     )("preserves qualification across cli/probe/cli metadata with %j grants (#13100)", (scopes) => {
-      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
       paired[deviceId]!.scopes = [...scopes];
       paired[deviceId]!.approvedScopes = [...scopes];
       writeJson(pairedPath, paired);
@@ -887,8 +921,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     );
 
     it("accepts native approval preserving an explicitly granted read scope (#13100)", () => {
-      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
       paired[deviceId]!.scopes = [...OPENCLAW_PAIRING_REQUIRED_SCOPES];
       paired[deviceId]!.approvedScopes = [...OPENCLAW_PAIRING_REQUIRED_SCOPES];
       writeJson(pairedPath, paired);
@@ -1228,8 +1261,7 @@ process.stdout.write("{}\\n");
       [
         "mismatched client credential",
         () => {
-          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
-          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
           auth.tokens.operator.token = "different-token";
           writeJson(authPath, auth);
         },
@@ -1237,8 +1269,7 @@ process.stdout.write("{}\\n");
       [
         "changed paired request scopes",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.scopes = ["operator.pairing", "operator.read", "operator.write"];
           writeJson(pairedPath, paired);
         },
@@ -1246,8 +1277,7 @@ process.stdout.write("{}\\n");
       [
         "changed approved request scopes",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.approvedScopes = ["operator.pairing", "operator.read"];
           writeJson(pairedPath, paired);
         },
@@ -1255,8 +1285,7 @@ process.stdout.write("{}\\n");
       [
         "changed paired token scopes",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.tokens.operator.scopes = ["operator.pairing", "operator.write"];
           writeJson(pairedPath, paired);
         },
@@ -1264,8 +1293,7 @@ process.stdout.write("{}\\n");
       [
         "changed client-auth token scopes",
         () => {
-          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
-          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
           auth.tokens.operator.scopes = ["operator.pairing", "operator.write"];
           writeJson(authPath, auth);
         },
@@ -1273,8 +1301,7 @@ process.stdout.write("{}\\n");
       [
         "changed canonical client ID",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.clientId = "unknown-client";
           writeJson(pairedPath, paired);
         },
@@ -1282,8 +1309,7 @@ process.stdout.write("{}\\n");
       [
         "changed canonical client mode",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.clientMode = "unknown-mode";
           writeJson(pairedPath, paired);
         },
@@ -1291,8 +1317,7 @@ process.stdout.write("{}\\n");
       [
         "duplicate operator identity roles",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.roles = ["operator", "operator"];
           writeJson(pairedPath, paired);
         },
@@ -1300,8 +1325,7 @@ process.stdout.write("{}\\n");
       [
         "missing canonical operator role",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           delete (paired[deviceId]! as unknown as Record<string, unknown>).role;
           writeJson(pairedPath, paired);
         },
@@ -1309,8 +1333,7 @@ process.stdout.write("{}\\n");
       [
         "missing canonical operator roles",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           delete (paired[deviceId]! as unknown as Record<string, unknown>).roles;
           writeJson(pairedPath, paired);
         },
@@ -1349,8 +1372,7 @@ process.stdout.write("{}\\n");
           >;
           identity.publicKey = `${publicKey}=`;
           writeJson(identityPath, identity);
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.publicKey = `${publicKey}=`;
           writeJson(pairedPath, paired);
         },
@@ -1358,12 +1380,10 @@ process.stdout.write("{}\\n");
       [
         "whitespace-padded operator token",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.tokens.operator.token = ` ${TOKEN} `;
           writeJson(pairedPath, paired);
-          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
-          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
           auth.tokens.operator.token = ` ${TOKEN} `;
           writeJson(authPath, auth);
         },
@@ -1382,8 +1402,7 @@ process.stdout.write("{}\\n");
       [
         "alternate scopes on the paired device",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.requestedScopes = ["operator.admin"];
           writeJson(pairedPath, paired);
         },
@@ -1391,8 +1410,7 @@ process.stdout.write("{}\\n");
       [
         "alternate public key on the paired device",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired[deviceId]!.publicKeyPem = publicKeyPem(ED25519_SPKI_PREFIX, Buffer.alloc(32, 8));
           writeJson(pairedPath, paired);
         },
@@ -1400,8 +1418,7 @@ process.stdout.write("{}\\n");
       [
         "alternate roles on the paired operator token",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           (paired[deviceId]!.tokens.operator as unknown as Record<string, unknown>).roles = [
             "admin",
           ];
@@ -1411,8 +1428,7 @@ process.stdout.write("{}\\n");
       [
         "alternate scopes on the client authorization",
         () => {
-          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
-          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          const [authPath, auth] = readFixture<AuthFixture>("identity", "device-auth.json");
           (auth.tokens.operator as unknown as Record<string, unknown>).approvedScopes = [
             "operator.admin",
           ];
@@ -1422,8 +1438,7 @@ process.stdout.write("{}\\n");
       [
         "ambiguous local device state",
         () => {
-          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
-          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          const [pairedPath, paired] = readFixture<PairedFixture>("devices", "paired.json");
           paired.duplicate = {
             ...paired[deviceId]!,
             deviceId: "different-device",
