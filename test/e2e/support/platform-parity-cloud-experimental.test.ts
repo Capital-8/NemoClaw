@@ -339,7 +339,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toMatch(/"\$CLI" "\$SANDBOX_NAME" exec -- \\\n\s+\/opt\/venv\/bin\/python3/);
     expect(script).not.toContain("env -u ALL_PROXY");
     expect(script.match(/--noproxy '\*'/g)).toHaveLength(2);
-    expect(script).toContain("/usr/bin/curl --fail-with-body -sS");
+    expect(script).toContain("/usr/bin/curl --verbose --fail-with-body -sS");
     expect(script).toMatch(
       /run_deterministic_tool_trace\(\)[\s\S]*"\$CLI" "\$SANDBOX_NAME" exec --[\s\S]*\/opt\/venv\/bin\/python3/,
     );
