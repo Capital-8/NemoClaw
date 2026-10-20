@@ -13,6 +13,7 @@ import unittest.mock
 import xml.etree.ElementTree as ET
 
 import test_assemble_runtime as fixtures
+import test_author_runtime_msi as author_fixtures
 import package_runtime as package
 from build_runtime_manifest import build as build_manifest
 
@@ -84,6 +85,12 @@ class PackageComposition(unittest.TestCase):
             self.output,
             selection,
         )
+
+    def transaction_helper(self):
+        fixture = author_fixtures.AuthoringTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        return fixture.helper
 
     def test_composition_keeps_shared_node_and_uses_fixed_guardian_wrappers(self):
         identity = self.compose()
@@ -442,7 +449,10 @@ class PackageComposition(unittest.TestCase):
         self.assertIs(inputs["installedAcceptance"], False)
         self.assertFalse((output / "native-ui").exists())
         self.assertEqual(list((output / "runtimes" / self.assembly["runtime"]["runtimeId"]).iterdir()), [])
-        authored = package.payload_authoring(output, self.fixture.root / "reviewed-image.wxs")
+        authored = package.payload_authoring(
+            output, self.fixture.root / "reviewed-image.wxs",
+            transaction_helper=self.transaction_helper(),
+        )
         self.assertLess(authored["files"], 100)
 
     def test_reviewed_recomposition_rejects_changed_image_and_image_receipt(self):
@@ -654,6 +664,105 @@ class PackageComposition(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "shared Node differs"):
             self.compose()
         self.assertFalse(self.output.exists())
+
+    def test_image_startup_service_owns_exact_helper_and_msi_lifecycle(self):
+        self.compose_image()
+        helper = self.transaction_helper()
+        authoring = self.fixture.root / "startup.wxs"
+        package.payload_authoring(self.output, authoring, transaction_helper=helper)
+        self.assertEqual((self.output / package.BOOT_RESTORE_FILE).read_bytes(), helper.read_bytes())
+        ns = {"w": package.NAMESPACE}
+        tree = ET.parse(authoring)
+        services = tree.findall(".//w:ServiceInstall", ns)
+        self.assertEqual(len(services), 1)
+        service = services[0]
+        self.assertEqual(service.get("Name"), package.BOOT_RESTORE_SERVICE)
+        self.assertEqual(service.get("Start"), "auto")
+        self.assertEqual(service.get("Type"), "ownProcess")
+        self.assertEqual(service.get("Account"), "LocalSystem")
+        self.assertEqual(service.get("Vital"), "yes")
+        self.assertEqual(service.get("ErrorControl"), "normal")
+        self.assertNotIn("Password", service.attrib)
+        expected = "--runtime-boot-service " + " ".join(
+            "[" + name + "]" for name in package.IDENTITY_PROPERTIES.values()
+        )
+        self.assertEqual(service.get("Arguments"), expected)
+        self.assertLessEqual(len(expected), 255)
+        component = tree.find(".//w:Component[w:ServiceInstall]", ns)
+        files = component.findall("w:File", ns)
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].get("Name"), "NemoClawRuntimeRestore.exe")
+        self.assertEqual(files[0].get("KeyPath"), "yes")
+        control = component.find("w:ServiceControl", ns)
+        self.assertEqual(control.get("Name"), package.BOOT_RESTORE_SERVICE)
+        self.assertEqual(control.get("Stop"), "both")
+        self.assertEqual(control.get("Remove"), "uninstall")
+        self.assertEqual(control.get("Wait"), "yes")
+        self.assertNotIn("Start", control.attrib)
+
+    def test_image_startup_service_requires_a_valid_helper_before_authoring(self):
+        self.compose_image()
+        authoring = self.fixture.root / "startup.wxs"
+        with self.assertRaisesRegex(ValueError, "pinned native startup"):
+            package.payload_authoring(self.output, authoring)
+        helper = self.fixture.root / "invalid-helper.exe"
+        helper.write_bytes(b"not a Windows executable")
+        with self.assertRaises(ValueError):
+            package.payload_authoring(self.output, authoring, transaction_helper=helper)
+        self.assertFalse(authoring.exists())
+        self.assertFalse((self.output / package.BOOT_RESTORE_FILE).exists())
+
+    def test_image_startup_service_refuses_substitution_and_reuses_identical_bytes(self):
+        self.compose_image()
+        helper = self.transaction_helper()
+        package.payload_authoring(
+            self.output, self.fixture.root / "first.wxs", transaction_helper=helper,
+        )
+        before = package.inventory(self.output)
+        package.payload_authoring(
+            self.output, self.fixture.root / "second.wxs", transaction_helper=helper,
+        )
+        self.assertEqual(package.inventory(self.output), before)
+        service = self.output / package.BOOT_RESTORE_FILE
+        service.write_bytes(service.read_bytes() + b"substituted")
+        with self.assertRaisesRegex(ValueError, "bytes changed"):
+            package.payload_authoring(
+                self.output, self.fixture.root / "third.wxs", transaction_helper=helper,
+            )
+        self.assertFalse((self.fixture.root / "third.wxs").exists())
+
+    def test_loose_package_cannot_register_an_image_startup_service(self):
+        self.compose()
+        authoring = self.fixture.root / "loose.wxs"
+        package.payload_authoring(self.output, authoring)
+        self.assertEqual(ET.parse(authoring).findall(".//{" + package.NAMESPACE + "}ServiceInstall"), [])
+        shutil.copy2(self.transaction_helper(), self.output / package.BOOT_RESTORE_FILE)
+        with self.assertRaisesRegex(ValueError, "loose runtime package"):
+            package.payload_authoring(self.output, self.fixture.root / "bad-loose.wxs")
+
+    def test_image_author_cli_binds_startup_to_the_same_transaction_identity(self):
+        self.compose_image()
+        helper = self.transaction_helper()
+        authoring = self.fixture.root / "startup.wxs"
+        transactions = self.fixture.root / "transactions.wxi"
+        result = subprocess.run([
+            sys.executable, package.__file__, "author", "--payload", str(self.output),
+            "--output", str(authoring), "--transaction-helper", str(helper),
+            "--transaction-output", str(transactions),
+        ], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ns = {"w": package.NAMESPACE}
+        service = ET.parse(authoring).find(".//w:ServiceInstall", ns)
+        properties = {
+            row.get("Id"): row.get("Value")
+            for row in ET.parse(transactions).findall("w:Property", ns)
+        }
+        expanded = service.get("Arguments")
+        for key, value in properties.items():
+            expanded = expanded.replace("[" + key + "]", value)
+        self.assertEqual(expanded, "--runtime-boot-service " + " ".join(
+            self.assembly["runtime"][name] for name in package.IDENTITY_PROPERTIES
+        ))
 
     def test_grouped_authoring_covers_exact_files_and_component_references(self):
         self.compose()

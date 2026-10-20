@@ -389,8 +389,8 @@ fn attach_virtual_disk(image: &Path) -> Result<(), Error> {
         return Err(Error::Native("runtime-image-host-compression"));
     }
     let disk = open_virtual_disk(image, ATTACH_RO)?;
-    // Keep the verified image read-only across helper exit and Windows restart.
-    // The explicit transaction detach remains the owner cleanup.
+    // Keep the verified image read-only after this helper exits. Boot restoration
+    // is owned by the installed service, not the unsupported AT_BOOT flag.
     let status = unsafe {
         AttachVirtualDisk(
             disk.0,
@@ -462,6 +462,33 @@ impl WindowsStore {
             created: CreatedDirectories::default(),
             journal: None,
         }
+    }
+    pub fn restore_on_boot(&mut self, expected: &RuntimeIdentity) -> Result<(), Error> {
+        expected.validate()?;
+        // Keep the exact selector open without write/delete sharing. Maintenance
+        // cannot retire it and replace the image while startup verifies/attaches it.
+        let control = ControlDirectory::open().map_err(native_error)?;
+        let mut selected = control
+            .open_content_file("runtime-current")
+            .map_err(native_error)?;
+        let actual = Descriptor::parse(&read_bounded(&mut selected, 512)?)
+            .map(identity)
+            .map_err(native_error)?;
+        super::runtime_image_attachment::validate_boot_restore(
+            expected,
+            &actual,
+            EMBEDDED_IMAGE_RUNTIME_ID,
+            EMBEDDED_IMAGE_SHA256,
+            self.read_journal()?.is_some(),
+        )?;
+        let (_, mount) = Self::image_paths(&expected.runtime_id)?;
+        let was_attached = mount.join("runtime.manifest").is_file();
+        let result = self.verify_complete_content(expected);
+        if result.is_err() && !was_attached && mount.join("runtime.manifest").is_file() {
+            Self::detach_image(&expected.runtime_id)
+                .map_err(|_| Error::Native("runtime-image-mount-cleanup"))?;
+        }
+        result
     }
     fn open(&mut self) -> Result<bool, Error> {
         if self.directory.is_some() {

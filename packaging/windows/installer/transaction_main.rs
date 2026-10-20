@@ -15,6 +15,127 @@ mod windows_runtime_store;
 mod windows_sha256;
 
 #[cfg(windows)]
+mod boot_service {
+    use super::{runtime_transaction::RuntimeIdentity, windows_runtime_store::WindowsStore};
+    use std::ffi::c_void;
+    use std::ptr::null_mut;
+    use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    const NAME: &str = "NemoClawRuntimeRestore";
+    static EXPECTED: OnceLock<RuntimeIdentity> = OnceLock::new();
+    static HANDLE: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
+    static EXIT: AtomicU32 = AtomicU32::new(1);
+    static STATE: Mutex<(u32, u32)> = Mutex::new((2, 0));
+
+    #[repr(C)]
+    struct Status {
+        kind: u32,
+        state: u32,
+        accepted: u32,
+        win32_exit: u32,
+        service_exit: u32,
+        checkpoint: u32,
+        wait_hint: u32,
+    }
+    #[repr(C)]
+    struct Entry {
+        name: *mut u16,
+        main: Option<unsafe extern "system" fn(u32, *mut *mut u16)>,
+    }
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn StartServiceCtrlDispatcherW(table: *const Entry) -> i32;
+        fn RegisterServiceCtrlHandlerW(
+            name: *const u16,
+            handler: Option<unsafe extern "system" fn(u32)>,
+        ) -> *mut c_void;
+        fn SetServiceStatus(handle: *mut c_void, status: *const Status) -> i32;
+    }
+
+    fn status(update: Option<(u32, u32)>) -> bool {
+        let Ok(mut current) = STATE.lock() else {
+            return false;
+        };
+        // Serialize interrogations with completion: STOPPED must be reported
+        // exactly once and must never be followed by a stale RUNNING status.
+        if current.0 == 1 {
+            return true;
+        }
+        if let Some(value) = update {
+            *current = value;
+        }
+        let (state, exit) = *current;
+        let value = Status {
+            kind: 0x10,
+            state,
+            // One bounded restore operation; no requests or user-supplied work.
+            accepted: 0,
+            win32_exit: if exit == 0 { 0 } else { 1066 },
+            service_exit: exit,
+            checkpoint: u32::from(state == 2),
+            wait_hint: if state == 2 { 30_000 } else { 0 },
+        };
+        unsafe { SetServiceStatus(HANDLE.load(Ordering::Acquire), &value) != 0 }
+    }
+    unsafe extern "system" fn control(code: u32) {
+        if code == 4 {
+            status(None);
+        }
+    }
+    unsafe extern "system" fn service_main(_count: u32, _arguments: *mut *mut u16) {
+        let name = NAME.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+        let handle = unsafe { RegisterServiceCtrlHandlerW(name.as_ptr(), Some(control)) };
+        if handle.is_null() {
+            return;
+        }
+        HANDLE.store(handle, Ordering::Release);
+        if !status(Some((2, 0))) || !status(Some((4, 0))) {
+            status(Some((1, 1)));
+            return;
+        }
+        let result = EXPECTED
+            .get()
+            .ok_or(super::runtime_transaction::Error::Identity)
+            .and_then(|expected| WindowsStore::new().restore_on_boot(expected));
+        let code = match result {
+            Ok(()) => 0,
+            Err(error) => super::failure_exit_code(&format!("{error:?}")) as u32,
+        };
+        EXIT.store(code, Ordering::Release);
+        if !status(Some((1, code))) {
+            EXIT.store(1, Ordering::Release);
+        }
+    }
+
+    pub fn run(expected: RuntimeIdentity) -> Result<(), String> {
+        expected.validate().map_err(|error| format!("{error:?}"))?;
+        EXPECTED
+            .set(expected)
+            .map_err(|_| "Runtime restore was already initialized.")?;
+        let mut name = NAME.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+        let table = [
+            Entry {
+                name: name.as_mut_ptr(),
+                main: Some(service_main),
+            },
+            Entry {
+                name: null_mut(),
+                main: None,
+            },
+        ];
+        // No image operation occurs unless the Windows SCM invokes service_main.
+        if unsafe { StartServiceCtrlDispatcherW(table.as_ptr()) } == 0 {
+            return Err("Runtime restore requires the installed Windows service.".into());
+        }
+        if EXIT.load(Ordering::Acquire) != 0 {
+            return Err("The installed runtime could not be restored at startup.".into());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
 mod diagnostics {
     use std::ffi::c_void;
     use std::ptr::{null, null_mut};
@@ -247,6 +368,20 @@ fn main() {
         // The same exact native lease entrypoints let Windows integration tests
         // hold real package/version/Node leases against the embedded helper.
         let result = match args.as_slice() {
+            [
+                "--runtime-boot-service",
+                runtime_id,
+                manifest_sha256,
+                source_revision,
+                node_sha256,
+                node_version,
+            ] => boot_service::run(runtime_transaction::RuntimeIdentity {
+                runtime_id: (*runtime_id).into(),
+                manifest_sha256: (*manifest_sha256).into(),
+                source_revision: (*source_revision).into(),
+                node_sha256: (*node_sha256).into(),
+                node_version: (*node_version).into(),
+            }),
             ["--runtime-session", agent] => runtime_lease::run(agent),
             ["--runtime-current-descriptor"] => runtime_lease::describe(),
             ["--runtime-retire", id, digest] => runtime_lease::transition(id, digest, false),
@@ -305,7 +440,10 @@ mod tests {
         assert_eq!(failure_exit_code("Native(\"runtime-image-diskpart\")"), 113);
         assert_eq!(failure_exit_code("Native(\"runtime-image-mount\")"), 115);
         assert_eq!(failure_exit_code("Native(\"runtime-image-detach\")"), 116);
-        assert_eq!(failure_exit_code("Native(\"runtime-image-mount-cleanup\")"), 123);
+        assert_eq!(
+            failure_exit_code("Native(\"runtime-image-mount-cleanup\")"),
+            123
+        );
         assert_eq!(
             failure_exit_code("Native(\"runtime-image-mount-permissions\")"),
             122

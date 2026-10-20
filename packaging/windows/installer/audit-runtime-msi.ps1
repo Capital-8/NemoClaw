@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory)][string]$MsiPath,
     [Parameter(Mandatory)][string]$HelperSha256,
     [Parameter(Mandatory)][string]$ReceiptPath,
-    [switch]$RequireInstallationRootRemoval
+    [switch]$RequireInstallationRootRemoval,
+    [switch]$RequireRuntimeRestore
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -203,6 +204,50 @@ try {
     }
     $receipt.identityTransport = @{ kind='database-private-properties'; runtime=$identity; targetColumnCharacters=255;
         actualMsiFormatting=$true; actions=$transport; executableActionsInvoked=$false }
+    if ($RequireRuntimeRestore) {
+        $services = @([NativeRuntimeMsiAudit]::Rows($MsiPath,
+            'SELECT `ServiceInstall`,`Name`,`ServiceType`,`StartType`,`ErrorControl`,`StartName`,`Password`,`Arguments`,`Component_` FROM `ServiceInstall`', 9))
+        if ($services.Count -ne 1) { throw 'The image package requires exactly one runtime restore service.' }
+        $service = $services[0]
+        $template = '--runtime-boot-service ' + $references
+        if ($service[0] -cne 'NemoClawRuntimeRestore' -or $service[1] -cne 'NemoClawRuntimeRestore' -or
+            [int]$service[2] -ne 16 -or [int]$service[3] -ne 2 -or [int]$service[4] -ne 32769 -or
+            $service[5] -cne 'LocalSystem' -or $service[6] -cne '' -or $service[7] -cne $template -or
+            [NativeRuntimeMsiAudit]::FormatCommand($MsiPath, $service[7]) -cne ('--runtime-boot-service ' + $tuple)) {
+            throw 'The compiled startup service does not preserve its native identity, privilege, or startup contract.'
+        }
+        $components = @([NativeRuntimeMsiAudit]::Rows($MsiPath,
+            ('SELECT `KeyPath` FROM `Component` WHERE `Component`=''' + $service[8] + ''''), 1))
+        $serviceFiles = @([NativeRuntimeMsiAudit]::Rows($MsiPath,
+            ('SELECT `File`,`FileName` FROM `File` WHERE `Component_`=''' + $service[8] + ''''), 2))
+        if ($components.Count -ne 1 -or $serviceFiles.Count -ne 1 -or
+            $components[0][0] -cne $serviceFiles[0][0] -or
+            ($serviceFiles[0][1] -split '\|')[-1] -cne 'NemoClawRuntimeRestore.exe') {
+            throw 'The startup service must own its exact executable as its sole component key path.'
+        }
+        $controls = @([NativeRuntimeMsiAudit]::Rows($MsiPath,
+            'SELECT `Name`,`Event`,`Arguments`,`Wait`,`Component_` FROM `ServiceControl`', 5))
+        if ($controls.Count -ne 1 -or $controls[0][0] -cne $service[1] -or
+            [int]$controls[0][1] -ne 162 -or $controls[0][2] -cne '' -or
+            [int]$controls[0][3] -ne 1 -or $controls[0][4] -cne $service[8]) {
+            throw 'The runtime service must stop on maintenance, be removed on uninstall, and never start before admission.'
+        }
+        foreach ($name in @('StopServices','DeleteServices','InstallServices')) {
+            if (-not $sequence.ContainsKey($name) -or
+                $sequence[$name].sequence -le $sequence.RemoveExistingProducts.sequence) {
+                throw 'Service mutation must follow protected runtime retirement.'
+            }
+        }
+        if ($sequence.StopServices.sequence -ge $sequence.DeleteServices.sequence -or
+            $sequence.DeleteServices.sequence -ge $sequence.RemoveFiles.sequence -or
+            $sequence.InstallServices.sequence -le $sequence.InstallFiles.sequence -or
+            $sequence.InstallServices.sequence -ge $sequence.NativeRuntimeVerify.sequence) {
+            throw 'The startup service lifecycle is not ordered with its executable and runtime verification.'
+        }
+        $receipt.runtimeRestore = @{ name=$service[1]; native=$true; automatic=$true;
+            fullTupleMatched=$true; executableKeyPath=$serviceFiles[0][0]; maintenanceStop=$true;
+            uninstallRemoval=$true; startsDuringInstall=$false; installedExecution=$false }
+    }
     $commits = @($actions.Keys | Where-Object { ($actions[$_].type -band 0x600) -eq 0x600 })
     $msiOwned = 'NEMOCLAW_BUNDLE_MANAGED_RUNTIME <> "1"'
     $installCommit = 'NOT UPGRADINGPRODUCTCODE AND NOT (REMOVE ~= "ALL") AND ' + $msiOwned

@@ -2965,7 +2965,7 @@ jobs:
               --nocapture --test-threads=1 --skip runtime_lease:: 2>&1 | Tee-Object -FilePath $log
             $result = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
-          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 26 passed; 0 failed; 0 ignored;') {
+          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 28 passed; 0 failed; 0 ignored;') {
             throw 'The twenty-six transaction, image cleanup, manifest, mount ACL and native SHA256 controls did not all pass.'
           }
 
@@ -3159,7 +3159,7 @@ jobs:
             $pythonResult = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
           $pythonText = [string](Get-Content -LiteralPath $pythonLog -Raw)
-          if ($pythonResult -ne 0 -or $pythonText -notmatch '(?m)^Ran 194 tests in [0-9.]+s\r?$' -or $pythonText -notmatch '(?m)^OK\r?$') {
+          if ($pythonResult -ne 0 -or $pythonText -notmatch '(?m)^Ran 199 tests in [0-9.]+s\r?$' -or $pythonText -notmatch '(?m)^OK\r?$') {
             throw 'The 194 MSI build and metadata controls did not all pass.'
           }
 

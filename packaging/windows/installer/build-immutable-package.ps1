@@ -380,7 +380,10 @@ try {
     if ($null -ne $cabinetFailure) { throw $cabinetFailure }
     # Same existing ICE60 exception as NemoClaw.wixproj; all other ICEs run.
     Invoke-BuildTool $WixPath @('msi', 'validate', '-sice', 'ICE60', '-wx', $msi) 'msi-validation'
-    & (Join-Path $owner 'audit-runtime-msi.ps1') -MsiPath $msi -HelperSha256 $helperSha -ReceiptPath (Join-Path $OutputDirectory 'compiled-msi.json') -RequireInstallationRootRemoval
+    & (Join-Path $owner 'audit-runtime-msi.ps1') -MsiPath $msi -HelperSha256 $helperSha -ReceiptPath (Join-Path $OutputDirectory 'compiled-msi.json') -RequireInstallationRootRemoval -RequireRuntimeRestore:$imageDelivery
+    if ($imageDelivery -and (Get-FileHash -LiteralPath (Join-Path $payload 'bin\NemoClawRuntimeRestore.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $helperSha) {
+        throw 'The packaged startup service differs from the pinned transaction helper.'
+    }
     $receipt['compiledMsi'] = Get-CompiledMsiCounts $msi
     $payloadFiles = @(Get-ChildItem -LiteralPath $payload -Recurse -File)
     $receipt['payload'] = @{ fileCount = $payloadFiles.Count; bytes = [long](($payloadFiles | Measure-Object -Property Length -Sum).Sum) }

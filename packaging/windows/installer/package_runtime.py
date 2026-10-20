@@ -21,7 +21,9 @@ from assemble_runtime import (
     read_json,
     write_json,
 )
-from author_runtime_msi import NAMESPACE, author, element, validate_identity
+from author_runtime_msi import (
+    IDENTITY_PROPERTIES, NAMESPACE, author, element, validate_identity, verify_helper,
+)
 from build_runtime_manifest import HEADER, hash_file
 
 COMMON_DIRECTORIES = {
@@ -43,6 +45,8 @@ LEGACY_DIRECTORIES = {
     "native-ui",
 }
 COMPONENT_NAMESPACE = uuid.UUID("b90129a5-8564-43de-b5e4-99617eec329d")
+BOOT_RESTORE_FILE = "bin/NemoClawRuntimeRestore.exe"
+BOOT_RESTORE_SERVICE = "NemoClawRuntimeRestore"
 
 
 def validate_launcher_capabilities(native, launcher_sha256):
@@ -435,6 +439,7 @@ def payload_authoring(
     output: Path,
     cabinet_source: Path | None = None,
     cabinet_runtime_source: Path | None = None,
+    transaction_helper: Path | None = None,
 ):
     explicit_cabinet_source = cabinet_source is not None
     if cabinet_runtime_source is not None and not explicit_cabinet_source:
@@ -446,6 +451,8 @@ def payload_authoring(
     ):
         raise ValueError("The cabinet source alias does not resolve to the verified payload.")
     inputs = read_json(payload / "immutable-package-inputs.json")
+    image_contract = inputs.get("deliveryContract") == "finished-native-image-v1"
+    validate_identity(inputs["runtime"])
     runtime_relative = Path("runtimes") / inputs["runtime"]["runtimeId"]
     runtime_root = payload / runtime_relative
     if cabinet_runtime_source is not None and (
@@ -456,6 +463,22 @@ def payload_authoring(
             "The cabinet runtime alias does not resolve to the verified runtime."
         )
     rows = inventory(payload)
+    restore = payload / BOOT_RESTORE_FILE
+    if image_contract:
+        if transaction_helper is None:
+            raise ValueError("The image package requires its pinned native startup helper.")
+        digest = hash_file(transaction_helper)[1]
+        verify_helper(transaction_helper, digest)
+        if restore.exists():
+            verify_helper(restore, digest)
+        else:
+            with restore.open("xb") as stream:
+                stream.write(transaction_helper.read_bytes())
+            verify_helper(restore, digest)
+        verify_helper(transaction_helper, digest)
+        rows = inventory(payload)
+    elif restore.exists():
+        raise ValueError("A loose runtime package cannot contain an image startup helper.")
     wix = ET.Element("{" + NAMESPACE + "}Wix")
     fragment = element(wix, "Fragment")
     root = element(fragment, "DirectoryRef", Id="INSTALLFOLDER")
@@ -480,9 +503,16 @@ def payload_authoring(
             )
     for directory, node in directories.items():
         files = by_directory.get(directory, [])
+        service_files = [name for name in files if name == BOOT_RESTORE_FILE]
+        files = [name for name in files if name != BOOT_RESTORE_FILE]
         groups = [files[i : i + 64] for i in range(0, len(files), 64)] or [[]]
+        if service_files:
+            groups.append(service_files)
         for index, group in enumerate(groups):
-            key = directory + ":" + str(index) + ":" + "|".join(group)
+            key = (
+                BOOT_RESTORE_FILE if group == [BOOT_RESTORE_FILE]
+                else directory + ":" + str(index) + ":" + "|".join(group)
+            )
             identifier = stable_id("Cmp_", key)
             component = element(
                 node,
@@ -515,6 +545,25 @@ def payload_authoring(
                         else source.resolve()
                     ),
                     KeyPath="yes" if number == 0 else "no",
+                )
+            if group == [BOOT_RESTORE_FILE]:
+                # MSI formats private tuple properties, avoiding the 255-character
+                # authored argument limit while preserving the complete identity.
+                arguments = "--runtime-boot-service " + " ".join(
+                    "[" + name + "]" for name in IDENTITY_PROPERTIES.values()
+                )
+                element(
+                    component, "ServiceInstall", Id=BOOT_RESTORE_SERVICE,
+                    Name=BOOT_RESTORE_SERVICE, DisplayName="NemoClaw Runtime Restore",
+                    Description="Restores the verified read-only runtime after Windows starts.",
+                    Type="ownProcess", Start="auto", ErrorControl="normal",
+                    Account="LocalSystem", Vital="yes", Arguments=arguments,
+                )
+                # Admission remains the transaction's responsibility. Do not start
+                # the service during an MSI transaction with a retired selector.
+                element(
+                    component, "ServiceControl", Id=BOOT_RESTORE_SERVICE + "Control",
+                    Name=BOOT_RESTORE_SERVICE, Stop="both", Remove="uninstall", Wait="yes",
                 )
     if len(components) >= 65536:
         raise ValueError(
@@ -626,6 +675,7 @@ def main():
             args.output,
             args.cabinet_source,
             args.cabinet_runtime_source,
+            args.transaction_helper,
         )
         xml, record = author(
             inputs["runtime"],
