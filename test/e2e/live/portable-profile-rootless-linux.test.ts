@@ -27,6 +27,10 @@ import {
   recoverHermesPortableLaunchForwards,
 } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { startSandbox } from "../../../src/lib/actions/sandbox/start.ts";
+import {
+  handleFinalizationState,
+  handlePostVerifyState,
+} from "../../../src/lib/onboard/machine/handlers/finalization.ts";
 import { enrollHermesPortableContainer } from "../../../src/lib/onboard/experimental/hermes-portable-container.ts";
 import { resolveHermesPortableStartupContract } from "../../../src/lib/onboard/experimental/hermes-portable-contract.ts";
 import {
@@ -69,10 +73,17 @@ import {
   cleanupPortableProfileRootlessFixture,
   installPortableProfileSystemctlShim,
 } from "../fixtures/portable-profile-systemctl.ts";
+import {
+  createPortableHermesFinalizationOptions,
+  runPortableDoctor,
+  withoutPodmanConnectionSelectors,
+  writePortableRegistry,
+} from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { runSandboxTokenContainerProbe } from "./openshell-gateway-auth-probe.ts";
 import type { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
+  captureOpenShell,
   recordPortableSandboxDiagnostics,
   verifyPinnedPodmanGatewayStarts,
 } from "./portable-profile-gateway-proof.ts";
@@ -358,37 +369,6 @@ function selectInstallerPodmanRuntime(repoRoot: string): string {
   return run("bash", ["-c", script]);
 }
 
-function captureOpenShell(
-  executablePath: string,
-  env: NodeJS.ProcessEnv,
-  args: readonly string[],
-  timeoutMs = 30_000,
-): HermesPortableLifecycleCommandResult {
-  const result = spawnSync(executablePath, [...args], {
-    encoding: "utf-8",
-    env,
-    killSignal: "SIGKILL",
-    maxBuffer: 512 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout:
-      timeoutMs <= 10_000
-        ? 10_000
-        : timeoutMs <= 30_000
-          ? 30_000
-          : timeoutMs <= 40_000
-            ? 40_000
-            : timeoutMs <= 60_000
-              ? 60_000
-              : 240_000,
-  });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    ...(result.error ? { error: result.error } : {}),
-  };
-}
-
 function requireOpenShellResult(
   result: HermesPortableLifecycleCommandResult,
   label: string,
@@ -563,24 +543,35 @@ function waitForOpenShellSandboxAbsent(
   assert.ok(observation.absent, `OpenShell sandbox cleanup did not settle: ${observation.detail}`);
 }
 
-function withoutPodmanConnectionSelectors(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const blocked = new Set([
-    "CONTAINER_CONNECTION",
-    "CONTAINER_CERT_PATH",
-    "CONTAINER_HOST",
-    "CONTAINER_SSHKEY",
-    "CONTAINER_TLS_VERIFY",
-    "CONTAINERS_CONF",
-    "CONTAINERS_STORAGE_CONF",
-    "DOCKER_CONTEXT",
-    "DOCKER_HOST",
-    "DOCKER_TLS",
-    "DOCKER_TLS_VERIFY",
-    "DOCKER_CERT_PATH",
-    "PODMAN_CONNECTIONS_CONF",
-    "REGISTRY_AUTH_FILE",
-  ]);
-  return Object.fromEntries(Object.entries(env).filter(([name]) => !blocked.has(name)));
+async function provePortableHermesFinalization(input: {
+  readonly lifecycleEnv: NodeJS.ProcessEnv;
+  readonly registry: SandboxEntry;
+  readonly sandboxName: string;
+}): Promise<Record<string, true>> {
+  const { lifecycleEnv, registry, sandboxName } = input;
+  const options = createPortableHermesFinalizationOptions(sandboxName, lifecycleEnv);
+
+  writePortableRegistry(lifecycleEnv.HOME!, sandboxName, {
+    ...registry,
+    lifecycleGeneration: `${HERMES_PORTABLE_E2E_GENERATION}-mismatch`,
+  });
+  const incomplete = await handleFinalizationState(options);
+  assert.equal(incomplete.stateResult.type, "pause");
+  assert.equal(runPortableDoctor(sandboxName, lifecycleEnv), 1);
+
+  writePortableRegistry(lifecycleEnv.HOME!, sandboxName, registry);
+  const finalization = await handleFinalizationState(options);
+  assert.equal(finalization.stateResult.type, "transition");
+  const postVerify = await handlePostVerifyState(options);
+  assert.equal(postVerify.stateResult.type, "complete");
+  assert.equal(runPortableDoctor(sandboxName, lifecycleEnv), 0);
+  return {
+    mismatchedAuthorityRejected: true,
+    doctorRejectedMismatchedAuthority: true,
+    finalizationAdvanced: true,
+    onboardingCompleted: true,
+    doctorHealthy: true,
+  };
 }
 
 async function proveHistoricalHermesPortableLifecycle(input: {
@@ -690,10 +681,14 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       name: sandboxName,
       agent: "hermes",
       gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+      gatewayPort: 8080,
       lifecycleGeneration: HERMES_PORTABLE_E2E_GENERATION,
       lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
       openshellDriver: "docker",
       openshellVersion: openshellExecutableAuthority.version,
+      portableLifecycleProfile: "hermes",
+      provider: "custom",
+      model: "e2e-readiness",
     };
     const context = {
       agent: "hermes",
@@ -775,6 +770,12 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       captureOpenShell: capture,
       readRegistry: () => registry,
     };
+
+    const finalizationEvidence = await provePortableHermesFinalization({
+      lifecycleEnv,
+      registry,
+      sandboxName,
+    });
 
     lifecycleEvidence = await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
       const gatewayEvidence: {
@@ -886,6 +887,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           forwardResult: gatewayEvidence.forwardRecovery?.kind ?? "missing",
           authenticatedHealth: "verified-by-public-start-before-forward-verification",
         },
+        finalization: finalizationEvidence,
         postRecoveryStop: {
           result: postRecoveryStop.kind,
           containerStatus: postRecoveryContainerStatus,

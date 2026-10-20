@@ -4,6 +4,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 
+import type { HermesPortableLifecycleCommandResult } from "../../../src/lib/onboard/experimental/hermes-portable-lifecycle.ts";
+
 import { redactFullWithUrls } from "../../../src/lib/security/redact.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -102,4 +104,35 @@ export async function verifyPinnedPodmanGatewayStarts(
     child.kill("SIGTERM");
     console.error(`Pinned OpenShell gateway diagnostics:\n${redactFullWithUrls(output)}`);
   }
+}
+
+export function captureOpenShell(
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+  args: readonly string[],
+  timeoutMs = 30_000,
+): HermesPortableLifecycleCommandResult {
+  const result = spawnSync(executablePath, [...args], {
+    encoding: "utf-8",
+    env,
+    killSignal: "SIGKILL",
+    maxBuffer: 512 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout:
+      timeoutMs <= 10_000
+        ? 10_000
+        : timeoutMs <= 30_000
+          ? 30_000
+          : timeoutMs <= 40_000
+            ? 40_000
+            : timeoutMs <= 60_000
+              ? 60_000
+              : 240_000,
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    ...(result.error ? { error: result.error } : {}),
+  };
 }
