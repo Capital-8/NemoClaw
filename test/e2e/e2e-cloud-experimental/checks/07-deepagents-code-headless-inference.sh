@@ -20,10 +20,10 @@
 # proxy routes inference.local when the request follows the normalized path.
 # Keep these phases in one ordered acceptance check: the absent-DNS observation
 # must describe the same sandbox used by login, direct-exec, and connect, and the
-# final credential scan must cover every captured output. A second connect run
-# sends untrusted evidence through the image-installed route-probe helper and
-# must stop before session attach. Per-phase diagnostics retain failure
-# attribution without splitting that shared evidence boundary.
+# final credential scan must cover every captured output. For managed routes,
+# a second connect run sends untrusted evidence through the image-installed
+# route-probe helper and must stop before session attach. Per-phase diagnostics
+# retain failure attribution without splitting that shared evidence boundary.
 # This check is the typed target's risk-plan activation marker. The same target's
 # ordered thread-auto-approval check verifies that two named rebuilds converge and
 # that `nemoclaw status --json` exits 0 after the capability returns to `disabled`.
@@ -855,19 +855,22 @@ DCODE_EXIT:${direct_exit}"
     fi
   fi
 
-  # 8. Untrusted evidence from the image-installed helper must fail closed
+  # 8. Managed routes must reject untrusted image-installed probe evidence
   # before the user-facing connect path can invoke interactive session attach.
-  fail_closed_connect_output="$(dcode_connect_fail_closed_contract || true)"
-  fail_closed_connect_exit="$(printf '%s\n' "$fail_closed_connect_output" | sed -n 's/^NEMOCLAW_DCODE_UNTRUSTED_CONNECT_EXIT:\([0-9][0-9]*\)$/\1/p' | tail -n1)"
-  if [ -n "$fail_closed_connect_exit" ] \
-    && [ "$fail_closed_connect_exit" -ne 0 ] \
-    && grep -Fq NEMOCLAW_DCODE_IMAGE_PROBE_USED <<<"$fail_closed_connect_output" \
-    && grep -Fq NEMOCLAW_DCODE_SESSION_ATTACH_NOT_INVOKED <<<"$fail_closed_connect_output" \
-    && grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
-    && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"; then
-    pass "connect rejects untrusted image-backed route evidence before session attach"
-  else
-    fail_test "connect did not fail closed before session attach for untrusted image-backed route evidence"
+  fail_closed_connect_output=""
+  if [ "$route_contract" = "managed" ]; then
+    fail_closed_connect_output="$(dcode_connect_fail_closed_contract || true)"
+    fail_closed_connect_exit="$(printf '%s\n' "$fail_closed_connect_output" | sed -n 's/^NEMOCLAW_DCODE_UNTRUSTED_CONNECT_EXIT:\([0-9][0-9]*\)$/\1/p' | tail -n1)"
+    if [ -n "$fail_closed_connect_exit" ] \
+      && [ "$fail_closed_connect_exit" -ne 0 ] \
+      && grep -Fq NEMOCLAW_DCODE_IMAGE_PROBE_USED <<<"$fail_closed_connect_output" \
+      && grep -Fq NEMOCLAW_DCODE_SESSION_ATTACH_NOT_INVOKED <<<"$fail_closed_connect_output" \
+      && grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
+      && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"; then
+      pass "connect rejects untrusted image-backed route evidence before session attach"
+    else
+      fail_test "connect did not fail closed before session attach for untrusted image-backed route evidence"
+    fi
   fi
 
   # 9. No real secrets in managed config, runtime env files, artifacts, logs, or captured output.
