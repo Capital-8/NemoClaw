@@ -3,7 +3,6 @@
 #[cfg(feature = "sdk")]
 mod platform;
 mod run_ci;
-mod runtime;
 use clap::{Parser, Subcommand};
 #[cfg(feature = "sdk")]
 use nemoclaw_sdk::bundle::{self, Manifest};
@@ -52,9 +51,6 @@ enum Action {
     Bundle {
         #[arg(long)]
         platform: Option<String>,
-    },
-    Runtime {
-        manifest: PathBuf,
     },
     /// Run this platform's `CI / Bundle` steps, or one named step.
     ///
@@ -218,10 +214,25 @@ struct Pins {
     #[serde(default)]
     images: std::collections::BTreeMap<String, String>,
 }
-/// A Cargo command without the package description that `cargo run` gives this
-/// tool. Cargo sets those variables per package, but some build scripts, such
-/// as ring's, rerun when an inherited CARGO_MANIFEST_DIR differs from the
-/// environment their cached output was built in.
+/// A Cargo command without the variables that `cargo run` set for this tool.
+///
+/// This works around ring's build script (ring 0.17.14). It declares
+/// `cargo:rerun-if-env-changed` for variables that Cargo sets for every build
+/// script: CARGO_MANIFEST_DIR, CARGO_PKG_*, and OUT_DIR. The Cargo book says
+/// that directive is for global variables such as CC, and that Cargo compares
+/// those it names in the environment of the `cargo` process, not the build
+/// script's. `cargo ci` runs this tool through `cargo run`, which sets the
+/// package variables and, because this package has a build script, OUT_DIR.
+/// A Cargo started from here would inherit them, so ring and its dependents,
+/// such as rustls, tonic, reqwest, and kube, would be stale for any `cargo`
+/// started another way. The docs job's `cargo run -p nemoclaw-build`, for
+/// example, recompiled them from the bundle job's cache.
+///
+/// The list must cover every variable ring tracks that `cargo run` sets. If
+/// CI logs show `Dirty ring ...: the env variable ... changed`, add that
+/// variable and bump the cache prefixes in `.github/actions/setup-rust`,
+/// because caches saved before the change keep the stale artifacts. Remove
+/// this once ring stops tracking variables that Cargo sets.
 fn cargo() -> Command {
     let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
     for (name, _) in std::env::vars_os() {
@@ -232,6 +243,7 @@ fn cargo() -> Command {
             || name.starts_with("CARGO_BIN_")
             || name == "CARGO_CRATE_NAME"
             || name == "CARGO_PRIMARY_PACKAGE"
+            || name == "OUT_DIR"
         {
             command.env_remove(name);
         }
@@ -688,6 +700,5 @@ async fn main() -> Result<()> {
 
             bundle(&pins, &platform::select(platform, bundle::platform)?).await
         }
-        Action::Runtime { manifest } => runtime::build_runtime(&pins, &manifest).await,
     }
 }
