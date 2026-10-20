@@ -81,6 +81,57 @@ function isStructuredProxyPolicyDenialDetail(detail: string): boolean {
   return isStructuredForwardProxyPolicyDenial(detail);
 }
 
+function isStructuredRestPolicyDenial(payload: Record<string, unknown>): boolean {
+  const { method, path, detail, rule_missing: missing } = payload;
+  // OpenShell 0.1.3 rest::deny_response_body separates the method and path
+  // from the endpoint. Require its denial fields to agree; never render its
+  // optional remediation text or use that text as evidence of a denial.
+  const fields = [
+    "error",
+    "policy",
+    "rule",
+    "detail",
+    "layer",
+    "protocol",
+    "method",
+    "path",
+    "host",
+    "port",
+    "binary",
+    "rule_missing",
+    "next_steps",
+    "agent_guidance",
+  ];
+  if (
+    Object.keys(payload).some((key) => !fields.includes(key)) ||
+    payload.layer !== "l7" ||
+    payload.protocol !== "rest" ||
+    typeof payload.policy !== "string" ||
+    !SAFE_DYNAMIC_PROXY_REASON_RE.test(payload.policy) ||
+    typeof method !== "string" ||
+    !/^[A-Z][A-Z0-9!#$%&'*+.^_`|~-]{0,31}$/.test(method) ||
+    typeof path !== "string" ||
+    !SAFE_PROXY_PATH_RE.test(path) ||
+    payload.rule !== `${method} ${path}` ||
+    typeof detail !== "string" ||
+    detail.length > MAX_STRUCTURED_PROXY_DETAIL_LENGTH ||
+    typeof missing !== "object" ||
+    missing === null ||
+    Array.isArray(missing) ||
+    !Array.isArray(payload.next_steps)
+  )
+    return false;
+  const rule = missing as Record<string, unknown>;
+  return (
+    rule.type === "rest_allow" &&
+    rule.layer === "l7" &&
+    rule.method === method &&
+    rule.path === path &&
+    ["host", "port", "binary"].every((key) => rule[key] === payload[key]) &&
+    isStructuredL7PolicyDenialReason(method, path, detail)
+  );
+}
+
 // Source-of-truth for structured proxy JSON:
 // - Invalid state: OpenShell reports some policy refusals only in structured
 //   CONNECT or forward-HTTP 403 JSON while the child tool receives opaque text.
@@ -126,20 +177,22 @@ function firstJsonObject(line: string): string | null {
   return null;
 }
 
-function isStructuredJsonPolicyDenial(line: string): boolean {
-  if (line.length > MAX_STRUCTURED_PROXY_LINE_LENGTH) return false;
+function structuredJsonPolicyDenial(line: string): Record<string, unknown> | null {
+  if (line.length > MAX_STRUCTURED_PROXY_LINE_LENGTH) return null;
   const jsonObject = firstJsonObject(line);
-  if (jsonObject === null) return false;
+  if (jsonObject === null) return null;
   try {
     const parsed: unknown = JSON.parse(jsonObject);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
     const payload = parsed as Record<string, unknown>;
-    const keys = Object.keys(payload);
-    if (keys.length !== 2 || !keys.includes("detail") || !keys.includes("error")) return false;
-    if (payload.error !== "policy_denied" || typeof payload.detail !== "string") return false;
-    return isStructuredProxyPolicyDenialDetail(payload.detail);
+    if (payload.error !== "policy_denied" || typeof payload.detail !== "string") return null;
+    const denied =
+      Object.keys(payload).length === 2
+        ? isStructuredProxyPolicyDenialDetail(payload.detail)
+        : isStructuredRestPolicyDenial(payload);
+    return denied ? payload : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -152,7 +205,7 @@ function isStructuredJsonPolicyDenial(line: string): boolean {
  */
 export function isPolicyDenialLine(line: string): boolean {
   if (OCSF_NETWORK_DENIAL_RE.test(line)) return true;
-  return isStructuredJsonPolicyDenial(line);
+  return structuredJsonPolicyDenial(line) !== null;
 }
 
 const LEADING_EPOCH_TIMESTAMP_RE = /^\s*\[\d+(?:\.\d+)?\]\s*/;
@@ -164,6 +217,14 @@ const LEADING_ISO_TIMESTAMP_RE =
  * Returns null when no candidate passes the terminal-output allowlist.
  */
 export function extractDeniedEndpoint(line: string): string | null {
+  const payload = structuredJsonPolicyDenial(line);
+  if (payload?.protocol === "rest") {
+    // REST responses contain remediation URLs. Only their endpoint fields
+    // identify the denied destination; never scan the surrounding response.
+    if (typeof payload.host !== "string" || typeof payload.port !== "number") return null;
+    const endpoint = `${payload.host}:${payload.port}`;
+    return isSafeEndpoint(endpoint) ? endpoint : null;
+  }
   const candidates: string[] = [];
   const arrow = line.match(/->\s*(\[[^\]\s]+\]:\d{1,5}|[^\s\]]+:\d{1,5})(?:\b|$)/);
   if (arrow) candidates.push(arrow[1]);

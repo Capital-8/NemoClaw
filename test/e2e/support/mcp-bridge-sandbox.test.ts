@@ -443,6 +443,13 @@ network_policies:
         path: "/mcp",
         port: 31337,
         protocol: "mcp",
+        enforcement: "enforce",
+        mcp: {
+          versions: ["2025-11-25"],
+          max_body_bytes: 4096,
+          strict_tool_names: true,
+          allow_all_known_mcp_methods: false,
+        },
         rules: [{ allow: { method: "tools/list" } }],
       }),
     ]);

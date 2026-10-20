@@ -304,10 +304,6 @@ except (OSError, ValueError):
     print("pre-rollback diagnostics directory unavailable or untrusted")
 PYDIAGNOSTICS
 ids="$("${"${runtime_command[@]}"}" container ps --all --quiet --no-trunc --filter "$sandbox_filter")"
-if [ -z "$ids" ]; then
-  printf '%s\n' "no runtime container found for $sandbox_filter"
-  exit 0
-fi
 for id in $ids; do
   if [[ ! "$id" =~ ^[a-f0-9]{64}$ ]]; then
     printf '%s\n' "ignored non-container identity"
@@ -315,6 +311,27 @@ for id in $ids; do
   fi
   printf '%s\n' "== exact container $id state =="
   "${"${runtime_command[@]}"}" container inspect --format '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.RestartCount}}' "$id" 2>&1 || true
+  role="$("${"${runtime_command[@]}"}" container inspect --format '{{index .Config.Labels "openshell.ai/isolation-role"}}' "$id" 2>/dev/null)" || continue
+  [ "$role" = sandbox ] || continue
+  # Capture numeric guard inputs after startup fails; argv and environment can contain credentials.
+  "${"${runtime_command[@]}"}" exec -i "$id" /usr/bin/python3 -I - <<'PYIDENTITY' || true
+import json, os, re
+fields = {"Uid", "Gid", "Groups", "PPid", "NSpid", "NoNewPrivs", "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"}
+try:
+    metadata = os.stat("/proc/1/status", follow_symlinks=False)
+    with open("/proc/1/status", "r", encoding="ascii") as stream:
+        status = stream.read(8193)
+    if len(status) > 8192:
+        raise ValueError("oversized status")
+    observed = {}
+    for line in status.splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key in fields and re.fullmatch(r"[0-9a-fA-F \t]*", value):
+            observed[key] = value.split()
+    print(json.dumps({"pid1_status_owner": [metadata.st_uid, metadata.st_gid], "pid1_status": observed}))
+except (OSError, UnicodeError, ValueError):
+    print("PID 1 identity diagnostics unavailable")
+PYIDENTITY
 done`;
   await captureDiagnosticsBestEffort(() =>
     host.command(

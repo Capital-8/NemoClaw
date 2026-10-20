@@ -23,6 +23,31 @@ const PROXY_JSON_LINE =
 const INTERLEAVED_CURL_PROXY_JSON_LINE =
   'curl: (22) The reque{"detail":"POST host.openshell.internal:4318/v1/traces not permitted by policy","error":"policy_denied"}sted URL returned error: 403';
 
+// Captured from the OpenShell 0.1.3 Deep Agents Code observability denial in run 39474622328.
+const REST_DENIAL = {
+  error: "policy_denied",
+  policy: "observability-otlp-local",
+  rule: "POST /not-traces",
+  detail: "POST /not-traces not permitted by policy",
+  layer: "l7",
+  protocol: "rest",
+  method: "POST",
+  path: "/not-traces",
+  host: "host.openshell.internal",
+  port: 4318,
+  binary: "/opt/venv/bin/python3",
+  rule_missing: {
+    type: "rest_allow",
+    layer: "l7",
+    method: "POST",
+    path: "/not-traces",
+    host: "host.openshell.internal",
+    port: 4318,
+    binary: "/opt/venv/bin/python3",
+  },
+  next_steps: [],
+};
+
 // A denial timestamp of 1783046573.602s parses to 1783046573602ms. Anchor the
 // command-start stamps around it to exercise the recency window.
 const START_BEFORE_DENIAL = 1783046573000;
@@ -41,6 +66,43 @@ describe("isPolicyDenialLine (#5978)", () => {
       "[1783046573.602] [sandbox] NET:OPEN [MED] DENIED /usr/bin/curl(9) -> [2001:db8::1]:443 [reason:not allowed by any policy]",
       true,
     ],
+    ["OpenShell 0.1.3 REST denial", JSON.stringify(REST_DENIAL), true],
+    [
+      "REST denial after Python HTTPError text",
+      `FAILED:HTTPError:HTTP Error 403: Forbidden:${JSON.stringify(REST_DENIAL)}`,
+      true,
+    ],
+    ...[
+      { error: "middleware_denied" },
+      { policy: "" },
+      { layer: "l4" },
+      { protocol: "mcp" },
+      { method: "GET" },
+      { method: "post" },
+      { path: "/other" },
+      { path: "/bad\npath" },
+      { rule: "POST /other" },
+      { detail: "arbitrary denial prose" },
+      { detail: "POST /other not permitted by policy" },
+      { detail: "x".repeat(1025) },
+      { rule_missing: null },
+      { rule_missing: [] },
+      { rule_missing: { ...REST_DENIAL.rule_missing, type: "mcp_allow" } },
+      { rule_missing: { ...REST_DENIAL.rule_missing, layer: "l4" } },
+      { rule_missing: { ...REST_DENIAL.rule_missing, method: "GET" } },
+      { rule_missing: { ...REST_DENIAL.rule_missing, path: "/other" } },
+      { rule_missing: { ...REST_DENIAL.rule_missing, host: "other.example" } },
+      { next_steps: null },
+      { extra: true },
+    ].map(
+      (change) =>
+        [
+          `REST denial with inconsistent ${JSON.stringify(change)}`,
+          JSON.stringify({ ...REST_DENIAL, ...change }),
+          false,
+        ] as const,
+    ),
+    ["truncated REST denial", JSON.stringify(REST_DENIAL).slice(0, -1), false],
     ["proxy JSON policy_denied body", PROXY_JSON_LINE, true],
     ["proxy JSON interleaved with curl stderr", INTERLEAVED_CURL_PROXY_JSON_LINE, true],
     [
@@ -217,6 +279,27 @@ describe("isPolicyDenialLine (#5978)", () => {
 
 describe("extractDeniedEndpoint (#5978)", () => {
   it.each([
+    ...[
+      ["host.openshell.internal", 4318, "host.openshell.internal:4318"],
+      [undefined, undefined, null],
+      ["unsafe\nhost", 4318, null],
+      ["host.openshell.internal", 99999, null],
+      ["host.openshell.internal", "4318", null],
+    ].map(
+      ([host, port, endpoint]) =>
+        [
+          `REST endpoint fields ${String(host)}:${String(port)} with unrelated remediation URLs`,
+          JSON.stringify({
+            ...REST_DENIAL,
+            host,
+            port,
+            rule_missing: { ...REST_DENIAL.rule_missing, host, port },
+            next_steps: ["https://other.example:443"],
+            agent_guidance: "-> misleading.example:8080",
+          }),
+          endpoint,
+        ] as const,
+    ),
     ["arrow target of a curl denial", DENIED_CURL_LINE, "example.com:443"],
     ["arrow target of a git denial", DENIED_GIT_LINE, "github.com:443"],
     [

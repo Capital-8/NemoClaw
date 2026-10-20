@@ -130,6 +130,7 @@ const request = (step) => new Promise((resolve) => {
     headers: {
       "content-type": "application/json",
       "content-length": Buffer.byteLength(body),
+      "mcp-protocol-version": "2025-11-25",
       authorization: "Bearer " + credentialPlaceholder,
     },
   }, (response) => {
@@ -199,6 +200,7 @@ const request = https.request({
   headers: {
     "content-type": "application/json",
     "content-length": Buffer.byteLength(body),
+    "mcp-protocol-version": "2025-11-25",
     authorization: "Bearer " + credentialPlaceholder,
   },
 }, (response) => {

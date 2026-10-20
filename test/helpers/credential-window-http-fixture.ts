@@ -4,8 +4,11 @@
 import { EventEmitter } from "node:events";
 
 export function credentialWindowHttpFixture(result: number | string) {
+  const requests: unknown[] = [];
   return {
-    request: (_options: unknown, callback: (response: unknown) => void) => {
+    requests,
+    request: (options: unknown, callback: (response: unknown) => void) => {
+      requests.push(options);
       const outbound = new EventEmitter();
       return Object.assign(outbound, {
         setTimeout: () => {},

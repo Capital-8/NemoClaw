@@ -293,7 +293,7 @@ describe("Deep Agents observability policy proof", () => {
       encoding: "utf8",
       env: { PATH: process.env.PATH },
       input:
-        'FAILED:HTTPError:HTTP Error 403: Forbidden:{"error":"policy_denied","detail":"POST example.com:4318/v1/traces not permitted by policy"}\n',
+        'FAILED:HTTPError:HTTP Error 403: Forbidden:{"error":"policy_denied","policy":"observability-otlp-local","rule":"POST /not-traces","detail":"POST /not-traces not permitted by policy","layer":"l7","protocol":"rest","method":"POST","path":"/not-traces","host":"host.openshell.internal","port":4318,"binary":"/opt/venv/bin/python3","rule_missing":{"type":"rest_allow","layer":"l7","method":"POST","path":"/not-traces","host":"host.openshell.internal","port":4318,"binary":"/opt/venv/bin/python3"},"next_steps":[]}\n',
     });
     expect(proxyDenial.status, proxyDenial.stderr).toBe(0);
     expect(proxyDenial.stdout.trim()).toBe("policy-denied");

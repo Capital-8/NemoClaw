@@ -361,7 +361,7 @@ describe("managed image activation failure diagnostics", () => {
     ) => void;
   }>([
     {
-      diagnostic: "selection-state-read",
+      diagnostic: "selection-state-permission",
       prepare: (env, _devices, secret) => {
         writeFileSync(
           env.NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER!,

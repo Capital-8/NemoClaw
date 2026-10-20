@@ -98,6 +98,8 @@ export function buildRawOpenShellAllowedIpsRebindingPolicy(
           enforcement: "enforce",
           allowed_ips: [pinnedIp],
           mcp: {
+            // OpenShell 0.1.3 includes this default in policy readback.
+            versions: ["2025-11-25"],
             max_body_bytes: 4096,
             strict_tool_names: true,
             allow_all_known_mcp_methods: false,
