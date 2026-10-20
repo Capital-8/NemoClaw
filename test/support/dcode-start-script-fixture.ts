@@ -54,10 +54,6 @@ export function prepareManagedScriptFixture(
     .replace(
       'readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/openshell-supervisor-ca/material/ca-bundle.crt"',
       `readonly MANAGED_FETCH_CA_BUNDLE_FILE="${caFile}"`,
-    )
-    .replace(
-      "readonly MANAGED_CA_OWNER_UID=0",
-      `readonly MANAGED_CA_OWNER_UID=${process.getuid?.() ?? 0}`,
     );
 }
 

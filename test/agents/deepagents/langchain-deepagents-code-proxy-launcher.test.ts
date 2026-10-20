@@ -449,7 +449,7 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
     mutate,
   }: {
     expected: string;
-    mutate: (caFile: string) => void;
+    mutate: (caFile: string, scripts: string[]) => void;
   }): Promise<void> => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-ca-bundle-"));
     const launcherPath = makeLauncherProxyProbeFixture(tempDir);
@@ -462,13 +462,14 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
     expect(safeStart.status, safeStart.stderr).toBe(0);
     expect(fs.existsSync(envFile)).toBe(true);
 
-    mutate(caFile);
-    const launcherResult = await runLauncher(launcherPath, ["-n", "PONG"], {});
+    mutate(caFile, [launcherPath, scriptPath, envFile]);
+    const env = { PATH: DEFAULT_TEST_PATH };
+    const launcherResult = await runLauncher(launcherPath, ["-n", "PONG"], env);
     const startResult = await runCommand("bash", [scriptPath, "true"], {
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      env,
     });
     const connectSourceResult = await runCommand("sh", ["-c", '. "$1"', "sh", envFile], {
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      env,
     });
 
     expect(launcherResult.status).not.toBe(0);
@@ -482,6 +483,36 @@ describe.concurrent("Deep Agents Code direct-exec proxy launcher", () => {
   };
 
   it.each([
+    {
+      condition: "foreign-owned",
+      expected: "Unsafe ownership or mode on managed fetch CA bundle file",
+      mutate: (caFile: string, scripts: string[]) => {
+        const statPath = path.join(path.dirname(caFile), "stat");
+        fs.writeFileSync(
+          statPath,
+          `#!/bin/sh\nprintf '%s\\n' '${(process.getuid?.() ?? 0) + 1}:444:18'\n`,
+          { mode: 0o755 },
+        );
+        const replaceStatObservation = (script: string): void => {
+          const source = fs.readFileSync(script, "utf8");
+          fs.chmodSync(script, 0o600);
+          fs.writeFileSync(script, source.replaceAll("stat -", `${JSON.stringify(statPath)} -`));
+        };
+        replaceStatObservation(scripts[0]);
+        replaceStatObservation(scripts[1]);
+        replaceStatObservation(scripts[2]);
+      },
+    },
+    {
+      condition: "owner-writable",
+      expected: "Unsafe ownership or mode on managed fetch CA bundle file",
+      mutate: (caFile: string) => fs.chmodSync(caFile, 0o644),
+    },
+    {
+      condition: "executable",
+      expected: "Unsafe ownership or mode on managed fetch CA bundle file",
+      mutate: (caFile: string) => fs.chmodSync(caFile, 0o544),
+    },
     {
       condition: "writable",
       expected: "Unsafe ownership or mode on managed fetch CA bundle file",

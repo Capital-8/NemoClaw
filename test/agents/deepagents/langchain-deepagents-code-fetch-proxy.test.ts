@@ -255,7 +255,7 @@ _nemoclaw_managed._UPSTREAM_PROVIDER_FILE = provider_file
 _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
 
 # Exercise the installed path without replacing the runtime's trust selector.
-# Redirect only that root-owned runtime path into this test's isolated filesystem.
+# Redirect only that projected runtime path into this test's isolated filesystem.
 original_open = os.open
 def open_projected_trust(path, flags, *args, **kwargs):
     assert Path(path) == Path("/run/openshell-supervisor-ca/material/ca-bundle.crt")
@@ -426,6 +426,7 @@ writable_ca_file = Path(${JSON.stringify(tempDir)}) / "writable-sensitive-ca.pem
 symlink_ca_file = Path(${JSON.stringify(tempDir)}) / "symlink-sensitive-ca.pem"
 provider_file.write_text("openai\\n", encoding="utf-8")
 managed_ca_file.write_text("test CA bundle\\n", encoding="utf-8")
+managed_ca_file.chmod(0o444)
 attacker_ca_file.write_text("attacker CA bundle\\n", encoding="utf-8")
 writable_ca_file.write_text("unsafe CA bundle\\n", encoding="utf-8")
 writable_ca_file.chmod(0o666)
@@ -649,7 +650,7 @@ finally:
 
 # Atomically replace the validated pathname after the managed helper opens it,
 # but before the transport consumes the CA input. The fd-backed verify path
-# must remain pinned to the original root-owned trust bytes.
+# must remain pinned to the original projected trust bytes.
 def replace_managed_ca_path():
     replacement = managed_ca_file.with_name("managed-ca-replacement")
     if replacement.exists() or replacement.is_symlink():
@@ -670,6 +671,7 @@ assert sessions[-1].ca_contents == ["test CA bundle\\n"]
 assert_fd_ca_path(calls[0][2]["verify"])
 managed_ca_file.unlink()
 managed_ca_file.write_text("test CA bundle\\n", encoding="utf-8")
+managed_ca_file.chmod(0o444)
 
 for invalid_ca_bundle, expected_error in (
     (
@@ -690,16 +692,37 @@ for invalid_ca_bundle, expected_error in (
         raise AssertionError(f"invalid CA bundle was accepted: {invalid_ca_bundle!r}")
 
 _nemoclaw_managed._MANAGED_FETCH_CA_BUNDLE_FILE = managed_ca_file
-_nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid() + 1
+# Image-file ownership does not supply authority for runtime-projected trust.
+_nemoclaw_managed._MANAGED_FILE_OWNER_UID = 0
+descriptor, _ = _nemoclaw_managed._managed_fetch_ca_bundle()
+_nemoclaw_managed._close_managed_fetch_ca_bundle(descriptor)
+original_fstat = os.fstat
+def foreign_owner_fstat(descriptor):
+    metadata = list(original_fstat(descriptor))
+    metadata[4] = os.geteuid() + 1
+    return os.stat_result(metadata)
+os.fstat = foreign_owner_fstat
 try:
     _nemoclaw_managed._managed_fetch_ca_bundle()
 except RuntimeError as exc:
     assert str(exc) == "managed fetch CA bundle is invalid"
 else:
     raise AssertionError("wrong-owner CA bundle was accepted")
+finally:
+    os.fstat = original_fstat
 _nemoclaw_managed._MANAGED_FILE_OWNER_UID = os.getuid()
 
-# The proxy and CA are immutable process-wide image inputs. Per-call isolation
+for mode in (0o644, 0o544, 0o400):
+    managed_ca_file.chmod(mode)
+    try:
+        _nemoclaw_managed._managed_fetch_ca_bundle()
+    except RuntimeError as exc:
+        assert str(exc) == "managed fetch CA bundle is invalid"
+    else:
+        raise AssertionError("CA bundle with a non-projected mode was accepted")
+managed_ca_file.chmod(0o444)
+
+# The proxy and CA are fixed process-wide runtime inputs. Per-call isolation
 # therefore means a fresh Session and explicit proxy mapping for each fetch,
 # including concurrent calls, rather than unsupported mutable configurations.
 calls.clear()

@@ -89,7 +89,8 @@ fi
 unset _NEMOCLAW_SANDBOX_RLIMITS
 
 readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/openshell-supervisor-ca/material/ca-bundle.crt"
-readonly MANAGED_CA_OWNER_UID=0
+# OpenShell projects this read-only bundle as the workload identity.
+readonly MANAGED_CA_OWNER_UID="$EUID"
 
 managed_fetch_ca_bundle_metadata() {
   local file="$1"
@@ -124,7 +125,7 @@ validate_managed_fetch_ca_bundle() {
     || [[ ! "$size" =~ ^[0-9]+$ ]] \
     || [ "$owner" != "$MANAGED_CA_OWNER_UID" ] \
     || [ "$size" -le 0 ] \
-    || (((8#$mode & 0022) != 0)); then
+    || ((8#$mode != 0444)); then
     printf '%s\n' 'Unsafe ownership or mode on managed fetch CA bundle file.' >&2
     return 1
   fi
@@ -214,7 +215,7 @@ NEMOCLAW_DCODE_CA_METADATA
     || [ -n "${_nemoclaw_dcode_ca_extra:-}" ] \
     || [ "$_nemoclaw_dcode_ca_owner" != "$_nemoclaw_dcode_ca_owner_uid" ] \
     || [ "$_nemoclaw_dcode_ca_size" -le 0 ] \
-    || [ "$((0$_nemoclaw_dcode_ca_mode & 022))" -ne 0 ]; then
+    || [ "$((0$_nemoclaw_dcode_ca_mode))" -ne "$((0444))" ]; then
     printf "%s\n" "Unsafe ownership or mode on managed fetch CA bundle file." >&2
     return 1 2>/dev/null || exit 1
   fi

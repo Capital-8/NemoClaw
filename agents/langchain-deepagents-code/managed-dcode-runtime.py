@@ -1198,8 +1198,8 @@ def _managed_fetch_ca_bundle() -> tuple[int, str]:
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != _MANAGED_FILE_OWNER_UID
-            or stat.S_IMODE(metadata.st_mode) & 0o022
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o444
             or metadata.st_size <= 0
         ):
             raise RuntimeError("managed fetch CA bundle is invalid")

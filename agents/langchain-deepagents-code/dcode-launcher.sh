@@ -60,7 +60,8 @@ if [ -f "$MANAGED_OBSERVABILITY_MARKER" ] \
   export NEMOCLAW_OBSERVABILITY=1
 fi
 
-readonly MANAGED_CA_OWNER_UID=0
+# OpenShell projects this read-only bundle as the workload identity.
+readonly MANAGED_CA_OWNER_UID="$EUID"
 
 managed_fetch_ca_bundle_metadata() {
   local file="$1"
@@ -95,7 +96,7 @@ validate_managed_fetch_ca_bundle() {
     || [[ ! "$size" =~ ^[0-9]+$ ]] \
     || [ "$owner" != "$MANAGED_CA_OWNER_UID" ] \
     || [ "$size" -le 0 ] \
-    || (((8#$mode & 0022) != 0)); then
+    || ((8#$mode != 0444)); then
     printf '%s\n' 'Unsafe ownership or mode on managed fetch CA bundle file.' >&2
     return 1
   fi
