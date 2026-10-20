@@ -971,8 +971,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
   }
   const nativeHosted = nativeHostedAgentConfig(upstreamProvider, inferenceBaseUrl);
   const nativeLocal =
-    ["ollama-local", "vllm-local", "llama-cpp-local"].includes(upstreamProvider) ||
-    env.NEMOCLAW_LOCAL_INFERENCE_TOKEN
+    ["ollama-local", "vllm-local", "llama-cpp-local", "compatible-endpoint"].includes(
+      upstreamProvider,
+    ) || env.NEMOCLAW_LOCAL_INFERENCE_TOKEN
       ? nativeLocalCredentialReference(
           upstreamProvider,
           inferenceBaseUrl,

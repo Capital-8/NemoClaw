@@ -150,7 +150,7 @@ os.fsync = sync_or_fail`
   }
 
   it.each(["v7", `s${"a".repeat(64)}`])(
-    "materializes the generated local compatible credential with scope %s",
+    "materializes the local compatible credential generated without a handle, with scope %s",
     async (scope) => {
       const handle = `openshell:resolve:env:${scope}_NEMOCLAW_LOCAL_INFERENCE_TOKEN`;
       const generated = buildConfig({
@@ -159,7 +159,6 @@ os.fsync = sync_or_fail`
         NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
         NEMOCLAW_INFERENCE_BASE_URL: "http://host.openshell.internal:45173/v1",
         NEMOCLAW_INFERENCE_API: "openai-completions",
-        NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle,
       });
       const run = await runRefresh(generated, { NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle });
       expect(run.result.status, run.result.stderr).toBe(0);

@@ -182,7 +182,7 @@ if (
 else:
     details = str(result.get('error', result))
     lowered = details.lower()
-    if any(marker in lowered for marker in DENIAL_MARKERS):
+    if lowered == 'fetch url error: url destination is blocked' or any(marker in lowered for marker in DENIAL_MARKERS):
         print(f'FETCH_BLOCKED:{details}')
     else:
         print(f'FETCH_ERROR:{details}')

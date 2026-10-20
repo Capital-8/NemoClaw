@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { MANAGED_IMAGE_AGENTS } from "../../../src/lib/onboard/managed-image/agents.ts";
+import { managedStartupStateRootOwnership } from "../../../src/lib/onboard/managed-startup/state-roots.ts";
 import { resolveSandboxGatewayName } from "../../../src/lib/onboard/gateway-binding.ts";
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import type { CleanupRegistry } from "./cleanup.ts";
 import { cleanupAcquiredResource } from "./cleanup-resources.ts";
 import type { HostCliClient } from "./clients/host.ts";
-import type { SandboxClient } from "./clients/sandbox.ts";
+import { type SandboxClient, validateSandboxName } from "./clients/sandbox.ts";
+import type { RuntimeProviderPrerequisite } from "./runtime-provider.ts";
+import type { ShellProbeRunOptions } from "./shell-probe.ts";
 import { initializeGatewayForCleanup } from "./gateway-runtime-start.ts";
 
 function buildOwnedSandboxCleanupEnv(
@@ -34,6 +38,86 @@ export function cleanupRegisteredSandbox(
   cleanup: () => Promise<void>,
 ): Promise<void> {
   return cleanupAcquiredResource(getSandbox(sandboxName) !== null, cleanup);
+}
+
+/** Verify absence after onboarding released its gateway before creating a sandbox. */
+export async function cleanupOwnedSandboxAfterOnboard(
+  sandbox: Pick<SandboxClient, "hasGatewayForInitialCleanup" | "cleanupSandbox">,
+  runtimeProvider: Pick<RuntimeProviderPrerequisite, "command">,
+  sandboxName: string,
+  options: ShellProbeRunOptions,
+): Promise<void> {
+  validateSandboxName(sandboxName);
+  const gatewayName = resolveSandboxGatewayName({
+    gatewayName: options.env?.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
+  });
+  const scopedOptions = {
+    ...options,
+    env: { ...options.env, OPENSHELL_GATEWAY: gatewayName },
+  };
+  if (await sandbox.hasGatewayForInitialCleanup(gatewayName, scopedOptions)) {
+    await sandbox.cleanupSandbox(sandboxName, scopedOptions);
+    return;
+  }
+  if (getSandbox(sandboxName) !== null) {
+    throw new Error(
+      `Cannot verify cleanup of registered sandbox '${sandboxName}' without its gateway.`,
+    );
+  }
+  // Include stopped workloads and supervisors; state volumes can outlive a failed create.
+  const requests = [
+    {
+      kind: "containers",
+      args: [
+        "container",
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `label=openshell.ai/sandbox-name=${sandboxName}`,
+        "--format",
+        "{{.ID}}",
+      ],
+    },
+    ...MANAGED_IMAGE_AGENTS.flatMap((agent) =>
+      managedStartupStateRootOwnership({ agent, sandboxName }).map((root) => ({
+        kind: root.resourceIdentity,
+        args: [
+          "volume",
+          "ls",
+          "--filter",
+          `name=${root.resourceIdentity}`,
+          "--format",
+          "{{.Name}}",
+        ],
+      })),
+    ),
+  ];
+  const inventories = await Promise.all(
+    requests.map(({ kind, args }) =>
+      runtimeProvider.command(args, {
+        ...scopedOptions,
+        artifactName: `cleanup-${sandboxName}-${kind}`,
+        captureLimitBytes: 4096,
+        timeoutMs: Math.min(options.timeoutMs ?? 30_000, 30_000),
+      }),
+    ),
+  );
+  if (
+    inventories.some(
+      (inventory) =>
+        inventory.exitCode !== 0 ||
+        inventory.signal !== null ||
+        inventory.timedOut ||
+        inventory.stdout !== "" ||
+        inventory.stderr !== "",
+    ) ||
+    getSandbox(sandboxName) !== null
+  ) {
+    throw new Error(
+      `Cannot verify runtime absence for sandbox '${sandboxName}' after its gateway was removed.`,
+    );
+  }
 }
 
 /** Prepare a sandbox name exclusively owned by this isolated qualification job. */

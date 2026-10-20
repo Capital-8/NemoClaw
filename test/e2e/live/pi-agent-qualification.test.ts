@@ -25,7 +25,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { assertNoDockerfileBuild, createDockerBuildGuard } from "../fixtures/docker-build-guard.ts";
-import { cleanupRegisteredSandbox } from "../fixtures/owned-sandbox-cleanup.ts";
+import {
+  cleanupOwnedSandboxAfterOnboard,
+  cleanupRegisteredSandbox,
+} from "../fixtures/owned-sandbox-cleanup.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -303,7 +306,16 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, inference, lifecycle, progress, sandbox }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    inference,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+  }) => {
     const platform = qualificationPlatform(
       process.arch,
       process.env.NEMOCLAW_PI_QUALIFICATION_PLATFORM,
@@ -331,7 +343,10 @@ test(
     cleanup.trackDisposable("remove Pi Docker build guard", guard.dispose);
     cleanup.trackGateway(host, GATEWAY, { env, timeoutMs: 60_000 });
     cleanup.trackDisposable("remove Pi OpenShell sandbox", () =>
-      sandbox.cleanupSandbox(SANDBOX_NAME, { env, timeoutMs: 60_000 }),
+      cleanupOwnedSandboxAfterOnboard(sandbox, runtimeProvider, SANDBOX_NAME, {
+        env,
+        timeoutMs: 60_000,
+      }),
     );
     cleanup.trackDisposable(`destroy sandbox ${SANDBOX_NAME}`, () =>
       cleanupRegisteredSandbox(SANDBOX_NAME, () =>

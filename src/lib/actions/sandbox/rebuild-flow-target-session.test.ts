@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { cliOpenShellInstalledVersionObserver } from "../../adapters/openshell/installed-version-cli";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
+import { cliOpenShellInstalledVersionObserver } from "../../../../test/helpers/rebuild-flow-harness";
 import type { ServingProfileProvenance } from "../../inference/serving/profile-provenance";
 
 const savedProfileProvenance: ServingProfileProvenance = {
@@ -174,9 +174,14 @@ describe("rebuildSandbox flow: target session", () => {
     }
   });
 
-  it.each(["ollama-local", "vllm-local"])(
-    "refuses a retained Pi %s rebuild before state changes on OpenShell 0.1.3",
-    async (provider) => {
+  it.each([
+    { provider: "ollama-local", version: "0.1.3" },
+    { provider: "vllm-local", version: "0.1.3" },
+    { provider: "ollama-local", version: null },
+    { provider: "vllm-local", version: null },
+  ])(
+    "refuses a retained Pi $provider rebuild before state changes with runtime version=$version",
+    async ({ provider, version }) => {
       const harness = createRebuildFlowHarness({
         sandboxEntry: {
           agent: "pi",
@@ -186,10 +191,13 @@ describe("rebuildSandbox flow: target session", () => {
           nativeLocalProviderAttachment: undefined,
         },
       });
-      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
-        ok: true,
-        version: "0.1.3",
-      });
+      const installedVersion = vi
+        .spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion")
+        .mockReturnValue(
+          version === null
+            ? { ok: false, error: { kind: "unavailable", message: "OpenShell binary not found." } }
+            : { ok: true, version },
+        );
       const before = structuredClone(harness.session);
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -199,6 +207,7 @@ describe("rebuildSandbox flow: target session", () => {
       expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).not.toHaveBeenCalled();
       expect(harness.session).toEqual(before);
+      expect(installedVersion).toHaveBeenCalledOnce();
     },
   );
 

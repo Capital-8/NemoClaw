@@ -249,7 +249,15 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
         dockerCapture: () =>
           JSON.stringify([
             { Id: CONTAINER_ID, Config: { Env: [] }, State: {} },
-            { Id: supervisor, Config: { Env: [`TOKEN=${secret}`] }, State: {} },
+            {
+              Id: supervisor,
+              Config: {
+                Env: [
+                  `OPENSHELL_MAIN_PROCESS_SPEC=${JSON.stringify({ version: 1, command: ["env", `TOKEN=${secret}`, "nemoclaw-start"], tty: false, await_main_process_attachment: false })}`,
+                ],
+              },
+              State: {},
+            },
           ]),
         dockerLogs,
       });

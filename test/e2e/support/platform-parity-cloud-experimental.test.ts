@@ -479,46 +479,93 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
   it.each([
     [
-      "accepts an explicit non-empty success response",
+      "accepts a non-empty response",
+      { status_code: 200, content_length: 1234 },
       "fetch-success-classification",
-      "FETCH_SUCCESS:200:1234",
       0,
       "1 passed",
     ],
     [
-      "accepts explicit denial evidence",
+      "accepts a policy denial",
+      { error: "network policy denied" },
       "fetch-blocked-classification",
-      "FETCH_BLOCKED:network policy denied",
       0,
       "1 passed",
     ],
     [
-      "rejects an unclassified fetch error",
+      "accepts the managed URL rejection",
+      { error: "Fetch URL error: URL destination is blocked" },
       "fetch-blocked-classification",
-      "FETCH_ERROR:opaque 403",
+      0,
+      "1 passed",
+    ],
+    [
+      "rejects an opaque HTTP error",
+      { error: "opaque 403" },
+      "fetch-blocked-classification",
       1,
       "lacked denial evidence",
     ],
-  ] as const)("%s from the fetch_url probe", (_label, selfTest, fixture, status, expected) => {
-    const result = spawnSync(
-      "bash",
-      [
-        path.join(
-          process.cwd(),
-          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
-        ),
-      ],
+    [
+      "rejects a DNS error",
+      { error: "Fetch URL error: URL hostname could not be resolved" },
+      "fetch-blocked-classification",
+      1,
+      "lacked denial evidence",
+    ],
+    [
+      "rejects an unrelated blocked message",
+      { error: "remote URL destination is blocked temporarily" },
+      "fetch-blocked-classification",
+      1,
+      "lacked denial evidence",
+    ],
+    [
+      "rejects success as denial",
       {
-        encoding: "utf8",
-        env: {
-          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: selfTest,
-          NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE: fixture,
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-        },
+        status_code: 200,
+        content_length: 1234,
+        error: "Fetch URL error: URL destination is blocked",
       },
+      "fetch-blocked-classification",
+      1,
+      "reached fixture host unexpectedly",
+    ],
+  ] as const)("%s from the fetch_url probe", (_label, response, selfTest, status, expected) => {
+    const script = path.join(cloudChecksDir, "06-deepagents-code-python-egress.sh");
+    const source = fs
+      .readFileSync(script, "utf8")
+      .split("fetch_url_probe_source() {\n  cat <<'PY'\n")[1]
+      .split("\nPY\n}")[0];
+    const probe = spawnSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import json, sys, types",
+          "package = types.ModuleType('deepagents_code')",
+          "tools = types.ModuleType('deepagents_code.tools')",
+          "managed = types.ModuleType('deepagents_code._nemoclaw_managed')",
+          "tools.fetch_url = lambda *args, **kwargs: json.loads(sys.argv[2])",
+          "managed._managed_fetch_uses_openshell = lambda: True",
+          "sys.modules.update({'deepagents_code': package, 'deepagents_code.tools': tools, 'deepagents_code._nemoclaw_managed': managed})",
+          source,
+        ].join("\n"),
+        "https://fixture.example/",
+        JSON.stringify(response),
+      ],
+      { encoding: "utf8", env: { PATH: DEFAULT_TEST_PATH } },
     );
-
-    expect(result.status).toBe(status);
+    expect(probe.status, probe.stderr).toBe(0);
+    const result = spawnSync("bash", [script], {
+      encoding: "utf8",
+      env: {
+        NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: selfTest,
+        NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE: probe.stdout.trim(),
+        PATH: DEFAULT_TEST_PATH,
+      },
+    });
+    expect(result.status, result.stderr).toBe(status);
     expect(`${result.stdout}\n${result.stderr}`).toContain(expected);
   });
 

@@ -5,9 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getSandbox } from "../../../src/lib/state/registry.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import {
+  cleanupOwnedSandboxAfterOnboard,
   cleanupRegisteredSandbox,
   prepareOwnedSandboxForOnboard,
 } from "../fixtures/owned-sandbox-cleanup.ts";
@@ -74,7 +77,7 @@ function fixture() {
   const cleanup = new CleanupRegistry();
   const prepare = (orphanGatewayName?: string) =>
     prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge", orphanGatewayName);
-  return { calls, host, sandbox, openshell, gateway, presentGateway, cleanup, prepare };
+  return { calls, host, sandbox, openshell, gateway, presentGateway, cleanup, prepare, response };
 }
 
 describe("owned-sandbox cleanup", () => {
@@ -139,6 +142,192 @@ describe("owned-sandbox cleanup", () => {
     ]);
     expect(destroy).not.toHaveBeenCalled();
     expect(later).toHaveBeenCalledOnce();
+  });
+
+  function finalCleanupFixture(environment: NodeJS.ProcessEnv = {}) {
+    const f = fixture();
+    const run = vi.fn().mockResolvedValue(f.response());
+    const runtime = new RuntimeProviderPrerequisite(
+      new HostCliClient({ run }),
+      undefined,
+      environment,
+    );
+    const options = { env: { OPENSHELL_GATEWAY: "nemoclaw" }, timeoutMs: 60_000 };
+    const finish = () =>
+      cleanupOwnedSandboxAfterOnboard(f.sandbox, runtime, "e2e-mcp-bridge", options);
+    return { ...f, run, runtime, options, finish };
+  }
+
+  it.each([
+    { environment: {}, command: "docker", prefix: [] },
+    {
+      environment: {
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+      },
+      command: "podman",
+      prefix: ["--url", "unix:///run/user/1000/podman/podman.sock"],
+    },
+  ])(
+    "accepts released resources only after empty $command inventory",
+    async ({ environment, command, prefix }) => {
+      const f = finalCleanupFixture(environment);
+      await f.finish();
+      expect(f.openshell.mock.calls.map(([args]) => args)).toEqual([
+        ["gateway", "info", "-g", "nemoclaw", "-o", "json"],
+      ]);
+      const expectedOptions = expect.objectContaining({
+        env: expect.objectContaining({ OPENSHELL_GATEWAY: "nemoclaw" }),
+        captureLimitBytes: 4096,
+        timeoutMs: 30_000,
+      });
+      expect(f.run.mock.calls).toEqual([
+        [
+          expect.objectContaining({
+            command,
+            args: [
+              ...prefix,
+              "container",
+              "ps",
+              "--all",
+              "--no-trunc",
+              "--filter",
+              "label=openshell.ai/sandbox-name=e2e-mcp-bridge",
+              "--format",
+              "{{.ID}}",
+            ],
+          }),
+          expectedOptions,
+        ],
+        [
+          expect.objectContaining({
+            command,
+            args: [
+              ...prefix,
+              "volume",
+              "ls",
+              "--filter",
+              "name=nemoclaw-openclaw-state-v1-e2e-mcp-bridge",
+              "--format",
+              "{{.Name}}",
+            ],
+          }),
+          expectedOptions,
+        ],
+        [
+          expect.objectContaining({
+            command,
+            args: [
+              ...prefix,
+              "volume",
+              "ls",
+              "--filter",
+              "name=nemoclaw-hermes-state-v1-e2e-mcp-bridge",
+              "--format",
+              "{{.Name}}",
+            ],
+          }),
+          expectedOptions,
+        ],
+      ]);
+      expect(f.host.command).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps raw deletion for an orphan when the selected gateway exists", async () => {
+    const f = finalCleanupFixture();
+    f.gateway.response = f.presentGateway;
+    await f.finish();
+    expect(f.calls).toEqual(["gateway info", "sandbox delete"]);
+    expect(f.openshell).toHaveBeenLastCalledWith(["sandbox", "delete", "e2e-mcp-bridge"], {
+      ...f.options,
+      artifactName: "cleanup-openshell-sandbox-e2e-mcp-bridge",
+    });
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it("preserves raw deletion failure when the gateway exists", async () => {
+    const f = finalCleanupFixture();
+    f.gateway.response = f.presentGateway;
+    vi.spyOn(f.sandbox, "cleanupSandbox").mockRejectedValue(new Error("delete refused"));
+    await expect(f.finish()).rejects.toThrow("delete refused");
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it("refuses absent-gateway cleanup for a retained registration", async () => {
+    const f = finalCleanupFixture();
+    state.registered = true;
+    await expect(f.finish()).rejects.toThrow("registered sandbox");
+    expect(f.run).not.toHaveBeenCalled();
+    expect(f.calls).toEqual(["gateway info"]);
+  });
+
+  it.each([
+    { stdout: "a".repeat(64) + "\n" },
+    { stdout: "malformed inventory" },
+    { stdout: "\n" },
+    { exitCode: 1 },
+    { signal: "SIGTERM" as const },
+    { timedOut: true },
+    { stderr: "runtime unavailable" },
+  ])("preserves uncertain runtime cleanup failure: %j", async (failure) => {
+    const f = finalCleanupFixture();
+    f.run.mockResolvedValue(f.response(failure));
+    const later = vi.fn();
+    f.cleanup.trackDisposable("later cleanup", later);
+    f.cleanup.trackDisposable("raw cleanup", f.finish);
+    expect((await f.cleanup.runAll()).failures).toEqual([
+      {
+        name: "raw cleanup",
+        message:
+          "Cannot verify runtime absence for sandbox 'e2e-mcp-bridge' after its gateway was removed.",
+      },
+    ]);
+    expect(later).toHaveBeenCalledOnce();
+    expect(f.calls).toEqual(["gateway info"]);
+  });
+
+  it.each([
+    { openclaw: { stdout: "nemoclaw-openclaw-state-v1-e2e-mcp-bridge\n" }, hermes: {} },
+    { openclaw: {}, hermes: { stdout: "nemoclaw-hermes-state-v1-e2e-mcp-bridge\n" } },
+    { openclaw: { exitCode: 1 }, hermes: {} },
+    { openclaw: {}, hermes: { signal: "SIGTERM" as const } },
+    { openclaw: { timedOut: true }, hermes: {} },
+    { openclaw: {}, hermes: { stderr: "volume inventory denied" } },
+  ])(
+    "refuses remaining or uncertain state volumes with no containers: %j",
+    async ({ openclaw, hermes }) => {
+      const f = finalCleanupFixture();
+      f.run
+        .mockResolvedValueOnce(f.response())
+        .mockResolvedValueOnce(f.response(openclaw))
+        .mockResolvedValueOnce(f.response(hermes));
+      await expect(f.finish()).rejects.toThrow("Cannot verify runtime absence");
+      expect(f.calls).toEqual(["gateway info"]);
+      expect(f.run).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it.each([
+    { exitCode: 1, stderr: "permission denied" },
+    { stdout: JSON.stringify({ gateway: "foreign" }) },
+    { exitCode: 1, signal: "SIGTERM" as const, stderr: "No gateway configured." },
+  ])("does not interpret uncertain gateway results as absence: %j", async (failure) => {
+    const f = finalCleanupFixture();
+    f.gateway.response = failure;
+    await expect(f.finish()).rejects.toThrow();
+    expect(f.run).not.toHaveBeenCalled();
+    expect(f.calls).toEqual(["gateway info"]);
+  });
+
+  it("rejects a registration acquired during the runtime inventory", async () => {
+    const f = finalCleanupFixture();
+    f.run.mockImplementation(async () => {
+      state.registered = true;
+      return f.response();
+    });
+    await expect(f.finish()).rejects.toThrow("Cannot verify runtime absence");
+    expect(f.calls).toEqual(["gateway info"]);
   });
 
   it("does not start a gateway or run CLI recovery when fresh resources are absent", async () => {
