@@ -58,7 +58,13 @@ The host firewall must allow the outbound DNS, HTTPS, image-registry, package-re
 
 ## Keep Remote Access on Loopback
 
-The OpenShell gateway binds to `127.0.0.1` by default. Dashboard and API forwards also stay on loopback outside WSL unless you explicitly change the bind setting.
+The OpenShell gateway binds to `127.0.0.1` by default.
+Dashboard forwards stay on loopback outside WSL unless you explicitly change `NEMOCLAW_DASHBOARD_BIND`.
+
+<AgentOnly variant="hermes">
+The Hermes API forward stays on `127.0.0.1`, including on WSL and when the dashboard bind setting is enabled.
+Use the [SSH forwarding procedure](../get-started/quickstart#installation-and-runtime-details) for remote API access.
+</AgentOnly>
 
 Connect to the server from your workstation:
 

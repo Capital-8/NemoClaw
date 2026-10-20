@@ -51,3 +51,11 @@ export function dashboardForwardIsRunning(forwardLine: string): boolean {
   const columns = stripAnsi(forwardLine).trim().split(/\s+/u);
   return columns.length === 5 && columns[4] === "running";
 }
+
+export const REMOTE_API_REFUSAL_PROBE = [
+  'const net = require("node:net");',
+  "const socket = net.connect({ host: process.argv[1], port: Number(process.argv[2]) });",
+  "const deadline = setTimeout(() => { socket.destroy(); process.exit(2); }, 5000);",
+  "socket.once('connect', () => { clearTimeout(deadline); socket.destroy(); process.exit(1); });",
+  "socket.once('error', (error) => { clearTimeout(deadline); process.exit(error.code === 'ECONNREFUSED' ? 0 : 2); });",
+].join("\n");

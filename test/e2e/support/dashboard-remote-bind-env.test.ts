@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFile } from "node:child_process";
+import net from "node:net";
+import { promisify } from "node:util";
+
 import { describe, expect, it } from "vitest";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildDashboardRemoteBindEnv,
+  REMOTE_API_REFUSAL_PROBE,
   dashboardForwardIsRunning,
   dashboardRemoteBindConnectStarted,
 } from "../live/dashboard-remote-bind-env.ts";
@@ -112,4 +117,37 @@ describe("dashboard remote-bind E2E environment", () => {
       ),
     ).toBe(false);
   });
+});
+
+describe("remote API refusal probe", () => {
+  it.each([false, true])(
+    "distinguishes listening=%s from a refused connection",
+    async (listening) => {
+      const server = net.createServer((socket) => socket.end());
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const port = (server.address() as net.AddressInfo).port;
+      const close = () =>
+        new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      await (listening ? Promise.resolve() : close());
+      try {
+        const result = await promisify(execFile)(
+          process.execPath,
+          ["-e", REMOTE_API_REFUSAL_PROBE, "127.0.0.1", String(port)],
+          { timeout: 10_000 },
+        ).then(
+          () => 0,
+          (error: { code: number }) => error.code,
+        );
+        expect(result).toBe(listening ? 1 : 0);
+      } finally {
+        await (listening ? close() : Promise.resolve());
+      }
+    },
+    15_000,
+  );
 });
