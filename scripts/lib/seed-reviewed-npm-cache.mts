@@ -5,11 +5,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
   LOCKED_NPM_CACHE_SEED_MANIFEST_NAME,
+  exactRootOverrides,
   lockedArchives,
   type NpmPlatformTarget,
 } from "../checks/materialize-locked-npm-cache-seed.mts";
@@ -176,7 +177,13 @@ export function lockedArchivesFromDirectory(
     );
   }
 
-  const selectedArchives = lockedArchives(readFileSync(lockfilePath, "utf8"), target);
+  const manifestPath = join(dirname(lockfilePath), "package.json");
+  const manifestEntry = existsSync(manifestPath) ? lstatSync(manifestPath) : undefined;
+  if (manifestEntry && (!manifestEntry.isFile() || manifestEntry.isSymbolicLink())) {
+    throw new Error("reviewed npm cache seed package manifest must be a regular file");
+  }
+  const overrides = manifestEntry ? exactRootOverrides(readFileSync(manifestPath, "utf8")) : {};
+  const selectedArchives = lockedArchives(readFileSync(lockfilePath, "utf8"), target, overrides);
   const expectedByResolved = new Map(
     selectedArchives.map((archive) => [archive.resolved, archive.archive]),
   );

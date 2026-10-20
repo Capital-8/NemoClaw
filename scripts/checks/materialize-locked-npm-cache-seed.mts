@@ -339,7 +339,17 @@ async function exactFileSource(file: string, label: string): Promise<Buffer> {
   }
 }
 
-async function exactRootOverrides(lockfile: string): Promise<Record<string, string>> {
+export function exactRootOverrides(manifestSource: string): Record<string, string> {
+  const manifest = record(JSON.parse(manifestSource) as unknown, "package manifest");
+  const overrides = record(manifest.overrides ?? {}, "package manifest overrides");
+  return Object.fromEntries(
+    Object.entries(overrides).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+
+async function readExactRootOverrides(lockfile: string): Promise<Record<string, string>> {
   const manifestPath = path.join(path.dirname(lockfile), "package.json");
   const exists = await lstat(manifestPath).then(
     () => true,
@@ -349,17 +359,8 @@ async function exactRootOverrides(lockfile: string): Promise<Record<string, stri
     },
   );
   if (!exists) return {};
-  const manifest = record(
-    JSON.parse(
-      (await exactFileSource(manifestPath, "package manifest")).toString("utf8"),
-    ) as unknown,
-    "package manifest",
-  );
-  const overrides = record(manifest.overrides ?? {}, "package manifest overrides");
-  return Object.fromEntries(
-    Object.entries(overrides).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ),
+  return exactRootOverrides(
+    (await exactFileSource(manifestPath, "package manifest")).toString("utf8"),
   );
 }
 
@@ -457,7 +458,7 @@ export async function materializeLockedNpmCacheSeed(options: {
   const archives = lockedArchives(
     lockSource.toString("utf8"),
     target,
-    await exactRootOverrides(options.lockfile),
+    await readExactRootOverrides(options.lockfile),
   );
   const downloadArchive = options.downloadArchive ?? defaultDownloadArchive;
   const directory = await atomicOutputDirectory(options.output);
@@ -560,7 +561,7 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
   const expected = lockedArchives(
     lockSource.toString("utf8"),
     target,
-    await exactRootOverrides(options.lockfile),
+    await readExactRootOverrides(options.lockfile),
   );
   const seed = await exactDirectory(options.seed, "seed directory");
   const manifestSource = await exactFileSource(

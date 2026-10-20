@@ -108,6 +108,45 @@ describe("reviewed npm cache seed", () => {
     ).toEqual(new Map([[PACKAGE_SPEC, copiedArchive]]));
   });
 
+  it("maps an exact root override to the locked replacement archive", () => {
+    const input = fixture();
+    const lock = JSON.parse(fs.readFileSync(input.lockfilePath, "utf8"));
+    const sdkName = "@modelcontextprotocol/sdk";
+    const sdkArchive = "sdk-1.32.0.tgz";
+    const sdkUrl = `https://registry.npmjs.org/${sdkName}/-/${sdkArchive}`;
+    const sdkBytes = Buffer.from("patched SDK archive");
+    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = {
+      [sdkName]: "1.31.0",
+    };
+    lock.packages[`node_modules/${sdkName}`] = {
+      integrity: `sha512-${createHash("sha512").update(sdkBytes).digest("base64")}`,
+      resolved: sdkUrl,
+      version: "1.32.0",
+    };
+    fs.writeFileSync(input.lockfilePath, JSON.stringify(lock));
+    fs.writeFileSync(
+      path.join(input.root, "package.json"),
+      JSON.stringify({ overrides: { [sdkName]: "1.32.0" } }),
+    );
+    const archiveDirectory = path.join(input.root, "archives");
+    fs.mkdirSync(archiveDirectory);
+    fs.copyFileSync(
+      input.archivePath,
+      path.join(archiveDirectory, path.basename(input.archivePath)),
+    );
+    fs.writeFileSync(path.join(archiveDirectory, sdkArchive), sdkBytes);
+
+    const mapped = lockedArchivesFromDirectory(
+      archiveDirectory,
+      input.lockfilePath,
+      REGISTRY_ORIGIN,
+      TARGET,
+    );
+
+    expect(mapped.get(`${sdkName}@1.32.0`)).toBe(path.join(archiveDirectory, sdkArchive));
+    expect(mapped.size).toBe(2);
+  });
+
   it("maps only the parent archive for a reviewed inBundle dependency", () => {
     const input = fixture();
     const lock = JSON.parse(fs.readFileSync(input.lockfilePath, "utf8"));
