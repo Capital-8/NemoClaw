@@ -208,6 +208,9 @@ describe("provider profile inspection and binding warnings (#12940, #13343)", ()
     });
 
     expect(result).toMatchObject({ ok: false, error: { reason: "profile_incompatible" } });
+    expect(result).toMatchObject({
+      error: { message: expect.stringContaining("Declared credential names: OTHER_TOKEN.") },
+    });
     expect(run).toHaveBeenCalledOnce();
     expect(run.mock.calls[0]?.[0]).toEqual([
       "provider",

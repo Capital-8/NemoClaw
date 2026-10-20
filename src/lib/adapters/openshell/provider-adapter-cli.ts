@@ -870,8 +870,7 @@ export function createCliOpenShellProviderAdapter(
       return failure({
         kind: "command",
         reason: "profile_incompatible",
-        message:
-          "The supplied credential names are not declared by the OpenShell provider profile.",
+        message: `The supplied credential names are not declared by the OpenShell provider profile. Declared credential names: ${credentialKeys.join(", ") || "none"}.`,
       });
     }
     if (supplied !== undefined && !request.expectedProfile) {
