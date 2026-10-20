@@ -52,6 +52,20 @@ describe("native-home destroy fallback", () => {
       openshellResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
     },
     {
+      agent: "openclaw",
+      initial: "owner permission failure",
+      openshellResult: {
+        status: 1,
+        stdout: "",
+        stderr: "rm: cannot remove root-owned managed state: Permission denied",
+      },
+    },
+    {
+      agent: "openclaw",
+      initial: "unavailable OpenShell execution",
+      openshellResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
+    },
+    {
       agent: "hermes",
       initial: "sticky native-home permission failure",
       openshellResult: {
@@ -68,9 +82,12 @@ describe("native-home destroy fallback", () => {
         status: 1,
         signal: null,
         stdout: Buffer.alloc(0),
-        stderr: Buffer.from("rm: cannot remove sandbox-owned POLICY.md: Permission denied"),
+        stderr: Buffer.from("rm: cannot remove sandbox-owned state: Permission denied"),
       }));
-      const clearStoppedNativeHome = vi.fn();
+      const clearStoppedNativeHome = vi.fn(() => ({
+        cleared: false as const,
+        failure: "runtime-not-stopped" as const,
+      }));
       const runAsSandboxUser = vi.fn(() => ({
         status: 0,
         signal: null,
@@ -121,6 +138,7 @@ describe("native-home destroy fallback", () => {
   it.each([
     ["langchain-deepagents-code", "LangChain Deep Agents Code"],
     ["hermes", "Hermes Agent"],
+    ["openclaw", "OpenClaw"],
   ])("fails closed when the pinned %s user cannot finish the wipe", (agent, displayName) => {
     const failure = { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     const runAsSandboxUser = vi.fn(() => failure);
@@ -196,6 +214,7 @@ describe("native-home destroy fallback", () => {
     }));
     const runPrivileged = vi.fn();
     const clearStoppedNativeHome = vi.fn();
+    const runAsSandboxUser = vi.fn();
 
     expect(() =>
       wipeAgentNativeHome(
@@ -205,10 +224,12 @@ describe("native-home destroy fallback", () => {
         undefined,
         runPrivileged,
         clearStoppedNativeHome,
+        runAsSandboxUser,
       ),
     ).toThrow("unsafe protected native-home ancestor");
     expect(runPrivileged).not.toHaveBeenCalled();
     expect(clearStoppedNativeHome).not.toHaveBeenCalled();
+    expect(runAsSandboxUser).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -225,6 +246,10 @@ describe("native-home destroy fallback", () => {
       openshellDriver: undefined,
     },
     { agent: "hermes", sandboxUser: "998:999", state: "registered", openshellDriver: "mxc" },
+    { agent: "openclaw", sandboxUser: "998:998", state: "registered", openshellDriver: "mxc" },
+    { agent: undefined, sandboxUser: "998:998", state: "registered", openshellDriver: "mxc" },
+    { agent: null, sandboxUser: "998:998", state: "registered", openshellDriver: "mxc" },
+    { agent: "", sandboxUser: "998:998", state: "registered", openshellDriver: "mxc" },
     { agent: "hermes", sandboxUser: "998:999", state: "pending", openshellDriver: undefined },
   ])(
     "destroys a $state $agent sandbox through its provider's pinned sandbox user",

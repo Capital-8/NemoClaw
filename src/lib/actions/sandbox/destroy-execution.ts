@@ -265,10 +265,12 @@ export function wipeAgentNativeHome(
       }
       throw error;
     }
-    // Without capabilities, root cannot remove owner-private state or entries
-    // in Hermes's sticky native home. Finish the wipe as the pinned home owner.
+    // Root may lack permission to remove owner-private state or entries in
+    // Hermes's sticky native home. Finish the validated wipe as the pinned owner.
     if (
-      (agentName === "langchain-deepagents-code" || agentName === "hermes") &&
+      (agentName === "langchain-deepagents-code" ||
+        agentName === "hermes" ||
+        agentName === "openclaw") &&
       result.status === 1 &&
       !result.error &&
       runAsSandboxUser
@@ -820,6 +822,7 @@ export async function executeSandboxDestroy({
       (expectedContainerIdentities === undefined && sandboxConfirmedAbsent);
     if (sandbox && !sandboxRuntimeConfirmedAbsent) {
       try {
+        const agentName = sandbox.agent || "openclaw";
         const registeredSandboxNames = new Set([sandboxName]);
         for (const entry of listSandboxes?.().sandboxes ?? []) {
           if (typeof entry.name === "string" && entry.name) registeredSandboxNames.add(entry.name);
@@ -852,10 +855,12 @@ export async function executeSandboxDestroy({
                 : {}),
             });
           if (
-            (sandbox.agent === "langchain-deepagents-code" || sandbox.agent === "hermes") &&
+            (agentName === "langchain-deepagents-code" ||
+              agentName === "hermes" ||
+              agentName === "openclaw") &&
             control.executeAsSandboxUser
           ) {
-            const identity = managedImageRuntimeIdentity(sandbox.agent);
+            const identity = managedImageRuntimeIdentity(agentName);
             runAsSandboxUser = (command) =>
               control.executeAsSandboxUser!({
                 sandbox,
@@ -888,7 +893,7 @@ export async function executeSandboxDestroy({
         markMutationStarted();
         (deps.wipeAgentNativeHome ?? wipeAgentNativeHome)(
           sandboxName,
-          sandbox.agent || "openclaw",
+          agentName,
           selectedRunOpenshell,
           sandbox.hostMounts,
           runPrivileged,
