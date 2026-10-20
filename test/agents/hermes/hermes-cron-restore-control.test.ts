@@ -7,10 +7,12 @@ import {
   chmodSync,
   chownSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,7 +20,10 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE } from "../../../src/lib/actions/sandbox/rebuild-hermes-post-restore";
+import {
+  HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
+  HERMES_RECOVERY_GENERATION_OBSERVER,
+} from "../../../src/lib/actions/sandbox/rebuild-hermes-post-restore";
 import { validateHermesCronRestoreBackup } from "../../../src/lib/state/rebuild/hermes-cron-restore-backup";
 
 const HELPER = path.resolve("agents/hermes/cron-restore-control.py");
@@ -407,7 +412,13 @@ try:
             module.os.open = original_open
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            module.observe_recovery_generation()
+            observer = sys.argv[4].replace(
+                'Path("/sandbox/.hermes")', "Path(" + repr(str(module.HERMES_HOME)) + ")"
+            ).replace(
+                'Path("/tmp/nemoclaw-hermes-gateway-recovery-waiting")',
+                "Path(" + repr(str(module.GATEWAY_RECOVERY_WAITING_PATH)) + ")",
+            )
+            exec(observer, {})
         assert not module.GATEWAY_RECOVERY_REQUEST_PATH.exists()
         observation = output.getvalue()
         def replace_generation():
@@ -719,7 +730,15 @@ describe("Hermes in-sandbox cron restore validator", () => {
   ) {
     return spawnSync(
       process.env.PYTHON || "python3",
-      ["-I", "-c", LIFECYCLE_HARNESS, HELPER, scenario, hermesHome],
+      [
+        "-I",
+        "-c",
+        LIFECYCLE_HARNESS,
+        HELPER,
+        scenario,
+        hermesHome,
+        HERMES_RECOVERY_GENERATION_OBSERVER,
+      ],
       { encoding: "utf8" },
     );
   }
@@ -1214,6 +1233,75 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(lstatSync(path.join(root, "run", "hermes-gateway-recovery-waiting")).mode & 0o777).toBe(
       0o600,
     );
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "observes an owned generation without reading the inaccessible cron controller",
+    () => {
+      const controller = path.join(root, "root-only-controller.py");
+      const generation = path.join(root, "generation");
+      writeFileSync(controller, readFileSync(HELPER), { mode: 0o000 });
+      writeFileSync(generation, `v1 ${"a".repeat(64)}\n`, { mode: 0o600 });
+      const before = readdirSync(root).sort();
+      const observer = HERMES_RECOVERY_GENERATION_OBSERVER.replace(
+        'Path("/sandbox/.hermes")',
+        `Path(${JSON.stringify(hermesHome)})`,
+      ).replace(
+        'Path("/tmp/nemoclaw-hermes-gateway-recovery-waiting")',
+        `Path(${JSON.stringify(generation)})`,
+      );
+      try {
+        // Mode 000 gives this unprivileged test UID the same lack of access
+        // that sandbox UID 998 has to the image's root:root 0700 controller.
+        const inaccessible = spawnSync(
+          process.env.PYTHON || "python3",
+          ["-I", controller, "observe-recovery-generation"],
+          { encoding: "utf8" },
+        );
+        expect(inaccessible.status).not.toBe(0);
+        expect(inaccessible.stderr).toContain("Permission denied");
+        const observed = spawnSync(process.env.PYTHON || "python3", ["-I", "-c", observer], {
+          encoding: "utf8",
+        });
+        expect(observed.status, observed.stderr).toBe(0);
+        expect(JSON.parse(observed.stdout)).toMatchObject({
+          version: 1,
+          generation: "a".repeat(64),
+          identity: expect.arrayContaining([process.getuid!(), 68]),
+        });
+        expect(readdirSync(root).sort()).toEqual(before);
+        expect(readFileSync(generation, "utf8")).toBe(`v1 ${"a".repeat(64)}\n`);
+        expect(lstatSync(generation).mode & 0o777).toBe(0o600);
+        expect(lstatSync(controller).mode & 0o777).toBe(0o000);
+      } finally {
+        chmodSync(controller, 0o700);
+      }
+    },
+  );
+
+  it.each([
+    ["public mode", (file: string) => chmodSync(file, 0o644)],
+    ["hard link", (file: string) => linkSync(file, `${file}.link`)],
+    ["symlink", (file: string) => symlinkSync(file, `${file}.symlink`)],
+    ["invalid nonce", (file: string) => writeFileSync(file, `v1 ${"Z".repeat(64)}\n`)],
+    ["oversized payload", (file: string) => writeFileSync(file, `v1 ${"a".repeat(65)}\n`)],
+  ] as const)("rejects an owner generation with %s", (kind, mutate) => {
+    const generation = path.join(root, "generation");
+    writeFileSync(generation, `v1 ${"a".repeat(64)}\n`, { mode: 0o600 });
+    mutate(generation);
+    const observedPath = kind === "symlink" ? `${generation}.symlink` : generation;
+    const observer = HERMES_RECOVERY_GENERATION_OBSERVER.replace(
+      'Path("/sandbox/.hermes")',
+      `Path(${JSON.stringify(hermesHome)})`,
+    ).replace(
+      'Path("/tmp/nemoclaw-hermes-gateway-recovery-waiting")',
+      `Path(${JSON.stringify(observedPath)})`,
+    );
+    const result = spawnSync(process.env.PYTHON || "python3", ["-I", "-c", observer], {
+      encoding: "utf8",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
   });
 
   it.each([

@@ -176,6 +176,7 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
       dockerRun,
       dockerCapture,
       dockerLogs,
+      expectedSandboxId: "sandbox-id",
     });
 
     expect(dockerRun.mock.calls[0][0]).toEqual(
@@ -187,6 +188,25 @@ describe("captureOpenShellDockerSandboxFailureOutput (#13178)", () => {
     expect(output).toContain(STARTUP_FAILURE);
     expect(output).not.toContain(opaqueSecret);
   });
+
+  it.each([null, CONTAINER_ID])(
+    "refuses logs from a changed sandbox identity with runtime %s",
+    (expectedContainerId) => {
+      const dockerRun = vi.fn(() => dockerResult(`${identity(CONTAINER_ID)}\n`));
+      const dockerCapture = vi.fn();
+      const dockerLogs = vi.fn();
+      expect(
+        captureOpenShellDockerSandboxFailureOutput("my-assistant", expectedContainerId, {
+          dockerRun,
+          dockerCapture,
+          dockerLogs,
+          expectedSandboxId: "different-sandbox-id",
+        }),
+      ).toBeNull();
+      expect(dockerCapture).not.toHaveBeenCalled();
+      expect(dockerLogs).not.toHaveBeenCalled();
+    },
+  );
 
   it("starts no Docker call after the shared capture deadline before rollback", () => {
     let clock = 1_000;

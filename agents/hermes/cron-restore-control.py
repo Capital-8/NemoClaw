@@ -476,13 +476,6 @@ def _wait_for_gateway_recovery_generation() -> dict[str, Any] | None:
         time.sleep(POLL_SECONDS)
 
 
-def observe_recovery_generation() -> None:
-    """Read only the supervisor generation, using the native home owner."""
-    if os.geteuid() != HERMES_HOME.lstat().st_uid:
-        raise ControlError("Hermes recovery observation requires the home owner")
-    print(json.dumps(_wait_for_gateway_recovery_generation(), separators=(",", ":")))
-
-
 def _validate_recovery_observation(raw: str) -> dict[str, Any] | None:
     """Revalidate the owner's read before the root controller publishes a request."""
     try:
@@ -1291,7 +1284,6 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("begin")
     prepare = subparsers.add_parser("prepare-recover")
     prepare.add_argument("--generation-observation-stdin", action="store_true")
-    subparsers.add_parser("observe-recovery-generation")
     subparsers.add_parser("recover")
     for action in ("validate", "observe", "complete"):
         subparser = subparsers.add_parser(action)
@@ -1319,8 +1311,6 @@ def main() -> int:
             if observation is not None and len(observation) > 2048:
                 raise ControlError("Hermes gateway recovery observation is too large")
             prepare_recovery(observation)
-        elif args.action == "observe-recovery-generation":
-            observe_recovery_generation()
         elif args.action == "recover":
             recover_drain()
         elif args.action == "validate":

@@ -28,6 +28,7 @@ import {
   beginHermesCronRestore,
   completeHermesCronRestoreAfterGatewayReplacement,
   HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE,
+  HERMES_RECOVERY_GENERATION_OBSERVER,
   isHermesCronRestoreDrainMarkerRollbackFailure,
   observeHermesCronReplacement,
   prepareHermesCronRestoreRecovery,
@@ -685,12 +686,7 @@ describe("Hermes cron rebuild restore contract", () => {
     expect(processMocks.executeProviderCommand.mock.calls).toEqual([
       [
         "alpha",
-        [
-          "/opt/hermes/.venv/bin/python",
-          "-I",
-          "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
-          "observe-recovery-generation",
-        ],
+        ["/opt/hermes/.venv/bin/python", "-I", "-c", HERMES_RECOVERY_GENERATION_OBSERVER],
         {
           expectedResourceHandle: "a".repeat(64),
           sanitizeEnvironment: true,
@@ -723,7 +719,7 @@ describe("Hermes cron rebuild restore contract", () => {
     {
       status: 2,
       stdout: Buffer.alloc(0),
-      stderr: Buffer.from("old helper has no observation action"),
+      stderr: Buffer.from("owner observer failed"),
     },
     { status: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) },
     { status: 0, stdout: Buffer.alloc(2049), stderr: Buffer.alloc(0) },

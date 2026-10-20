@@ -90,7 +90,7 @@ const SANDBOX_FAILURE_OUTPUT_BUDGET_MS = 4_000;
 type SandboxFailureOutputDeps = Pick<
   DockerGpuPatchDeps,
   "dockerCapture" | "dockerLogs" | "dockerRun"
-> & { readonly now?: () => number };
+> & { readonly now?: () => number; readonly expectedSandboxId?: string };
 
 /**
  * Capture redacted recent output from the sandbox runtime before rollback
@@ -118,7 +118,7 @@ export function captureOpenShellDockerSandboxFailureOutput(
     const now = deps.now ?? Date.now;
     const deadlineMs = now() + SANDBOX_FAILURE_OUTPUT_BUDGET_MS;
     let containers = [{ id: expectedContainerId ?? "", role: "" }];
-    if (!expectedContainerId) {
+    if (!expectedContainerId || deps.expectedSandboxId) {
       const observation = inspectDockerSandboxNameLabeledContainers(
         sandboxName,
         (args, options) => {
@@ -144,6 +144,7 @@ export function captureOpenShellDockerSandboxFailureOutput(
             row.managedBy !== OPENSHELL_MANAGED_BY_VALUE ||
             !row.sandboxId ||
             row.sandboxId !== first.sandboxId ||
+            (deps.expectedSandboxId !== undefined && row.sandboxId !== deps.expectedSandboxId) ||
             row.namespace !== first.namespace,
         )
       )
@@ -157,6 +158,7 @@ export function captureOpenShellDockerSandboxFailureOutput(
         rows.some((row) => row.isolationRole === "sandbox" && Boolean(row.workspace)) &&
         rows.some((row) => row.isolationRole === "supervisor" && row.workspace === "");
       if (!legacy && !native) return null;
+      if (expectedContainerId && !rows.some((row) => row.id === expectedContainerId)) return null;
       containers = rows.map((row) => ({ id: row.id, role: row.isolationRole ?? "" }));
     }
     const outputs: string[] = [];

@@ -661,14 +661,46 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     let createdSandboxVerified = false;
     let compatibilityCreatePollError: unknown = null;
+    let compatibilitySandboxId: string | null = null;
+    const runCompatibilityLifecycle = (action: "start" | "stop"): void => {
+      try {
+        sandboxGpuCreateAttempt.requireCompatibilityLifecycleCommand(
+          action,
+          input.sandboxName,
+          input.gatewayName,
+          deps,
+        );
+      } catch (error) {
+        try {
+          // Recheck current authority before reading a failed runtime; never rediscover ownership by name.
+          revalidatePostCreateEffect(
+            `capture failed compatibility ${action} for sandbox '${input.sandboxName}'`,
+          );
+          if (compatibilitySandboxId) {
+            const containerId = runtimePatch.replacementRuntimeId?.() ?? null;
+            const sandboxContainerOutput = deps.captureSandboxContainerOutput
+              ? deps.captureSandboxContainerOutput(
+                  input.sandboxName,
+                  containerId,
+                  compatibilitySandboxId,
+                )
+              : captureOpenShellDockerSandboxFailureOutput(input.sandboxName, containerId, {
+                  expectedSandboxId: compatibilitySandboxId,
+                });
+            printCreateFailureDiagnostics(input.sandboxName, {
+              backupPath: input.restoreBackupPath,
+              sandboxContainerOutput,
+            });
+          }
+        } catch {
+          // Evidence collection must not replace the original lifecycle failure.
+        }
+        throw error;
+      }
+    };
     const applyVerifiedCompatibilityCutover = async (): Promise<string | null> => {
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
-      sandboxGpuCreateAttempt.requireCompatibilityLifecycleCommand(
-        "stop",
-        input.sandboxName,
-        input.gatewayName,
-        deps,
-      );
+      runCompatibilityLifecycle("stop");
       revalidatePostCreateEffect(`confirm stopped compatibility sandbox '${input.sandboxName}'`);
       await runtimePatch.ensureApplied();
       await runtimePatch.exitOnPatchError();
@@ -676,12 +708,7 @@ export function createSandboxGpuCreateAttemptRunner(
     };
     const publishVerifiedCompatibilityCutover = async (): Promise<void> => {
       revalidatePostCreateEffect(`publish replacement runtime for sandbox '${input.sandboxName}'`);
-      sandboxGpuCreateAttempt.requireCompatibilityLifecycleCommand(
-        "start",
-        input.sandboxName,
-        input.gatewayName,
-        deps,
-      );
+      runCompatibilityLifecycle("start");
     };
     const verifyAndPatchCompatibilityDuringCreate = async (): Promise<void> => {
       if (!compatibility || !deferPostCreateEffects || !createAttemptNonce) return;
@@ -722,6 +749,7 @@ export function createSandboxGpuCreateAttemptRunner(
           deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
         if (!runtimeId || !verifyExactRuntime(input.sandboxName, runtimeId, true)) return;
         waitForCreatedSandboxPublication(sandboxId);
+        compatibilitySandboxId = sandboxId;
         await verifyCreatedSandboxBeforeEffects(
           sandboxId,
           createAttemptNonce,
@@ -958,6 +986,7 @@ export function createSandboxGpuCreateAttemptRunner(
         );
       }
       waitForCreatedSandboxPublication(sandboxId);
+      compatibilitySandboxId = sandboxId;
       await verifyCreatedSandboxBeforeEffects(
         sandboxId,
         createAttemptNonce!,

@@ -52,6 +52,8 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
 
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import {
+  rejectChangedDiagnosticIdentity,
+  diagnosticResult,
   createGpuFlowInput,
   createGpuFlowDeps,
   createGpuPatchFixture,
@@ -155,7 +157,15 @@ describe("compatibility lifecycle failure diagnostics", () => {
   afterEach(resetGpuFlowMocks);
 
   it.each([
-    { action: "stop", status: 1, signal: null, error: undefined, timeout: 90_000, applied: 0 },
+    {
+      action: "stop",
+      status: 1,
+      signal: null,
+      error: undefined,
+      timeout: 90_000,
+      applied: 0,
+      diagnostic: "pass",
+    },
     {
       action: "stop",
       status: null,
@@ -163,21 +173,71 @@ describe("compatibility lifecycle failure diagnostics", () => {
       error: new Error("spawnSync openshell ETIMEDOUT"),
       timeout: 90_000,
       applied: 0,
+      diagnostic: "pass",
     },
-    { action: "start", status: 1, signal: null, error: undefined, timeout: 30_000, applied: 1 },
+    {
+      action: "start",
+      status: 1,
+      signal: null,
+      error: undefined,
+      timeout: 30_000,
+      applied: 1,
+      diagnostic: "pass",
+    },
+    {
+      action: "stop",
+      status: 1,
+      signal: null,
+      error: undefined,
+      timeout: 90_000,
+      applied: 0,
+      diagnostic: "capture-fails",
+    },
+    {
+      action: "start",
+      status: 1,
+      signal: null,
+      error: undefined,
+      timeout: 30_000,
+      applied: 1,
+      diagnostic: "writer-fails",
+    },
+    {
+      action: "stop",
+      status: 1,
+      signal: null,
+      error: undefined,
+      timeout: 90_000,
+      applied: 0,
+      diagnostic: "identity-changed",
+    },
   ])(
     "retains bounded redacted $action failure evidence before further mutation [case %#]",
-    async ({ action, status, signal, error, timeout, applied }) => {
+    async ({ action, status, signal, error, timeout, applied, diagnostic }) => {
       const input = createGpuFlowInput();
       input.gpuRoutePlan = "compatibility-only";
       input.initialGpuRoute = "compatibility";
       input.persistRetainedSandboxRecovery = vi.fn(() => true);
-      input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+      const events: string[] = [];
+      let originalFailure: unknown;
+      input.revalidateVerifiedSandboxBeforeEffect = vi.fn((operation) => {
+        events.push(operation);
+        rejectChangedDiagnosticIdentity(diagnostic, operation);
+      });
       input.verifyCreatedSandboxBeforeEffects = vi.fn(async (_identity, before, after) => {
-        await before?.();
-        await after?.();
+        try {
+          await before?.();
+          await after?.();
+        } catch (caught) {
+          originalFailure = caught;
+          events.push("unwind");
+          throw caught;
+        }
       });
       const patch = createGpuPatchFixture();
+      patch.ensureApplied.mockImplementation(() => {
+        patch.replacementRuntimeId.mockReturnValue("b".repeat(64));
+      });
       mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
       const deps = createGpuFlowDeps();
       let nonce = "";
@@ -199,6 +259,14 @@ describe("compatibility lifecycle failure diagnostics", () => {
             ])
           : "alpha Ready",
       );
+      deps.captureSandboxContainerOutput = vi.fn(() => {
+        events.push("capture");
+        return diagnosticResult(diagnostic, "capture-fails", "redacted container output");
+      });
+      deps.printCreateFailureDiagnostics = vi.fn(() => {
+        events.push("write");
+        diagnosticResult(diagnostic, "writer-fails", "");
+      });
       const secret = "private-lifecycle-diagnostic-canary";
       vi.stubEnv("NVIDIA_API_KEY", secret);
       const originalRun = vi.mocked(deps.runOpenshell).getMockImplementation()!;
@@ -216,6 +284,27 @@ describe("compatibility lifecycle failure diagnostics", () => {
 
       const failure = await runSandboxGpuCreateFlow(input, deps).catch((caught: Error) => caught);
       expect(failure).toBeInstanceOf(Error);
+      expect(failure).toBe(originalFailure);
+      expect(events.at(-1)).toBe("unwind");
+      expect(events).toContain(`capture failed compatibility ${action} for sandbox 'alpha'`);
+      expect(vi.mocked(deps.captureSandboxContainerOutput).mock.calls).toEqual(
+        diagnostic === "identity-changed"
+          ? []
+          : [["alpha", action === "start" ? "b".repeat(64) : null, "alpha-sandbox-id"]],
+      );
+      expect(vi.mocked(deps.printCreateFailureDiagnostics).mock.calls).toEqual(
+        ["identity-changed", "capture-fails"].includes(diagnostic)
+          ? []
+          : [
+              [
+                "alpha",
+                {
+                  backupPath: null,
+                  sandboxContainerOutput: "redacted container output",
+                },
+              ],
+            ],
+      );
       const message = (failure as Error).message;
       expect(message).toContain(`could not ${action} sandbox 'alpha'`);
       expect(message).toContain(`status=${String(status)}, signal=${String(signal)}`);

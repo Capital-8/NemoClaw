@@ -30,6 +30,58 @@ import {
 
 const HERMES_CRON_CONTROL = "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
+// The owner cannot read the root-only cron controller. This fixed observer
+// reads only the supervisor generation; the controller still owns publication.
+export const HERMES_RECOVERY_GENERATION_OBSERVER = String.raw`
+import json, os, stat, time
+from pathlib import Path
+home = Path("/sandbox/.hermes")
+generation_path = Path("/tmp/nemoclaw-hermes-gateway-recovery-waiting")
+owner = home.lstat().st_uid
+if os.geteuid() != owner:
+    raise RuntimeError("Hermes recovery observation requires the home owner")
+deadline = time.monotonic() + 2.0
+observation = None
+while True:
+    try:
+        descriptor = os.open(generation_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+        continue
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != owner
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size != 68
+        ):
+            raise RuntimeError("Hermes recovery generation metadata is unsafe")
+        raw = os.read(descriptor, 69)
+    finally:
+        os.close(descriptor)
+    payload = raw.decode("ascii")
+    if (
+        len(payload) != 68
+        or not payload.startswith("v1 ")
+        or not payload.endswith("\n")
+        or any(c not in "0123456789abcdef" for c in payload[3:-1])
+    ):
+        raise RuntimeError("Hermes recovery generation is invalid")
+    observation = {
+        "version": 1,
+        "generation": payload[3:-1],
+        "identity": [
+            metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_mode,
+            metadata.st_nlink, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns,
+        ],
+    }
+    break
+print(json.dumps(observation, separators=(",", ":")))
+`;
 const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
 const CONTROL_ERROR_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_ERROR_V1:";
 export const HERMES_CRON_RESTORE_DRAIN_MARKER_ROLLBACK_FAILED_CODE = "drain-marker-rollback-failed";
@@ -720,7 +772,7 @@ function prepareHermesRecoveryWithOwnerObservation(sandboxName: string): string 
   // with the home owner and the drain/request authority with the root controller.
   const observed = executeProviderCommand(
     sandboxName,
-    [...command, "observe-recovery-generation"],
+    [HERMES_PYTHON, "-I", "-c", HERMES_RECOVERY_GENERATION_OBSERVER],
     { ...options, sandboxUser: `${owner.uid}:${owner.gid}` },
   );
   if (
