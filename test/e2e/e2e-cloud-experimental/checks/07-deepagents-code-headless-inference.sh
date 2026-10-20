@@ -855,8 +855,8 @@ DCODE_EXIT:${direct_exit}"
     fi
   fi
 
-  # 8. Managed routes must reject untrusted image-installed probe evidence
-  # before the user-facing connect path can invoke interactive session attach.
+  # 8. Untrusted evidence from the image-installed helper must fail closed
+  # before session attach on managed routes.
   fail_closed_connect_output=""
   if [ "$route_contract" = "managed" ]; then
     fail_closed_connect_output="$(dcode_connect_fail_closed_contract || true)"
