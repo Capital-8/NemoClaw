@@ -414,6 +414,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     forward: OpenShellForwardIdentity,
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
+    migrateToLoopback = false,
   ): Promise<void> {
     const adapter = forwardAdapterForAuthority(authority);
     const assertCurrent = () =>
@@ -439,6 +440,22 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         throw new Error(forwardResultMessage(retirement));
       }
       result = await adapter.startForward({ forward, assertCurrent });
+    }
+    if (migrateToLoopback && result.state === "refused" && result.observation.state === "foreign") {
+      const wildcard = { ...forward, localHost: "0.0.0.0" as const };
+      const [previous] = await adapter.observeForwards({ forwards: [wildcard], assertCurrent });
+      if (previous?.state === "owned" || previous?.state === "stale") {
+        const retirement = await adapter.retireLegacyForward({
+          forward: wildcard,
+          migrateToLoopback: true,
+          assertCurrent,
+          authorize: async () => assertCurrent(),
+        });
+        if (retirement.state !== "retired" && retirement.state !== "not_needed") {
+          throw new Error(forwardResultMessage(retirement));
+        }
+        result = await adapter.startForward({ forward, assertCurrent });
+      }
     }
     if (result.state !== "started" && result.state !== "reused") {
       throw new Error(forwardResultMessage(result));
@@ -682,6 +699,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         forwardIdentity(sandboxName, authority, port, "loopback"),
         label,
         revalidateSandboxIdentity,
+        true,
       );
       return true;
     } catch (error) {

@@ -71,3 +71,95 @@ it("does not signal a pre-endpoint forward whose PID changes", async () => {
   ).resolves.toEqual({ state: "failed", forward, effect: "none", error: errors.ownership });
   expect(signalProcess).not.toHaveBeenCalled();
 });
+
+it("retires an exact owned wildcard forward only for loopback migration", async () => {
+  const wildcard = { ...forward, localHost: "0.0.0.0" as const };
+  const inspect = vi.fn<InspectListener>(async () => ({ state: "owned", pid: 4_312 }));
+  const signalProcess = vi.fn<SignalProcess>();
+  const { adapter } = createHarness({ inspect, signalProcess });
+  await expect(
+    adapter.retireLegacyForward({ forward: wildcard, authorize: async () => {} }),
+  ).resolves.toMatchObject({ state: "not_needed" });
+  await expect(
+    adapter.retireLegacyForward({
+      forward: wildcard,
+      migrateToLoopback: true,
+      authorize: async () => {},
+    }),
+  ).resolves.toEqual({ state: "retired", forward: wildcard });
+  expect(signalProcess).toHaveBeenCalledExactlyOnceWith(4_312, "SIGKILL");
+});
+
+it.each(["changed PID", "foreign", "indeterminate"] as const)(
+  "preserves a wildcard listener with %s at migration revalidation",
+  async (change) => {
+    const wildcard = { ...forward, localHost: "0.0.0.0" as const };
+    const inspect = vi
+      .fn<InspectListener>()
+      .mockResolvedValueOnce({ state: "owned", pid: 4_312 })
+      .mockResolvedValue(
+        change === "changed PID"
+          ? { state: "owned", pid: 9_876 }
+          : change === "foreign"
+            ? { state: "foreign", pids: [9_876] }
+            : { state: "indeterminate" },
+      );
+    const signalProcess = vi.fn<SignalProcess>();
+    const { adapter } = createHarness({ inspect, signalProcess });
+    const result = await adapter.retireLegacyForward({
+      forward: wildcard,
+      migrateToLoopback: true,
+      authorize: async () => {},
+    });
+    expect(["failed", "refused"]).toContain(result.state);
+    expect(signalProcess).not.toHaveBeenCalled();
+  },
+);
+
+it("does not migrate an already loopback direct forward", async () => {
+  const signalProcess = vi.fn<SignalProcess>();
+  const { adapter } = createHarness({ signalProcess });
+  await expect(
+    adapter.retireLegacyForward({ forward, migrateToLoopback: true, authorize: async () => {} }),
+  ).resolves.toMatchObject({ state: "failed", effect: "none", error: errors.validation });
+  expect(signalProcess).not.toHaveBeenCalled();
+});
+
+it("preserves a wildcard forward when authority changes before retirement", async () => {
+  const signalProcess = vi.fn<SignalProcess>();
+  const { adapter } = createHarness({
+    signalProcess,
+    inspect: async () => ({ state: "owned", pid: 4_321 }),
+  });
+  await expect(
+    adapter.retireLegacyForward({
+      forward: { ...forward, localHost: "0.0.0.0" },
+      migrateToLoopback: true,
+      authorize: async () => {
+        throw new Error("sandbox replaced");
+      },
+    }),
+  ).resolves.toMatchObject({ state: "failed", effect: "none", error: errors.authority });
+  expect(signalProcess).not.toHaveBeenCalled();
+});
+
+it("reports an unreleased wildcard port after migration retirement", async () => {
+  const signalProcess = vi.fn<SignalProcess>();
+  const { adapter } = createHarness({
+    signalProcess,
+    inspect: async () => ({ state: "owned", pid: 4_321 }),
+    probePort: async () => ({ state: "bound" }),
+  });
+  await expect(
+    adapter.retireLegacyForward({
+      forward: { ...forward, localHost: "0.0.0.0" },
+      migrateToLoopback: true,
+      authorize: async () => {},
+    }),
+  ).resolves.toMatchObject({
+    state: "release_unproved",
+    effect: "possible",
+    error: errors.cleanup,
+  });
+  expect(signalProcess).toHaveBeenCalledExactlyOnceWith(4_321, "SIGKILL");
+});
