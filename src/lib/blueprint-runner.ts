@@ -6,19 +6,7 @@ import { redactForLog } from "./security/redact.js";
 import { sdkOpenShellGatewayHealthObserver } from "../../nemoclaw/dist/shared/openshell-gateway-health-sdk.js";
 import type { OpenShellGatewayHealthObserver } from "../../nemoclaw/dist/shared/openshell-observation-boundary.cjs";
 
-import { findSandboxAcrossGatewayRoots } from "./state/registry/cross-port";
-import { verifyBlueprintNativeInferenceSelection } from "./actions/sandbox/inference-route-health";
-import { createRegisteredSandboxIdentityRevalidation } from "./onboard/sandbox-recreate-transaction";
-import { observeSandboxOnGateway } from "./onboard/sandbox-recreate-probe";
-import {
-  createBlueprintNativeInference,
-  reconcileBlueprintNativeTimeout,
-  findBlueprintNativeReceipt,
-  observeBlueprintCreatedInference,
-} from "./inference/native-provider/blueprint";
-
-const readBlueprintSandboxRegistration = (sandboxName: string) =>
-  findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
+import type { createBlueprintNativeInference } from "./inference/native-provider/blueprint";
 
 /** Observe existing native authority without creating, repairing, or attaching providers. */
 export async function observeBlueprintNativeInference(
@@ -32,6 +20,16 @@ export async function observeBlueprintNativeInference(
     requiresCredential?: boolean;
   }>,
 ): Promise<string> {
+  const { findSandboxAcrossGatewayRoots } = await import("./state/registry/cross-port");
+  const { verifyBlueprintNativeInferenceSelection } =
+    await import("./actions/sandbox/inference-route-health");
+  const { createRegisteredSandboxIdentityRevalidation } =
+    await import("./onboard/sandbox-recreate-transaction");
+  const { observeSandboxOnGateway } = await import("./onboard/sandbox-recreate-probe");
+  const { findBlueprintNativeReceipt, observeBlueprintCreatedInference } =
+    await import("./inference/native-provider/blueprint");
+  const readBlueprintSandboxRegistration = (sandboxName: string) =>
+    findSandboxAcrossGatewayRoots(sandboxName)?.entry ?? null;
   const entry = readBlueprintSandboxRegistration(requested.sandboxName);
   if (!entry) {
     const receipt = findBlueprintNativeReceipt(requested);
@@ -59,6 +57,7 @@ export async function prepareBlueprintNativeInference(
   requested: Parameters<typeof observeBlueprintNativeInference>[0] &
     Readonly<{ timeoutSeconds: number }>,
 ): Promise<void> {
+  const { reconcileBlueprintNativeTimeout } = await import("./inference/native-provider/blueprint");
   await reconcileBlueprintNativeTimeout(requested, () =>
     observeBlueprintNativeInference(requested),
   );
@@ -99,7 +98,11 @@ async function run(): Promise<void> {
   await runner.main(process.argv.slice(2), {
     gatewayHealthObserver: sdkOpenShellGatewayHealthObserver,
     nativeInferenceObserver: observeBlueprintNativeInference,
-    nativeInferenceCreator: createBlueprintNativeInference,
+    nativeInferenceCreator: async (input) => {
+      const { createBlueprintNativeInference } =
+        await import("./inference/native-provider/blueprint");
+      return createBlueprintNativeInference(input);
+    },
     nativeInferencePreparer: prepareBlueprintNativeInference,
   });
 }

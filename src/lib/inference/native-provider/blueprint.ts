@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { isPrivateIp } from "../../private-networks";
+import { isValidProviderName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import { normalizeProviderBaseUrl } from "../../core/provider-endpoint";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
@@ -79,7 +80,7 @@ function admitBlueprintSelection(input: BlueprintNativeSelection): {
     typeof input.provider !== "string" ||
     !NAME.test(input.gatewayName) ||
     !NAME.test(input.sandboxName) ||
-    !NAME.test(input.provider) ||
+    !isValidProviderName(input.provider) ||
     typeof input.model !== "string" ||
     !input.model ||
     input.model.length > 1024 ||
@@ -202,6 +203,68 @@ function requireCreatedSandbox(receipt: BlueprintNativeReceipt, deps: Dependenci
     throw new Error("Blueprint sandbox identity changed; no later resource was modified.");
 }
 
+const MAX_BLUEPRINT_RECEIPT_BYTES = 1024 * 1024;
+
+function readBlueprintRunPlan(file: string, directory: fs.Stats): unknown | null {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number")
+    throw new Error("Blueprint run receipts require no-follow file reads.");
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      file,
+      fs.constants.O_RDONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0),
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ELOOP") return null;
+    throw error;
+  }
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile() || before.size > MAX_BLUEPRINT_RECEIPT_BYTES) return null;
+    const requireSamePath = (): void => {
+      const currentDirectory = fs.lstatSync(path.dirname(file));
+      const currentFile = fs.lstatSync(file);
+      if (
+        !currentDirectory.isDirectory() ||
+        currentDirectory.dev !== directory.dev ||
+        currentDirectory.ino !== directory.ino ||
+        !currentFile.isFile() ||
+        currentFile.dev !== before.dev ||
+        currentFile.ino !== before.ino
+      )
+        throw new Error("Blueprint run receipt changed while it was read.");
+    };
+    requireSamePath();
+    const contents = Buffer.alloc(MAX_BLUEPRINT_RECEIPT_BYTES + 1);
+    let offset = 0;
+    while (offset < contents.length) {
+      const count = fs.readSync(descriptor, contents, offset, contents.length - offset, null);
+      if (count === 0) break;
+      offset += count;
+    }
+    const after = fs.fstatSync(descriptor);
+    requireSamePath();
+    if (
+      offset > MAX_BLUEPRINT_RECEIPT_BYTES ||
+      offset !== before.size ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs
+    )
+      throw new Error("Blueprint run receipt changed while it was read.");
+    try {
+      return JSON.parse(contents.subarray(0, offset).toString("utf8"));
+    } catch (error) {
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 /** Recover only this plugin's nonsecret run receipts; live identities remain authoritative. */
 export function findBlueprintNativeReceipt(
   requested: BlueprintNativeSelection,
@@ -212,18 +275,10 @@ export function findBlueprintNativeReceipt(
   for (const name of fs.readdirSync(runs)) {
     if (!/^[a-zA-Z0-9_-]+$/u.test(name)) continue;
     const directory = path.join(runs, name);
-    if (!fs.lstatSync(directory).isDirectory()) continue;
+    const directoryMetadata = fs.lstatSync(directory);
+    if (!directoryMetadata.isDirectory()) continue;
     const file = path.join(directory, "plan.json");
-    if (!fs.existsSync(file)) continue;
-    const metadata = fs.lstatSync(file);
-    if (!metadata.isFile() || metadata.size > 1024 * 1024) continue;
-    let plan: unknown;
-    try {
-      plan = JSON.parse(fs.readFileSync(file, "utf8"));
-    } catch (error) {
-      if (error instanceof SyntaxError) continue;
-      throw error;
-    }
+    const plan = readBlueprintRunPlan(file, directoryMetadata);
     if (!plan || typeof plan !== "object" || Array.isArray(plan)) continue;
     const receipt = (plan as Record<string, unknown>).native_inference as
       | BlueprintNativeReceipt

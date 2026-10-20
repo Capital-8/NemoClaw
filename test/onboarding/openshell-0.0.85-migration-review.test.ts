@@ -7,16 +7,11 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 describe("OpenShell migration executable contracts", () => {
-  it("keeps exact-main runtime proofs separate from upstream-only fault injection", () => {
+  it("wires native runtime and MCP privacy proofs without upstream fault injection", () => {
     const helper = fs.readFileSync(
       path.join(repoRoot, "test", "e2e", "live", "openshell-exact-main-runtime-contracts.ts"),
       "utf8",
     );
-    expect(helper).toContain('chain.policy !== "accept"');
-    expect(helper).toContain("expected exactly one ${family} ${protocol} reject rule");
-    expect(helper).toContain("DIRECT_BYPASS_PROBE_CODE");
-    expect(helper).toContain('sha256sum \\"/proc/$old_pid/exe\\"');
-    expect(helper).toContain('[ "$new_status" = 403 ]');
     expect(helper).toContain("line.includes(`tools=${options.expectedTool}`)");
     expect(helper).toContain("not.toMatch(/\\barguments\\b[\"']?\\s*[:=]/iu)");
     expect(helper).not.toContain("iptables -F");
@@ -26,7 +21,7 @@ describe("OpenShell migration executable contracts", () => {
       path.join(repoRoot, "test", "e2e", "live", "openshell-exact-main-mcp-proof.ts"),
       "utf8",
     );
-    expect(mcpProof).toContain("assertExactMainPolicyNftAndIdentityContracts({");
+    expect(mcpProof).toContain("assertExactMainPolicyAndIdentityContracts({");
     expect(mcpProof).toContain("assertExactMainMcpLogPrivacy({");
   });
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,12 +23,14 @@ import {
 function fixture(
   overrides: {
     credential?: string;
+    providerName?: string;
     expiry?: number;
     collision?: boolean;
     wrongSandbox?: boolean;
     configFailure?: boolean;
   } = {},
 ) {
+  const providerName = overrides.providerName ?? "chosen-provider";
   let source = "";
   let provider: OpenShellProviderMetadata | null = null;
   let nonce = "";
@@ -47,7 +50,7 @@ function fixture(
         ? {
             ok: true,
             value: {
-              name: "chosen-provider",
+              name: providerName,
               type: "operator-profile",
               credentialKeys: [],
               configKeys: [],
@@ -86,7 +89,7 @@ function fixture(
     ),
     listProviderAttachments: vi.fn(async () => ({
       ok: true,
-      value: { names: attached ? ["chosen-provider"] : [] },
+      value: { names: attached ? [providerName] : [] },
     })),
     updateProvider: vi.fn(),
     deleteProvider: vi.fn(),
@@ -110,7 +113,7 @@ function fixture(
         },
   );
   const deps = {
-    adapter: () => adapter,
+    adapter: vi.fn(() => adapter),
     capture: vi.fn(() =>
       JSON.stringify({
         sandboxes: [
@@ -135,7 +138,7 @@ function fixture(
   const input = {
     gatewayName: "chosen-gateway",
     sandboxName: "chosen-sandbox",
-    provider: "chosen-provider",
+    provider: providerName,
     model: "custom-model",
     api: "openai-completions",
     endpointUrl: "http://8.8.8.8:8000/v1",
@@ -173,6 +176,42 @@ function fixture(
 }
 
 describe("blueprint native creation", () => {
+  it.each(["Provider_1.prod", `a${"b".repeat(127)}`])(
+    "creates and verifies the supported provider name %s",
+    async (providerName) => {
+      const f = fixture({ providerName });
+      const created = await createBlueprintNativeInference(f.input, f.deps);
+      expect(f.adapter.createProvider).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ name: providerName, fromExisting: false }),
+      );
+      expect(f.receipts.at(-1)).toMatchObject({
+        provider: providerName,
+        configPublished: true,
+        providerAttachment: { providerName, providerId: "provider-id-1" },
+      });
+      await expect(created.observe()).resolves.toBe(created.identity);
+    },
+  );
+
+  it.each(["1provider", "--help", "$(id)", "provider\n::error::forged", `a${"b".repeat(128)}`])(
+    "rejects malformed provider name %j before host operations",
+    async (providerName) => {
+      const f = fixture({ providerName });
+      const createDirectory = vi.spyOn(fs, "mkdtempSync");
+      await expect(createBlueprintNativeInference(f.input, f.deps)).rejects.toThrow(
+        "Invalid blueprint native inference selection.",
+      );
+      expect(createDirectory).not.toHaveBeenCalled();
+      expect(f.deps.adapter).not.toHaveBeenCalled();
+      expect(f.deps.capture).not.toHaveBeenCalled();
+      expect(f.deps.readHandle).not.toHaveBeenCalled();
+      expect(f.deps.writeConfig).not.toHaveBeenCalled();
+      expect(f.input.persist).not.toHaveBeenCalled();
+      expect(f.input.createSandbox).not.toHaveBeenCalled();
+      expect(f.input.prepareSandboxPolicy).not.toHaveBeenCalled();
+    },
+  );
+
   it("records immutable ownership before later effects and preserves the requested provider, model and timeout", async () => {
     const f = fixture();
     const created = await createBlueprintNativeInference(f.input, f.deps);
@@ -438,7 +477,199 @@ describe("blueprint native creation", () => {
   });
 });
 
+async function recoveryFixture() {
+  const f = fixture();
+  await createBlueprintNativeInference(f.input, f.deps);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "blueprint-recovery-"));
+  vi.spyOn(os, "homedir").mockReturnValue(home);
+  const directory = path.join(home, ".nemoclaw/state/runs/nc-current");
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, "plan.json");
+  const plan = JSON.stringify({ native_inference: f.receipts.at(-1) });
+  fs.writeFileSync(file, plan);
+  return { ...f, home, directory, file, plan };
+}
+
 describe("blueprint run receipt recovery", () => {
+  it("reads a completed receipt at the byte limit and closes its descriptor", async () => {
+    const f = await recoveryFixture();
+    try {
+      fs.writeFileSync(f.file, f.plan.padEnd(1024 * 1024, " "));
+      const open = vi.spyOn(fs, "openSync");
+      expect(findBlueprintNativeReceipt(f.input)).toEqual(f.receipts.at(-1));
+      expect(() => fs.fstatSync(open.mock.results[0]!.value)).toThrow();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("skips an oversized receipt without reading its content", async () => {
+    const f = await recoveryFixture();
+    try {
+      fs.writeFileSync(f.file, f.plan.padEnd(1024 * 1024 + 1, " "));
+      const read = vi.spyOn(fs, "readSync");
+      const open = vi.spyOn(fs, "openSync");
+      expect(findBlueprintNativeReceipt(f.input)).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+      expect(() => fs.fstatSync(open.mock.results[0]!.value)).toThrow();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("skips a symbolic-link receipt without reading its target", async () => {
+    const f = await recoveryFixture();
+    try {
+      const outside = path.join(f.home, "outside.json");
+      fs.renameSync(f.file, outside);
+      fs.symlinkSync(outside, f.file);
+      const read = vi.spyOn(fs, "readSync");
+      expect(findBlueprintNativeReceipt(f.input)).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symbolic link substituted immediately before opening the receipt", async () => {
+    const f = await recoveryFixture();
+    const open = fs.openSync;
+    try {
+      const outside = path.join(f.home, "outside.json");
+      fs.writeFileSync(outside, f.plan);
+      vi.spyOn(fs, "openSync").mockImplementationOnce((file, flags) => {
+        fs.unlinkSync(f.file);
+        fs.symlinkSync(outside, f.file);
+        return open(file, flags);
+      });
+      const read = vi.spyOn(fs, "readSync");
+      expect(findBlueprintNativeReceipt(f.input)).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a nonblocking FIFO receipt before reading", async () => {
+    const f = await recoveryFixture();
+    try {
+      fs.unlinkSync(f.file);
+      execFileSync("mkfifo", [f.file]);
+      const read = vi.spyOn(fs, "readSync");
+      const openFile = fs.openSync;
+      const open = vi.spyOn(fs, "openSync").mockImplementationOnce((file, flags) => {
+        expect(Number(flags) & fs.constants.O_NONBLOCK).toBe(fs.constants.O_NONBLOCK);
+        return openFile(file, flags);
+      });
+      expect(findBlueprintNativeReceipt(f.input)).toBeNull();
+      expect(read).not.toHaveBeenCalled();
+      expect(() => fs.fstatSync(open.mock.results[0]!.value)).toThrow();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  }, 5_000);
+
+  it("refuses a file replaced after opening without reading the replacement", async () => {
+    const f = await recoveryFixture();
+    const open = fs.openSync;
+    try {
+      const opened = vi.spyOn(fs, "openSync").mockImplementationOnce((file, flags) => {
+        const descriptor = open(file, flags);
+        fs.renameSync(f.file, path.join(f.home, "retained.json"));
+        fs.writeFileSync(f.file, f.plan);
+        return descriptor;
+      });
+      const read = vi.spyOn(fs, "readSync");
+      expect(() => findBlueprintNativeReceipt(f.input)).toThrow("changed while it was read");
+      expect(read).not.toHaveBeenCalled();
+      expect(() => fs.fstatSync(opened.mock.results[0]!.value)).toThrow();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a file replaced after reading and closes the original descriptor", async () => {
+    const f = await recoveryFixture();
+    const stat = fs.fstatSync;
+    try {
+      vi.spyOn(fs, "fstatSync")
+        .mockImplementationOnce((descriptor) => stat(descriptor))
+        .mockImplementationOnce((descriptor) => {
+          fs.renameSync(f.file, path.join(f.home, "retained.json"));
+          fs.writeFileSync(f.file, f.plan);
+          return stat(descriptor);
+        });
+      const open = vi.spyOn(fs, "openSync");
+      expect(() => findBlueprintNativeReceipt(f.input)).toThrow("changed while it was read");
+      expect(() => fs.fstatSync(open.mock.results[0]!.value)).toThrow();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses two different complete receipts for the same sandbox", async () => {
+    const f = await recoveryFixture();
+    try {
+      const other = path.join(path.dirname(f.directory), "nc-other");
+      fs.mkdirSync(other);
+      const receipt = f.receipts.at(-1)!;
+      fs.writeFileSync(
+        path.join(other, "plan.json"),
+        JSON.stringify({
+          native_inference: {
+            ...receipt,
+            providerAttachment: { ...receipt.providerAttachment, providerId: "other-provider-id" },
+          },
+        }),
+      );
+      expect(() => findBlueprintNativeReceipt(f.input)).toThrow("Conflicting blueprint");
+      expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+      expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a run directory replaced by a symbolic link before reading", async () => {
+    const f = await recoveryFixture();
+    const open = fs.openSync;
+    try {
+      const outside = path.join(f.home, "outside");
+      fs.mkdirSync(outside);
+      fs.writeFileSync(path.join(outside, "plan.json"), f.plan);
+      vi.spyOn(fs, "openSync").mockImplementationOnce((file, flags) => {
+        fs.renameSync(f.directory, path.join(f.home, "retained"));
+        fs.symlinkSync(outside, f.directory);
+        return open(file, flags);
+      });
+      const read = vi.spyOn(fs, "readSync");
+      expect(() => findBlueprintNativeReceipt(f.input)).toThrow("changed while it was read");
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds a receipt that grows after descriptor validation and refuses it", async () => {
+    const f = await recoveryFixture();
+    const stat = fs.fstatSync;
+    try {
+      vi.spyOn(fs, "fstatSync").mockImplementationOnce((descriptor) => {
+        const before = stat(descriptor);
+        fs.appendFileSync(f.file, " ".repeat(2 * 1024 * 1024));
+        return before;
+      });
+      const read = vi.spyOn(fs, "readSync");
+      const open = vi.spyOn(fs, "openSync");
+      expect(() => findBlueprintNativeReceipt(f.input)).toThrow("changed while it was read");
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(read.mock.results[0]?.value).toBe(1024 * 1024 + 1);
+      expect(() => fs.fstatSync(open.mock.results[0]!.value)).toThrow();
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     "{ malformed historical JSON",
     JSON.stringify({ native_inference: { gatewayName: "other", sandboxName: "chosen-sandbox" } }),
