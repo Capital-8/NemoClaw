@@ -39,7 +39,7 @@ describe("runInferenceSet context window", () => {
     const config = ollamaConfig();
     const deps = createDeps({
       config,
-      entry: legacyLocalEntry,
+      entry: { ...legacyLocalEntry, gatewayName: "nemoclaw-18080", gatewayPort: 18080 },
       session: baseSession(),
       contextWindow: 16384,
     });
@@ -49,6 +49,7 @@ describe("runInferenceSet context window", () => {
     expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
       "ollama-local",
       "qwen2.5:7b",
+      18080,
     );
     expect(inferenceModels(config)[0].contextWindow).toBe(16384);
     const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");

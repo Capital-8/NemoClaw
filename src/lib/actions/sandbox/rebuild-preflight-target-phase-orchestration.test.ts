@@ -252,7 +252,7 @@ describe("prepareRebuildTargetPreflights", () => {
     };
     const recreateOptions = {
       controlUiPort: 18_789,
-      targetGatewayName: "nemoclaw",
+      targetGatewayName: "nemoclaw-18080",
       toolDisclosure: "progressive",
       dcodeAutoApprovalMode: "disabled",
       observabilityEnabled: false,
@@ -282,7 +282,8 @@ describe("prepareRebuildTargetPreflights", () => {
         sandboxEntry: {
           name: "alpha",
           agent: "openclaw",
-          gatewayName: "nemoclaw",
+          gatewayName: "nemoclaw-18080",
+          gatewayPort: 18080,
           openshellDriver: "docker",
           workload: { kind: "managed-image" },
         } as never,
@@ -292,7 +293,11 @@ describe("prepareRebuildTargetPreflights", () => {
         bail: mocks.bail as never,
       }),
     ).resolves.toBeNull();
-    expect(mocks.resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
+    expect(mocks.resolveContextWindowForModel).toHaveBeenCalledWith(
+      "ollama-local",
+      "qwen3.5:9b",
+      18080,
+    );
   });
 
   it("passes legacy Station authority from the source registry row into rebuild readiness (#10370)", async () => {
