@@ -1368,9 +1368,9 @@ if (!finalList.pending.some((pending) => pending.requestId === staleRequest.requ
     },
   );
   requireSuccess(proof, "prove real SQLite bounded device self-approval");
-  proveRealPairingStateReadable(stateDir);
+  proveRealPairingStateReadable(stateDir, readBaseline ? "probe" : "cli");
   proveRealPostUpgradeChecks(stateDir, options.dist, options.nodeExecutable);
-  proveRealPairingStateReadable(stateDir);
+  proveRealPairingStateReadable(stateDir, readBaseline ? "probe" : "cli");
 }
 
 export function proveRealOpenClawAgentScopes(dist: string): void {

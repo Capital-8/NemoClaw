@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 /** Read native OpenClaw's committed approval through the shipped onboarding adapter. */
-export function proveRealPairingStateReadable(stateDir: string): void {
+export function proveRealPairingStateReadable(stateDir: string, clientMode: "cli" | "probe"): void {
   const result = spawnSync(
     "python3",
     [
@@ -22,11 +22,12 @@ token = paired['tokens']['operator']
 assert token['token'] == stored['token'], 'stored and paired credentials differ'
 assert sorted(stored['scopes']) == ['operator.pairing', 'operator.read', 'operator.write']
 assert sorted(token['scopes']) == sorted(stored['scopes'])
-assert paired['clientId'] == 'cli' and paired['clientMode'] == 'cli'
+assert paired['clientId'] == 'cli' and paired['clientMode'] == sys.argv[3]
 assert any(pending['deviceId'] == device_id for pending in records['pending'].values())
 `,
       path.resolve(import.meta.dirname, "../../scripts/lib/openclaw_pairing_state.py"),
       stateDir,
+      clientMode,
     ],
     { encoding: "utf8", timeout: 10_000 },
   );
