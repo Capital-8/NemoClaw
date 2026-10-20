@@ -83,6 +83,48 @@ describe("isSafeLlamaCppServedModelAlias", () => {
 });
 
 describe("probeLlamaCppAttachment", () => {
+  it.each([
+    { managedRuntime: undefined, timeout: "5" },
+    { managedRuntime: true as const, timeout: "30" },
+  ])("bounds every fingerprint request to $timeout seconds", ({ managedRuntime, timeout }) => {
+    const probe = scriptedProbe(nativeResponses());
+
+    expect(
+      probeLlamaCppAttachment("secret-token", {
+        managedRuntime,
+        runCurlProbeImpl: probe,
+      }),
+    ).toMatchObject({ ok: true, model: "team/model-alias" });
+    expect(probe).toHaveBeenCalledTimes(5);
+    expect(probe.mock.calls.map(([args]) => args[args.indexOf("--max-time") + 1])).toEqual(
+      Array(5).fill(timeout),
+    );
+  });
+
+  it("keeps a managed fingerprint timeout as a failure", () => {
+    const responses = nativeResponses();
+    responses[2] = curlFailure(28);
+
+    expect(
+      probeLlamaCppAttachment("secret-token", {
+        managedRuntime: true,
+        runCurlProbeImpl: scriptedProbe(responses),
+      }),
+    ).toMatchObject({ ok: false, reason: "probe-timeout" });
+  });
+
+  it("still rejects an invalid managed API key", () => {
+    const responses = nativeResponses();
+    responses[1] = response(401, '{"error":"unauthorized"}');
+
+    expect(
+      probeLlamaCppAttachment("secret-token", {
+        managedRuntime: true,
+        runCurlProbeImpl: scriptedProbe(responses),
+      }),
+    ).toMatchObject({ ok: false, reason: "authentication-rejected" });
+  });
+
   it("returns the selected model's served context rather than its training limit (#11527)", () => {
     const responses = nativeResponses();
     responses[1] = response(

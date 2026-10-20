@@ -53,6 +53,7 @@ export type LlamaCppAttachmentResult =
 export interface ProbeLlamaCppAttachmentOptions {
   requestedModel?: string | null;
   baseUrl?: string;
+  managedRuntime?: true;
   runCurlProbeImpl?: (argv: string[], options?: CurlProbeOptions) => CurlProbeResult;
 }
 
@@ -66,6 +67,8 @@ const LLAMA_CPP_META_NUMERIC_KEYS = [
 ] as const;
 
 const LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES = 256 * 1024;
+// Owned Docker Desktop bridges can complete a request after the attachment probe's 5-second cap.
+const LLAMA_CPP_MANAGED_PROBE_TIMEOUT_SECONDS = 30;
 
 function failure(
   reason: LlamaCppAttachmentFailureReason,
@@ -149,13 +152,13 @@ function hasNativeMetricsResponse(result: CurlProbeResult): boolean {
   );
 }
 
-function probeArgs(authArgs: readonly string[], url: string): string[] {
+function probeArgs(authArgs: readonly string[], url: string, timeoutSeconds: number): string[] {
   return [
     "-sS",
     "--connect-timeout",
     "2",
     "--max-time",
-    "5",
+    String(timeoutSeconds),
     "--max-filesize",
     String(LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES),
     ...authArgs,
@@ -171,9 +174,10 @@ function probeModelEndpoint(
   model: string,
   allowUnscopedFallback: boolean,
   options: CurlProbeOptions,
+  timeoutSeconds: number,
 ): CurlProbeResult {
   const scoped = probe(
-    probeArgs(authArgs, `${baseUrl}${path}?model=${encodeURIComponent(model)}`),
+    probeArgs(authArgs, `${baseUrl}${path}?model=${encodeURIComponent(model)}`, timeoutSeconds),
     options,
   );
   const body = parseJsonObject(scoped.body);
@@ -190,7 +194,7 @@ function probeModelEndpoint(
   ) {
     return scoped;
   }
-  return probe(probeArgs(authArgs, `${baseUrl}${path}`), options);
+  return probe(probeArgs(authArgs, `${baseUrl}${path}`, timeoutSeconds), options);
 }
 
 function boundedProbeFailure(result: CurlProbeResult): LlamaCppAttachmentResult | null {
@@ -252,11 +256,15 @@ export function probeLlamaCppAttachment(
     );
   }
   const probe = options.runCurlProbeImpl ?? runCurlProbe;
+  const timeoutSeconds = options.managedRuntime ? LLAMA_CPP_MANAGED_PROBE_TIMEOUT_SECONDS : 5;
   const anonymousProbeOptions: CurlProbeOptions = {
     maxResponseBytes: LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES,
     pinnedAddresses: [],
   };
-  const anonymousModels = probe(probeArgs([], `${baseUrl}/v1/models`), anonymousProbeOptions);
+  const anonymousModels = probe(
+    probeArgs([], `${baseUrl}/v1/models`, timeoutSeconds),
+    anonymousProbeOptions,
+  );
   const anonymousBoundFailure = boundedProbeFailure(anonymousModels);
   if (anonymousBoundFailure) return anonymousBoundFailure;
   if (anonymousModels.curlStatus !== 0 || anonymousModels.httpStatus === 0) {
@@ -273,7 +281,10 @@ export function probeLlamaCppAttachment(
     );
   }
   if (anonymousModels.httpStatus === 200) {
-    const anonymousProps = probe(probeArgs([], `${baseUrl}/props`), anonymousProbeOptions);
+    const anonymousProps = probe(
+      probeArgs([], `${baseUrl}/props`, timeoutSeconds),
+      anonymousProbeOptions,
+    );
     const anonymousPropsBoundFailure = boundedProbeFailure(anonymousProps);
     if (anonymousPropsBoundFailure) return anonymousPropsBoundFailure;
     if (anonymousProps.curlStatus !== 0 || anonymousProps.httpStatus === 0) {
@@ -311,7 +322,10 @@ export function probeLlamaCppAttachment(
       trustedConfigFiles: auth.trustedConfigFiles,
       pinnedAddresses: [],
     };
-    const authenticatedModels = probe(probeArgs(auth.args, `${baseUrl}/v1/models`), probeOptions);
+    const authenticatedModels = probe(
+      probeArgs(auth.args, `${baseUrl}/v1/models`, timeoutSeconds),
+      probeOptions,
+    );
     const authenticatedBoundFailure = boundedProbeFailure(authenticatedModels);
     if (authenticatedBoundFailure) return authenticatedBoundFailure;
     if (authenticatedModels.httpStatus === 401 || authenticatedModels.httpStatus === 403) {
@@ -367,7 +381,7 @@ export function probeLlamaCppAttachment(
         "llama.cpp must be started with a non-path served model alias.",
       );
     }
-    const health = probe(probeArgs(auth.args, `${baseUrl}/health`), probeOptions);
+    const health = probe(probeArgs(auth.args, `${baseUrl}/health`, timeoutSeconds), probeOptions);
     const allowUnscopedFallback = modelEntries.length === 1;
     const props = probeModelEndpoint(
       probe,
@@ -377,6 +391,7 @@ export function probeLlamaCppAttachment(
       model,
       allowUnscopedFallback,
       probeOptions,
+      timeoutSeconds,
     );
     const metrics = probeModelEndpoint(
       probe,
@@ -386,6 +401,7 @@ export function probeLlamaCppAttachment(
       model,
       allowUnscopedFallback,
       probeOptions,
+      timeoutSeconds,
     );
     for (const result of [health, props, metrics]) {
       const boundFailure = boundedProbeFailure(result);
