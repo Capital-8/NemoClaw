@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Live / DGX Station
+
+on:
+  workflow_dispatch:
+    inputs:
+      example_path:
+        description: Repository example to apply on the leased DGX Station.
+        type: string
+        default: examples/gtc-dc/openclaw-dgx-station.yaml
+  # Dispatch requires this file on the default branch. Use an approved opt-in
+  # branch for initial qualification, as the Brev workflow does.
+  push:
+    branches: [run-station-v1-e2e/**]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-dgx-station-v1
+  cancel-in-progress: false
+
+jobs:
+  station:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/v1') ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/run-station-v1-e2e/')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out workflow controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_amd64
+          save-cache: "false"
+      - name: Dispatch example to Station backend
+        env:
+          DGX_STATION_V1_DISPATCH_URL: ${{ vars.DGX_STATION_V1_DISPATCH_URL }}
+          STATION_CANDIDATE_SHA: ${{ github.sha }}
+          STATION_EXAMPLE_PATH: ${{ inputs.example_path || 'examples/gtc-dc/openclaw-dgx-station.yaml' }}
+          STATION_ARTIFACT_DIR: ${{ runner.temp }}/station-e2e
+        run: cargo run --locked -p nemoclaw-e2e --bin station-dispatch
+      - name: Upload Station result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: station-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/station-e2e/
+          if-no-files-found: warn
+          retention-days: 14
