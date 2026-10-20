@@ -406,6 +406,42 @@ describe("locked npm cache seed materialization", () => {
     expect(downloadArchive).not.toHaveBeenCalled();
   });
 
+  it("accepts an exact root override when it matches the locked replacement", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const beta = archive("beta", "beta archive");
+    const lockfile = writeLock(testRoot, [alpha.locked, beta.locked]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    lock.packages[""].dependencies = { alpha: "1.0.0" };
+    lock.packages["node_modules/alpha"].dependencies = { beta: "2.0.0" };
+    writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+    writeFileSync(
+      path.join(testRoot, "package.json"),
+      `${JSON.stringify({ overrides: { beta: "1.0.0" } })}\n`,
+    );
+    const seed = path.join(testRoot, "seed");
+
+    const manifest = await materializeLockedNpmCacheSeed({
+      downloadArchive: async (entry) =>
+        entry.archive === alpha.locked.archive ? alpha.bytes : beta.bytes,
+      lockfile,
+      output: seed,
+      target: TARGET,
+    });
+
+    expect(manifest.archives.map(({ size: _size, ...entry }) => entry)).toEqual([
+      alpha.locked,
+      beta.locked,
+    ]);
+    await verifyAndCopyLockedNpmCacheSeed({
+      lockfile,
+      output: path.join(testRoot, "copied"),
+      seed,
+      target: TARGET,
+    });
+  });
+
   it("rejects a lock archive outside the exact npm registry origin", async () => {
     const alpha = archive("alpha", "alpha archive");
     const lockfile = writeLock(testRoot, [

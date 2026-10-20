@@ -169,7 +169,11 @@ function resolveDependencyPath(
   }
 }
 
-function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget): string[] {
+function reachablePackagePaths(
+  packages: JsonRecord,
+  target: NpmPlatformTarget,
+  overrides: Record<string, string>,
+): string[] {
   const root = record(packages[""], "package-lock root package");
   const queue: Array<{
     dependency: string;
@@ -200,7 +204,11 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
     }
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
     const exactVersion = exactDependencyVersion(edge.requested);
-    if (exactVersion !== undefined && entry.version !== exactVersion) {
+    if (
+      exactVersion !== undefined &&
+      entry.version !== exactVersion &&
+      overrides[edge.dependency] !== entry.version
+    ) {
       throw new Error(
         `package-lock exact dependency is unresolved: ${edge.dependency}@${exactVersion} from ${edge.fromPath || "root package"}`,
       );
@@ -260,6 +268,7 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
 export function lockedArchives(
   lockSource: string,
   requestedTarget: NpmPlatformTarget,
+  overrides: Record<string, string> = {},
 ): LockedArchive[] {
   const lock = record(JSON.parse(lockSource) as unknown, "package-lock.json");
   if (lock.lockfileVersion !== 3) throw new Error("package-lock.json must use lockfileVersion 3");
@@ -270,7 +279,7 @@ export function lockedArchives(
   const byIntegrity = new Map<string, LockedArchive>();
   const collidingArchives = new Set<string>();
 
-  for (const packagePath of reachablePackagePaths(packages, target)) {
+  for (const packagePath of reachablePackagePaths(packages, target, overrides)) {
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
     if (entry.inBundle === true) continue;
     const resolved = entry.resolved;
@@ -328,6 +337,30 @@ async function exactFileSource(file: string, label: string): Promise<Buffer> {
   } finally {
     await handle.close();
   }
+}
+
+async function exactRootOverrides(lockfile: string): Promise<Record<string, string>> {
+  const manifestPath = path.join(path.dirname(lockfile), "package.json");
+  const exists = await lstat(manifestPath).then(
+    () => true,
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    },
+  );
+  if (!exists) return {};
+  const manifest = record(
+    JSON.parse(
+      (await exactFileSource(manifestPath, "package manifest")).toString("utf8"),
+    ) as unknown,
+    "package manifest",
+  );
+  const overrides = record(manifest.overrides ?? {}, "package manifest overrides");
+  return Object.fromEntries(
+    Object.entries(overrides).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
 
 async function exactDirectory(directory: string, label: string): Promise<string> {
@@ -421,7 +454,11 @@ export async function materializeLockedNpmCacheSeed(options: {
 }): Promise<SeedManifest> {
   const lockSource = await exactFileSource(options.lockfile, "lockfile");
   const target = exactTarget(options.target);
-  const archives = lockedArchives(lockSource.toString("utf8"), target);
+  const archives = lockedArchives(
+    lockSource.toString("utf8"),
+    target,
+    await exactRootOverrides(options.lockfile),
+  );
   const downloadArchive = options.downloadArchive ?? defaultDownloadArchive;
   const directory = await atomicOutputDirectory(options.output);
   try {
@@ -520,7 +557,11 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
 }): Promise<SeedManifest> {
   const lockSource = await exactFileSource(options.lockfile, "lockfile");
   const target = exactTarget(options.target);
-  const expected = lockedArchives(lockSource.toString("utf8"), target);
+  const expected = lockedArchives(
+    lockSource.toString("utf8"),
+    target,
+    await exactRootOverrides(options.lockfile),
+  );
   const seed = await exactDirectory(options.seed, "seed directory");
   const manifestSource = await exactFileSource(
     path.join(seed, LOCKED_NPM_CACHE_SEED_MANIFEST_NAME),
