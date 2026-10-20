@@ -1521,6 +1521,7 @@ jobs:
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/install-pinned-wix.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/installer/runtime-image-storage.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-ui-lifecycle.test.mts'),
+            (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-ui-relay.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-web-session.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-gateway-configuration.test.mts'),
             (Join-Path $env:GITHUB_WORKSPACE 'packaging/windows/runtime/native-openclaw-models.test.mts'),

@@ -28,6 +28,27 @@ async function writeBrowserFrame(socket: Socket, data: Buffer) {
   });
 }
 
+export async function forwardNativeUiFrames(
+  io: Pick<Awaited<ReturnType<typeof openNativeUiFileOwner>>, "read" | "list" | "unlink">,
+  directory: string,
+  socket: Socket,
+) {
+  // Observe closure before listing: the producer may publish its final frames
+  // and close marker while an earlier directory listing is in flight.
+  const ended = (await io.read(`${directory}/sandbox-close`)) !== null;
+  for (const name of (await io.list(directory))
+    .filter((name) => /^sandbox-[0-9]{10}\.bin$/u.test(name))
+    .sort()) {
+    const data = await io.read(`${directory}/${name}`);
+    // A flushed frame can still have an open deny-write-sharing handle.
+    // Do not deliver later frames, or EOF, before this frame becomes readable.
+    if (data === null) return false;
+    await writeBrowserFrame(socket, data);
+    await io.unlink(`${directory}/${name}`);
+  }
+  return ended;
+}
+
 export async function startFileTcpRelay(
   relayRoot: string,
   token: string,
@@ -133,15 +154,7 @@ export async function startFileTcpRelay(
       for (const [directory, stream] of streams) {
         if (closed) break;
         measurements?.scan(true);
-        for (const name of (await io.list(directory))
-          .filter((name) => /^sandbox-[0-9]{10}\.bin$/u.test(name))
-          .sort()) {
-          const data = await io.read(`${directory}/${name}`);
-          if (data === null) continue;
-          await writeBrowserFrame(stream.socket, data);
-          await io.unlink(`${directory}/${name}`);
-        }
-        if ((await io.read(`${directory}/sandbox-close`)) !== null) {
+        if (await forwardNativeUiFrames(io, directory, stream.socket)) {
           stream.closing = true;
           stream.socket.end();
           stream.socket.resume();

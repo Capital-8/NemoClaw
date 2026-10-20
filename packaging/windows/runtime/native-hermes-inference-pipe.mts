@@ -31,11 +31,13 @@ export function hermesInferencePipePythonSource(): string[] {
         def __init__(self, reader):
             super().__init__(reader)
             self.transport = None
+            self.ready = asyncio.get_running_loop().create_future()
             self.closed = asyncio.get_running_loop().create_future()
 
         def connection_made(self, transport):
             self.transport = transport
             super().connection_made(transport)
+            self.ready.set_result(None)
 
         def connection_lost(self, error):
             super().connection_lost(error)
@@ -131,7 +133,11 @@ export function hermesInferencePipePythonSource(): string[] {
             stream = None
             try:
                 async with asyncio.timeout(timeout):
-                    await connect(lambda: protocol, pipe_name)
+                    transport, _ = await connect(lambda: protocol, pipe_name)
+                    # Proactor returns before its scheduled connection_made callback.
+                    # Own the handle immediately, but wait for protocol initialization.
+                    protocol.transport = transport
+                    await asyncio.shield(protocol.ready)
                 if self.closing or protocol.transport.is_closing():
                     raise httpcore.ConnectError('Hermes inference pipe closed during connection')
                 stream = PipeStream(reader, protocol, self)

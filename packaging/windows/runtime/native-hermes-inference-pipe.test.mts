@@ -43,6 +43,7 @@ pipes = []
 requests = []
 connect_delay = 0
 after_bind_delay = 0
+ready_delay = 0
 write_paused = False
 close_delay = 0
 
@@ -100,8 +101,11 @@ def pipe_loop():
         protocol = factory()
         transport = MemoryPipe(protocol, loop)
         pipes.append(transport)
-        protocol.connection_made(transport)
-        if after_bind_delay: await asyncio.sleep(after_bind_delay)
+        if after_bind_delay:
+            protocol.connection_made(transport)
+            await asyncio.sleep(after_bind_delay)
+        else:
+            loop.call_later(ready_delay, protocol.connection_made, transport)
         return transport, protocol
     loop.create_pipe_connection = connect
     return loop
@@ -281,6 +285,50 @@ assert len(pipes) == 1 and pipes[0].closing and pipes[0].protocol.closed.done()
 assert not requests
 `);
 });
+
+test(
+  "connect deadlines retain returned pipes until deferred readiness and closure settle",
+  options,
+  () => {
+    check(String.raw`
+ready_delay = 0.05
+close_delay = 0.08
+with build(url) as client:
+    try: client.get(url, timeout=0.02)
+    except httpx.ConnectTimeout: pass
+    else: raise AssertionError('protocol readiness did not time out')
+assert len(pipes) == 1 and pipes[0].closing and pipes[0].protocol.closed.done()
+assert pipes[0].protocol.ready.done() and not pipes[0].protocol.ready.cancelled()
+assert not requests
+`);
+  },
+);
+
+test(
+  "client closure before deferred connection_made retains and closes the returned pipe",
+  options,
+  () => {
+    check(String.raw`
+ready_delay = 0.05
+close_delay = 0.08
+async def exercise():
+    client = build(url, async_mode=True)
+    backend = client._transport.backend
+    pending = asyncio.create_task(client.get(url))
+    while not pipes and not pending.done(): await asyncio.sleep(0)
+    if pending.done(): await pending
+    assert not pipes[0].protocol.ready.done()
+    await client.aclose()
+    try: await pending
+    except asyncio.CancelledError: pass
+    else: raise AssertionError('connecting request survived client closure')
+    assert not backend.pending and not backend.streams and not requests
+    assert pipes[0].closing and pipes[0].protocol.closed.done()
+    assert pipes[0].protocol.ready.done() and not pipes[0].protocol.ready.cancelled()
+run(exercise())
+`);
+  },
+);
 
 test("write backpressure has a deadline and bounded chunks", options, () => {
   check(String.raw`
