@@ -14,7 +14,8 @@ NemoClaw can pull, start, and manage a local NVIDIA NIM container on hosts with 
 This provider is experimental and requires an explicit opt-in.
 New Local NVIDIA NIM selections use a native OpenShell provider attached to the sandbox.
 Live qualification on OpenShell `0.1.3` remains pending.
-Back up an older NIM sandbox without a native attachment, then re-onboard it with `--fresh --name <sandbox-name> --recreate-sandbox` before upgrading OpenShell.
+For older NIM sandboxes without a native attachment, preserve backups, the existing installation, and sandbox data.
+Follow the [OpenShell upgrade restrictions](../../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path).
 Local NVIDIA NIM is unavailable on N1x.
 NemoClaw omits this provider from onboarding and rejects `NEMOCLAW_PROVIDER=nim-local` on N1x.
 Use the [Deferred managed-vLLM preview](set-up-vllm#use-n1x-express) instead.

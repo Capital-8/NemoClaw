@@ -3412,7 +3412,9 @@ Back up the sandbox data before running `nemo-deepagents onboard --fresh --name 
 
 Older OpenClaw Ollama, standalone vLLM, and llama.cpp sandboxes without a native attachment stop before rebuild.
 Back up the sandbox data before running `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox`.
-New Local NVIDIA NIM sandboxes use their recorded native attachment during rebuild. Back up and recreate older shared-route NIM sandboxes before upgrading OpenShell.
+New Local NVIDIA NIM sandboxes use their recorded native attachment during rebuild.
+For older shared-route NIM sandboxes, preserve backups, the existing installation, and sandbox data.
+Follow the [OpenShell upgrade restrictions](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path).
 
 </AgentOnly>
 
@@ -3953,11 +3955,16 @@ $$nemoclaw credentials list
 
 ### `$$nemoclaw credentials add <PROVIDER>`
 
-Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. With `--from-existing`, NemoClaw inspects the provider profile and rejects registration when one of its credential keys is reserved by a managed MCP server. After the gateway accepts the provider, rebuild each sandbox that should use it.
+Register a provider credential with the OpenShell gateway by name and type. Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv. Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them. With `--from-existing`, NemoClaw inspects the provider profile and rejects registration when one of its credential keys is reserved by a managed MCP server.
 
 After a successful provider creation or attachment, NemoClaw compares a previously verified profile with its current gateway definition. If it warns that verification did not complete or the profile changed, the successful operation remains successful. Ask the gateway operator to inspect the profile before relying on its credential boundary.
 
-Registered providers are gateway-wide and attach to every sandbox you build or rebuild after the call.
+Provider registration is gateway-wide.
+Native NVIDIA Endpoints and fixed hosted providers attach when a sandbox selects or restores that inference provider.
+After registering one of these providers, follow the command's `inference set` guidance.
+Ordinary extra providers, such as Tavily, attach during subsequent sandbox builds and rebuilds after reconciliation.
+Rebuild each existing sandbox that should use an ordinary extra provider.
+Registration alone does not change a sandbox's inference selection.
 Credential reset refuses removal while a sandbox records that provider as its registered inference selection.
 For providers eligible for reset, the command can detach current sandbox attachments before deleting the provider.
 After registering a replacement, rebuild each sandbox reported as detached.
