@@ -6,24 +6,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import { createHermesStateVolumeDockerHarness as dockerHarness } from "../__test-helpers__/hermes-state-volume";
-import {
-  createDockerRuntimeProviderBundle,
-  createKubernetesRuntimeProviderBundle,
-} from "../runtime-provider/docker";
+import { createDockerRuntimeProviderBundle } from "../runtime-provider/docker";
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import {
   MANAGED_HERMES_STATE_ROOT,
+  managedHermesStateVolumeName,
   MANAGED_OPENCLAW_STATE_ROOT,
   managedStartupStateRoots,
 } from "../managed-startup/state-roots";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import { preflightManagedStateVolumes, prepareManagedStateVolumes } from "./managed-state-volumes";
-import {
-  managedHermesStateVolumeName,
-  removeManagedAgentStateVolumes,
-  prepareManagedHermesStateVolume,
-  removeManagedHermesStateVolume,
-} from "./hermes-state-volume";
+import { removeManagedAgentStateVolumes } from "./hermes-state-volume";
 
 const context = {
   agentName: "hermes",
@@ -31,6 +24,12 @@ const context = {
   sandboxName: "alpha",
   workloadKind: "managed-image",
 } as const;
+
+const roots = managedStartupStateRoots({
+  agent: "hermes",
+  sandboxName: context.sandboxName,
+  agentIdentity: managedImageRuntimeIdentity("hermes"),
+});
 
 describe("managed Hermes state volume", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -42,16 +41,19 @@ describe("managed Hermes state volume", () => {
   ])("approves a new volume for ambient %s and selected workspace %s", (workspace, selected) => {
     vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
     const docker = dockerHarness();
-    const scope = prepareManagedHermesStateVolume(context, {
-      workspace: selected,
-      runDocker: docker.runDocker as never,
-      registerExitCleanup: () => () => undefined,
-    });
+    const scope = prepareManagedStateVolumes(
+      { roots },
+      {
+        workspace: selected,
+        runContainerEngine: docker.runDocker as never,
+        registerExitCleanup: () => () => undefined,
+      },
+    );
     expect(docker.volume?.labels).toMatchObject({
       "openshell.ai/sandbox-attachable": "true",
       "openshell.ai/sandbox-attachable-workspace": selected ?? workspace ?? "default",
     });
-    expect(scope?.reused).toBe(false);
+    expect(scope?.reused).toEqual([false]);
   });
 
   it.each([
@@ -73,10 +75,13 @@ describe("managed Hermes state volume", () => {
   ] as const)("preserves an owned retained volume with %s approval", (_problem, approval) => {
     vi.stubEnv("OPENSHELL_WORKSPACE", "default");
     const created = dockerHarness();
-    prepareManagedHermesStateVolume(context, {
-      runDocker: created.runDocker as never,
-      registerExitCleanup: () => () => undefined,
-    })!.commit();
+    prepareManagedStateVolumes(
+      { roots },
+      {
+        runContainerEngine: created.runDocker as never,
+        registerExitCleanup: () => () => undefined,
+      },
+    )!.commit();
     const retained = created.volume!;
     delete retained.labels["openshell.ai/sandbox-attachable"];
     delete retained.labels["openshell.ai/sandbox-attachable-workspace"];
@@ -84,15 +89,13 @@ describe("managed Hermes state volume", () => {
     const docker = dockerHarness(retained);
     const before = JSON.stringify(docker.volume);
     expect(() =>
-      prepareManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+      prepareManagedStateVolumes({ roots }, { runContainerEngine: docker.runDocker as never }),
     ).toThrow("Retained data was not changed");
     expect(JSON.stringify(docker.volume)).toBe(before);
     expect(docker.calls.every((args) => args[0] === "inspect")).toBe(true);
     expect(
-      removeManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
-    ).toEqual({
-      status: "removed",
-    });
+      removeManagedAgentStateVolumes(context, { runDocker: docker.runDocker as never }),
+    ).toEqual([{ status: "removed" }]);
   });
 
   it.each(["openclaw", "hermes"] as const)(
@@ -137,7 +140,7 @@ describe("managed Hermes state volume", () => {
       vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
       const docker = dockerHarness();
       expect(() =>
-        prepareManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+        prepareManagedStateVolumes({ roots }, { runContainerEngine: docker.runDocker as never }),
       ).toThrow("exact OpenShell workspace");
       expect(docker.calls).toEqual([]);
     },
@@ -147,23 +150,27 @@ describe("managed Hermes state volume", () => {
     let exitCleanup: (() => void) | null = null;
     const unregister = vi.fn();
 
-    const scope = prepareManagedHermesStateVolume(context, {
-      runDocker: docker.runDocker as never,
-      registerExitCleanup: (cleanup) => {
-        exitCleanup = cleanup;
-        return unregister;
+    const scope = prepareManagedStateVolumes(
+      { roots },
+      {
+        runContainerEngine: docker.runDocker as never,
+        registerExitCleanup: (cleanup) => {
+          exitCleanup = cleanup;
+          return unregister;
+        },
       },
-    });
+    );
 
     expect(scope).toMatchObject({
-      reused: false,
-      volumeName: "nemoclaw-hermes-state-v1-alpha",
-      mount: {
-        type: "volume",
-        source: "nemoclaw-hermes-state-v1-alpha",
-        target: MANAGED_HERMES_STATE_ROOT,
-        read_only: false,
-      },
+      reused: [false],
+      mounts: [
+        {
+          type: "volume",
+          source: "nemoclaw-hermes-state-v1-alpha",
+          target: MANAGED_HERMES_STATE_ROOT,
+          read_only: false,
+        },
+      ],
     });
     expect(docker.volume?.labels).toMatchObject({
       "io.nvidia.nemoclaw.hermes-state.managed": "true",
@@ -175,22 +182,6 @@ describe("managed Hermes state volume", () => {
     exitCleanup!();
     expect(docker.volume).toBeNull();
     expect(unregister).not.toHaveBeenCalled();
-  });
-
-  it("uses the registered native provider for the same managed Hermes volume contract", () => {
-    const runtime = dockerHarness();
-    const scope = prepareManagedHermesStateVolume(
-      { ...context, runtimeProviderId: "podman" },
-      {
-        runDocker: runtime.runDocker as never,
-        registerExitCleanup: () => () => undefined,
-      },
-    );
-
-    expect(scope?.mount).toMatchObject({
-      source: "nemoclaw-hermes-state-v1-alpha",
-      target: MANAGED_HERMES_STATE_ROOT,
-    });
   });
 
   it("dispatches native volume lifecycle through the selected provider operation", () => {
@@ -235,15 +226,15 @@ describe("managed Hermes state volume", () => {
       },
     });
 
-    const scope = prepareManagedHermesStateVolume(
-      { ...context, runtimeProviderId: "podman" },
+    const scope = prepareManagedStateVolumes(
+      { roots },
       {
-        runtimeProviders: { podman: provider },
+        runtimeProvider: provider,
         registerExitCleanup: () => () => undefined,
       },
     );
 
-    expect(scope?.mount.source).toBe("nemoclaw-hermes-state-v1-alpha");
+    expect(scope?.mounts[0]?.source).toBe("nemoclaw-hermes-state-v1-alpha");
     expect(workloadCleanupCapture).toHaveBeenCalled();
     expect(workloadCleanupCapture.mock.calls.every(([args]) => args[0] === "volume")).toBe(true);
   });
@@ -252,13 +243,16 @@ describe("managed Hermes state volume", () => {
     const docker = dockerHarness();
     let exitCleanup: (() => void) | null = null;
     const unregister = vi.fn();
-    const scope = prepareManagedHermesStateVolume(context, {
-      runDocker: docker.runDocker as never,
-      registerExitCleanup: (cleanup) => {
-        exitCleanup = cleanup;
-        return unregister;
+    const scope = prepareManagedStateVolumes(
+      { roots },
+      {
+        runContainerEngine: docker.runDocker as never,
+        registerExitCleanup: (cleanup) => {
+          exitCleanup = cleanup;
+          return unregister;
+        },
       },
-    });
+    );
 
     scope!.commit();
     exitCleanup!();
@@ -270,23 +264,29 @@ describe("managed Hermes state volume", () => {
 
   it("reuses the exact owned volume across rebuild without arming failure cleanup", () => {
     const created = dockerHarness();
-    const first = prepareManagedHermesStateVolume(context, {
-      runDocker: created.runDocker as never,
-      registerExitCleanup: () => () => undefined,
-    });
+    const first = prepareManagedStateVolumes(
+      { roots },
+      {
+        runContainerEngine: created.runDocker as never,
+        registerExitCleanup: () => () => undefined,
+      },
+    );
     const reused = dockerHarness(created.volume);
     const registerExitCleanup = vi.fn();
 
-    const second = prepareManagedHermesStateVolume(context, {
-      runDocker: reused.runDocker as never,
-      registerExitCleanup,
-    });
+    const second = prepareManagedStateVolumes(
+      { roots },
+      {
+        runContainerEngine: reused.runDocker as never,
+        registerExitCleanup,
+      },
+    );
 
-    expect(first?.volumeName).toBe(second?.volumeName);
-    expect(second?.reused).toBe(true);
+    expect(first?.mounts[0]?.source).toBe(second?.mounts[0]?.source);
+    expect(second?.reused).toEqual([true]);
     expect(registerExitCleanup).not.toHaveBeenCalled();
     expect(reused.calls.some((args) => args[0] === "create")).toBe(false);
-    expect(second?.cleanupIncompleteCreate()).toEqual({ status: "not-applicable" });
+    expect(second?.cleanupIncompleteCreate()).toEqual([]);
     expect(reused.volume).not.toBeNull();
   });
 
@@ -295,7 +295,7 @@ describe("managed Hermes state volume", () => {
     const docker = dockerHarness({ name, labels: { "com.example.owner": "foreign" } });
 
     expect(() =>
-      prepareManagedHermesStateVolume(context, { runDocker: docker.runDocker as never }),
+      prepareManagedStateVolumes({ roots }, { runContainerEngine: docker.runDocker as never }),
     ).toThrow(/exact NemoClaw ownership labels do not match/u);
     expect(docker.volume).not.toBeNull();
     expect(docker.calls.some((args) => args[0] === "rm")).toBe(false);
@@ -303,22 +303,25 @@ describe("managed Hermes state volume", () => {
 
   it("removes only an exactly owned volume during sandbox destroy", () => {
     const owned = dockerHarness();
-    const scope = prepareManagedHermesStateVolume(context, {
-      runDocker: owned.runDocker as never,
-      registerExitCleanup: () => () => undefined,
-    });
+    const scope = prepareManagedStateVolumes(
+      { roots },
+      {
+        runContainerEngine: owned.runDocker as never,
+        registerExitCleanup: () => () => undefined,
+      },
+    );
     scope!.commit();
 
     expect(
-      removeManagedHermesStateVolume(context, { runDocker: owned.runDocker as never }),
-    ).toEqual({ status: "removed" });
+      removeManagedAgentStateVolumes(context, { runDocker: owned.runDocker as never }),
+    ).toEqual([{ status: "removed" }]);
     expect(owned.volume).toBeNull();
 
     const name = managedHermesStateVolumeName(context.sandboxName);
     const foreign = dockerHarness({ name, labels: { "com.example.owner": "foreign" } });
     expect(
-      removeManagedHermesStateVolume(context, { runDocker: foreign.runDocker as never }),
-    ).toMatchObject({ status: "not-owned", volumeName: name });
+      removeManagedAgentStateVolumes(context, { runDocker: foreign.runDocker as never }),
+    ).toMatchObject([{ status: "not-owned", volumeName: name }]);
     expect(foreign.volume).not.toBeNull();
   });
 
@@ -377,28 +380,6 @@ describe("managed Hermes state volume", () => {
       expect(docker.calls.filter((args) => args[0] === "rm")).toEqual(
         targetAgent === sourceAgent ? [] : [["rm", `nemoclaw-${sourceAgent}-state-v1-alpha`]],
       );
-    },
-  );
-
-  it.each([
-    ["agent", { ...context, agentName: "openclaw" }],
-    ["provider", { ...context, runtimeProviderId: "kubernetes" }],
-    ["workload", { ...context, workloadKind: "legacy-dockerfile" }],
-  ])(
-    "does not provision outside the managed container-engine Hermes %s boundary",
-    (_boundary, input) => {
-      const docker = dockerHarness();
-
-      expect(
-        prepareManagedHermesStateVolume(input, {
-          runDocker: docker.runDocker as never,
-          runtimeProviders: {
-            docker: createDockerRuntimeProviderBundle(),
-            kubernetes: createKubernetesRuntimeProviderBundle(),
-          },
-        }),
-      ).toBeNull();
-      expect(docker.calls).toEqual([]);
     },
   );
 });

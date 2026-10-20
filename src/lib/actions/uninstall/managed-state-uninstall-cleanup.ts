@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ManagedHermesStateVolumeContext as ManagedAgentStateVolumeContext } from "../../onboard/managed-workload/hermes-state-volume";
+import type { ManagedAgentStateVolumeContext } from "../../onboard/managed-workload/hermes-state-volume";
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/access";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../onboard/runtime-provider/current";
 import type { RuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/contract";
