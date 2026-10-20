@@ -25,8 +25,18 @@ Do not upload private configuration or state.
 
 ## GitHub Actions Handoff
 
-`station.yml` sends the candidate commit and example path to the operator's HTTPS origin in repository variable `DGX_STATION_V1_DISPATCH_URL`.
-It uses short-lived GitHub OIDC tokens with audience `nemoclaw-dgx-station-v1-dispatch`; tokens stay in memory.
+`station.yml` sends the candidate commit and example path through a Cloudflare Tunnel to the Cologit backend on the leased Station VM.
+Cologit runs the backend and `cloudflared` directly on that VM; no jump server is needed.
+Set the repository Actions variable to the Station tunnel's public HTTPS origin:
+
+```sh
+gh variable set DGX_STATION_V1_DISPATCH_URL --repo NVIDIA/NemoClaw \
+  --body 'https://<station-tunnel>.trycloudflare.com'
+```
+
+Replace the example URL with the origin reported by Station's `cloudflared`, without an API path.
+Update the variable if a Quick Tunnel restart changes its URL. `JETSON_DISPATCH_URL` belongs to the separate Jetson backend.
+The Station controller uses short-lived GitHub OIDC tokens with audience `nemoclaw-dgx-station-v1-dispatch`; tokens stay in memory.
 The current Jetson backend needs a Station extension. The proposed request is:
 
 ```json

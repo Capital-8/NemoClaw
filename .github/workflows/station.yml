@@ -42,8 +42,9 @@ jobs:
         with:
           platform: linux_amd64
           save-cache: "false"
-      - name: Dispatch example to Station backend
+      - name: Dispatch example through Station Cloudflare tunnel
         env:
+          # Public HTTPS origin of the Cloudflare tunnel to the Station backend.
           DGX_STATION_V1_DISPATCH_URL: ${{ vars.DGX_STATION_V1_DISPATCH_URL }}
           STATION_CANDIDATE_SHA: ${{ github.sha }}
           STATION_EXAMPLE_PATH: ${{ inputs.example_path || 'examples/gtc-dc/openclaw-dgx-station.yaml' }}
