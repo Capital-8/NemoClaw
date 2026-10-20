@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Hosted switching and native local routing share the OpenClaw live contract.
-
-import { readRegisteredLocalRoute } from "../fixtures/registered-inference.ts";
+import {
+  readRegisteredLocalRoute,
+  operatorInferenceSwitchFixture,
+  OPERATOR_SWITCH_PROVIDER,
+  OPERATOR_SWITCH_API_KEY,
+  OPERATOR_SWITCH_CREDENTIAL_ENV,
+} from "../fixtures/registered-inference.ts";
 import fs from "node:fs";
 import http, { type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -51,6 +55,8 @@ import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   getRouteOutput,
+  httpStatusFromResponse,
+  httpBodyFromResponse,
   readOpenClawConfig,
   agentReplyContainsToken,
   anthropicToolCount,
@@ -94,6 +100,7 @@ const SWITCH_PROVIDER = process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SW
 const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 const SWITCH_INFERENCE_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
+const SWITCH_REGISTERED = SWITCH_PROVIDER === OPERATOR_SWITCH_PROVIDER;
 const SWITCH_NATIVE_CUSTOM = process.env.NEMOCLAW_SWITCH_NATIVE_CUSTOM === "1";
 const SWITCH_MOCK_PORT = parsePortEnv("NEMOCLAW_SWITCH_MOCK_PORT", 0);
 const TEST_TIMEOUT_MS = testTimeout(75 * 60_000);
@@ -117,15 +124,6 @@ interface ChatCompletionResponse {
 
 interface AnthropicResponse {
   content?: Array<{ text?: unknown }>;
-}
-
-interface SandboxRegistry {
-  sandboxes?: Record<
-    string,
-    {
-      nativeNvidiaProviderAttachment?: unknown;
-    }
-  >;
 }
 
 interface MockAnthropicProvider {
@@ -458,16 +456,22 @@ async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise
   return result.stdout.trim();
 }
 
-async function verifyNativeNvidiaAttachmentAfterSwitch(
+async function verifyNativeAttachmentAfterSwitch(
   home: string,
   sandbox: SandboxClient,
+  operator?: ReturnType<typeof operatorInferenceSwitchFixture>,
+  operatorId?: string,
 ): Promise<void> {
+  let observed: unknown;
+  let expected: object;
   switch (SWITCH_PROVIDER) {
     case PUBLIC_NVIDIA_SWITCH_PROVIDER: {
       const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
-      const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as SandboxRegistry;
-      expect(
-        await readPublicNvidiaSwitchAttachmentEvidence({
+      const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
+        sandboxes?: Record<string, { nativeNvidiaProviderAttachment?: unknown }>;
+      };
+      observed = {
+        evidence: await readPublicNvidiaSwitchAttachmentEvidence({
           artifactName: "native-nvidia-provider-attachment-after-switch",
           env: commandEnv(home),
           logicalProvider: SWITCH_PROVIDER,
@@ -475,50 +479,42 @@ async function verifyNativeNvidiaAttachmentAfterSwitch(
           sandbox,
           sandboxName: SANDBOX_NAME,
         }),
-      ).toBe(PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE);
+      };
+      expected = { evidence: PUBLIC_NVIDIA_SWITCH_ATTACHMENT_EVIDENCE };
+      break;
     }
+    case OPERATOR_SWITCH_PROVIDER:
+      observed = await operator!.evidence();
+      expected = operator!.expected(operatorId!);
+      break;
+    default:
+      return;
   }
+  expect(observed).toMatchObject(expected);
 }
 
-// Source tests own serialized config and registry/session field values. This
-// live owner retains the actual configuration read and real gateway requests.
+// Validate the sandbox credential before the real gateway request.
 async function recordOpenClawConfig(
   sandbox: SandboxClient,
   home: string,
   expected: {
-    model: string;
     inferenceApi: string;
     artifactName: string;
     nativeNvidia?: boolean;
     nativeCustomEndpoint?: string;
+    registered?: boolean;
   },
 ): Promise<void> {
   const configResult = await readOpenClawConfig(sandbox, SANDBOX_NAME, {
     nativeNvidia: expected.nativeNvidia,
     nativeCustomApi: expected.nativeCustomEndpoint ? expected.inferenceApi : undefined,
+    registeredProvider: expected.registered ? SWITCH_PROVIDER : undefined,
+    credentialEnv: expected.registered ? OPERATOR_SWITCH_CREDENTIAL_ENV : undefined,
     artifactName: expected.artifactName,
     env: commandEnv(home),
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   expect(configResult.exitCode, resultText(configResult)).toBe(0);
-}
-
-function httpStatusFromResponse(response: string): string {
-  return (
-    response
-      .split("\n")
-      .filter((line) => line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
-      .at(-1)
-      ?.replace("__NEMOCLAW_HTTP_STATUS__=", "")
-      .trim() ?? ""
-  );
-}
-
-function httpBodyFromResponse(response: string): string {
-  return response
-    .split("\n")
-    .filter((line) => !line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
-    .join("\n");
 }
 
 function parseChatContent(raw: string): string {
@@ -565,7 +561,7 @@ async function checkSandboxInference(
         };
   const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
   const curlCommand = nativeCustomEndpoint
-    ? `curl -sS -o "$tmp" -w '%{http_code}' --max-time 90 ${shellQuote(`${nativeCustomEndpoint}/v1/messages`)} -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -H "$AUTH_HEADER" --data-binary @/tmp/nemoclaw-switch-payload.json`
+    ? `curl -sS -o "$tmp" -w '%{http_code}' --max-time 90 ${shellQuote(`${nativeCustomEndpoint}${SWITCH_REGISTERED ? "/chat/completions" : "/v1/messages"}`)} -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -H "$AUTH_HEADER" --data-binary @/tmp/nemoclaw-switch-payload.json`
     : SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
       ? `curl -sS -o "$tmp" -w '%{http_code}' --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-binary @/tmp/nemoclaw-switch-payload.json`
       : SWITCH_INFERENCE_API === "anthropic-messages"
@@ -576,8 +572,10 @@ async function checkSandboxInference(
     ...(nativeCustomEndpoint
       ? [
           nativeHostedAuthHeaderScript({
-            credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-            api: "anthropic-messages",
+            credentialEnv: SWITCH_REGISTERED
+              ? OPERATOR_SWITCH_CREDENTIAL_ENV
+              : "COMPATIBLE_ANTHROPIC_API_KEY",
+            api: SWITCH_REGISTERED ? "openai-completions" : "anthropic-messages",
           }),
         ]
       : SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
@@ -681,6 +679,7 @@ async function checkOpenClawGatewayInference(
     inferenceApi: string;
     artifactName: string;
     phase: string;
+    provider?: string;
   },
   mockProvider: MockAnthropicProvider | undefined,
   baselineProvider?: Pick<FakeOpenAiCompatibleServer, "requests">,
@@ -772,7 +771,8 @@ exit "$rc"
         request.model === expected.model,
     );
   const expectedOpenClawProvider =
-    expected.inferenceApi === "anthropic-messages" ? "anthropic" : "inference";
+    expected.provider ??
+    (expected.inferenceApi === "anthropic-messages" ? "anthropic" : "inference");
   if (
     result.exitCode === 0 &&
     modelRun?.provider === expectedOpenClawProvider &&
@@ -800,11 +800,6 @@ exit "$rc"
   );
 }
 
-// The pure reply-matching and mock-baseline-config assertions that previously
-// lived here as test(...) blocks (which only run under the opt-in live lane)
-// are covered in the fast e2e-support project instead:
-// test/e2e/support/openclaw-inference-switch-helpers.test.ts.
-
 function isExternalProviderValidationFailure(text: string): boolean {
   return (
     /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
@@ -823,6 +818,8 @@ async function runOpenClawInferenceSetWithRetry(
   const attempts = inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS);
   const compatibleCredentialEnv = (() => {
     switch (SWITCH_PROVIDER) {
+      case OPERATOR_SWITCH_PROVIDER:
+        return OPERATOR_SWITCH_CREDENTIAL_ENV;
       case "compatible-endpoint":
         return "COMPATIBLE_API_KEY";
       case "compatible-anthropic-endpoint":
@@ -860,7 +857,7 @@ async function runOpenClawInferenceSetWithRetry(
       runNemoclaw(host, home, args, {
         artifactName: `nemoclaw-inference-set-${attempt}`,
         env: {
-          ...compatibleAnthropicSwitchEnv(switchBinding),
+          ...compatibleAnthropicSwitchEnv(SWITCH_REGISTERED ? null : switchBinding),
           ...(SWITCH_NATIVE_CUSTOM && switchBinding
             ? {
                 NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: new URL(switchBinding.endpointUrl)
@@ -911,7 +908,7 @@ test(
         "when staged, the authenticated baseline fixture receives each selected-model OpenClaw gateway request",
         "nemoclaw inference set switches the running sandbox route",
         "OpenClaw gateway is supervisor-restarted after every changed inference configuration",
-        "NemoClaw reports the switched provider/model",
+        "OpenClaw consumes the selected provider and model through its native attachment",
         "sandbox inference returns PONG from the switched model",
         "OpenClaw gateway model inference answers through the switched route without agent tools",
       ],
@@ -927,26 +924,33 @@ test(
         ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
         : null;
     const useMockBaseline =
+      SWITCH_REGISTERED ||
       SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER ||
       (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1");
-    // OpenShell reaches this fixture from its gateway network namespace, where
-    // the runner's loopback address is not routable.
     const nativeBaselineHost = useMockBaseline
       ? (await discoverHostAddress(host, "native-baseline-endpoint-address")).address
       : undefined;
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startMockOpenClawBaselineProvider(progress, nativeBaselineHost)
       : undefined;
-    cleanup.trackDisposable("close baseline inference provider", async () => {
-      await baselineProvider?.close();
+    let operatorProvider: FakeOpenAiCompatibleServer | undefined;
+    cleanup.trackDisposable("close inference providers", async () => {
+      await Promise.all([baselineProvider?.close(), operatorProvider?.close()]);
     });
+    operatorProvider = SWITCH_REGISTERED
+      ? await startMockOpenClawBaselineProvider(
+          progress,
+          nativeBaselineHost,
+          OPERATOR_SWITCH_API_KEY,
+        )
+      : undefined;
     const baseline = baselineProvider
       ? mockBaselineInference(baselineProvider.baseUrl)
       : requireHostedInferenceConfig({
           required: (name) => publicApiKey ?? secrets.required(name),
         });
     const apiKey = baseline.apiKey;
-    const redactionValues = [apiKey, publicApiKey].filter(
+    const redactionValues = [apiKey, publicApiKey, OPERATOR_SWITCH_API_KEY].filter(
       (value): value is string => typeof value === "string",
     );
 
@@ -1027,7 +1031,6 @@ test(
     );
     const verifyInitialRoute = async (artifactSuffix: string): Promise<void> => {
       await recordOpenClawConfig(sandbox, home, {
-        model: baseline.model,
         inferenceApi: "openai-completions",
         artifactName: `read-openclaw-initial-route-${artifactSuffix}`,
         nativeCustomEndpoint: nativeBaselineHost ? baseline.endpointUrl : undefined,
@@ -1080,13 +1083,25 @@ test(
         endpointUrl: mockProvider.endpointUrl,
       });
     }
-    // Only the explicit Anthropic bridge supplies endpoint metadata. The
-    // compatible baseline reuses its registered OpenShell provider, while the
-    // public NVIDIA provider has no caller-supplied endpoint identity.
+    const operator = SWITCH_REGISTERED
+      ? operatorInferenceSwitchFixture(host, {
+          home,
+          env: commandEnv(home),
+          endpointUrl: operatorProvider!.baseUrl,
+          credentialValue: OPERATOR_SWITCH_API_KEY,
+          sandboxName: SANDBOX_NAME,
+          model: SWITCH_MODEL,
+        })
+      : undefined;
+    cleanup.trackDisposable("remove fixture-owned operator provider", async () => {
+      await operator?.cleanup();
+    });
+    const operatorId = await operator?.create();
     const switchBinding =
-      SWITCH_PROVIDER === "compatible-anthropic-endpoint"
+      operator ??
+      (SWITCH_PROVIDER === "compatible-anthropic-endpoint"
         ? await prepareCompatibleAnthropicSwitchBinding(host, home, mockProvider)
-        : null;
+        : null);
     switchBinding && redactionValues.push(switchBinding.credentialValue);
 
     progress.phase("switch the route and verify restart semantics");
@@ -1119,29 +1134,26 @@ test(
     }
 
     progress.phase("inspect route configuration and recorded state");
-    const route = await getRouteOutput(host, {
+    await getRouteOutput(host, {
       env: commandEnv(home),
       timeoutMs: COMMAND_TIMEOUT_MS,
     });
-    expect(route.exitCode, resultText(route)).toBe(0);
-    const routeState = JSON.parse(route.stdout) as { provider?: unknown; model?: unknown };
-    expect(routeState.provider).toBe(SWITCH_PROVIDER);
-    expect(routeState.model).toBe(SWITCH_MODEL);
     await recordOpenClawConfig(sandbox, home, {
-      model: SWITCH_MODEL,
       inferenceApi: SWITCH_INFERENCE_API,
       artifactName: "read-openclaw-config-after-inference-switch",
       nativeNvidia: SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER,
-      nativeCustomEndpoint: SWITCH_NATIVE_CUSTOM ? switchBinding!.endpointUrl : undefined,
+      registered: SWITCH_REGISTERED,
+      nativeCustomEndpoint:
+        SWITCH_NATIVE_CUSTOM || SWITCH_REGISTERED ? switchBinding!.endpointUrl : undefined,
     });
-    await verifyNativeNvidiaAttachmentAfterSwitch(home, sandbox);
+    await verifyNativeAttachmentAfterSwitch(home, sandbox, operator, operatorId);
 
     progress.phase("prove sandbox and OpenClaw gateway inference");
     const inference = await checkSandboxInference(
       sandbox,
       artifacts,
       home,
-      SWITCH_NATIVE_CUSTOM ? switchBinding!.endpointUrl : undefined,
+      SWITCH_NATIVE_CUSTOM || SWITCH_REGISTERED ? switchBinding!.endpointUrl : undefined,
     );
     if (inference !== "ok") {
       await artifacts.target.complete({
@@ -1162,8 +1174,10 @@ test(
         inferenceApi: SWITCH_INFERENCE_API,
         artifactName: "openclaw-gateway-inference-after-switch",
         phase: "prove sandbox and OpenClaw gateway inference",
+        provider: SWITCH_REGISTERED ? SWITCH_PROVIDER : undefined,
       },
       mockProvider,
+      operatorProvider,
     );
     if (gatewayInference !== "ok") {
       await artifacts.target.complete({
@@ -1175,6 +1189,47 @@ test(
       skip(gatewayInference.skipped);
     }
 
+    switch (SWITCH_PROVIDER) {
+      case OPERATOR_SWITCH_PROVIDER: {
+        const replacementId = await operator!.replace();
+        await artifacts.writeJson("operator-provider-replacement.json", {
+          originalProviderId: operatorId,
+          replacementProviderId: replacementId,
+        });
+        const beforeDenied = operatorProvider!.requests().length;
+        const denied = await host.nemoclaw(
+          [
+            "inference",
+            "set",
+            "--provider",
+            SWITCH_PROVIDER,
+            "--model",
+            SWITCH_MODEL,
+            "--sandbox",
+            SANDBOX_NAME,
+            "--endpoint-url",
+            operator!.endpointUrl,
+            "--credential-env",
+            OPERATOR_SWITCH_CREDENTIAL_ENV,
+            "--inference-api",
+            "openai-completions",
+          ],
+          {
+            artifactName: "operator-replaced-identity-denial",
+            env: commandEnv(home),
+            redactionValues,
+            timeoutMs: COMMAND_TIMEOUT_MS,
+          },
+        );
+        expect(denied.exitCode).not.toBe(0);
+        expect(resultText(denied)).toContain(
+          "Recorded registered inference provider identity or profile changed",
+        );
+        expect(operatorProvider!.requests()).toHaveLength(beforeDenied);
+        await operator!.cleanup();
+        break;
+      }
+    }
     progress.phase("apply sandbox retention and record the result");
     if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
       await resetOpenClawInferenceSwitchState(host, sandbox, home, "final");

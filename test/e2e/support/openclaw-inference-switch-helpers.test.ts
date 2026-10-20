@@ -10,11 +10,14 @@ import { redactString } from "../fixtures/redaction.ts";
 import { patchOpenClawInferenceConfig } from "../../../src/lib/actions/inference-set.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 
+import { OPERATOR_SWITCH_API_KEY } from "../fixtures/registered-inference.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
 import {
   getRouteOutput,
   readOpenClawConfig,
+  httpStatusFromResponse,
+  httpBodyFromResponse,
   agentReplyContainsToken,
   anthropicToolCount,
   classifyExhaustedPostSwitchEvidence,
@@ -236,54 +239,70 @@ describe("openclaw-inference-switch gateway model-run output", () => {
 });
 
 describe("openclaw-inference-switch mock-Anthropic baseline", () => {
-  it("serves authenticated PONG replies for the lifecycle gateway checks", async () => {
-    const progress = startTestProgress("OpenClaw baseline", ["serve baseline", "verify baseline"], {
-      logLine: () => undefined,
-    });
-    const baseline = await startMockOpenClawBaselineProvider(progress);
-    try {
-      const endpoint = new URL(`${baseline.baseUrl}/chat/completions`);
-      expect(endpoint.hostname).toBe("host.openshell.internal");
-      endpoint.hostname = "127.0.0.1";
-      const payload = {
-        model: MOCK_BASELINE_MODEL,
-        messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-        stream: true,
-      };
-      const denied = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      expect(denied.status).toBe(401);
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${MOCK_BASELINE_API_KEY}`,
-          "Content-Type": "application/json",
+  it.each([undefined, OPERATOR_SWITCH_API_KEY])(
+    "serves authenticated PONG replies using the selected fixture credential: %s",
+    async (apiKey) => {
+      const progress = startTestProgress(
+        "OpenClaw baseline",
+        ["serve baseline", "verify baseline"],
+        {
+          logLine: () => undefined,
         },
-        body: JSON.stringify(payload),
-      });
-      expect(response.status).toBe(200);
-      const chunks = (await response.text())
-        .split("\n\n")
-        .filter((chunk) => chunk.startsWith("data: {"))
-        .map((chunk) => JSON.parse(chunk.slice("data: ".length)));
-      expect(chunks.map((chunk) => chunk.choices[0].delta.content ?? "").join("")).toBe("PONG");
-      expect(baseline.requests()).toContainEqual(
-        expect.objectContaining({
-          auth: "ok",
-          method: "POST",
-          path: "/v1/chat/completions",
-          model: MOCK_BASELINE_MODEL,
-          stream: true,
-        }),
       );
-    } finally {
-      await baseline.close();
-      progress.stop();
-    }
-  });
+      const baseline = await startMockOpenClawBaselineProvider(progress, undefined, apiKey);
+      try {
+        const endpoint = new URL(`${baseline.baseUrl}/chat/completions`);
+        expect(endpoint.hostname).toBe("host.openshell.internal");
+        endpoint.hostname = "127.0.0.1";
+        const payload = {
+          model: MOCK_BASELINE_MODEL,
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          stream: true,
+        };
+        const denied = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        expect(denied.status).toBe(401);
+        const wrongCredential = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey ? MOCK_BASELINE_API_KEY : OPERATOR_SWITCH_API_KEY}`,
+          },
+          body: JSON.stringify(payload),
+        });
+        expect(wrongCredential.status).toBe(401);
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey ?? MOCK_BASELINE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+        expect(response.status).toBe(200);
+        const chunks = (await response.text())
+          .split("\n\n")
+          .filter((chunk) => chunk.startsWith("data: {"))
+          .map((chunk) => JSON.parse(chunk.slice("data: ".length)));
+        expect(chunks.map((chunk) => chunk.choices[0].delta.content ?? "").join("")).toBe("PONG");
+        expect(baseline.requests()).toContainEqual(
+          expect.objectContaining({
+            auth: "ok",
+            method: "POST",
+            path: "/v1/chat/completions",
+            model: MOCK_BASELINE_MODEL,
+            stream: true,
+          }),
+        );
+      } finally {
+        await baseline.close();
+        progress.stop();
+      }
+    },
+  );
 
   it("uses an authenticated local baseline with the compatible env wiring", () => {
     expect(mockBaselineInference("http://127.0.0.1:34567/v1")).toEqual({
@@ -389,6 +408,7 @@ function sandboxForOpenClawConfig(config: object, handle = scopedNativeHandle) {
             env: {
               ...process.env,
               NVIDIA_INFERENCE_API_KEY: handle,
+              NEMOCLAW_E2E_OPERATOR_TOKEN: handle,
               COMPATIBLE_ANTHROPIC_API_KEY: handle,
               COMPATIBLE_API_KEY: handle,
             },
@@ -527,3 +547,41 @@ it.each(["", "nvapi-fixture-secret", "openshell:resolve:env:NVIDIA_INFERENCE_API
     ).rejects.toThrow();
   },
 );
+
+it.each([
+  "openshell:resolve:env:v7_NEMOCLAW_E2E_OPERATOR_TOKEN",
+  "raw-key",
+  "openshell:resolve:env:v7_OTHER_TOKEN",
+])(
+  "reads registered OpenClaw configuration only with the matching scoped credential: %s",
+  async (handle) => {
+    const sandbox = sandboxForOpenClawConfig(
+      { models: { providers: { "operator-prod": { apiKey: handle } } } },
+      handle,
+    );
+    const operation = readOpenClawConfig(sandbox as never, "switch-test", {
+      artifactName: "registered-config",
+      env: {},
+      timeoutMs: 1000,
+      registeredProvider: "operator-prod",
+      credentialEnv: "NEMOCLAW_E2E_OPERATOR_TOKEN",
+    });
+    const outcome = await operation.then(
+      (result) => JSON.parse(result.stdout),
+      () => "rejected",
+    );
+    expect(outcome).toEqual(
+      handle.startsWith("openshell:resolve:env:v7_NEMOCLAW_")
+        ? { models: { providers: { "operator-prod": {} } } }
+        : "rejected",
+    );
+  },
+);
+
+it("reads the final curl status while preserving only the response body", () => {
+  const response =
+    '{"model":"selected"}\n__NEMOCLAW_HTTP_STATUS__=100\n__NEMOCLAW_HTTP_STATUS__=200';
+  expect(httpStatusFromResponse(response)).toBe("200");
+  expect(httpBodyFromResponse(response)).toBe('{"model":"selected"}');
+  expect(httpStatusFromResponse("no status")).toBe("");
+});

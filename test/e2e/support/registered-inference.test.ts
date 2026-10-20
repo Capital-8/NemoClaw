@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,6 +16,9 @@ import {
 import { customNativeProvider } from "../../../src/lib/inference/native-provider/custom.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
+  operatorInferenceSwitchFixture,
+  OPERATOR_SWITCH_PROVIDER,
+  OPERATOR_SWITCH_CREDENTIAL_ENV,
   registeredCompatibleChatCommand,
   registeredCompatibleResponseCommand,
   readRegisteredLocalRoute,
@@ -331,4 +335,159 @@ it("preserves the registered native curl caller used by DNS and runtime identity
     ),
     expect.objectContaining({ artifactName: "native-curl" }),
   );
+});
+
+function operatorFixture() {
+  let profile: any;
+  let providerId: string | undefined;
+  let created = 0;
+  let attached = false;
+  const command = vi.fn(async (_executable: string, args: string[], options: any) => {
+    const result = (stdout = "", exitCode = 0) => ({ stdout, stderr: "", exitCode });
+    const operation = args.find((arg) =>
+      ["import", "export", "get", "create", "list", "detach", "delete"].includes(arg),
+    );
+    switch (operation) {
+      case "import":
+        profile = JSON.parse(fs.readFileSync(args[args.indexOf("--file") + 1]!, "utf8"));
+        return result();
+      case "export":
+        return result(JSON.stringify(profile));
+      case "get":
+        return providerId
+          ? result(
+              [
+                `Name: ${OPERATOR_SWITCH_PROVIDER}`,
+                `Type: ${profile.id}`,
+                `Id: ${providerId}`,
+                "Resource version: 1",
+                `Credential keys: ${OPERATOR_SWITCH_CREDENTIAL_ENV}`,
+                "Config keys: <none>",
+              ].join("\n"),
+            )
+          : result("provider not found", 1);
+      case "create":
+        expect(options.env[OPERATOR_SWITCH_CREDENTIAL_ENV]).toBe("synthetic-key");
+        providerId = `fixture-${++created}`;
+        return result();
+      case "list":
+        return result(attached ? OPERATOR_SWITCH_PROVIDER : "");
+      case "detach":
+        attached = false;
+        return result();
+      case "delete":
+        providerId = undefined;
+        return result();
+      default:
+        throw new Error("Unexpected fixture command");
+    }
+  });
+  const fixture = operatorInferenceSwitchFixture(
+    { command, openshellCommandPath: "openshell" } as unknown as HostCliClient,
+    {
+      home: directory,
+      env: { HOME: directory, OPENSHELL_GATEWAY: "nemoclaw" },
+      endpointUrl: "http://10.1.2.3:18000/v1",
+      credentialValue: "synthetic-key",
+      sandboxName: "test-sandbox",
+      model: "test-model",
+    },
+  );
+  return {
+    fixture,
+    command,
+    attach: () => {
+      attached = true;
+    },
+    changeProfile: () => {
+      profile.endpoints[0].port = 18001;
+    },
+    replaceOutsideFixture: () => {
+      providerId = "operator-owned-replacement";
+    },
+  };
+}
+
+it("creates an inference profile with exact endpoint and environment-only synthetic credentials", async () => {
+  const { fixture, command } = operatorFixture();
+  const id = await fixture.create();
+  expect(id).toBe("fixture-1");
+  const imported = command.mock.calls.find((call) => call[1].includes("import"))!;
+  const profile = JSON.parse(
+    fs.readFileSync(imported[1][imported[1].indexOf("--file") + 1]!, "utf8"),
+  );
+  expect(profile).toMatchObject({
+    inference_capable: true,
+    endpoints: [{ host: "10.1.2.3", port: 18000, allowed_ips: ["10.1.2.3/32"] }],
+    credentials: [{ env_vars: [OPERATOR_SWITCH_CREDENTIAL_ENV], auth_style: "bearer" }],
+  });
+  expect(command.mock.calls.map((call) => call[1].join(" ")).join("\n")).not.toContain(
+    "synthetic-key",
+  );
+  expect(imported[2].env[OPERATOR_SWITCH_CREDENTIAL_ENV]).toBeUndefined();
+});
+
+it("replaces only its attached immutable provider and cleans the new unattached identity", async () => {
+  const { fixture, command, attach } = operatorFixture();
+  await fixture.create();
+  attach();
+  expect(await fixture.replace()).toBe("fixture-2");
+  await fixture.cleanup();
+  expect(command.mock.calls.filter((call) => call[1].includes("delete"))).toHaveLength(2);
+  expect(command.mock.calls.find((call) => call[1].includes("detach"))![1]).toEqual([
+    "sandbox",
+    "provider",
+    "detach",
+    "test-sandbox",
+    OPERATOR_SWITCH_PROVIDER,
+    "-g",
+    "nemoclaw",
+  ]);
+});
+
+it("refuses replacement and cleanup when another operator owns the current provider identity", async () => {
+  const { fixture, command, replaceOutsideFixture } = operatorFixture();
+  await fixture.create();
+  replaceOutsideFixture();
+  await expect(fixture.replace()).rejects.toThrow("unowned");
+  await expect(fixture.cleanup()).rejects.toThrow("unowned");
+  expect(
+    command.mock.calls.filter((call) => call[1].includes("delete") || call[1].includes("detach")),
+  ).toEqual([]);
+});
+
+it("cleans its provider attachment before deletion after an interrupted selection", async () => {
+  const { fixture, command, attach } = operatorFixture();
+  await fixture.create();
+  attach();
+  await fixture.cleanup();
+  expect(
+    command.mock.calls.map((call) => call[1][2]).filter((operation) => operation === "detach"),
+  ).toEqual(["detach"]);
+  expect(command.mock.calls.filter((call) => call[1].includes("delete"))).toHaveLength(1);
+});
+
+it("binds the recorded selection to the original provider, exported profile and live attachment", async () => {
+  const { fixture, attach } = operatorFixture();
+  const id = await fixture.create();
+  attach();
+  fs.mkdirSync(path.join(directory, ".nemoclaw"));
+  fs.writeFileSync(
+    path.join(directory, ".nemoclaw", "sandboxes.json"),
+    JSON.stringify({ sandboxes: { "test-sandbox": fixture.expected(id).selected } }),
+  );
+  expect(await fixture.evidence()).toMatchObject(fixture.expected(id));
+});
+
+it("does not recompute expected profile identity from a later changed export", async () => {
+  const { fixture, attach, changeProfile } = operatorFixture();
+  const id = await fixture.create();
+  attach();
+  fs.mkdirSync(path.join(directory, ".nemoclaw"));
+  fs.writeFileSync(
+    path.join(directory, ".nemoclaw", "sandboxes.json"),
+    JSON.stringify({ sandboxes: { "test-sandbox": fixture.expected(id).selected } }),
+  );
+  changeProfile();
+  expect(await fixture.evidence()).not.toMatchObject(fixture.expected(id));
 });

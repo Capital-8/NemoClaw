@@ -159,9 +159,10 @@ export const MOCK_BASELINE_MODEL = "openclaw-switch-baseline-model";
 export function startMockOpenClawBaselineProvider(
   progress: FakeOpenAiCompatibleServerOptions["progress"],
   publicHost = "host.openshell.internal",
+  apiKey = MOCK_BASELINE_API_KEY,
 ) {
   return startFakeOpenAiCompatibleServer({
-    apiKey: MOCK_BASELINE_API_KEY,
+    apiKey,
     chatContent: "PONG",
     host: "0.0.0.0",
     model: MOCK_BASELINE_MODEL,
@@ -215,23 +216,25 @@ export async function readOpenClawConfig(
     artifactName: string;
     nativeNvidia?: boolean;
     nativeCustomApi?: string;
+    registeredProvider?: string;
+    credentialEnv?: string;
   },
 ): Promise<ShellProbeResult> {
   return sandbox.exec(
     sandboxName,
-    options.nativeNvidia || options.nativeCustomApi
+    options.nativeNvidia || options.nativeCustomApi || options.registeredProvider
       ? [
           "node",
           "-e",
           [
             'const fs = require("node:fs");',
             'const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));',
-            `const provider = config.models?.providers?.${options.nativeCustomApi === "anthropic-messages" ? "anthropic" : "inference"};`,
+            `const provider = config.models?.providers?.[${JSON.stringify(options.registeredProvider ?? (options.nativeCustomApi === "anthropic-messages" ? "anthropic" : "inference"))}];`,
             // OpenShell retains scoped handles across same-provider revisions.
             // Check their form here; the caller also proves provider attachment
             // and authenticated inference through the actual OpenClaw gateway.
             // Keep both values inside the sandbox before artifact redaction.
-            `const credentialEnv = ${JSON.stringify(options.nativeCustomApi ? (options.nativeCustomApi === "anthropic-messages" ? "COMPATIBLE_ANTHROPIC_API_KEY" : "COMPATIBLE_API_KEY") : "NVIDIA_INFERENCE_API_KEY")};`,
+            `const credentialEnv = ${JSON.stringify(options.credentialEnv ?? (options.nativeCustomApi ? (options.nativeCustomApi === "anthropic-messages" ? "COMPATIBLE_ANTHROPIC_API_KEY" : "COMPATIBLE_API_KEY") : "NVIDIA_INFERENCE_API_KEY"))};`,
             "const handle = process.env[credentialEnv];",
             'const scoped = new RegExp("^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_" + credentialEnv + "$");',
             'require("node:assert/strict").ok(typeof handle === "string" && scoped.test(handle), "native exec credential is not scoped");',
@@ -243,4 +246,22 @@ export async function readOpenClawConfig(
       : ["cat", "/sandbox/.openclaw/openclaw.json"],
     { artifactName: options.artifactName, env: options.env, timeoutMs: options.timeoutMs },
   );
+}
+
+export function httpStatusFromResponse(response: string): string {
+  return (
+    response
+      .split("\n")
+      .filter((line) => line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
+      .at(-1)
+      ?.replace("__NEMOCLAW_HTTP_STATUS__=", "")
+      .trim() ?? ""
+  );
+}
+
+export function httpBodyFromResponse(response: string): string {
+  return response
+    .split("\n")
+    .filter((line) => !line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
+    .join("\n");
 }

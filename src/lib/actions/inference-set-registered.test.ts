@@ -136,6 +136,24 @@ function collisionFixture() {
 }
 
 describe("registered inference selection transaction", () => {
+  it("preserves the recorded route and configuration when the operator provider was replaced", async () => {
+    const f = fixture();
+    await runInferenceSet(f.options, f.deps);
+    const before = structuredClone({ entry: f.entry, config: f.config });
+    f.state.id = "replacement-provider";
+    vi.clearAllMocks();
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(
+      "Recorded registered inference provider identity or profile changed",
+    );
+    expect({ entry: f.entry, config: f.config }).toEqual(before);
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(f.deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(f.deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+    expect(f.deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
   it.each(["openclaw", "hermes"])(
     "attaches an explicit operator route for %s without shared inference mutation",
     async (agent) => {

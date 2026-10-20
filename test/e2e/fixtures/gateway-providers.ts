@@ -266,19 +266,22 @@ export async function createExtraGatewayProvider(
   options: {
     artifactName: string;
     env: NodeJS.ProcessEnv;
+    profilePath?: string;
+    credentialEnv?: string;
   },
 ): Promise<void> {
   assertProviderName(providerName);
-  const credential = options.env[EXTRA_PROVIDER_CREDENTIAL_ENV];
+  const credentialEnv = options.credentialEnv ?? EXTRA_PROVIDER_CREDENTIAL_ENV;
+  const profilePath = options.profilePath ?? EXTRA_PROVIDER_PROFILE;
+  if (!CREDENTIAL_ENV.test(credentialEnv)) throw new Error("Unsafe fixture credential environment");
+  const credential = options.env[credentialEnv];
   if (!credential) {
-    throw new Error(`Missing provider credential env value: ${EXTRA_PROVIDER_CREDENTIAL_ENV}`);
+    throw new Error(`Missing provider credential env value: ${credentialEnv}`);
   }
-  const contract = parseCheckedInProviderProfileContract(
-    fs.readFileSync(EXTRA_PROVIDER_PROFILE, "utf8"),
-  );
+  const contract = parseCheckedInProviderProfileContract(fs.readFileSync(profilePath, "utf8"));
   if (!contract) throw new Error("The E2E extra-provider profile is invalid.");
   const profileEnv = { ...options.env };
-  delete profileEnv[EXTRA_PROVIDER_CREDENTIAL_ENV];
+  delete profileEnv[credentialEnv];
   const run = (args: string[], artifactName: string, env: NodeJS.ProcessEnv) =>
     host.command(host.openshellCommandPath, scopeGatewayOpenshellArgs(args, "nemoclaw"), {
       artifactName,
@@ -287,7 +290,7 @@ export async function createExtraGatewayProvider(
       timeoutMs: 60_000,
     });
   const imported = await run(
-    ["provider", "profile", "import", "--file", EXTRA_PROVIDER_PROFILE],
+    ["provider", "profile", "import", "--file", profilePath],
     `${options.artifactName}-profile-import`,
     profileEnv,
   );
@@ -314,7 +317,7 @@ export async function createExtraGatewayProvider(
       "--type",
       contract.profileId,
       "--credential",
-      EXTRA_PROVIDER_CREDENTIAL_ENV,
+      credentialEnv,
     ],
     options.artifactName,
     options.env,
