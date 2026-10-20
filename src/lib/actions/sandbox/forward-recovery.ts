@@ -768,7 +768,14 @@ export async function ensureSandboxPortForwardForPort(
   // A listener this sandbox does not own is reported, never replaced. A
   // launch onto it would only fail as "occupied", and reporting the forward
   // as restored would send the dashboard token to that process (#11149).
-  if (listener === "foreign" || listener === "indeterminate") {
+  const sandbox = readForwardSandbox(sandboxName);
+  const canMigrateApi =
+    listener === "foreign" &&
+    sandbox?.agent === "hermes" &&
+    port === resolveSandboxHermesApiPort(sandbox) &&
+    (expectedBind ?? "127.0.0.1") === "127.0.0.1" &&
+    !forwardTarget.startsWith("0.0.0.0:");
+  if (listener === "indeterminate" || (listener === "foreign" && !canMigrateApi)) {
     console.error(nonOwnedForwardListenerRefusal(sandboxName, port));
     return false;
   }
@@ -785,8 +792,34 @@ export async function ensureSandboxPortForwardForPort(
       expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
     );
     const adapter = createOpenShellForwardAdapterForAuthority(runtime);
-    const assertCurrent = async () =>
+    const assertCurrent = async () => {
       assertSandboxForwardAuthorityCurrent(sandboxName, gatewayName, authority);
+      if (canMigrateApi) {
+        const current = readForwardSandbox(sandboxName);
+        if (current?.agent !== "hermes" || resolveSandboxHermesApiPort(current) !== port) {
+          throw new Error("Hermes API forward authority changed during migration");
+        }
+      }
+    };
+    if (canMigrateApi) {
+      // Loopback observation calls wildcard listeners foreign. Prove the exact
+      // wildcard identity before allowing the adapter to retire an owned PID.
+      const wildcard = { ...forward, localHost: "0.0.0.0" as const };
+      const [previous] = await adapter.observeForwards({ forwards: [wildcard], assertCurrent });
+      if (previous?.state !== "owned" && previous?.state !== "stale") {
+        console.error(nonOwnedForwardListenerRefusal(sandboxName, port));
+        return false;
+      }
+      const retirement = await adapter.retireLegacyForward({
+        forward: wildcard,
+        migrateToLoopback: true,
+        assertCurrent,
+        authorize: async () => assertCurrent(),
+      });
+      if (retirement.state !== "retired" && retirement.state !== "not_needed") {
+        throw new Error(forwardOperationFailureMessage(retirement));
+      }
+    }
     if (listener === "stale") {
       const retirement = await adapter.retireLegacyForward({
         forward,

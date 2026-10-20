@@ -246,6 +246,114 @@ describe("forward recovery through the typed adapter", () => {
     },
   );
 
+  it.each([8_642, 8_643])(
+    "migrates an owned wildcard Hermes API on port %i during recovery",
+    async (port) => {
+      mocks.getSandbox.mockReturnValue(sandboxEntry({ agent: "hermes", hermesApiPort: port }));
+      let migrated = false;
+      mocks.observeForwards.mockImplementation(async (request: ObserveOpenShellForwardsRequest) => {
+        await request.assertCurrent?.();
+        return request.forwards.map((forward) =>
+          observation(
+            forward,
+            forward.port !== port || migrated || forward.localHost === "0.0.0.0"
+              ? "owned"
+              : "foreign",
+          ),
+        );
+      });
+      mocks.retireLegacyForward.mockImplementation(
+        async (request: RetireLegacyOpenShellForwardRequest) => {
+          await request.assertCurrent?.();
+          await request.authorize(request.forward);
+          migrated = true;
+          return { state: "retired", forward: request.forward };
+        },
+      );
+      const { ensureSandboxPortForwardForPort, areSandboxLaunchForwardsHealthy } =
+        await import("./forward-recovery");
+
+      await expect(ensureSandboxPortForwardForPort("box", port)).resolves.toBe(true);
+      expect(mocks.retireLegacyForward).toHaveBeenCalledWith(
+        expect.objectContaining({
+          forward: expect.objectContaining({ sandboxName: "box", port, localHost: "0.0.0.0" }),
+          migrateToLoopback: true,
+        }),
+      );
+      expect(mocks.startForward).toHaveBeenCalledWith(
+        expect.objectContaining({
+          forward: expect.objectContaining({ port, localHost: "127.0.0.1" }),
+        }),
+      );
+      await expect(areSandboxLaunchForwardsHealthy("box")).resolves.toBe(true);
+    },
+  );
+
+  it.each(["foreign", "indeterminate"] as const)(
+    "preserves a %s wildcard Hermes API listener",
+    async (state) => {
+      mocks.getSandbox.mockReturnValue(sandboxEntry({ agent: "hermes", hermesApiPort: 8_642 }));
+      mocks.observeForwards.mockImplementation(async (request: ObserveOpenShellForwardsRequest) =>
+        request.forwards.map((forward) =>
+          observation(forward, forward.localHost === "0.0.0.0" ? state : "foreign"),
+        ),
+      );
+      const { ensureSandboxPortForwardForPort } = await import("./forward-recovery");
+      await expect(ensureSandboxPortForwardForPort("box", 8_642)).resolves.toBe(false);
+      expect(mocks.retireLegacyForward).not.toHaveBeenCalled();
+      expect(mocks.startForward).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not replace a wildcard API when retirement cannot prove release", async () => {
+    mocks.getSandbox.mockReturnValue(sandboxEntry({ agent: "hermes", hermesApiPort: 8_642 }));
+    mocks.observeForwards.mockImplementation(async (request: ObserveOpenShellForwardsRequest) =>
+      request.forwards.map((forward) =>
+        observation(forward, forward.localHost === "0.0.0.0" ? "owned" : "foreign"),
+      ),
+    );
+    mocks.retireLegacyForward.mockResolvedValue({
+      state: "failed",
+      effect: "unknown",
+      error: { kind: "ownership", message: "release unproved" },
+    });
+    const { ensureSandboxPortForwardForPort } = await import("./forward-recovery");
+    await expect(ensureSandboxPortForwardForPort("box", 8_642)).resolves.toBe(false);
+    expect(mocks.retireLegacyForward).toHaveBeenCalledOnce();
+    expect(mocks.startForward).not.toHaveBeenCalled();
+  });
+
+  it.each(["agent", "port", "gateway"])(
+    "refuses wildcard migration when %s authority changes",
+    async (field) => {
+      mocks.getSandbox.mockReturnValue(sandboxEntry({ agent: "hermes", hermesApiPort: 8_642 }));
+      mocks.observeForwards.mockImplementation(async (request: ObserveOpenShellForwardsRequest) => {
+        await request.assertCurrent?.();
+        return request.forwards.map((forward) =>
+          observation(forward, forward.localHost === "0.0.0.0" ? "owned" : "foreign"),
+        );
+      });
+      mocks.retireLegacyForward.mockImplementation(
+        async (request: RetireLegacyOpenShellForwardRequest) => {
+          mocks.getSandbox.mockReturnValue(
+            sandboxEntry({
+              agent: field === "agent" ? "openclaw" : "hermes",
+              hermesApiPort: field === "port" ? 8_643 : 8_642,
+              gatewayName: field === "gateway" ? "nemoclaw-19080" : "nemoclaw",
+              gatewayPort: field === "gateway" ? 19_080 : 8_080,
+            }),
+          );
+          await request.authorize(request.forward);
+          return { state: "retired", forward: request.forward };
+        },
+      );
+      const { ensureSandboxPortForwardForPort } = await import("./forward-recovery");
+      await expect(ensureSandboxPortForwardForPort("box", 8_642)).resolves.toBe(false);
+      expect(mocks.retireLegacyForward).toHaveBeenCalledOnce();
+      expect(mocks.startForward).not.toHaveBeenCalled();
+    },
+  );
+
   it("starts exactly once when the dashboard forward is absent", async () => {
     states.set(18_789, "absent");
     const { ensureSandboxPortForward } = await import("./forward-recovery");

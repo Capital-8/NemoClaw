@@ -4292,8 +4292,7 @@ Set `NEMOCLAW_NO_AUTO_AUDIT_LOGS=1` to prevent `$$nemoclaw <name> logs` and fail
 | `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1                                           | The OpenShell gateway uses this bind address. NemoClaw keeps Docker-driver gateways on loopback while gateway JWT auth is active.                                                                                                  |
 
 <AgentOnly variant="openclaw,hermes">
-  | `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard or
-  API forward |
+  | `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard forward |
 </AgentOnly>
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference | | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama
 inference | | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy | |
