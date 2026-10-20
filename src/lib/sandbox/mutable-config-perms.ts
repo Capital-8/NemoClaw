@@ -23,9 +23,9 @@ import fcntl
 import os
 import pwd
 import runpy
+import signal
 import stat
 import struct
-import subprocess
 import sys
 
 sandbox_identity = pwd.getpwnam("sandbox")
@@ -57,15 +57,32 @@ startup_receipt = startup["wait_for_completion"]() if startup is not None else N
 directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY
 file_flags = os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW
 
+# Load the existing checker before the integrity snapshot. Starting another
+# interpreter inside each check lets background runtime writes overlap imports.
+private_topology = None
+if stat.S_IMODE(os.stat(config_dir, follow_symlinks=False).st_mode) == 0o700:
+    private_topology = runpy.run_path(
+        "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
+    )["inspect_private_mutable_topology"]
+
+class TopologyDeadline(BaseException):
+    pass
+
+def topology_deadline(_signal, _frame):
+    raise TopologyDeadline("Hermes topology inspection timed out")
+
 def require_private_topology():
-    result = subprocess.run(
-        ["/opt/hermes/.venv/bin/python", "-I",
-         "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
-         "inspect-private-mutable-topology", "--hermes-dir", config_dir],
-        capture_output=True, timeout=5, check=False,
-    )
-    if result.returncode != 0 or result.stdout != b"same-uid-nonroot\n":
-        raise RuntimeError("Private Hermes config requires an attested same-UID runtime; rebuild with the current Hermes image")
+    previous_handler = signal.signal(signal.SIGALRM, topology_deadline)
+    signal.alarm(5)
+    try:
+        if private_topology is None:
+            raise RuntimeError("Hermes config root changed before inspection")
+        private_topology()
+    except (Exception, TopologyDeadline) as error:
+        raise RuntimeError("Private Hermes config requires an attested same-UID runtime; rebuild with the current Hermes image") from error
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 metadata_fields = ("st_dev", "st_ino", "st_uid", "st_gid", "st_mode", "st_nlink", "st_ctime_ns")
 
@@ -190,7 +207,7 @@ export function mutableHermesConfigProbeCommand(target: AgentConfigTarget): read
     throw new Error(`agent ${target.agentName} does not use the mutable Hermes config contract`);
   }
   return [
-    "/usr/bin/python3",
+    "/opt/hermes/.venv/bin/python3",
     "-I",
     "-c",
     MUTABLE_HERMES_CONFIG_PROBE,

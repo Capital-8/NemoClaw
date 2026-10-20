@@ -38,7 +38,17 @@ const localSandboxIdentity = `
 import os, pwd, types, runpy
 sandbox_uid, sandbox_gid = os.geteuid(), os.getegid()
 pwd.getpwnam = lambda name: types.SimpleNamespace(pw_uid=sandbox_uid, pw_gid=sandbox_gid)
-runpy.run_path = lambda path: {"requires_completion": lambda: True, "wait_for_completion": lambda: "fixture", "read_completion": lambda: "fixture"}
+startup_fixture = {"requires_completion": lambda: True, "wait_for_completion": lambda: "fixture", "read_completion": lambda: "fixture"}
+def topology_fixture():
+    return None
+def load_runtime_helper(path):
+    if path.endswith("hermes-startup-completion.py"):
+        if startup_fixture is None:
+            raise FileNotFoundError(2, "missing helper", path)
+        return startup_fixture
+    assert path == "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
+    return {"inspect_private_mutable_topology": lambda: topology_fixture()}
+runpy.run_path = load_runtime_helper
 `;
 
 const hermesTarget: AgentConfigTarget = {
@@ -86,7 +96,7 @@ describe("mutable Hermes config permissions", () => {
       ],
       expect.objectContaining({ timeout: 35_000, maxBuffer: 64 * 1024 }),
     );
-    expect(mutableHermesConfigProbeCommand(hermesTarget)[0]).toBe("/usr/bin/python3");
+    expect(mutableHermesConfigProbeCommand(hermesTarget)[0]).toBe("/opt/hermes/.venv/bin/python3");
   });
 
   it.each([
@@ -249,7 +259,7 @@ describe("mutable Hermes config permissions", () => {
       const codeIndex = command.indexOf("-c") + 1;
       const prelude = `
 ${localSandboxIdentity}
-import pathlib, subprocess
+import pathlib
 scenario = ${JSON.stringify(scenario)}
 calls = 0
 original_stat = os.stat
@@ -270,11 +280,10 @@ def transient_entry():
     temporary = pathlib.Path(config_dir) / ".private-entry-canary"
     temporary.write_text("private-state-canary")
     temporary.unlink()
-def topology_response(args, **kwargs):
+def topology_fixture():
     global calls
     calls += 1
     assert calls <= 2
-    assert args[3] == "inspect-private-mutable-topology"
     if calls == 2:
         mutations = {
             "created": lambda: (pathlib.Path(config_dir) / "shared-state.db-shm").write_text("private-state-canary"),
@@ -290,8 +299,7 @@ def topology_response(args, **kwargs):
         if scenario != "stable":
             info = original_stat(config_dir)
             os.utime(config_dir, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000))
-    return types.SimpleNamespace(returncode=0, stdout=b"same-uid-nonroot\\n")
-subprocess.run = topology_response
+    return None
 probe = ${JSON.stringify(command[codeIndex])}
 try:
     exec(probe)
@@ -330,6 +338,8 @@ finally:
   it.each([
     [0o3770, "unavailable", true, ""],
     [0o700, "verified", true, ""],
+    [0o700, "guard-import", true, ""],
+    [0o700, "guard-timeout", false, "Private Hermes config requires an attested same-UID runtime"],
     [0o700, "retained-image", true, ""],
     [0o3770, "root-separated", true, ""],
     [0o700, "unavailable", false, "Private Hermes config requires an attested same-UID runtime"],
@@ -392,14 +402,26 @@ finally:
       // Supply blocking inode flags as external metadata; keep file I/O real.
       const prelude = `
 ${localSandboxIdentity}
-import fcntl, os, stat, struct, subprocess, types
+import fcntl, os, stat, struct, signal, sys, types
 topology = ${JSON.stringify(topology)}
+original_load_runtime_helper = runpy.run_path
+def load_before_snapshot(path):
+    if topology == "guard-import" and path.endswith("hermes-runtime-config-guard.py"):
+        directory = sys.argv[1]
+        before = os.stat(directory)
+        transient = os.path.join(directory, ".runtime-import-fixture")
+        with open(transient, "x", encoding="utf-8") as output:
+            output.write("fixture")
+        os.unlink(transient)
+        os.utime(directory, ns=(before.st_atime_ns, before.st_mtime_ns + 1000000))
+    return original_load_runtime_helper(path)
+runpy.run_path = load_before_snapshot
 if topology == "startup-generation":
-    runpy.run_path = lambda path: {"requires_completion": lambda: True, "wait_for_completion": lambda: "old", "read_completion": lambda: "new"}
+    startup_fixture = {"requires_completion": lambda: True, "wait_for_completion": lambda: "old", "read_completion": lambda: "new"}
 elif topology == "retained-image":
-    runpy.run_path = lambda path: (_ for _ in ()).throw(FileNotFoundError(2, "missing helper", path))
+    startup_fixture = None
 elif topology == "root-separated":
-    runpy.run_path = lambda path: {"requires_completion": lambda: False}
+    startup_fixture = {"requires_completion": lambda: False}
 original_fstat = os.fstat
 original_ioctl = fcntl.ioctl
 def blocking_flags(fd, append_flag, immutable_flag):
@@ -426,10 +448,9 @@ elif topology == "wrong-user":
 elif topology == "wrong-group":
     os.getegid = lambda: sandbox_gid + 1
 calls = 0
-def topology_response(args, **kwargs):
+def topology_fixture():
     global calls
     calls += 1
-    assert args[3] == "inspect-private-mutable-topology"
     if topology == "directory-race" and calls == 2:
         os.chmod(config_dir, 0o750)
     if topology == "directory-timestamp" and calls == 2:
@@ -442,9 +463,14 @@ def topology_response(args, **kwargs):
             output.write("private-state-canary")
         os.unlink(transient)
         os.utime(config_dir, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000))
+    if topology == "guard-timeout":
+        try:
+            signal.raise_signal(signal.SIGALRM)
+        except Exception:
+            pass
     success = topology != "unavailable" and not (topology == "changed" and calls == 2)
-    return types.SimpleNamespace(returncode=0 if success else 1, stdout=b"same-uid-nonroot\\n")
-subprocess.run = topology_response
+    if not success:
+        raise RuntimeError("topology unavailable")
 if topology == "access-denied":
     os.access = lambda *args, **kwargs: False
 os.mkdir = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("probe must not create state"))
@@ -467,7 +493,9 @@ os.mkdir = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("probe m
         expect(result.stderr).not.toContain("private-entry-canary");
         expect(result.stderr).not.toContain("private-state-canary");
         expect(fs.readdirSync(configDir).sort()).toEqual([...names].sort());
-        expect(fs.statSync(configDir).mtimeMs === before).toBe(topology !== "directory-entry");
+        expect(fs.statSync(configDir).mtimeMs === before).toBe(
+          !["directory-entry", "guard-import"].includes(topology),
+        );
         expect(names.map((name) => fs.readFileSync(path.join(configDir, name), "utf8"))).toEqual([
           "fixture\n",
           "fixture\n",
