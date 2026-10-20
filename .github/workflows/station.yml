@@ -8,7 +8,7 @@ on:
       example_path:
         description: Repository example to apply on the leased DGX Station.
         type: string
-        default: examples/gtc-dc/openclaw-dgx-station.yaml
+        default: examples/gtc-dc/hermes-dgx-station.yaml
   # Dispatch requires this file on the default branch. Use an approved opt-in
   # branch for initial qualification, as the Brev workflow does.
   push:
@@ -47,7 +47,7 @@ jobs:
           # Public HTTPS origin of the Cloudflare tunnel to the Station backend.
           DGX_STATION_V1_DISPATCH_URL: ${{ vars.DGX_STATION_V1_DISPATCH_URL }}
           STATION_CANDIDATE_SHA: ${{ github.sha }}
-          STATION_EXAMPLE_PATH: ${{ inputs.example_path || 'examples/gtc-dc/openclaw-dgx-station.yaml' }}
+          STATION_EXAMPLE_PATH: ${{ inputs.example_path || 'examples/gtc-dc/hermes-dgx-station.yaml' }}
           STATION_ARTIFACT_DIR: ${{ runner.temp }}/station-e2e
         run: cargo run --locked -p nemoclaw-e2e --bin station-dispatch
       - name: Upload Station result

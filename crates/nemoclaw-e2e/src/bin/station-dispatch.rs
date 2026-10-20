@@ -198,7 +198,7 @@ async fn dispatch(backend: &Backend, request: &Value, directory: &std::path::Pat
     };
     if result.is_err() {
         let cancellation = backend
-            .request(Method::DELETE, &format!("v1/jobs/{job}"), None)
+            .request(Method::DELETE, &format!("v1/jobs/{job}"), Some(request))
             .await;
         let confirmed = cancellation
             .as_ref()
@@ -236,7 +236,7 @@ mod tests {
         use nemoclaw_e2e::http_fixture::Fixture;
         use std::sync::{Arc, Mutex};
         for outcome in [Some(true), Some(false), None] {
-            let request = json!({"candidateSha":"a".repeat(40),"examplePath":"examples/gtc-dc/openclaw-dgx-station.yaml","workflowRunId":"123456789","workflowRunAttempt":1});
+            let request = json!({"schemaVersion":4,"target":"dgx-station-v1","candidateSha":"a".repeat(40),"examplePath":"examples/gtc-dc/hermes-dgx-station.yaml","workflowRunId":"123456789","workflowRunAttempt":1});
             let status = json!({"schemaVersion":4,"jobId":job_id(&request),"request":request,"state":"completed","conclusion":if outcome==Some(true){"success"}else{"failure"},"cleanup":"succeeded"});
             let calls = Arc::new(Mutex::new(Vec::new()));
             let observed = calls.clone();
@@ -257,7 +257,14 @@ mod tests {
                         status.clone()
                     }
                     "GET" => json!({"status":status,"log":"test result"}),
-                    "DELETE" => status.clone(),
+                    "DELETE" => {
+                        if serde_json::from_slice::<Value>(&call.body).ok()
+                            != Some(status["request"].clone())
+                        {
+                            return Some((400, b"{}".to_vec()));
+                        }
+                        status.clone()
+                    }
                     _ => panic!("unexpected request"),
                 };
                 Some((200, value.to_string().into_bytes()))
@@ -296,10 +303,10 @@ mod tests {
 
     #[test]
     fn matches_the_station_handoff_job_identity() {
-        let request = json!({"candidateSha":"a".repeat(40),"examplePath":"examples/gtc-dc/openclaw-dgx-station.yaml","workflowRunId":"123456789","workflowRunAttempt":1});
+        let request = json!({"schemaVersion":4,"target":"dgx-station-v1","candidateSha":"a".repeat(40),"examplePath":"examples/gtc-dc/hermes-dgx-station.yaml","workflowRunId":"123456789","workflowRunAttempt":1});
         assert_eq!(
             job_id(&request),
-            "1d9fa04f619dc5eb6b7d30cf4b680989229bc685655e3b2f66d754d42dba7ec8"
+            "61b95ddc6d694905aca14a054e23f815a4df25e09924dd0b750d349773a0490d"
         );
     }
 
