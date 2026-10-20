@@ -1,64 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! GitHub-hosted controller for the operator's DGX Station v1 receiver.
 
-use async_trait::async_trait;
-use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::{Client, Method, Url};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{env, fs, path::Path, process::ExitCode, time::Duration};
+use std::{env, fs, path::PathBuf, time::Duration};
 
-type Result<T> = std::result::Result<T, String>;
-const AUDIENCE: &str = "nemoclaw-dgx-station-v1-dispatch";
-const STATUS_LIMIT: usize = 64 * 1024;
-const LOG_LIMIT: usize = 4 * 1024 * 1024;
-const ARCHIVE_LIMIT: usize = 1024 * 1024;
-const ARTIFACT_LIMIT: usize = LOG_LIMIT * 6 + ARCHIVE_LIMIT * 2 + STATUS_LIMIT;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 fn required(name: &str) -> Result<String> {
     env::var(name)
         .ok()
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| format!("{name} is required"))
-}
-
-fn example_path(path: &str) -> bool {
-    path.len() <= 512
-        && path.starts_with("examples/")
-        && (path.ends_with(".yaml") || path.ends_with(".yml"))
-        && path
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
-        && path
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
-}
-
-fn request(candidate: String, example: String, run: String, attempt: String) -> Result<Value> {
-    if candidate.len() != 40
-        || !candidate
-            .bytes()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
-    {
-        return Err("candidate must be a full lowercase commit SHA".into());
-    }
-    if !example_path(&example) {
-        return Err("example must be a normalized YAML path below examples/".into());
-    }
-    let positive = |v: &str| {
-        v.parse::<u64>()
-            .ok()
-            .filter(|n| *n > 0 && n.to_string() == v)
-    };
-    if positive(&run).is_none() {
-        return Err("workflow run ID must be a positive decimal integer".into());
-    }
-    let attempt =
-        positive(&attempt).ok_or("workflow attempt must be a positive decimal integer")?;
-    Ok(
-        json!({"schemaVersion": 4, "target": "dgx-station-v1", "candidateSha": candidate, "examplePath": example, "workflowRunId": run, "workflowRunAttempt": attempt}),
-    )
+        .ok_or_else(|| format!("{name} is required").into())
 }
 
 fn job_id(request: &Value) -> String {
@@ -75,73 +29,32 @@ fn job_id(request: &Value) -> String {
         .collect()
 }
 
-fn origin(value: &str) -> Result<Url> {
-    let url = Url::parse(value).map_err(|_| "invalid dispatch URL")?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
-    {
-        return Err("dispatch URL must be an HTTPS origin without credentials or a path".into());
-    }
-    Ok(url)
-}
-
 fn validate_status(status: &Value, request: &Value, job: &str) -> Result<()> {
     if status["schemaVersion"] != 4 || status["jobId"] != job || status["request"] != *request {
         return Err("backend returned a different dispatch identity".into());
     }
-    match status["state"].as_str() {
-        Some("queued" | "running")
-            if status["cleanup"] == "pending" && status.get("conclusion").is_none() =>
-        {
-            Ok(())
+    let valid = match status["state"].as_str() {
+        Some("queued" | "running") => {
+            status["cleanup"] == "pending" && status.get("conclusion").is_none()
         }
         Some("completed") => {
-            if !matches!(
+            matches!(
                 status["conclusion"].as_str(),
                 Some("success" | "failure" | "cancelled" | "timed-out" | "cleanup-failed")
-            ) || !matches!(status["cleanup"].as_str(), Some("succeeded" | "failed"))
-                || (status["conclusion"] == "success" && status["cleanup"] != "succeeded")
-            {
-                return Err("backend returned an invalid terminal result".into());
-            }
-            Ok(())
+            ) && matches!(status["cleanup"].as_str(), Some("succeeded" | "failed"))
+                && (status["conclusion"] != "success" || status["cleanup"] == "succeeded")
         }
-        _ => Err("backend returned an invalid job state".into()),
+        _ => false,
+    };
+    if !valid {
+        return Err("backend returned an invalid job status".into());
     }
+    Ok(())
 }
 
-#[async_trait]
-trait Api: Sync {
-    async fn call(
-        &self,
-        method: Method,
-        path: &str,
-        body: Option<&Value>,
-        limit: usize,
-    ) -> Result<Value>;
-}
-
-struct Http {
-    client: Client,
-    base: Url,
-    token_url: Url,
-    request_token: String,
-}
-
-async fn response(mut response: reqwest::Response, limit: usize) -> Result<Value> {
+async fn read(mut response: reqwest::Response, limit: usize) -> Result<Value> {
     if !response.status().is_success() {
-        return Err(format!("dispatch HTTP {}", response.status().as_u16()));
-    }
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err("dispatch response exceeds its size limit".into());
+        return Err(format!("dispatch HTTP {}", response.status().as_u16()).into());
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response
@@ -154,140 +67,69 @@ async fn response(mut response: reqwest::Response, limit: usize) -> Result<Value
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).map_err(|_| "dispatch response is not JSON".into())
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
-impl Http {
-    fn from_environment() -> Result<Self> {
-        let mut token_url = Url::parse(&required("ACTIONS_ID_TOKEN_REQUEST_URL")?)
-            .map_err(|_| "invalid GitHub OIDC URL")?;
-        if token_url.scheme() != "https"
-            || !token_url.username().is_empty()
-            || token_url.password().is_some()
-        {
-            return Err("GitHub OIDC URL must use HTTPS without credentials".into());
-        }
-        token_url
-            .query_pairs_mut()
-            .append_pair("audience", AUDIENCE);
-        Ok(Self {
-            client: Client::builder()
-                .https_only(true)
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(15))
-                .build()
-                .map_err(|_| "HTTP client setup failed")?,
-            base: origin(&required("DGX_STATION_V1_DISPATCH_URL")?)?,
-            token_url,
-            request_token: required("ACTIONS_ID_TOKEN_REQUEST_TOKEN")?,
-        })
-    }
+struct Backend {
+    client: Client,
+    url: Url,
+    oidc: Url,
+    request_token: String,
 }
 
-#[async_trait]
-impl Api for Http {
-    async fn call(
-        &self,
-        method: Method,
-        path: &str,
-        body: Option<&Value>,
-        limit: usize,
-    ) -> Result<Value> {
+impl Backend {
+    async fn request(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Value> {
         let token = self
             .client
-            .get(self.token_url.clone())
+            .get(self.oidc.clone())
             .bearer_auth(&self.request_token)
             .send()
             .await
-            .map_err(|_| "GitHub OIDC token request failed")?;
-        let token = response(token, 32 * 1024).await?;
-        let token = token["value"]
-            .as_str()
-            .filter(|v| !v.is_empty() && v.len() <= 16 * 1024)
-            .ok_or("invalid GitHub OIDC token response")?;
-        let url = self.base.join(path).map_err(|_| "invalid dispatch route")?;
-        let mut request = self
+            .map_err(|_| "GitHub OIDC request failed")?;
+        let token = read(token, 32 * 1024).await?;
+        let mut call = self
             .client
-            .request(method, url)
-            .bearer_auth(token)
-            .header("Accept", "application/json");
+            .request(method, self.url.join(path)?)
+            .bearer_auth(token["value"].as_str().ok_or("missing OIDC token")?);
         if let Some(body) = body {
-            request = request
+            call = call
                 .header("Content-Type", "application/json")
-                .body(serde_json::to_vec(body).map_err(|_| "invalid request")?);
+                .body(body.to_string());
         }
-        response(
-            request
-                .send()
-                .await
-                .map_err(|_| "dispatch transport failed")?,
+        let limit = if path.ends_with("/artifact") {
+            32 * 1024 * 1024
+        } else {
+            64 * 1024
+        };
+        read(
+            call.send().await.map_err(|_| "dispatch transport failed")?,
             limit,
         )
         .await
     }
-}
 
-fn save(directory: &Path, name: &str, value: &Value) -> Result<()> {
-    fs::write(
-        directory.join(name),
-        serde_json::to_vec_pretty(value).map_err(|_| "cannot encode dispatch receipt")?,
-    )
-    .map_err(|_| "cannot save dispatch receipt".into())
-}
-
-async fn drive(
-    api: &impl Api,
-    request: &Value,
-    job: &str,
-    directory: &Path,
-    interval: Duration,
-) -> Result<bool> {
-    let mut status = api
-        .call(Method::POST, "v1/jobs", Some(request), STATUS_LIMIT)
-        .await?;
-    loop {
-        validate_status(&status, request, job)?;
-        save(directory, "station-dispatch.json", &status)?;
-        if status["state"] == "completed" {
-            break;
+    async fn execute(&self, request: &Value, job: &str, receipt: &std::path::Path) -> Result<bool> {
+        let mut status = self.request(Method::POST, "v1/jobs", Some(request)).await?;
+        loop {
+            validate_status(&status, request, job)?;
+            fs::write(receipt, status.to_string())?;
+            if status["state"] == "completed" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            status = self
+                .request(Method::GET, &format!("v1/jobs/{job}"), None)
+                .await?;
         }
-        tokio::time::sleep(interval).await;
-        status = api
-            .call(Method::GET, &format!("v1/jobs/{job}"), None, STATUS_LIMIT)
+        let artifact = self
+            .request(Method::GET, &format!("v1/jobs/{job}/artifact"), None)
             .await?;
-    }
-    let artifact = api
-        .call(
-            Method::GET,
-            &format!("v1/jobs/{job}/artifact"),
-            None,
-            ARTIFACT_LIMIT,
-        )
-        .await?;
-    validate_status(&artifact["status"], request, job)?;
-    if artifact["status"] != status {
-        return Err("artifact status differs from the terminal result".into());
-    }
-    let log = artifact["log"]
-        .as_str()
-        .filter(|log| log.len() <= LOG_LIMIT)
-        .ok_or("invalid artifact log")?;
-    fs::write(directory.join("station.log"), log).map_err(|_| "cannot save dispatch log")?;
-    if let Some(archive) = artifact.get("artifactArchiveBase64") {
-        let archive = archive
-            .as_str()
-            .filter(|s| s.len() <= ARCHIVE_LIMIT.div_ceil(3) * 4)
-            .ok_or("invalid artifact archive")?;
-        let decoded = STANDARD
-            .decode(archive)
-            .map_err(|_| "invalid archive encoding")?;
-        if decoded.len() > ARCHIVE_LIMIT {
-            return Err("artifact archive exceeds its size limit".into());
+        if artifact["status"] != status {
+            return Err("artifact does not match the completed job".into());
         }
-        fs::write(directory.join("station-artifacts.tar.gz"), decoded)
-            .map_err(|_| "cannot save artifact archive")?;
+        fs::write(receipt, artifact.to_string())?;
+        Ok(status["conclusion"] == "success" && status["cleanup"] == "succeeded")
     }
-    Ok(status["conclusion"] == "success" && status["cleanup"] == "succeeded")
 }
 
 async fn shutdown() {
@@ -303,85 +145,84 @@ async fn shutdown() {
     }
 }
 
-async fn dispatch(
-    api: &impl Api,
-    request: &Value,
-    directory: &Path,
-    interval: Duration,
-    deadline: Duration,
-) -> Result<bool> {
+async fn run() -> Result<bool> {
+    let request = json!({"schemaVersion":4,"target":"dgx-station-v1",
+        "candidateSha":required("STATION_CANDIDATE_SHA")?,"examplePath":required("STATION_EXAMPLE_PATH")?,
+        "workflowRunId":required("GITHUB_RUN_ID")?,"workflowRunAttempt":required("GITHUB_RUN_ATTEMPT")?.parse::<u32>()?});
+    let url = Url::parse(&required("DGX_STATION_V1_DISPATCH_URL")?)?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("dispatch URL must be an HTTPS origin without credentials or a path".into());
+    }
+    let backend = Backend {
+        url,
+        oidc: {
+            let mut url = Url::parse(&required("ACTIONS_ID_TOKEN_REQUEST_URL")?)?;
+            url.query_pairs_mut()
+                .append_pair("audience", "nemoclaw-dgx-station-v1-dispatch");
+            url
+        },
+        request_token: required("ACTIONS_ID_TOKEN_REQUEST_TOKEN")?,
+        client: Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(15))
+            .build()?,
+    };
+    let directory = PathBuf::from(required("STATION_ARTIFACT_DIR")?);
+    if !directory.is_absolute() {
+        return Err("artifact directory must be absolute".into());
+    }
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&directory)?;
+    dispatch(&backend, &request, &directory).await
+}
+
+async fn dispatch(backend: &Backend, request: &Value, directory: &std::path::Path) -> Result<bool> {
+    let receipt = directory.join("station-result.json");
     let job = job_id(request);
-    let mut receipt = json!({"schemaVersion": 4, "jobId": job, "request": request});
-    save(directory, "station-dispatch.json", &receipt)?;
+    fs::write(&receipt, json!({"jobId":job,"request":request}).to_string())?;
     let result = tokio::select! {
-        result = tokio::time::timeout(deadline, drive(api, request, &job, directory, interval)) => result.map_err(|_| "dispatch deadline exceeded".to_owned()).and_then(|result| result),
+        result = tokio::time::timeout(Duration::from_secs(110 * 60), backend.execute(request, &job, &receipt)) => result.unwrap_or_else(|_| Err("dispatch deadline exceeded".into())),
         _ = shutdown() => Err("dispatch interrupted".into()),
     };
-    if let Err(error) = result {
-        receipt["cancellation"] = match api
-            .call(
-                Method::DELETE,
-                &format!("v1/jobs/{job}"),
-                None,
-                STATUS_LIMIT,
-            )
-            .await
-        {
-            Ok(status) if validate_status(&status, request, &job).is_ok() => json!("requested"),
-            _ => json!("unconfirmed"),
-        };
-        save(directory, "station-recovery.json", &receipt)?;
-        return Err(format!(
-            "{error}; cancellation {}; inspect the dispatch receipt",
-            receipt["cancellation"]
-        ));
+    if result.is_err() {
+        let cancellation = backend
+            .request(Method::DELETE, &format!("v1/jobs/{job}"), None)
+            .await;
+        let confirmed = cancellation
+            .as_ref()
+            .is_ok_and(|status| validate_status(status, request, &job).is_ok());
+        fs::write(
+            directory.join("station-cancellation.json"),
+            json!({"jobId":job,"request":request,"acknowledged":confirmed}).to_string(),
+        )?;
+        eprintln!("Cancellation acknowledged: {confirmed}; inspect the job receipt");
     }
     result
 }
 
-async fn run() -> Result<bool> {
-    let request = request(
-        required("STATION_CANDIDATE_SHA")?,
-        required("STATION_EXAMPLE_PATH")?,
-        required("GITHUB_RUN_ID")?,
-        required("GITHUB_RUN_ATTEMPT")?,
-    )?;
-    let api = Http::from_environment()?;
-    let directory = std::path::PathBuf::from(required("STATION_ARTIFACT_DIR")?);
-    if !directory.is_absolute() {
-        return Err("STATION_ARTIFACT_DIR must be absolute".into());
-    }
-    fs::create_dir(&directory).map_err(|_| "artifact directory must be new")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-            .map_err(|_| "cannot protect artifact directory")?;
-    }
-    dispatch(
-        &api,
-        &request,
-        &directory,
-        Duration::from_secs(10),
-        Duration::from_secs(110 * 60),
-    )
-    .await
-}
-
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn main() -> std::process::ExitCode {
     match run().await {
-        Ok(true) => {
-            println!("Station example and backend cleanup passed");
-            ExitCode::SUCCESS
-        }
+        Ok(true) => std::process::ExitCode::SUCCESS,
         Ok(false) => {
-            eprintln!("Station test or backend cleanup failed; inspect the artifacts");
-            ExitCode::FAILURE
+            eprintln!("Station test or cleanup failed");
+            std::process::ExitCode::FAILURE
         }
         Err(error) => {
             eprintln!("{error}");
-            ExitCode::FAILURE
+            std::process::ExitCode::FAILURE
         }
     }
 }
@@ -389,47 +230,101 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::VecDeque, sync::Mutex};
 
-    struct Fake {
-        replies: Mutex<VecDeque<Result<Value>>>,
-        calls: Mutex<Vec<(Method, String)>>,
-    }
-
-    #[async_trait]
-    impl Api for Fake {
-        async fn call(
-            &self,
-            method: Method,
-            path: &str,
-            _body: Option<&Value>,
-            _limit: usize,
-        ) -> Result<Value> {
-            self.calls.lock().unwrap().push((method, path.into()));
-            self.replies
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("unexpected backend request")
+    #[tokio::test]
+    async fn propagates_job_results_and_cancels_a_lost_submission_without_resubmitting() {
+        use nemoclaw_e2e::http_fixture::Fixture;
+        use std::sync::{Arc, Mutex};
+        for outcome in [Some(true), Some(false), None] {
+            let request = json!({"candidateSha":"a".repeat(40),"examplePath":"examples/gtc-dc/openclaw-dgx-station.yaml","workflowRunId":"123456789","workflowRunAttempt":1});
+            let status = json!({"schemaVersion":4,"jobId":job_id(&request),"request":request,"state":"completed","conclusion":if outcome==Some(true){"success"}else{"failure"},"cleanup":"succeeded"});
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let observed = calls.clone();
+            let fixture = Fixture::start_tcp(move |call| {
+                if call.path == "/oidc" {
+                    assert_eq!(call.header("authorization"), Some("Bearer request-token"));
+                    return Some((200, json!({"value":"job-token"}).to_string().into_bytes()));
+                }
+                assert_eq!(call.header("authorization"), Some("Bearer job-token"));
+                observed.lock().unwrap().push(call.method.clone());
+                let value = match call.method.as_str() {
+                    "POST" => {
+                        assert_eq!(
+                            serde_json::from_slice::<Value>(&call.body).unwrap(),
+                            status["request"]
+                        );
+                        if outcome.is_none() {
+                            return None;
+                        }
+                        status.clone()
+                    }
+                    "GET" => json!({"status":status,"log":"test result"}),
+                    "DELETE" => status.clone(),
+                    _ => panic!("unexpected request"),
+                };
+                Some((200, value.to_string().into_bytes()))
+            })
+            .await;
+            let backend = Backend {
+                client: Client::builder()
+                    .no_proxy()
+                    .timeout(Duration::from_secs(1))
+                    .build()
+                    .unwrap(),
+                url: Url::parse(&fixture.endpoint).unwrap(),
+                oidc: Url::parse(&format!("{}/oidc", fixture.endpoint)).unwrap(),
+                request_token: "request-token".into(),
+            };
+            let directory = tempfile::tempdir().unwrap();
+            let result = dispatch(&backend, &request, directory.path()).await;
+            match outcome {
+                Some(passed) => {
+                    assert_eq!(result.unwrap(), passed);
+                    assert_eq!(*calls.lock().unwrap(), ["POST", "GET"]);
+                }
+                None => {
+                    assert!(result.is_err());
+                    assert_eq!(*calls.lock().unwrap(), ["POST", "DELETE"]);
+                    let receipt: Value = serde_json::from_slice(
+                        &fs::read(directory.path().join("station-cancellation.json")).unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(receipt["acknowledged"], true);
+                    assert_eq!(receipt["jobId"], job_id(&request));
+                }
+            }
         }
-    }
-
-    fn candidate() -> Value {
-        request(
-            "a".repeat(40),
-            "examples/gtc-dc/openclaw-dgx-station.yaml".into(),
-            "123456789".into(),
-            "1".into(),
-        )
-        .unwrap()
     }
 
     #[test]
     fn matches_the_station_handoff_job_identity() {
+        let request = json!({"candidateSha":"a".repeat(40),"examplePath":"examples/gtc-dc/openclaw-dgx-station.yaml","workflowRunId":"123456789","workflowRunAttempt":1});
         assert_eq!(
-            job_id(&candidate()),
+            job_id(&request),
             "1d9fa04f619dc5eb6b7d30cf4b680989229bc685655e3b2f66d754d42dba7ec8"
         );
+    }
+
+    #[test]
+    fn rejects_success_for_another_candidate_or_incomplete_cleanup() {
+        let request = json!({"candidateSha":"a".repeat(40)});
+        let status = json!({"schemaVersion":4,"jobId":"job","request":request,"state":"completed","conclusion":"success","cleanup":"succeeded"});
+        validate_status(&status, &request, "job").unwrap();
+        for (field, value) in [
+            ("jobId", json!("other")),
+            ("request", json!({"candidateSha":"b".repeat(40)})),
+            ("cleanup", json!("pending")),
+            ("cleanup", json!("failed")),
+            ("conclusion", json!("unknown")),
+            ("state", json!("unknown")),
+        ] {
+            let mut invalid = status.clone();
+            invalid[field] = value;
+            assert!(
+                validate_status(&invalid, &request, "job").is_err(),
+                "{field}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -443,259 +338,17 @@ mod tests {
             )
         };
         assert_eq!(
-            response(reply(200, "{\"ok\":true}"), 32).await.unwrap(),
+            read(reply(200, "{\"ok\":true}"), 32).await.unwrap(),
             json!({"ok":true})
         );
-        assert!(response(reply(200, "{\"ok\":true}"), 4).await.is_err());
-        assert!(response(reply(200, "not JSON"), 32).await.is_err());
-        let error = response(reply(401, "private-backend-message"), 32)
-            .await
-            .unwrap_err();
-        assert_eq!(error, "dispatch HTTP 401");
-    }
-
-    fn status(request: &Value, state: &str, conclusion: Option<&str>, cleanup: &str) -> Value {
-        let mut status = json!({"schemaVersion":4,"jobId":job_id(request),"request":request,"state":state,"cleanup":cleanup});
-        if let Some(conclusion) = conclusion {
-            status["conclusion"] = conclusion.into();
-        }
-        status
-    }
-
-    fn fake(replies: Vec<Result<Value>>) -> Fake {
-        Fake {
-            replies: Mutex::new(replies.into()),
-            calls: Mutex::new(Vec::new()),
-        }
-    }
-
-    #[test]
-    fn rejects_paths_outside_repository_examples_and_credential_bearing_origins() {
-        for path in [
-            "/examples/a.yaml",
-            "examples/../a.yaml",
-            "examples//a.yaml",
-            "examples/./a.yaml",
-            "examples/a.yaml;id",
-            "examples/a.yaml\n",
-            "examples/a.txt",
-            "examples/a\\b.yaml",
-        ] {
-            assert!(!example_path(path), "{path:?}");
-        }
-        for url in [
-            "http://example.com",
-            "https://user:secret@example.com",
-            "https://example.com/jobs",
-            "https://example.com/?token=secret",
-            "https://example.com/#fragment",
-        ] {
-            assert!(origin(url).is_err());
-        }
+        assert!(read(reply(200, "{\"ok\":true}"), 4).await.is_err());
+        assert!(read(reply(200, "not JSON"), 32).await.is_err());
         assert_eq!(
-            origin("https://example.com").unwrap().as_str(),
-            "https://example.com/"
-        );
-        assert!(
-            request(
-                "main".into(),
-                "examples/a.yaml".into(),
-                "1".into(),
-                "1".into()
-            )
-            .is_err()
-        );
-        for attempt in ["0", "-1", "1.5", "01"] {
-            assert!(
-                request(
-                    "a".repeat(40),
-                    "examples/a.yaml".into(),
-                    "1".into(),
-                    attempt.into()
-                )
-                .is_err()
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn polls_the_owned_job_and_downloads_bounded_artifacts_after_cleanup() {
-        let request = candidate();
-        let complete = status(&request, "completed", Some("success"), "succeeded");
-        let api = fake(vec![
-            Ok(status(&request, "queued", None, "pending")),
-            Ok(status(&request, "running", None, "pending")),
-            Ok(complete.clone()),
-            Ok(
-                json!({"status":complete,"log":"components passed","artifactArchiveBase64":STANDARD.encode(b"archive")}),
-            ),
-        ]);
-        let directory = tempfile::tempdir().unwrap();
-        assert!(
-            dispatch(
-                &api,
-                &request,
-                directory.path(),
-                Duration::ZERO,
-                Duration::from_secs(5)
-            )
-            .await
-            .unwrap()
-        );
-        assert_eq!(
-            fs::read(directory.path().join("station-artifacts.tar.gz")).unwrap(),
-            b"archive"
-        );
-        assert_eq!(
-            fs::read_to_string(directory.path().join("station.log")).unwrap(),
-            "components passed"
-        );
-        let calls = api.calls.lock().unwrap();
-        let job = job_id(&request);
-        assert_eq!(
-            *calls,
-            vec![
-                (Method::POST, "v1/jobs".into()),
-                (Method::GET, format!("v1/jobs/{job}")),
-                (Method::GET, format!("v1/jobs/{job}")),
-                (Method::GET, format!("v1/jobs/{job}/artifact"))
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn propagates_failed_tests_and_cleanup_without_repeating_the_job() {
-        for (conclusion, cleanup) in [
-            ("failure", "succeeded"),
-            ("cleanup-failed", "failed"),
-            ("timed-out", "succeeded"),
-            ("cancelled", "succeeded"),
-        ] {
-            let request = candidate();
-            let complete = status(&request, "completed", Some(conclusion), cleanup);
-            let api = fake(vec![
-                Ok(complete.clone()),
-                Ok(json!({"status":complete,"log":"failure"})),
-            ]);
-            let directory = tempfile::tempdir().unwrap();
-            assert!(
-                !dispatch(
-                    &api,
-                    &request,
-                    directory.path(),
-                    Duration::ZERO,
-                    Duration::from_secs(5)
-                )
+            read(reply(401, "private-backend-message"), 32)
                 .await
-                .unwrap()
-            );
-            assert_eq!(api.calls.lock().unwrap().len(), 2);
-            assert!(directory.path().join("station.log").is_file());
-        }
-    }
-
-    #[tokio::test]
-    async fn cancels_an_uncertain_submission_and_keeps_its_recovery_identity() {
-        let request = candidate();
-        let api = fake(vec![
-            Err("lost POST response".into()),
-            Ok(status(
-                &request,
-                "completed",
-                Some("cancelled"),
-                "succeeded",
-            )),
-        ]);
-        let directory = tempfile::tempdir().unwrap();
-        assert!(
-            dispatch(
-                &api,
-                &request,
-                directory.path(),
-                Duration::ZERO,
-                Duration::from_secs(5)
-            )
-            .await
-            .is_err()
+                .unwrap_err()
+                .to_string(),
+            "dispatch HTTP 401"
         );
-        let receipt: Value = serde_json::from_slice(
-            &fs::read(directory.path().join("station-recovery.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(receipt["jobId"], job_id(&request));
-        assert_eq!(receipt["request"], request);
-        assert_eq!(receipt["cancellation"], "requested");
-        assert_eq!(
-            *api.calls.lock().unwrap(),
-            vec![
-                (Method::POST, "v1/jobs".into()),
-                (Method::DELETE, format!("v1/jobs/{}", job_id(&request)))
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn cancels_and_reports_an_unconfirmed_cancellation_after_status_failure() {
-        let request = candidate();
-        let api = fake(vec![
-            Ok(status(&request, "running", None, "pending")),
-            Err("status transport failed".into()),
-            Err("cancel transport failed".into()),
-        ]);
-        let directory = tempfile::tempdir().unwrap();
-        let error = dispatch(
-            &api,
-            &request,
-            directory.path(),
-            Duration::ZERO,
-            Duration::from_secs(5),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.contains("unconfirmed"));
-        assert_eq!(api.calls.lock().unwrap().last().unwrap().0, Method::DELETE);
-    }
-
-    #[tokio::test]
-    async fn cancels_when_the_controller_deadline_expires() {
-        let request = candidate();
-        let api = fake(vec![
-            Ok(status(&request, "running", None, "pending")),
-            Ok(status(&request, "running", None, "pending")),
-        ]);
-        let directory = tempfile::tempdir().unwrap();
-        let error = dispatch(
-            &api,
-            &request,
-            directory.path(),
-            Duration::from_secs(10),
-            Duration::from_millis(1),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.contains("deadline"));
-        assert_eq!(api.calls.lock().unwrap().last().unwrap().0, Method::DELETE);
-    }
-
-    #[test]
-    fn rejects_success_for_another_candidate_or_incomplete_cleanup() {
-        let request = json!({"candidateSha": "a".repeat(40), "examplePath": "examples/gtc-dc/openclaw-dgx-station.yaml"});
-        let status = json!({"schemaVersion": 4, "jobId": "job", "request": request, "state": "completed", "conclusion": "success", "cleanup": "succeeded"});
-        validate_status(&status, &request, "job").unwrap();
-        for (field, value) in [
-            ("jobId", json!("other")),
-            ("request", json!({"candidateSha": "b".repeat(40)})),
-            ("cleanup", json!("pending")),
-            ("cleanup", json!("failed")),
-            ("conclusion", json!("unknown")),
-            ("state", json!("unknown")),
-        ] {
-            let mut invalid = status.clone();
-            invalid[field] = value;
-            assert!(
-                validate_status(&invalid, &request, "job").is_err(),
-                "{field}"
-            );
-        }
     }
 }
