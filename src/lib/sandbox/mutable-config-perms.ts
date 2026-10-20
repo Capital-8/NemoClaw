@@ -88,9 +88,46 @@ def require_mutable_flags(descriptor, info):
     if flags & blocked:
         raise PermissionError("Hermes config has immutable or append-only inode flags")
 
+# Metadata only for fixed runtime-state entries; never follow their targets.
+known_runtime_names = ("gateway_state.json", "shared-state.db", "shared-state.db-wal", "shared-state.db-shm")
+
+def known_runtime_state():
+    snapshot = {}
+    for name in known_runtime_names:
+        try:
+            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            snapshot[name] = ("present", info.st_dev, info.st_ino, info.st_mode,
+                              info.st_nlink, info.st_ctime_ns, info.st_mtime_ns)
+        except FileNotFoundError:
+            snapshot[name] = ("absent",)
+        except OSError:
+            snapshot[name] = ("unavailable",)
+    return snapshot
+
+def known_runtime_changes(initial):
+    current = known_runtime_state()
+    changes = []
+    for name in known_runtime_names:
+        before, after = initial[name], current[name]
+        if "unavailable" in (before[0], after[0]):
+            change = "unavailable"
+        elif before == after:
+            continue
+        elif before[0] == "absent":
+            change = "created"
+        elif after[0] == "absent":
+            change = "removed"
+        elif before[1:3] != after[1:3]:
+            change = "replaced"
+        else:
+            change = "metadata-changed"
+        changes.append(name + "=" + change)
+    return ", ".join(changes) if changes else "none observed"
+
 directory_fd = os.open(config_dir, directory_flags)
 try:
     directory = os.fstat(directory_fd)
+    initial_known_runtime_state = known_runtime_state()
     if not stat.S_ISDIR(directory.st_mode):
         raise RuntimeError("Hermes config root is not a directory")
     if directory.st_uid != os.geteuid() or directory.st_gid != os.getegid():
@@ -135,11 +172,13 @@ try:
         changed_fields = [name for name, before, after in
                           zip(metadata_fields, initial_directory, current_directory)
                           if before != after]
-        # Report only the timestamp comparison, not paths or state contents. It does
-        # not identify the writer or permit retrying a changed integrity snapshot.
+        # Report timestamp and fixed-entry metadata comparisons without state contents.
+        # These observations do not identify the writer or permit another inspection.
         mtime_change = "changed" if current_directory_info.st_mtime_ns != directory.st_mtime_ns else "unchanged"
         raise RuntimeError("Hermes config root changed during inspection: " + ", ".join(changed_fields)
-                           + "; directory mtime " + mtime_change)
+                           + "; directory mtime " + mtime_change
+                           + "; known entries in inspected directory: "
+                           + known_runtime_changes(initial_known_runtime_state))
     if startup is not None and startup["read_completion"]() != startup_receipt:
         raise RuntimeError("Hermes startup generation changed during config inspection")
 finally:

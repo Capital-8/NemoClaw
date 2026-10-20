@@ -96,6 +96,7 @@ describe("mutable Hermes config permissions", () => {
   ])("rejects an incomplete native permission probe: %j", (result) => {
     captureSanitizedResolvedOpenshell.mockReturnValue(result);
     expect(inspectMutableHermesConfigPerms("hermes-demo", getSandbox).verified).toBe(false);
+    expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledOnce();
   });
 
   it("retains bounded probe failure details with credentials redacted and controls escaped", () => {
@@ -216,6 +217,115 @@ describe("mutable Hermes config permissions", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ["created", false, "shared-state.db-shm=created"],
+    ["removed", false, "shared-state.db-wal=removed"],
+    ["replaced", false, "shared-state.db=replaced"],
+    ["metadata", false, "shared-state.db=metadata-changed"],
+    ["symlink", false, "gateway_state.json=replaced"],
+    ["unavailable", false, "gateway_state.json=unavailable"],
+    ["unlisted", false, "known entries in inspected directory: none observed"],
+    ["stable", true, ""],
+  ] as const)(
+    "reports fixed runtime entry metadata for %s without reading contents or retrying",
+    (scenario, expected, diagnostic) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-entry-metadata-"));
+      fs.chownSync(root, process.getuid!(), process.getgid!());
+      const configDir = path.join(root, ".hermes");
+      fs.mkdirSync(configDir, { mode: 0o700 });
+      fs.writeFileSync(path.join(configDir, "config.yaml"), "config-fixture", { mode: 0o640 });
+      fs.writeFileSync(path.join(configDir, "shared-state.db"), "private-state-canary");
+      fs.writeFileSync(path.join(configDir, "shared-state.db-wal"), "private-state-canary");
+      const outside = path.join(root, "private-target-canary");
+      fs.writeFileSync(outside, "private-target-content");
+      fs.symlinkSync(outside, path.join(configDir, "gateway_state.json"));
+      const command = mutableHermesConfigProbeCommand({
+        ...hermesTarget,
+        configDir,
+        configPath: path.join(configDir, "config.yaml"),
+        sensitiveFiles: [],
+      });
+      const codeIndex = command.indexOf("-c") + 1;
+      const prelude = `
+${localSandboxIdentity}
+import pathlib, subprocess
+scenario = ${JSON.stringify(scenario)}
+calls = 0
+original_stat = os.stat
+known = ("gateway_state.json", "shared-state.db", "shared-state.db-wal", "shared-state.db-shm")
+def observed_stat(name, *args, **kwargs):
+    if name in known:
+        assert kwargs.get("follow_symlinks") is False
+        assert isinstance(kwargs.get("dir_fd"), int)
+        if scenario == "unavailable" and name == "gateway_state.json" and calls == 2:
+            raise PermissionError("private-error-canary")
+    return original_stat(name, *args, **kwargs)
+os.stat = observed_stat
+def replace_entry():
+    temporary = pathlib.Path(config_dir) / ".private-entry-canary"
+    temporary.write_text("private-state-canary")
+    os.replace(temporary, pathlib.Path(config_dir) / ("gateway_state.json" if scenario == "symlink" else "shared-state.db"))
+def transient_entry():
+    temporary = pathlib.Path(config_dir) / ".private-entry-canary"
+    temporary.write_text("private-state-canary")
+    temporary.unlink()
+def topology_response(args, **kwargs):
+    global calls
+    calls += 1
+    assert calls <= 2
+    assert args[3] == "inspect-private-mutable-topology"
+    if calls == 2:
+        mutations = {
+            "created": lambda: (pathlib.Path(config_dir) / "shared-state.db-shm").write_text("private-state-canary"),
+            "removed": lambda: (pathlib.Path(config_dir) / "shared-state.db-wal").unlink(),
+            "replaced": replace_entry,
+            "metadata": lambda: os.chmod(pathlib.Path(config_dir) / "shared-state.db", 0o600),
+            "symlink": replace_entry,
+            "unavailable": lambda: None,
+            "unlisted": transient_entry,
+            "stable": lambda: None,
+        }
+        mutations[scenario]()
+        if scenario != "stable":
+            info = original_stat(config_dir)
+            os.utime(config_dir, ns=(info.st_atime_ns, info.st_mtime_ns + 1000000))
+    return types.SimpleNamespace(returncode=0, stdout=b"same-uid-nonroot\\n")
+subprocess.run = topology_response
+probe = ${JSON.stringify(command[codeIndex])}
+try:
+    exec(probe)
+finally:
+    assert calls == 2
+`;
+      try {
+        const result = spawnSync(
+          "python3",
+          ["-I", "-c", prelude, ...command.slice(codeIndex + 1)],
+          {
+            encoding: "utf8",
+            timeout: 15_000,
+          },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status === 0, result.stderr).toBe(expected);
+        expect(result.stderr).toContain(diagnostic);
+        expect(result.stderr === "").toBe(expected);
+        expect(result.stderr.includes("Hermes config root changed during inspection")).toBe(
+          !expected,
+        );
+        expect(result.stderr).not.toMatch(
+          /private-(?:state|target|entry|error)-(?:canary|content)/u,
+        );
+        expect(result.stderr).not.toContain(root);
+        expect(result.stdout).toBe("");
+        expect(fs.readFileSync(outside, "utf8")).toBe("private-target-content");
+        expect(fs.readFileSync(path.join(configDir, "config.yaml"), "utf8")).toBe("config-fixture");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     [0o3770, "unavailable", true, ""],
