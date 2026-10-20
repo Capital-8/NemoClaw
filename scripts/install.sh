@@ -1123,11 +1123,11 @@ usage() {
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
   printf "                                  Allow automatic upgrade only for eligible gateways\n"
-  printf "                                  Registered sandboxes on OpenShell 0.0.x prevent upgrade to 0.1.3\n"
+  printf "                                  Registered sandboxes prevent replacement of an out-of-range OpenShell version\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Resume an eligible upgrade after strict backup, forward retirement, and gateway retirement\n"
-  printf "                                  With registered sandboxes, the installed OpenShell version must be verifiable and at least 0.1.0\n"
-  printf "                                  This flag does not migrate registered sandboxes from OpenShell 0.0.x\n"
+  printf "                                  With registered sandboxes, the installed OpenShell version must be verifiable and within the supported range\n"
+  printf "                                  This flag does not migrate registered sandboxes from an out-of-range OpenShell version\n"
   printf "                                  Retained NemoClaw sandbox records still block component replacement, including on OpenShell 0.1.x\n"
   printf "                                  Preserve the legacy gateway, registrations, sandbox records, and data\n"
   printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
@@ -4757,7 +4757,8 @@ preinstall_backup_and_retire_legacy_gateway() {
     old_cutover_version="$(installed_openshell_version || true)"
     [[ "$old_cutover_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
       || error "Could not verify the installed OpenShell version before the 0.1.x cutover. Existing gateway and sandboxes were left unchanged."
-    if ! version_gte "$old_cutover_version" "0.1.0"; then
+    if ! version_gte "$old_cutover_version" "$min_openshell_version" \
+      || ! version_gte "$max_openshell_version" "$old_cutover_version"; then
       if [ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ] \
         || [ "$reg_file" = "${HOME}/.nemoclaw/sandboxes.json" ]; then scope="legacy"; fi
       sandbox_names="$(inspect_sandbox_registry_for_upgrade "$reg_file" names "$scope")" \

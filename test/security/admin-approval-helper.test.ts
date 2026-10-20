@@ -130,9 +130,9 @@ function omitLocalIdentity(root: string, _identity: Record<string, unknown>): st
   return path.join(root, "state");
 }
 
-function writePairingStateHelper(root: string): string {
+function writePairingStateHelper(root: string, body = PAIRING_STATE_HELPER_PY): string {
   const helperPath = path.join(root, "openclaw_pairing_state.py");
-  fs.writeFileSync(helperPath, PAIRING_STATE_HELPER_PY);
+  fs.writeFileSync(helperPath, body);
   return helperPath;
 }
 
@@ -185,6 +185,7 @@ function runAdminApprovalScript(
     omitPreparedWrapper?: boolean;
     pendingRequestIds?: readonly string[];
     selectExpectedRequest?: boolean;
+    pairingHelper?: string;
   } = {},
 ): {
   commands: string[];
@@ -215,7 +216,7 @@ exec "$FAKE_REAL_PYTHON" "$@"
     { mode: 0o755 },
   );
   const stateRoot = writeLocalIdentity(root);
-  const helperPath = writePairingStateHelper(root);
+  const helperPath = writePairingStateHelper(root, options.pairingHelper);
   const terminalProbe = path.join(root, "terminal-probe.py");
   fs.writeFileSync(terminalProbe, ADMIN_APPROVAL_TEST_PTY_PY);
   const terminalRc = path.join(root, "connect.bashrc");
@@ -1110,6 +1111,50 @@ describe("prepared connect-shell administrative approval", () => {
       );
       expect(commands.filter((command) => command.startsWith("cron run "))).toHaveLength(1);
       expect(stagedScriptRetained).toBe(false);
+    },
+  );
+
+  it.each([
+    ["OpenClawPairingStateRetryableError", "canonical pairing-state database is busy", "busy"],
+    [
+      "OpenClawPairingStateRetryableError",
+      "canonical pairing-state WAL changed while reading",
+      "changed",
+    ],
+    [
+      "OpenClawPairingStateRetryableError",
+      "canonical pairing-state WAL is missing its shared-memory sidecar",
+      "wal-incomplete",
+    ],
+    [
+      "OpenClawPairingStateRetryableError",
+      "SQLite reopened an unvalidated pairing-state file identity",
+      "unvalidated",
+    ],
+    ["OSError", "unsafe canonical pairing-state SQLite entry", "unsafe"],
+    ["FileNotFoundError", "missing database", "missing"],
+    ["PermissionError", "cannot read database", "permission"],
+    ["ValueError", "unsupported canonical device state schema", "schema"],
+    ["ValueError", "canonical primary device identity is unavailable", "read"],
+  ])(
+    "preserves refusal and redacts the %s pairing-state failure (%s)",
+    (errorType, message, category) => {
+      const { commands, result, stagedScriptRetained, privateCapturesRemaining } =
+        runAdminApprovalScript(undefined, 0, EXPECTED_REQUEST_ID, {
+          verifyCronConsumer: false,
+          selectExpectedRequest: true,
+          expectedRequestId: EXPECTED_REQUEST_ID,
+          removeCaptures: true,
+          pairingHelper: `class OpenClawPairingStateRetryableError(OSError):\n    pass\ndef read_openclaw_pairing_state(*args, **kwargs):\n    raise ${errorType}(${JSON.stringify(message + " PRIVATE_PAIRING_DATA")})\n`,
+        });
+      expect(result.status).toBe(26);
+      expect(commands).toEqual(["devices list --json"]);
+      expect(result.stderr).toContain(`ADMIN_DIAGNOSTIC=selection-state-${category}`);
+      expect(result.stdout + result.stderr).not.toMatch(
+        /PRIVATE_PAIRING_DATA|test-gateway-token|Traceback/,
+      );
+      expect(stagedScriptRetained).toBe(false);
+      expect(privateCapturesRemaining).toEqual([]);
     },
   );
 

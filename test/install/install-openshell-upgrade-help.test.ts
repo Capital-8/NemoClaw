@@ -15,8 +15,12 @@ it("limits prepared upgrade guidance to eligible gateways and preserves legacy s
     env: process.env,
   });
   expect(stderr).toBe("");
-  expect(stdout).toContain("the installed OpenShell version must be verifiable and at least 0.1.0");
-  expect(stdout).toContain("This flag does not migrate registered sandboxes from OpenShell 0.0.x");
+  expect(stdout).toContain(
+    "the installed OpenShell version must be verifiable and within the supported range",
+  );
+  expect(stdout).toContain(
+    "This flag does not migrate registered sandboxes from an out-of-range OpenShell version",
+  );
   expect(stdout).toContain("Retained NemoClaw sandbox records still block component replacement");
   expect(stdout).toContain("Preserve the legacy gateway, registrations, sandbox records, and data");
   expect(stdout).not.toContain("openshell gateway destroy");

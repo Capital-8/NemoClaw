@@ -506,10 +506,14 @@ esac`,
     expect(openshellLog).toBe("");
   });
 
-  it.each(["automatic", "prepared"])(
-    "preserves a registered 0.0.x gateway before the 0.1.3 %s cutover (#12558)",
-    async (mode) => {
-      const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
+  it.each(
+    ["0.0.116", "0.1.2", "0.1.4"].flatMap((version) =>
+      ["automatic", "prepared"].map((mode) => ({ version, mode })),
+    ),
+  )(
+    "preserves a registered $version gateway before the 0.1.3 $mode cutover (#12558)",
+    async ({ version, mode }) => {
+      const { result, cliLog, openshellLog, registry } = await runPreinstallUpgradeGuard(
         {
           NON_INTERACTIVE: "1",
           NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
@@ -519,7 +523,7 @@ esac`,
         {
           currentMinOpenshellVersion: "0.1.3",
           currentMaxOpenshellVersion: "0.1.3",
-          openshellVersion: "0.0.116",
+          openshellVersion: version,
         },
       );
 
@@ -529,6 +533,7 @@ esac`,
       );
       expect(cliLog).toBe("");
       expect(openshellLog).toBe("");
+      expect(registry).toBe('{"sandboxes":{"alpha":{"name":"alpha"}}}');
     },
   );
 
@@ -740,22 +745,27 @@ esac`,
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it("keeps a backed-up gateway whose OpenShell version is already supported", async () => {
-    const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
-      { NON_INTERACTIVE: "1" },
-      {
-        finishInstallMode: "source",
-        hasOldCli: false,
-        openshellVersion: "0.0.85",
-        registryJson:
-          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
-      },
-    );
+  it.each(["0.0.85", "0.1.3"])(
+    "keeps a backed-up gateway on supported OpenShell %s",
+    async (version) => {
+      const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
+        { NON_INTERACTIVE: "1" },
+        {
+          finishInstallMode: "source",
+          hasOldCli: false,
+          openshellVersion: version,
+          currentMinOpenshellVersion: version,
+          currentMaxOpenshellVersion: version,
+          registryJson:
+            '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+        },
+      );
 
-    expect(result.status).toBe(0);
-    expect(cliLog).toContain("current:backup-all");
-    expect(openshellLog).toBe("openshell install-mode if-missing defer=\n");
-  });
+      expect(result.status).toBe(0);
+      expect(cliLog).toContain("current:backup-all");
+      expect(openshellLog).toBe("openshell install-mode if-missing defer=\n");
+    },
+  );
 
   it("forces OpenShell installation for a managed CLI install mode (#8800)", async () => {
     const { result, openshellLog } = await runPreinstallUpgradeGuard(

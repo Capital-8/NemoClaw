@@ -779,10 +779,12 @@ The installer detects existing sandbox sessions before onboarding and prints a w
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_SINGLE_SESSION=1 bash
 ```
 
-If a registered sandbox uses an OpenShell `0.0.x` gateway, the installer refuses to replace that gateway with OpenShell `0.1.3` and reports the affected sandbox names after name validation.
+When installing OpenShell `0.1.x` with registered sandboxes, the installed OpenShell version must already be within the target release's supported range.
+This release requires `0.1.3`; an installed `0.0.x`, `0.1.2`, or later out-of-range version stops the installer.
+After name validation, the installer reports the affected sandbox names.
 It leaves the gateway and sandboxes unchanged before backup or gateway retirement; neither `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` nor `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` bypasses the stop.
-Refer to [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before upgrading registered sandboxes across this version boundary.
-For a supported upgrade that does not cross from OpenShell `0.0.x` to `0.1.x`, scripted installs can set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the automatic path.
+Refer to [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before upgrading registered sandboxes.
+For an eligible upgrade, scripted installs can set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the automatic path.
 That path prepares the current CLI, backs up registered sandboxes, retires an out-of-range gateway, installs the supported OpenShell release, and recovers eligible sandboxes.
 The installer reads that supported range from the prepared current source and stops without retiring the gateway if the installed version is unknown or the range is missing or invalid.
 When the installed OpenShell version is already supported, the installer keeps the running gateway through the host update.
@@ -810,7 +812,7 @@ Required DGX Station reconciliation still passes host admission before onboardin
 Use `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the current release CLI completes strict backup and forward retirement, and the selected gateway is retired.
 Preparation can be completed manually or by the installer.
 The installer checks the installed OpenShell version before it accepts this flag.
-When the selected gateway has registered sandboxes, an OpenShell `0.0.x`, missing, or unreadable version stops the upgrade even when backups exist.
+When the selected gateway has registered sandboxes, an out-of-range, missing, or unreadable OpenShell version stops the upgrade even when backups exist.
 Passing the version check does not bypass the component installer's retained-record check.
 Do not retire a legacy gateway, delete its registration, or remove sandbox records to bypass that stop.
 Preserve the existing installation, sandbox data, and completed backups.
@@ -4876,7 +4878,7 @@ The following flags change defaults for commands that manage existing sandboxes.
 </AgentOnly>
 | `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` | JSON array of sandbox names | Confirms to the installer that the listed set of pre-fingerprint OpenClaw or Hermes sandboxes used NemoClaw-managed images, allowing recovery onto the current managed image. The normalized names must exactly match the installer's printed array. Set it only after verifying every named sandbox. Recorded custom-image evidence remains blocked. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips automatic DNS-proxy mutation for stale `inference.local` routes during `$$nemoclaw <name> connect` and `$$nemoclaw <name> connect --probe-only`. The command still probes the route and exits non-zero when the provider-specific requirement fails. An `ollama-local` route still requires a healthy authenticated proxy and HTTP 2xx from `inference.local/v1/models`. Use only as a troubleshooting escape hatch. |
-| `NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS` | Exactly `1` to enable; unset by default | Enables strict `$$nemoclaw backup-all` checks. A failed backup or an ordinary skipped sandbox makes the command exit nonzero. A record confirmed absent from both the selected gateway and container provider produces no backup and does not fail strict mode. The installer sets this variable for pre-upgrade backups; it does not bypass the OpenShell `0.0.x` migration stop. |
+| `NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS` | Exactly `1` to enable; unset by default | Enables strict `$$nemoclaw backup-all` checks. A failed backup or an ordinary skipped sandbox makes the command exit nonzero. A record confirmed absent from both the selected gateway and container provider produces no backup and does not fail strict mode. The installer sets this variable for pre-upgrade backups; it does not bypass the OpenShell version check. |
 | `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP` | Exactly `1` to opt in (`true`, `yes`, `0` are not accepted) | Applies to standalone `$$nemoclaw backup-all` runs. Skips running sandboxes whose in-sandbox SSH endpoint does not answer. It does not relax the installer's strict pre-upgrade backup, which still aborts if any registered sandbox is skipped or fails. Any uncommitted state since the last successful backup is not included in the skipped backup. |
 | `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS` | `1` to opt in | Makes `$$nemoclaw uninstall` remove every gateway port on the host instead of only the port `NEMOCLAW_GATEWAY_PORT` selects. Equivalent to passing the `--all-gateway-ports` flag; the whole-host `Proceed?` confirmation still applies unless `--yes` is also passed. Each port runs as its own uninstall, and the variable is dropped from those runs so the sweep cannot re-enter itself. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `$$nemoclaw uninstall`, skips eligible fresh sandbox backups, and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) in the selected gateway's state root. It does not select the explicit `--destroy-user-data` CLI-shim removal path; shim handling follows the ordinary selected-gateway scope. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
