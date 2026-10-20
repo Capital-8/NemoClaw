@@ -84,6 +84,50 @@ test("native UI tunnel sharing retries are bounded", () => {
   );
 });
 
+test("native UI tunnel reports a failed connection instead of returning an empty page", async () => {
+  const relayRoot = fs.mkdtempSync(path.join(os.tmpdir(), "native-ui-connect-failure-"));
+  const stop = new AbortController();
+  const sockets = new Set<Socket>();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    socket.resume();
+  });
+  let tunnel: Promise<unknown> | undefined;
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    tunnel = startNativeUiTunnel({
+      relayRoot,
+      relayToken: "connect-failure-control",
+      uiPort: port,
+      signal: stop.signal,
+    }).catch((error: unknown) => error);
+    const deadline = performance.now() + 5000;
+    while (!fs.existsSync(path.join(relayRoot, "ready")) && performance.now() < deadline)
+      await delay(10);
+    assert(fs.existsSync(path.join(relayRoot, "ready")));
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const stream = path.join(relayRoot, "stream-0123456789abcdef");
+    fs.mkdirSync(stream);
+    fs.writeFileSync(path.join(stream, "open"), "connect-failure-control");
+    const result = await Promise.race([tunnel, delay(5000, "no settlement", { ref: false })]);
+    assert(result instanceof Error);
+    assert.match(
+      result.message,
+      /contained native UI connection failed before opening \(ECONNREFUSED\)/u,
+    );
+    assert.equal(fs.existsSync(path.join(stream, "sandbox-close")), false);
+  } finally {
+    stop.abort();
+    await tunnel;
+    for (const socket of sockets) socket.destroy();
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    fs.rmSync(relayRoot, { recursive: true, force: true });
+  }
+});
+
 for (const pipe of process.platform === "win32" ? [false, true] : [false])
   for (const ending of ["overflow", "shutdown", "abort"] as const)
     test(`native UI tunnel bounds discovery and closes owned resources on ${ending} (${pipe ? "pipe" : "tcp"})`, async (t) => {

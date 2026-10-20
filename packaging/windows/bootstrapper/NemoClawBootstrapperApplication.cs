@@ -226,8 +226,9 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             this.Ui(() => {
                 this.window?.SetDataRemovalAvailable(inspection.Value.RemovalAvailable);
                 this.window?.SetMaintenanceContext(this.relatedOnly);
-                this.window?.SetReplacementSetupAvailable(!this.installed && !this.relatedOnly
-                    && (this.replacedPreviousPreview || NativeSetupOperations.HasSavedOpenClawSetup()));
+                this.window?.SetReplacementSetupAvailable(new[] { "openclaw", "hermes" }.Where(agent =>
+                    !this.installed && !this.relatedOnly
+                    && ((agent == "openclaw" && this.replacedPreviousPreview) || NativeSetupOperations.HasSavedSetup(agent))));
                 this.window?.ShowReady(this.installed || this.relatedOnly);
             });
             if (this.command?.Action == LaunchAction.Uninstall && !this.replacedPreviousPreview)

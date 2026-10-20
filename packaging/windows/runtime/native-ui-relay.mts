@@ -10,17 +10,21 @@ type Stream = { directory: string; socket: Socket; sequence: number; closing: bo
 
 async function writeBrowserFrame(socket: Socket, data: Buffer) {
   if (socket.destroyed || socket.writableEnded || socket.write(data)) return;
-  await new Promise<void>((resolve) => {
-    const done = () => {
+  await new Promise<void>((resolve, reject) => {
+    const finish = (error?: Error) => {
       clearTimeout(timeout);
       socket.removeListener("drain", done);
       socket.removeListener("close", done);
       socket.removeListener("error", done);
-      resolve();
+      if (error) reject(error);
+      else resolve();
     };
+    const done = () => finish();
     const timeout = setTimeout(() => {
+      finish(
+        new Error("The native agent browser did not accept UI response data within 30 seconds."),
+      );
       socket.destroy();
-      done();
     }, 30_000);
     socket.once("drain", done);
     socket.once("close", done);

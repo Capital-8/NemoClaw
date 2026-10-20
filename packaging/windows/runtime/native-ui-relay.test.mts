@@ -93,3 +93,45 @@ test("UI relay cannot reorder readable frames around a locked frame or close ear
   });
   assert.equal(received.toString(), "firstsecond");
 });
+
+test("UI relay reports stalled browser output and retains the undelivered frame", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const socket = new net.Socket();
+  let written!: () => void;
+  const writing = new Promise<void>((resolve) => {
+    written = resolve;
+  });
+  t.mock.method(socket, "write", () => {
+    written();
+    return false;
+  });
+  let removed = false;
+  const forwarding = forwardNativeUiFrames(
+    {
+      async read(name) {
+        return name === first ? Buffer.from("response") : null;
+      },
+      async list() {
+        return ["sandbox-0000000000.bin"];
+      },
+      async unlink() {
+        removed = true;
+      },
+    },
+    directory,
+    socket,
+  );
+  const rejected = assert.rejects(
+    forwarding,
+    /browser did not accept UI response data within 30 seconds/u,
+  );
+  await writing;
+  t.mock.timers.tick(29_999);
+  assert.equal(socket.destroyed, false);
+  assert.equal(removed, false);
+  t.mock.timers.tick(1);
+  await rejected;
+  assert.equal(socket.destroyed, true);
+  assert.equal(removed, false);
+  for (const event of ["drain", "close", "error"]) assert.equal(socket.listenerCount(event), 0);
+});

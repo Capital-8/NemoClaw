@@ -275,12 +275,16 @@ export async function startNativeUiTunnel({
             root: streamRoot,
             sequence: 0,
             socket,
+            connected: false,
             pendingFrames: 0,
             blocked: false,
             hostEnded: false,
             claimRetries: new Map(),
           };
           streams.set(entry, state);
+          socket.once("connect", () => {
+            state.connected = true;
+          });
           socket.on("drain", () => {
             state.blocked = false;
           });
@@ -296,7 +300,13 @@ export async function startNativeUiTunnel({
               finish(error);
             }
           });
-          socket.once("error", () => {});
+          socket.once("error", (error: NodeJS.ErrnoException) => {
+            if (finished || state.connected) return;
+            const code = /^[A-Z0-9_]+$/u.test(error.code ?? "") ? error.code : "unknown";
+            finish(
+              new Error(`The contained native UI connection failed before opening (${code}).`),
+            );
+          });
           socket.once("close", () => {
             streams.delete(entry);
             if (finished) return;

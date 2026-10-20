@@ -43,7 +43,7 @@ public partial class MainWindow : Window
     private bool packageInstalled;
     private bool configurationSaved;
     private bool preparingModel;
-    private bool replacementSetupAvailable;
+    private readonly HashSet<string> replacementSetupAgents = new(StringComparer.Ordinal);
     internal bool ResumeSavedSetup { get; private set; }
 
     public MainWindow()
@@ -93,10 +93,15 @@ public partial class MainWindow : Window
     public event EventHandler? UninstallRequested;
     public event EventHandler? ReplacePreviewRequested;
     public void SetDataRemovalAvailable(bool available) => this.RemovalOptions.SetAvailable(available);
-    internal void SetReplacementSetupAvailable(bool available)
+    internal void SetReplacementSetupAvailable(IEnumerable<string> agents)
     {
-        this.replacementSetupAvailable = available;
-        this.KeepSavedSetup.IsChecked = available;
+        this.replacementSetupAgents.Clear();
+        foreach (var agent in agents)
+        {
+            if (!AgentNames.ContainsKey(agent)) throw new InvalidOperationException("Saved setup is unavailable for this agent.");
+            this.replacementSetupAgents.Add(agent);
+        }
+        this.KeepSavedSetup.IsChecked = this.replacementSetupAgents.Count != 0;
         this.RefreshSavedSetupChoice();
     }
     public void SetMaintenanceContext(bool relatedOnly)
@@ -336,7 +341,7 @@ public partial class MainWindow : Window
     public void ShowConfigurationFailure(string? detail = null)
     {
         this.ResumeSavedSetup = false;
-        this.SetReplacementSetupAvailable(false);
+        this.SetReplacementSetupAvailable(Array.Empty<string>());
         this.busy = false;
         this.preparingModel = false;
         this.StopElapsed();
@@ -471,20 +476,23 @@ public partial class MainWindow : Window
             && (this.UseSavedSetup || this.ProviderChoice?.SelectedItem is ComboBoxItem { IsEnabled: true });
     }
 
-    private bool UseSavedSetup => this.replacementSetupAvailable && !this.packageInstalled
-        && this.SelectedAgent == "openclaw" && this.KeepSavedSetup?.IsChecked == true;
+    private bool UseSavedSetup => this.replacementSetupAgents.Contains(this.SelectedAgent) && !this.packageInstalled
+        && this.KeepSavedSetup?.IsChecked == true;
 
     private void KeepSavedSetupChanged(object sender, RoutedEventArgs args) => this.RefreshSavedSetupChoice();
 
     private void RefreshSavedSetupChoice()
     {
         if (this.KeepSavedSetup is null || this.ConfigurationFields is null) return;
-        this.KeepSavedSetup.Visibility = this.replacementSetupAvailable && !this.packageInstalled
-            && this.SelectedAgent == "openclaw" ? Visibility.Visible : Visibility.Collapsed;
+        this.KeepSavedSetup.Visibility = this.replacementSetupAgents.Contains(this.SelectedAgent) && !this.packageInstalled
+            ? Visibility.Visible : Visibility.Collapsed;
+        ((TextBlock)this.KeepSavedSetup.Content).Text = $"Keep my existing {AgentNames[this.SelectedAgent]} setup";
+        System.Windows.Automation.AutomationProperties.SetAutomationId(this.KeepSavedSetup,
+            this.SelectedAgent == "hermes" ? "KeepSavedHermesSetup" : "KeepSavedOpenClawSetup");
         this.ConfigurationFields.Visibility = this.UseSavedSetup ? Visibility.Collapsed : Visibility.Visible;
         this.ConfigurationTitle.Text = this.UseSavedSetup ? "Keep your setup." : "Give your agent a model.";
         this.ConfigurationDetail.Text = this.UseSavedSetup
-            ? "Your existing OpenClaw setup will be checked after installation."
+            ? $"Your existing {AgentNames[this.SelectedAgent]} setup will be checked after installation."
             : $"Choose a model for {AgentNames[this.SelectedAgent]} on this PC, a hosted provider, or an existing local server.";
         if (this.runtimeAvailability.IsUnqualified(this.SelectedAgent))
             this.ConfigurationDetail.Text = this.runtimeAvailability.SelectionDetail(this.SelectedAgent) + " " + this.ConfigurationDetail.Text;
@@ -594,22 +602,23 @@ public partial class MainWindow : Window
 
     internal async Task<NativeSetupConfiguration> RestoreSavedSetupAsync()
     {
-        if (!this.ResumeSavedSetup || !this.packageInstalled || this.SelectedAgent != "openclaw"
-            || !this.runtimeAvailability.CanSelect("openclaw"))
-            throw new InvalidOperationException("Saved OpenClaw setup cannot be restored before installation.");
+        var agent = this.SelectedAgent;
+        if (!this.ResumeSavedSetup || !this.packageInstalled || !AgentNames.ContainsKey(agent)
+            || !this.runtimeAvailability.CanSelect(agent))
+            throw new InvalidOperationException("Saved agent setup cannot be restored before installation.");
         this.ResumeSavedSetup = false;
-        this.SetReplacementSetupAvailable(false);
+        this.SetReplacementSetupAvailable(Array.Empty<string>());
         this.savedSettingsReady = false;
-        this.ProgressDetail.Text = "Checking your saved OpenClaw setup. Your settings and keys are not being changed.";
+        this.ProgressDetail.Text = $"Checking your saved {AgentNames[agent]} setup. Your settings and keys are not being changed.";
         // Only the newly installed launcher reads the saved record under its state lease.
-        var saved = NativeSetupOperations.ReadSavedSettings(await this.readSavedSettings("openclaw"), "openclaw");
+        var saved = NativeSetupOperations.ReadSavedSettings(await this.readSavedSettings(agent), agent);
         this.ApplySavedSettings(saved);
-        this.savedChoicesLoaded.Add("openclaw");
+        this.savedChoicesLoaded.Add(agent);
         this.savedSettingsReady = true;
         this.LicenseChanged(this, new RoutedEventArgs());
         var configuration = saved.Configuration ?? throw new InvalidOperationException(saved.State == "needs-resave"
             ? "The previous settings save is unfinished. Review your choices and re-enter required keys to recover it."
-            : "No saved OpenClaw setup was found. Choose a provider and model to finish setup.");
+            : $"No saved {AgentNames[agent]} setup was found. Choose a provider and model to finish setup.");
         if (this.ProviderChoice.SelectedItem is not ComboBoxItem { IsEnabled: true })
             throw new InvalidOperationException("The saved model is unavailable in this package. Choose an available provider to finish setup.");
         this.Configuration = configuration;

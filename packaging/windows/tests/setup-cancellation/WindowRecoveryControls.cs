@@ -387,7 +387,7 @@ internal static class WindowRecoveryControls
             Invoke(window, "AgentSelected", new RadioButton {Tag = agent}, new RoutedEventArgs());
             loader.SetValue(window, (Func<string, Task<string>>)(_ => Task.FromResult(empty)));
             Finish((Task)Invoke(window, "LoadSavedSettingsAsync")!);
-            if (agent == "openclaw") AssertReplacementSetup(window, loader, installed, Finish);
+            AssertReplacementSetup(window, agent, loader, installed, Finish);
         }
         finally
         {
@@ -407,9 +407,9 @@ internal static class WindowRecoveryControls
         }
     }
 
-    private static void AssertReplacementSetup(MainWindow window, FieldInfo loader, FieldInfo installed, Action<Task> finish)
+    private static void AssertReplacementSetup(MainWindow window, string agent, FieldInfo loader, FieldInfo installed, Action<Task> finish)
     {
-        const string saved = "{\"schemaVersion\":1,\"kind\":\"native-saved-settings\",\"agent\":\"openclaw\",\"state\":\"saved\",\"settings\":{\"inference\":\"nvidia\",\"endpoint\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"saved-native-model\",\"credentialStored\":true,\"options\":{\"messaging\":{\"telegram\":{\"credentialStored\":true,\"allowedUsers\":[\"123456\"]}}}}}";
+        var saved = "{\"schemaVersion\":1,\"kind\":\"native-saved-settings\",\"agent\":\"" + agent + "\",\"state\":\"saved\",\"settings\":{\"inference\":\"nvidia\",\"endpoint\":\"https://integrate.api.nvidia.com/v1\",\"model\":\"saved-native-model\",\"credentialStored\":true,\"options\":{\"messaging\":{\"telegram\":{\"credentialStored\":true,\"allowedUsers\":[\"123456\"]}}}}}";
         var choice = (CheckBox)window.FindName("KeepSavedSetup");
         var fields = (StackPanel)window.FindName("ConfigurationFields");
         var license = (CheckBox)window.FindName("LicenseCheck");
@@ -419,29 +419,38 @@ internal static class WindowRecoveryControls
         var reads = 0;
         var installs = 0;
         var hintRoot = Path.Combine(Path.GetTempPath(), "NemoClawSavedSetupHint-" + Guid.NewGuid().ToString("N"));
-        var hintFile = Path.Combine(hintRoot, "NVIDIA", "NemoClaw", "agents", "openclaw", "native-windows.json");
+        var hintFile = Path.Combine(hintRoot, "NVIDIA", "NemoClaw", "agents", agent, "native-windows.json");
         var hint = typeof(MainWindow).Assembly.GetType("Nvidia.NemoClaw.Bootstrapper.NativeSetupOperations")!
-            .GetMethod("HasSavedOpenClawSetup", BindingFlags.Static | BindingFlags.NonPublic)!;
+            .GetMethod("HasSavedSetup", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var otherAgent = agent == "openclaw" ? "hermes" : "openclaw";
+        void SetAvailable(bool available) =>
+            Invoke(window, "SetReplacementSetupAvailable", (object)(available ? new[] { agent } : Array.Empty<string>()));
         EventHandler requested = (_, _) => installs++;
         window.InstallRequested += requested;
         try
         {
             installed.SetValue(window, false);
-            Invoke(window, "SetReplacementSetupAvailable", (bool)hint.Invoke(null, new object[] { hintRoot })!);
+            SetAvailable((bool)hint.Invoke(null, new object[] { agent, hintRoot })!);
             if (choice.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Fresh setup offered replacement-only restore.");
             Directory.CreateDirectory(Path.GetDirectoryName(hintFile)!);
             File.WriteAllText(hintFile, "fixture metadata is deliberately not parsed before installation");
             using (var held = new FileStream(hintFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
-                Invoke(window, "SetReplacementSetupAvailable", (bool)hint.Invoke(null, new object[] { hintRoot })!);
+                SetAvailable((bool)hint.Invoke(null, new object[] { agent, hintRoot })!);
             }
             if (choice.Visibility != Visibility.Visible || choice.IsChecked != true || fields.Visibility != Visibility.Collapsed)
                 throw new InvalidOperationException("Replacement did not offer existing setup without editable defaults.");
+            if ((bool)hint.Invoke(null, new object[] { otherAgent, hintRoot })!)
+                throw new InvalidOperationException("Saved setup hint crossed agent boundaries.");
+            var expectedName = agent == "hermes" ? "Hermes Agent" : "OpenClaw";
+            if (((TextBlock)choice.Content).Text != $"Keep my existing {expectedName} setup"
+                || System.Windows.Automation.AutomationProperties.GetAutomationId(choice) != (agent == "hermes" ? "KeepSavedHermesSetup" : "KeepSavedOpenClawSetup"))
+                throw new InvalidOperationException("Saved setup choice identifies the wrong agent.");
             Invoke(window, "ConfigureClicked", window, new RoutedEventArgs());
             var evidence = Environment.GetEnvironmentVariable("NEMOCLAW_SETUP_PRESENTATION_EVIDENCE");
             if (!string.IsNullOrWhiteSpace(evidence))
             {
-                var output = Path.GetFullPath(evidence + "-replacement");
+                var output = Path.GetFullPath(evidence + (agent == "openclaw" ? "-replacement" : "-replacement-hermes"));
                 if (Directory.Exists(output) || File.Exists(output)) throw new InvalidOperationException("Replacement frames require a fresh directory.");
                 Directory.CreateDirectory(output);
                 var root = (FrameworkElement)window.Content;
@@ -472,20 +481,20 @@ internal static class WindowRecoveryControls
             choice.IsChecked = false;
             if (fields.Visibility != Visibility.Visible) throw new InvalidOperationException("Replacement prevented choosing new settings.");
             choice.IsChecked = true;
-            Invoke(window, "AgentSelected", new RadioButton { Tag = "hermes" }, new RoutedEventArgs());
+            Invoke(window, "AgentSelected", new RadioButton { Tag = otherAgent }, new RoutedEventArgs());
             Invoke(window, "ConfigureClicked", window, new RoutedEventArgs());
             if (choice.Visibility != Visibility.Collapsed || fields.Visibility != Visibility.Visible)
-                throw new InvalidOperationException("OpenClaw replacement changed another agent's onboarding.");
-            Invoke(window, "AgentSelected", new RadioButton { Tag = "openclaw" }, new RoutedEventArgs());
+                throw new InvalidOperationException("Replacement changed another agent's onboarding.");
+            Invoke(window, "AgentSelected", new RadioButton { Tag = agent }, new RoutedEventArgs());
             Invoke(window, "ConfigureClicked", window, new RoutedEventArgs());
             license.IsChecked = false;
             Invoke(window, "InstallClicked", window, new RoutedEventArgs());
             if (installs != 0) throw new InvalidOperationException("Restore bypassed license acceptance.");
             license.IsChecked = true;
             key.Password = "fixture-only-unused-key";
-            loader.SetValue(window, (Func<string, Task<string>>)(agent =>
+            loader.SetValue(window, (Func<string, Task<string>>)(requestedAgent =>
             {
-                if (agent != "openclaw") throw new InvalidOperationException("Restore read another agent's settings.");
+                if (requestedAgent != agent) throw new InvalidOperationException("Restore read another agent's settings.");
                 reads++;
                 return Task.FromResult(saved);
             }));
@@ -510,11 +519,11 @@ internal static class WindowRecoveryControls
             foreach (var state in new[] { "unconfigured", "needs-resave" })
             {
                 installed.SetValue(window, false);
-                Invoke(window, "SetReplacementSetupAvailable", true);
+                SetAvailable(true);
                 Invoke(window, "InstallClicked", window, new RoutedEventArgs());
                 installed.SetValue(window, true);
                 loader.SetValue(window, (Func<string, Task<string>>)(_ => Task.FromResult(
-                    "{\"schemaVersion\":1,\"kind\":\"native-saved-settings\",\"agent\":\"openclaw\",\"state\":\"" + state + "\",\"settings\":null}")));
+                    "{\"schemaVersion\":1,\"kind\":\"native-saved-settings\",\"agent\":\"" + agent + "\",\"state\":\"" + state + "\",\"settings\":null}")));
                 var rejected = false;
                 try { finish((Task)Invoke(window, "RestoreSavedSetupAsync")!); }
                 catch (InvalidOperationException) { rejected = true; }
@@ -525,7 +534,7 @@ internal static class WindowRecoveryControls
                     throw new InvalidOperationException("Failed restore did not return to normal onboarding.");
             }
             installed.SetValue(window, false);
-            Invoke(window, "SetReplacementSetupAvailable", true);
+            SetAvailable(true);
             Invoke(window, "InstallClicked", window, new RoutedEventArgs());
             installed.SetValue(window, true);
             loader.SetValue(window, (Func<string, Task<string>>)(_ => Task.FromException<string>(new IOException("fixture read failure"))));
@@ -541,11 +550,11 @@ internal static class WindowRecoveryControls
                 throw new InvalidOperationException("A successful status retry did not recover normal configuration.");
 
             var modelType = typeof(MainWindow).Assembly.GetType("Nvidia.NemoClaw.Bootstrapper.NativeExpressSetup")!;
-            var unavailable = System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = 1, kind = "native-saved-settings", agent = "openclaw", state = "saved",
+            var unavailable = System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = 1, kind = "native-saved-settings", agent, state = "saved",
                 settings = new { inference = "local", model = modelType.GetProperty("Model", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null),
                     localModel = modelType.GetProperty("Id", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null), credentialStored = false, options = new { } } });
             installed.SetValue(window, false);
-            Invoke(window, "SetReplacementSetupAvailable", true);
+            SetAvailable(true);
             Invoke(window, "InstallClicked", window, new RoutedEventArgs());
             installed.SetValue(window, true);
             loader.SetValue(window, (Func<string, Task<string>>)(_ => Task.FromResult(unavailable)));
@@ -559,7 +568,7 @@ internal static class WindowRecoveryControls
         finally
         {
             window.InstallRequested -= requested;
-            Invoke(window, "SetReplacementSetupAvailable", false);
+            SetAvailable(false);
             if (Directory.Exists(hintRoot)) Directory.Delete(hintRoot, true);
         }
     }

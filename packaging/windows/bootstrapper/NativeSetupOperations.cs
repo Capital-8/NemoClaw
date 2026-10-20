@@ -83,12 +83,13 @@ internal sealed class NativeSetupObservation
 
 internal static class NativeSetupOperations
 {
-    internal static bool HasSavedOpenClawSetup(string? localApplicationData = null)
+    internal static bool HasSavedSetup(string agent, string? localApplicationData = null)
     {
+        if (agent is not ("openclaw" or "hermes")) throw new InvalidOperationException("Saved setup inspection is unavailable for this agent.");
         // This is only a UI hint after interrupted replacement, never validation.
         // The newly installed helper must still read and validate the saved setup.
         var root = localApplicationData ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return File.Exists(Path.Combine(root, "NVIDIA", "NemoClaw", "agents", "openclaw", "native-windows.json"));
+        return File.Exists(Path.Combine(root, "NVIDIA", "NemoClaw", "agents", agent, "native-windows.json"));
     }
 
     internal static Task<string> ReadSavedSettingsAsync(string agent)
