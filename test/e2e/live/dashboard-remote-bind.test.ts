@@ -15,6 +15,7 @@ import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   buildDashboardRemoteBindEnv,
+  dashboardRemoteBindSandboxName,
   REMOTE_API_REFUSAL_PROBE,
 } from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
@@ -54,7 +55,7 @@ runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
     },
   },
   async (agent, { artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
-    const sandboxName = `${SANDBOX_NAME}-${agent}`;
+    const sandboxName = dashboardRemoteBindSandboxName(SANDBOX_NAME, agent);
     const apiPort = process.env.NEMOCLAW_HERMES_API_PORT || "8642";
     function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
       return buildDashboardRemoteBindEnv(sandboxName, {

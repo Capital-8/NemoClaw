@@ -3,10 +3,20 @@
 
 import os from "node:os";
 
+import { NAME_MAX_LENGTH } from "../../../src/lib/name-validation.ts";
+
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 
 function stripAnsi(output: string): string {
   return output.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+export function dashboardRemoteBindSandboxName(
+  baseName: string,
+  agent: "openclaw" | "hermes",
+): string {
+  const prefix = baseName.slice(0, NAME_MAX_LENGTH - agent.length - 1).replace(/-+$/u, "");
+  return `${prefix}-${agent}`;
 }
 
 export function buildDashboardRemoteBindEnv(

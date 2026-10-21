@@ -7,10 +7,13 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
+import { isValidName } from "../../../src/lib/name-validation.ts";
+
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildDashboardRemoteBindEnv,
+  dashboardRemoteBindSandboxName,
   REMOTE_API_REFUSAL_PROBE,
   dashboardForwardIsRunning,
   dashboardRemoteBindConnectStarted,
@@ -164,3 +167,17 @@ it("selects dashboard-remote-bind when its host-network probe helper changes", (
     "dashboard-remote-bind",
   );
 });
+
+it.each(["e2e-dashboard-bind", "e2e-wsl", "abcdefghijklmnopqrs", "abcdefghij-klmnopqr"])(
+  "keeps both agent sandbox names valid for base %s",
+  (baseName) => {
+    const names = ["openclaw", "hermes"].map((agent) =>
+      dashboardRemoteBindSandboxName(baseName, agent as "openclaw" | "hermes"),
+    );
+    expect(names.every((name) => isValidName(name))).toBe(true);
+    expect(names.map((name) => buildDashboardRemoteBindEnv(name).NEMOCLAW_SANDBOX_NAME)).toEqual(
+      names,
+    );
+    expect(new Set(names).size).toBe(2);
+  },
+);
