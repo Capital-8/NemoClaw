@@ -1249,6 +1249,39 @@ function resolveMatchingAgentConfigTarget(
   return target;
 }
 
+function shouldRestartHermesGateway(input: {
+  isHermes: boolean;
+  retryPending: boolean;
+  selectingNative: boolean;
+  previousNativeAttachment: boolean;
+  previousNativeLocalAttachment: boolean;
+  configChanged: boolean;
+  nativeAttachmentChanged: boolean;
+  nativeLocalAttachmentChanged: boolean;
+}): boolean {
+  if (!input.isHermes) return false;
+  if (input.retryPending) return true;
+  const hasNativeAttachment =
+    input.selectingNative || input.previousNativeAttachment || input.previousNativeLocalAttachment;
+  return (
+    hasNativeAttachment &&
+    (input.configChanged || input.nativeAttachmentChanged || input.nativeLocalAttachmentChanged)
+  );
+}
+
+function markHermesGatewayRestartPending(
+  required: boolean,
+  sandboxName: string,
+  deps: Pick<InferenceSetDeps, "updateSandbox">,
+): void {
+  if (!required) return;
+  if (!deps.updateSandbox(sandboxName, { hermesGatewayRestartPending: true })) {
+    throw new InferenceSetError(
+      `Failed to record the pending Hermes gateway restart for sandbox '${sandboxName}'.`,
+    );
+  }
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -2006,19 +2039,17 @@ async function runInferenceSetWithoutHostLock(
       );
     }
 
-    const hermesGatewayRestartRequired =
-      agentName === "hermes" &&
-      (retryingHermesGatewayRestart ||
-        (Boolean(selectingNative || previousNativeAttachment || previousNativeLocalAttachment) &&
-          (patched.changed || nativeAttachmentChanged || nativeLocalAttachmentChanged)));
-    if (
-      hermesGatewayRestartRequired &&
-      !deps.updateSandbox(sandboxName, { hermesGatewayRestartPending: true })
-    ) {
-      throw new InferenceSetError(
-        `Failed to record the pending Hermes gateway restart for sandbox '${sandboxName}'.`,
-      );
-    }
+    const hermesGatewayRestartRequired = shouldRestartHermesGateway({
+      isHermes: agentName === "hermes",
+      retryPending: retryingHermesGatewayRestart,
+      selectingNative: Boolean(selectingNative),
+      previousNativeAttachment: Boolean(previousNativeAttachment),
+      previousNativeLocalAttachment: Boolean(previousNativeLocalAttachment),
+      configChanged: patched.changed,
+      nativeAttachmentChanged,
+      nativeLocalAttachmentChanged,
+    });
+    markHermesGatewayRestartPending(hermesGatewayRestartRequired, sandboxName, deps);
 
     deps.log(
       agentName === "hermes"
