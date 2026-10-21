@@ -4,9 +4,10 @@
 import { expect } from "vitest";
 
 import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
+import { customProviderRebuildEntry } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import type { RebuildFlowHarness } from "./rebuild-flow-generic-harness";
 
-export function makeDcodeSandboxEntry(): Record<string, unknown> {
+export function makeDcodeSandboxEntry(native = true): Record<string, unknown> {
   return {
     name: "alpha",
     agent: "langchain-deepagents-code",
@@ -25,6 +26,7 @@ export function makeDcodeSandboxEntry(): Record<string, unknown> {
     gpuEnabled: false,
     sandboxGpuEnabled: false,
     sandboxGpuMode: "0",
+    ...(native ? customProviderRebuildEntry() : {}),
   };
 }
 

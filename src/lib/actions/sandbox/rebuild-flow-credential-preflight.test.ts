@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   rebuildBackupPhase,
+  cliOpenShellInstalledVersionObserver,
   listHarnessRebuildBackups,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import {
@@ -606,191 +607,202 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
   });
 
-  it("lets validated prepared recovery recreate a missing provider from a host key (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        provider: "compatible-endpoint",
-        model: MODEL,
-        credentialEnv: "COMPATIBLE_API_KEY",
-        endpointUrl: "https://inference.example.test/v1",
-        preferredInferenceApi: "openai-completions",
-      },
-      hydrateCredentialEnv: () => "host-provider-key",
-      runOpenshell: providerRuntime([]),
-      sandboxInventory: {
-        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
-      },
-    });
-    configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
-      endpointUrl: "https://inference.example.test/v1",
-      preferredInferenceApi: "openai-completions",
+  describe("shared-provider recovery on OpenShell 0.0.116", () => {
+    beforeEach(() => {
+      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+        ok: true,
+        version: "0.0.116",
+      });
     });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["provider", "get", "compatible-endpoint"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.onboardSpy).toHaveBeenCalledOnce();
-    expect(harness.onboardSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        rebuildProviderReconfigure: {
-          sandboxName: "alpha",
+    it("lets validated prepared recovery recreate a missing provider from a host key (#6114)", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
           provider: "compatible-endpoint",
           model: MODEL,
           credentialEnv: "COMPATIBLE_API_KEY",
           endpointUrl: "https://inference.example.test/v1",
+          preferredInferenceApi: "openai-completions",
         },
-      }),
-    );
-  });
-
-  it("aborts if the missing provider appears at the delete edge (#6114)", async () => {
-    const missingProvider = providerRuntime([]);
-    const registeredProvider = providerRuntime(["compatible-endpoint"], {
-      "compatible-endpoint": "COMPATIBLE_API_KEY",
-    });
-    const providerLookups = [missingProvider, registeredProvider];
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        provider: "compatible-endpoint",
-        model: MODEL,
-        credentialEnv: "COMPATIBLE_API_KEY",
+        hydrateCredentialEnv: () => "host-provider-key",
+        runOpenshell: providerRuntime([]),
+        sandboxInventory: {
+          sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+        },
+      });
+      configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
         endpointUrl: "https://inference.example.test/v1",
         preferredInferenceApi: "openai-completions",
-      },
-      hydrateCredentialEnv: () => "host-provider-key",
-      runOpenshell: (args) =>
-        args[0] === "provider" ? (providerLookups.shift() ?? registeredProvider)(args) : undefined,
-      staleRecovery: false,
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["provider", "get", "compatible-endpoint"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+      expect(harness.onboardSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rebuildProviderReconfigure: {
+            sandboxName: "alpha",
+            provider: "compatible-endpoint",
+            model: MODEL,
+            credentialEnv: "COMPATIBLE_API_KEY",
+            endpointUrl: "https://inference.example.test/v1",
+          },
+        }),
+      );
     });
-    configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
-      endpointUrl: "https://inference.example.test/v1",
-      preferredInferenceApi: "openai-completions",
-    });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("changed during rebuild preflight");
-
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-  });
-
-  it("aborts if the provider credential disappears at the delete edge (#6114)", async () => {
-    let credentialAvailable = true;
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        provider: "compatible-endpoint",
-        model: MODEL,
-        credentialEnv: "COMPATIBLE_API_KEY",
+    it("aborts if the missing provider appears at the delete edge (#6114)", async () => {
+      const missingProvider = providerRuntime([]);
+      const registeredProvider = providerRuntime(["compatible-endpoint"], {
+        "compatible-endpoint": "COMPATIBLE_API_KEY",
+      });
+      const providerLookups = [missingProvider, registeredProvider];
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: MODEL,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          endpointUrl: "https://inference.example.test/v1",
+          preferredInferenceApi: "openai-completions",
+        },
+        hydrateCredentialEnv: () => "host-provider-key",
+        runOpenshell: (args) =>
+          args[0] === "provider"
+            ? (providerLookups.shift() ?? registeredProvider)(args)
+            : undefined,
+        staleRecovery: false,
+      });
+      configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
         endpointUrl: "https://inference.example.test/v1",
         preferredInferenceApi: "openai-completions",
-      },
-      hydrateCredentialEnv: () => (credentialAvailable ? "host-provider-key" : null),
-      runOpenshell: providerRuntime([]),
-      staleRecovery: false,
-    });
-    configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
-      endpointUrl: "https://inference.example.test/v1",
-      preferredInferenceApi: "openai-completions",
-    });
+      });
 
-    const backupPhase = rebuildBackupPhase.runRebuildBackupPhase;
-    vi.spyOn(rebuildBackupPhase, "runRebuildBackupPhase").mockImplementation(async (args) => {
-      const result = await backupPhase(args);
-      credentialAvailable = false;
-      return result;
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("changed during rebuild preflight");
+
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("became unavailable before sandbox deletion");
-
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-  });
-
-  it("aborts when the delete-edge provider lookup is indeterminate (#6114)", async () => {
-    const missingProvider = providerRuntime([]);
-    const indeterminateProvider = () => ({
-      status: 7,
-      output: "",
-      stdout: "",
-      stderr: "gateway transport unavailable",
-    });
-    const providerLookups = [missingProvider, indeterminateProvider];
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        provider: "compatible-endpoint",
-        model: MODEL,
-        credentialEnv: "COMPATIBLE_API_KEY",
+    it("aborts if the provider credential disappears at the delete edge (#6114)", async () => {
+      let credentialAvailable = true;
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: MODEL,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          endpointUrl: "https://inference.example.test/v1",
+          preferredInferenceApi: "openai-completions",
+        },
+        hydrateCredentialEnv: () => (credentialAvailable ? "host-provider-key" : null),
+        runOpenshell: providerRuntime([]),
+        staleRecovery: false,
+      });
+      configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
         endpointUrl: "https://inference.example.test/v1",
         preferredInferenceApi: "openai-completions",
-      },
-      hydrateCredentialEnv: () => "host-provider-key",
-      runOpenshell: (args) =>
-        args[0] === "provider"
-          ? (providerLookups.shift() ?? indeterminateProvider)(args)
-          : undefined,
-      staleRecovery: false,
+      });
+
+      const backupPhase = rebuildBackupPhase.runRebuildBackupPhase;
+      vi.spyOn(rebuildBackupPhase, "runRebuildBackupPhase").mockImplementation(async (args) => {
+        const result = await backupPhase(args);
+        credentialAvailable = false;
+        return result;
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("became unavailable before sandbox deletion");
+
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
-    configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
-      endpointUrl: "https://inference.example.test/v1",
-      preferredInferenceApi: "openai-completions",
-    });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("could not be verified before sandbox deletion");
-
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-  });
-
-  it("keeps prepared recovery fail-closed when the missing provider has no host key (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        provider: "compatible-endpoint",
-        model: MODEL,
-        credentialEnv: "COMPATIBLE_API_KEY",
+    it("aborts when the delete-edge provider lookup is indeterminate (#6114)", async () => {
+      const missingProvider = providerRuntime([]);
+      const indeterminateProvider = () => ({
+        status: 7,
+        output: "",
+        stdout: "",
+        stderr: "gateway transport unavailable",
+      });
+      const providerLookups = [missingProvider, indeterminateProvider];
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: MODEL,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          endpointUrl: "https://inference.example.test/v1",
+          preferredInferenceApi: "openai-completions",
+        },
+        hydrateCredentialEnv: () => "host-provider-key",
+        runOpenshell: (args) =>
+          args[0] === "provider"
+            ? (providerLookups.shift() ?? indeterminateProvider)(args)
+            : undefined,
+        staleRecovery: false,
+      });
+      configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
         endpointUrl: "https://inference.example.test/v1",
         preferredInferenceApi: "openai-completions",
-      },
-      hydrateCredentialEnv: () => null,
-      runOpenshell: providerRuntime([]),
-      staleRecovery: true,
-    });
-    configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
-      endpointUrl: "https://inference.example.test/v1",
-      preferredInferenceApi: "openai-completions",
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("could not be verified before sandbox deletion");
+
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Missing gateway provider: compatible-endpoint");
+    it("keeps prepared recovery fail-closed when the missing provider has no host key (#6114)", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: MODEL,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          endpointUrl: "https://inference.example.test/v1",
+          preferredInferenceApi: "openai-completions",
+        },
+        hydrateCredentialEnv: () => null,
+        runOpenshell: providerRuntime([]),
+        staleRecovery: true,
+      });
+      configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
+        endpointUrl: "https://inference.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+      });
 
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Missing gateway provider: compatible-endpoint");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    });
   });
 
   it("copies the staged Hermes messaging plan into the rebuild resume session", async () => {

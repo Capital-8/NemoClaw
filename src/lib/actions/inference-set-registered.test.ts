@@ -202,7 +202,7 @@ describe("registered inference selection transaction", () => {
           };
     await expect(
       runInferenceSet({ provider: "nvidia-prod", model: "vendor/model-b" }, f.deps),
-    ).rejects.toThrow("did not confirm removal of native provider access");
+    ).rejects.toThrow("did not confirm removal of native NVIDIA access");
     expect(f.events).toEqual(["detach:native-extra", "attach:nemoclaw-nvidia-prod-v1"]);
     expect(f.state.attached).toBe(false);
     expect(f.entry.registeredInferenceProviderAttachment).toEqual(f.binding);

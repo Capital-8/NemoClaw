@@ -16,7 +16,10 @@ import {
   snapshotEnv,
   tempFiles,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
-import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import {
+  customProviderRebuildEntry,
+  makePreparedRecoveryManifest,
+} from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import {
@@ -949,9 +952,8 @@ describe("rebuildSandbox flow: lifecycle", () => {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
         sandboxEntry: {
-          provider: "compatible-endpoint",
+          ...customProviderRebuildEntry("https://compatible.example.test/v1"),
           model: "reasoning-model",
-          endpointUrl: "https://compatible.example.test/v1",
           compatibleEndpointReasoning: "true",
           compatibleEndpointReasoningEffort: "high",
           mcp: { bridges: { github: mcpEntry } },
