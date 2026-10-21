@@ -64,8 +64,15 @@ export function hermesDashboardPythonSource(): string[] {
                     return
                 loop = asyncio.get_running_loop()
 
+                class AcceptedPipeProtocol(config.http_protocol_class):
+                    def connection_made(self, transport):
+                        super().connection_made(transport)
+                        # Proactor replenishes its accept instance before this callback.
+                        # Admit the next private relay connection only after that point.
+                        transport.write(b'\x00')
+
                 def create_protocol():
-                    return config.http_protocol_class(
+                    return AcceptedPipeProtocol(
                         config=config, server_state=self.server_state,
                         app_state=self.lifespan.state, _loop=loop)
 

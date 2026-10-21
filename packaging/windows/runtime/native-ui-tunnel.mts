@@ -100,6 +100,7 @@ export async function startNativeUiTunnel({
   relayToken,
   uiPort,
   pipe = false,
+  pipeAcceptance = false,
   signal,
   measurements,
 }: {
@@ -107,6 +108,7 @@ export async function startNativeUiTunnel({
   relayToken: string;
   uiPort: number;
   pipe?: boolean;
+  pipeAcceptance?: boolean;
   signal?: AbortSignal;
   measurements?: RelayMeasurements;
 }): Promise<void> {
@@ -115,7 +117,8 @@ export async function startNativeUiTunnel({
     typeof relayToken !== "string" ||
     !Number.isInteger(uiPort) ||
     uiPort < 1 ||
-    uiPort > 65535
+    uiPort > 65535 ||
+    (pipeAcceptance && !pipe)
   )
     throw new Error("The contained native UI tunnel identity is invalid.");
   signal?.throwIfAborted();
@@ -130,9 +133,18 @@ export async function startNativeUiTunnel({
       const connected = await new Promise<boolean>((resolvePromise, reject) => {
         const socket = net.createConnection({ ...target, signal });
         socket.once("connect", () => {
+          if (pipeAcceptance) return;
           socket.destroy();
           resolvePromise(true);
         });
+        if (pipeAcceptance)
+          socket.once("data", (chunk: Buffer) => {
+            socket.destroy();
+            if (chunk.length !== 1 || chunk[0] !== 0)
+              reject(new Error("The Hermes dashboard pipe acceptance is invalid."));
+            else resolvePromise(true);
+          });
+        socket.once("close", () => resolvePromise(false));
         socket.once("error", (error: NodeJS.ErrnoException) => {
           socket.destroy();
           if (error.code === "EACCES" || error.code === "EPERM") reject(error);
@@ -192,6 +204,9 @@ export async function startNativeUiTunnel({
         root: string;
         sequence: number;
         socket: Socket;
+        connected: boolean;
+        opening: boolean;
+        acceptDeadline: number;
         pendingFrames: number;
         blocked: boolean;
         hostEnded: boolean;
@@ -270,12 +285,14 @@ export async function startNativeUiTunnel({
           if (readNativeUiTunnelMarker(open, measurements) !== relayToken) continue;
           if (streams.size >= MAX_ACTIVE_STREAMS)
             throw new Error("The native UI relay active-stream limit was exceeded.");
-          const socket = net.createConnection(target);
+          const socket = pipeAcceptance ? new net.Socket() : net.createConnection(target);
           const state = {
             root: streamRoot,
             sequence: 0,
             socket,
             connected: false,
+            opening: !pipeAcceptance,
+            acceptDeadline: performance.now() + 30_000,
             pendingFrames: 0,
             blocked: false,
             hostEnded: false,
@@ -283,7 +300,7 @@ export async function startNativeUiTunnel({
           };
           streams.set(entry, state);
           socket.once("connect", () => {
-            state.connected = true;
+            if (!pipeAcceptance) state.connected = true;
           });
           socket.on("drain", () => {
             state.blocked = false;
@@ -291,6 +308,13 @@ export async function startNativeUiTunnel({
           socket.on("data", (chunk) => {
             if (finished) return;
             try {
+              if (pipeAcceptance && !state.connected) {
+                if (chunk[0] !== 0)
+                  throw new Error("The Hermes dashboard pipe acceptance is invalid.");
+                state.connected = true;
+                chunk = chunk.subarray(1);
+                if (chunk.length === 0) return;
+              }
               writeRelayFile(
                 join(streamRoot, "sandbox-" + String(state.sequence++).padStart(10, "0") + ".bin"),
                 chunk,
@@ -310,12 +334,28 @@ export async function startNativeUiTunnel({
           socket.once("close", () => {
             streams.delete(entry);
             if (finished) return;
+            if (pipeAcceptance && !state.connected) {
+              finish(new Error("The Hermes dashboard pipe closed before acceptance."));
+              return;
+            }
             try {
               writeRelayFile(join(streamRoot, "sandbox-close"), Buffer.alloc(0));
             } catch {}
           });
         }
+        if (pipeAcceptance) {
+          // A busy Windows pipe enters libuv's blocking wait path inside MXC.
+          // The server acknowledgment, not 'connect', establishes a renewed accept.
+          const pending = [...streams.values()].filter((stream) => !stream.connected);
+          if (pending.some((stream) => performance.now() >= stream.acceptDeadline))
+            throw new Error("The Hermes dashboard pipe acceptance timed out.");
+          if (pending.length && !pending.some((stream) => stream.opening)) {
+            pending[0].opening = true;
+            pending[0].socket.connect(target);
+          }
+        }
         for (const stream of streams.values()) {
+          if (pipeAcceptance && !stream.connected) continue;
           const entries = readDirectory(stream.root);
           stream.pendingFrames = entries.filter((name) =>
             /^sandbox-[0-9]{10}[.]bin$/u.test(name),

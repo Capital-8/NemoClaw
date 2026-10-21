@@ -585,7 +585,7 @@ try {
       throw new Error("The Hermes dashboard process stopped during readiness.");
     const { startNativeUiTunnel } = await import("./native-ui-tunnel.mts");
     await Promise.race([
-      startNativeUiTunnel({ relayRoot: required("NEMOCLAW_UI_RELAY_ROOT"), relayToken: required("NEMOCLAW_UI_RELAY_TOKEN"), uiPort: port, pipe: true, signal: stopWatcher.signal }),
+      startNativeUiTunnel({ relayRoot: required("NEMOCLAW_UI_RELAY_ROOT"), relayToken: required("NEMOCLAW_UI_RELAY_TOKEN"), uiPort: port, pipe: true, pipeAcceptance: true, signal: stopWatcher.signal }),
       childExit.then(() => { throw new Error("The Hermes dashboard stopped unexpectedly."); }),
     ]);
     // The host subsequently deletes the exact MXC sandbox, which owns every

@@ -36,9 +36,15 @@ class Lifespan:
     async def shutdown(self): events.append('shutdown')
 
 configs = []
+class Protocol:
+    def __init__(self, **kwargs): self.kwargs = kwargs
+    def connection_made(self, transport):
+        events.append(('connection_made', transport))
+        if getattr(transport, 'failure', None): raise transport.failure
+
 def build(host, port, *, ssh_isolated):
     events.append(('build', host, port, ssh_isolated))
-    config = NS(app=app, http_protocol_class=lambda **kwargs: kwargs,
+    config = NS(app=app, http_protocol_class=Protocol,
                 proxy_headers=False, forwarded_allow_ips='127.0.0.1',
                 ws_ping_interval=None, ws_ping_timeout=None, ws_max_size=1048576)
     configs.append(config)
@@ -164,10 +170,28 @@ async def run():
     assert config is configs[0]
     assert (config.proxy_headers, config.forwarded_allow_ips, config.ws_ping_interval,
             config.ws_ping_timeout, config.ws_max_size) == (False, '127.0.0.1', None, None, 1048576)
-    assert protocols[0] == {'config': config, 'server_state': server.server_state,
+    assert protocols[0].kwargs == {'config': config, 'server_state': server.server_state,
                             'app_state': server.lifespan.state, '_loop': asyncio.get_running_loop()}
     assert server.servers[0].sockets == ()
     assert web._read_bound_port(server, 0) == 8123
+asyncio.run(run())
+`);
+});
+
+test("dashboard acknowledges private pipe acceptance only after Uvicorn initializes the connection", () => {
+  check(String.raw`
+install('8123')
+async def run():
+    config, _, _, protocols = await scenario()
+    writes = []
+    transport = NS(write=lambda data: writes.append((data, events[-1])))
+    protocols[0].connection_made(transport)
+    assert writes == [(b'\x00', ('connection_made', transport))]
+    assert config.http_protocol_class is Protocol
+    writes.clear()
+    transport.failure = RuntimeError('initialization failed')
+    rejects(lambda: protocols[0].connection_made(transport), 'initialization failed')
+    assert writes == []
 asyncio.run(run())
 `);
 });
