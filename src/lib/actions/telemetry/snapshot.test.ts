@@ -378,6 +378,56 @@ it.each(nativeModelCases)(
   },
 );
 
+const hermesNvidiaConfig =
+  "model:\n  default: nvidia/nemotron-3-ultra-550b-a55b\n  provider: custom\n  base_url: https://integrate.api.nvidia.com/v1\n";
+const nvidiaAttachment = {
+  schemaVersion: 1,
+  profileId: "nemoclaw-nvidia-inference-v1",
+  providerName: "nemoclaw-nvidia-prod-v1",
+  providerId: "11111111-2222-4333-8444-555555555555",
+} as const;
+
+it.each([
+  {
+    name: "an attached native NVIDIA route",
+    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    attachment: nvidiaAttachment,
+    providerProfile: "nvidia",
+  },
+  {
+    name: "a native config for another recorded model",
+    model: "other/model",
+    attachment: nvidiaAttachment,
+    providerProfile: "custom",
+  },
+  {
+    name: "a native config without an attachment",
+    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    attachment: undefined,
+    providerProfile: "custom",
+  },
+])(
+  "reports the Hermes custom adapter for $name as $providerProfile (#13577)",
+  async ({ model, attachment, providerProfile }) => {
+    const event = await collectNativeConfiguration(
+      "hermes",
+      "/sandbox/.hermes/config.yaml",
+      hermesNvidiaConfig,
+      {
+        provider: "nvidia-prod",
+        model,
+        ...(attachment ? { nativeNvidiaProviderAttachment: attachment } : {}),
+      },
+    );
+    expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
+      modelId: "nvidia/nemotron-3-ultra-550b-a55b",
+      providerProfile,
+      providerStatus: "reported",
+    });
+    expect(isOperationEvent(event)).toBe(true);
+  },
+);
+
 it.each(nativeModelCases)(
   "marks a malformed $agent native model as a collection error (#12859)",
   async ({ agent, configPath, invalidConfig }) => {

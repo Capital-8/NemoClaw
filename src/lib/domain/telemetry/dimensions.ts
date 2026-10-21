@@ -95,6 +95,9 @@ export interface RuntimeRouteAuthority {
   modelSelectionProvenance?: unknown;
   nativeModelSelectionProvenance?: unknown;
   modelAssignmentSelections?: unknown;
+  nativeNvidiaProviderAttachment?: unknown;
+  nativeHostedProviderAttachment?: unknown;
+  nativeLocalProviderAttachment?: unknown;
   metadataErrors?: readonly TelemetryMetadataError[];
 }
 
@@ -103,8 +106,18 @@ type ModelReference = {
   providerKey: string;
   api?: unknown;
   managed: boolean;
+  /** A native reference that NemoClaw attached for the recorded provider and model. */
+  attached?: boolean;
   nativeConfiguration?: unknown;
 };
+
+function hasNativeProviderAttachment(authority: RuntimeRouteAuthority): boolean {
+  return [
+    authority.nativeNvidiaProviderAttachment,
+    authority.nativeHostedProviderAttachment,
+    authority.nativeLocalProviderAttachment,
+  ].some((receipt) => dataRecord(receipt) !== null);
+}
 
 type AssignmentSources = {
   selections: Map<string, ModelAssignmentSelection>;
@@ -241,11 +254,12 @@ function projectModel(
     gatewayReceipt.provider === authority.provider
       ? gatewayReceipt.providerProfile
       : undefined;
-  const provider = reference.managed
-    ? (bound?.providerProfile ?? gatewayProvider ?? classifyTelemetryProvider(authority.provider))
-    : reference.providerKey
-      ? (NATIVE_PROVIDERS[reference.providerKey] ?? "custom")
-      : "unknown";
+  const provider =
+    reference.managed || reference.attached
+      ? (bound?.providerProfile ?? gatewayProvider ?? classifyTelemetryProvider(authority.provider))
+      : reference.providerKey
+        ? (NATIVE_PROVIDERS[reference.providerKey] ?? "custom")
+        : "unknown";
   const api = classifyTelemetryApi(reference.api);
   return {
     assignment,
@@ -551,6 +565,12 @@ export function projectRuntimeAgents(
       managed:
         typeof model.base_url === "string" &&
         /^https:\/\/inference\.local(?:\/v1)?\/?$/.test(model.base_url),
+      // NemoClaw writes every Hermes route with the `custom` adapter, so the
+      // adapter name does not identify the selected provider.
+      attached:
+        model.provider === "custom" &&
+        model.default === authority.model &&
+        hasNativeProviderAttachment(authority),
     };
   } else if (runtime.agentHarnessId === "langchain-deepagents-code") {
     const models = dataRecord(root.models);
