@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -105,6 +108,7 @@ describe("platform evidence workflow", () => {
     });
     expect(detection.run).toContain("-User $env:WSL_TEST_USER");
     expect(live.run).toContain("-User $env:WSL_TEST_USER");
+    expect(live.run).toContain('test "`$(git rev-parse HEAD)" = "$env:GITHUB_SHA"');
   });
 
   it("runs Hermes remote-dashboard isolation before and after restart on WSL", () => {
@@ -143,6 +147,54 @@ describe("platform evidence workflow", () => {
       "--reporter=default",
     ]);
   });
+  it.each([0, 17])(
+    "preserves full-suite status %s on the native Docker WSL runner",
+    (fullStatus) => {
+      const run = step("wsl-vitest", "Run WSL live E2E").run ?? "";
+      const script = run.match(/\$script = @"\n([\s\S]*?)\n"@/u)?.[1];
+      expect(script).toBeDefined();
+      const workspace = mkdtempSync(path.join(os.tmpdir(), "wsl-native-docker-"));
+      try {
+        const shell = script!
+          .replaceAll("$workdir", '"$TEST_WORKSPACE"')
+          .replaceAll("$exports", "")
+          .replaceAll("$dashboardArtifacts", '"$TEST_WORKSPACE/dashboard"')
+          .replaceAll("$env:GITHUB_SHA", "test-revision")
+          .replaceAll("`", "");
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            `
+          git() { echo test-revision; }
+          docker() { echo Ubuntu; }
+          python3() { return 42; }
+          npx() {
+            case "$*" in
+              *full-e2e.test.ts*) return "$TEST_FULL_STATUS" ;;
+              *dashboard-remote-bind.test.ts*) return 0 ;;
+              *) echo 'Native Docker has no IPv6-only host alias' >&2; return 42 ;;
+            esac
+          }
+          ${shell}
+        `,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              PATH: process.env.PATH,
+              TEST_WORKSPACE: workspace,
+              TEST_FULL_STATUS: String(fullStatus),
+            },
+          },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status, result.stderr).toBe(fullStatus);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("keeps credentialed macOS E2E independent from non-live shard failures", () => {
     const nonLive = job("macos-vitest");
