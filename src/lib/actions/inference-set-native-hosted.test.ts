@@ -694,6 +694,38 @@ describe("custom native inference selection", () => {
     expect([...attached.get("alpha")!]).toEqual([custom.providerName]);
     expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
   });
+  it("waits for a replacement endpoint credential with unchanged provider and model (#12603)", async () => {
+    const { deps, entry } = fixture([custom, replacement]);
+    await runInferenceSet({ provider: "openai-api", model: "first-model" }, deps);
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: custom.endpoint,
+        inferenceApi: custom.api,
+      },
+      deps,
+    );
+    let elapsed = 0;
+    deps.sleep = async (milliseconds) => {
+      elapsed += milliseconds;
+    };
+    deps.calls.probeSandboxRoute.mockImplementation(async () =>
+      elapsed >= 10_000
+        ? { ok: true }
+        : { ok: false, detail: "native credential handle pending", httpStatus: null },
+    );
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: replacement.endpoint,
+        inferenceApi: replacement.api,
+      },
+      deps,
+    );
+    expect(entry.nativeHostedProviderAttachment?.custom).toEqual(replacement.custom);
+  });
   it("restores the prior attachment if a changed custom endpoint fails sandbox verification", async () => {
     const { deps, calls, entry, attached, authorities } = fixture([custom, replacement]);
     await runInferenceSet({ provider: "openai-api", model: "first-model" }, deps);

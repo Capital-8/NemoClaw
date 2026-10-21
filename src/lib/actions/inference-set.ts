@@ -1964,6 +1964,7 @@ async function runInferenceSetWithoutHostLock(
             previousProvider,
             previousModel,
             previousInferenceApi,
+            providerAttachmentChanged: nativeAttachmentChanged || registeredAttachmentChanged,
             targetInferenceApi: preMutationInferenceApi,
           },
           {

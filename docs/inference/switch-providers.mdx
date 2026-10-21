@@ -174,7 +174,8 @@ This flag does not bypass shared-gateway compatibility checks.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 It then sends a validation request from the target sandbox before persisting the route in NemoClaw state.
 The output limit is 16 tokens for ordinary providers and 256 tokens for Google Gemini.
-For sandbox-only custom endpoints, NemoClaw waits 6 seconds for OpenShell's route cache after changing the provider or model, then verifies the new route from inside the sandbox.
+Before sandbox verification, NemoClaw waits 6 seconds when the provider, model, or provider attachment changes.
+This wait also applies when a custom endpoint change replaces the attachment but keeps the provider and model names.
 When the switch also changes the API family and that request returns HTTP `400` or `404`, NemoClaw retries up to two times after delays of 2 and 4 seconds.
 NemoClaw uses the same retry schedule when validation fails before it receives an HTTP status, such as while the gateway route is reloading.
 Each retry uses the same output limit for the selected provider.

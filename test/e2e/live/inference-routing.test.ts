@@ -922,7 +922,8 @@ test(
         env: { ...buildAvailabilityProbeEnv(), COMPATIBLE_API_KEY: apiKey },
         progress,
         redactionValues: [apiKey],
-        timeoutMs: 60_000,
+        // Match the OpenClaw switch lane: selection also restarts and pairs the gateway.
+        timeoutMs: 120_000,
       },
     );
     expect(
