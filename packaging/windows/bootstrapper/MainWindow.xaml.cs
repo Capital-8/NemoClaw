@@ -43,6 +43,7 @@ public partial class MainWindow : Window
     private bool packageInstalled;
     private bool configurationSaved;
     private bool preparingModel;
+    private bool upgrading;
     private readonly HashSet<string> replacementSetupAgents = new(StringComparer.Ordinal);
     internal bool ResumeSavedSetup { get; private set; }
 
@@ -108,6 +109,11 @@ public partial class MainWindow : Window
     {
         this.ReplacePreviewButton.Visibility = relatedOnly ? Visibility.Visible : Visibility.Collapsed;
         this.ConfigureInstalledAgentButton.Visibility = relatedOnly ? Visibility.Collapsed : Visibility.Visible;
+    }
+    internal void SetUpgradeContext(bool upgrade)
+    {
+        this.upgrading = upgrade;
+        this.UpdateModelSetupAction();
     }
     private void ReplacePreviewClicked(object sender, RoutedEventArgs args) => this.ReplacePreviewRequested?.Invoke(this, EventArgs.Empty);
     public event EventHandler? CancelRequested;
@@ -721,7 +727,7 @@ public partial class MainWindow : Window
     {
         if (this.UseSavedSetup)
         {
-            this.InstallButton.Content = "Install NemoClaw";
+            this.InstallButton.Content = this.upgrading ? "Upgrade NemoClaw" : "Install NemoClaw";
             return;
         }
         var provider = (this.ProviderChoice.SelectedItem as ComboBoxItem)?.Tag as string;
@@ -730,8 +736,8 @@ public partial class MainWindow : Window
             ? NativeDownloadedModelSetup.Description(provider!) + (this.SelectedAgent == "openclaw" ? " Setup opens OpenClaw after the GPU test passes." : " Launch your agent after setup finishes.")
             : "Uses the included model. Saving records your choice; its service starts when you launch the agent.";
         this.InstallButton.Content = download
-            ? this.packageInstalled ? "Prepare model and save" : "Install and prepare model"
-            : this.packageInstalled ? "Save configuration" : "Install NemoClaw";
+            ? this.packageInstalled ? "Prepare model and save" : this.upgrading ? "Upgrade and prepare model" : "Install and prepare model"
+            : this.packageInstalled ? "Save configuration" : this.upgrading ? "Upgrade NemoClaw" : "Install NemoClaw";
     }
 
     private void InstallClicked(object sender, RoutedEventArgs args)

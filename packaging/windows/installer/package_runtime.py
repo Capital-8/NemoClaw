@@ -411,6 +411,8 @@ def compose(
                 "classification": "immutable-package-inputs",
                 "runtime": identity,
                 "launcher": native,
+                **({"hermesBundleUpgradeProtocol": "superseded-retirement-v1"}
+                   if [row["agent"] for row in record["agents"]] == ["hermes"] else {}),
                 "availabilityEvidence": references,
                 "inputPayloadReceiptSha256": hash_file(
                     host / "runtime-payload-receipt.json"

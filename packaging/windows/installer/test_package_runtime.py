@@ -149,6 +149,7 @@ class PackageComposition(unittest.TestCase):
         self.assertEqual(inputs["launcher"], value)
         self.assertFalse(inputs["installedAcceptance"])
         self.assertFalse(inputs["completePackage"])
+        self.assertNotIn("hermesBundleUpgradeProtocol", inputs)
         self.assertEqual(package.validate_launcher_capabilities(value, value["launcherSha256"]),
                          ["native-state-inspection-v1"])
 
@@ -326,6 +327,7 @@ class PackageComposition(unittest.TestCase):
         ])
         inputs = package.read_json(output / "immutable-package-inputs.json")
         self.assertEqual(inputs["availabilityEvidence"], package.read_json(decision)["agents"])
+        self.assertEqual(inputs["hermesBundleUpgradeProtocol"], "superseded-retirement-v1")
         self.assertIs(inputs["installedAcceptance"], False)
         self.assertIs(inputs["completePackage"], False)
         self.assertFalse((output / "native-ui").exists())

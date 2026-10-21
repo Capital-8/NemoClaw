@@ -80,6 +80,7 @@ internal static class Program
         AssertRelatedCompletion();
         AssertApplyRestartResult();
         AssertInspectionControls();
+        AssertHermesUpgradeRouting();
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         foreach (var operation in new Func<Task>[] {
@@ -279,6 +280,81 @@ internal static class Program
             if (calls.Count != 0)
                 throw new InvalidOperationException("Pre-cancelled headless maintenance inspected or changed installed state.");
         }
+    }
+
+    private static void AssertHermesUpgradeRouting()
+    {
+        var detection = new NativeHermesUpgrade();
+        var inspections = 0;
+        bool Immutable() { inspections++; return true; }
+        if (detection.CanUpgrade(false, true, true, Immutable) || inspections != 0)
+            throw new InvalidOperationException("Missing engine upgrade evidence reached installed inspection.");
+        foreach (var version in new[] { "", "invalid" })
+        {
+            detection.Reset();
+            detection.Observe("NemoClawArm64Msi", true, true, version);
+            if (detection.CanUpgrade(false, true, true, Immutable) || inspections != 0)
+                throw new InvalidOperationException("An invalid related version was admitted for in-place upgrade.");
+        }
+        foreach (var perMachine in new[] { false, true })
+        foreach (var major in new[] { false, true })
+        {
+            detection.Reset();
+            detection.Observe("NemoClawArm64Msi", perMachine, major, "0.1.12");
+            if (detection.CanUpgrade(false, true, true, Immutable) != (perMachine && major))
+                throw new InvalidOperationException("Engine upgrade direction or installation scope was ignored.");
+        }
+        detection.Reset();
+        detection.Observe("OtherMsi", true, true, "0.1.12");
+        if (detection.CanUpgrade(false, true, true, Immutable))
+            throw new InvalidOperationException("An unrelated package enabled a Hermes upgrade.");
+        detection.Observe("NemoClawArm64Msi", true, true, "0.1.12");
+        if (!detection.CanUpgrade(false, true, true, Immutable) ||
+            detection.CanUpgrade(true, true, true, Immutable) ||
+            detection.CanUpgrade(false, false, true, Immutable) ||
+            detection.CanUpgrade(false, true, false, Immutable) ||
+            detection.CanUpgrade(false, true, true, () => false))
+            throw new InvalidOperationException("Upgrade routing lost current-product, selected-agent or immutable-runtime constraints.");
+        var failure = new InvalidDataException("Unreadable immutable runtime.");
+        try { detection.CanUpgrade(false, true, true, () => throw failure); throw new InvalidOperationException("Failed upgrade inspection was accepted."); }
+        catch (InvalidDataException error) when (ReferenceEquals(error, failure)) { }
+        detection.Observe("NemoClawArm64Msi", true, false, "0.1.14");
+        if (detection.CanUpgrade(false, true, true, Immutable))
+            throw new InvalidOperationException("Mixed related-product evidence enabled upgrade.");
+        detection.Reset();
+        if (detection.CanUpgrade(false, true, true, Immutable))
+            throw new InvalidOperationException("A new Detect cycle reused old upgrade evidence.");
+        foreach (var hermes in new[] { false, true })
+        foreach (var installed in new[] { false, true })
+        foreach (var related in new[] { false, true })
+        foreach (var uninstall in new[] { false, true })
+            if (NativeHermesUpgrade.RetireSupersededBundle(hermes, installed, related, uninstall) !=
+                (hermes && !installed && related && uninstall))
+                throw new InvalidOperationException("Superseded bundle retirement crossed its Hermes/engine/product/action boundary.");
+        var root = Directory.CreateTempSubdirectory("hermes-upgrade-contract-").FullName;
+        try
+        {
+            var launcher = Path.Combine(root, "fixture-launcher");
+            File.WriteAllText(launcher, "inert fixture, never executable");
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(launcher))).ToLowerInvariant();
+            foreach (var protocol in new object?[] { null, false, "unknown", "superseded-retirement-v1" })
+            {
+                var record = new Dictionary<string, object?> {
+                    ["schemaVersion"] = 1, ["classification"] = "immutable-package-inputs",
+                    ["launcher"] = new { launcherSha256 = hash, capabilities = new {
+                        schemaVersion = 1, kind = "native-runtime-capabilities", immutableRuntime = true, guardianEnabled = true } },
+                };
+                if (protocol is not null) record["hermesBundleUpgradeProtocol"] = protocol;
+                File.WriteAllText(Path.Combine(root, "immutable-package-inputs.json"), System.Text.Json.JsonSerializer.Serialize(record));
+                if (!NativeMaintenance.SupportsFinishedRuntime(root, launcher) ||
+                    NativeMaintenance.SupportsFinishedRuntime(root, launcher, true) != (protocol as string == "superseded-retirement-v1"))
+                    throw new InvalidOperationException("Upgrade eligibility ignored the exact installed bundle protocol or changed legacy maintenance.");
+            }
+            File.AppendAllText(launcher, "changed");
+            try { NativeMaintenance.SupportsFinishedRuntime(root, launcher, true); throw new InvalidOperationException("Changed installed launcher accepted for upgrade."); }
+            catch (InvalidDataException) { }
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static void AssertInspectionControls()

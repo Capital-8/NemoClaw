@@ -11,5 +11,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../bootstrapper/NativeMaintenance.cs" Link="NativeMaintenance.cs" />
+    <Compile Include="../../bootstrapper/NativeHermesUpgrade.cs" Link="NativeHermesUpgrade.cs" />
   </ItemGroup>
 </Project>

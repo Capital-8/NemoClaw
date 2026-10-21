@@ -84,7 +84,14 @@ internal static class NativeMaintenance
         return File.Exists(launcher) && (SupportsFinishedRuntime(root, launcher) || File.Exists(Path.Combine(root, "qualification", "native-remove-data.mts")));
     }
 
-    private static bool SupportsFinishedRuntime(string root, string launcher)
+    internal static bool SupportsImmutableInstallation()
+    {
+        var launcher = NativeSetupOperations.InstalledLauncher();
+        var root = Directory.GetParent(Path.GetDirectoryName(launcher)!)!.FullName;
+        return File.Exists(launcher) && SupportsFinishedRuntime(root, launcher, requireUpgradeProtocol: true);
+    }
+
+    internal static bool SupportsFinishedRuntime(string root, string launcher, bool requireUpgradeProtocol = false)
     {
         var receipt = Path.Combine(root, "immutable-package-inputs.json");
         if (!File.Exists(receipt)) return false;
@@ -108,7 +115,10 @@ internal static class NativeMaintenance
         if (executable.Length is < 1 or > 32 * 1024 * 1024 ||
             Convert.ToHexString(SHA256.HashData(executable)).ToLowerInvariant() != native.GetProperty("launcherSha256").GetString())
             throw new InvalidDataException("The installed launcher differs from its command contract.");
-        return true;
+        // This marker comes from the same-source immutable composition. A version
+        // number alone cannot establish the cached bootstrapper's cleanup protocol.
+        return !requireUpgradeProtocol || (value.TryGetProperty("hermesBundleUpgradeProtocol", out var protocol)
+            && protocol.ValueKind == JsonValueKind.String && protocol.GetString() == "superseded-retirement-v1");
     }
 
     internal static int RunInstalledInstaller()

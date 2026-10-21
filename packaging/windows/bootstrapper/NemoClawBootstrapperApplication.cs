@@ -25,6 +25,10 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     private bool relatedOnly;
     private bool preparingMaintenance;
     private bool replacedPreviousPreview;
+    private readonly NativeHermesUpgrade upgradeDetection = new();
+    private readonly NativeRuntimeAvailability runtimeAvailability = NativeRuntimeAvailability.Load();
+    private bool upgrading;
+    private bool retiringSupersededBundle;
     private readonly NativeCancellationState cancellation = new();
     private bool executingPackage;
     private string? executingPackageId;
@@ -88,7 +92,8 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             {
                 this.window = new MainWindow();
                 this.ownerWindow = this.window;
-                this.window.InstallRequested += (_, _) => _ = this.BeginPlanAsync(LaunchAction.Install);
+                this.window.InstallRequested += (_, _) => _ = this.upgrading
+                    ? this.BeginMaintenanceAsync(LaunchAction.Install) : this.BeginPlanAsync(LaunchAction.Install);
                 this.window.RepairRequested += (_, _) => _ = this.BeginMaintenanceAsync(LaunchAction.Repair);
                 this.window.UninstallRequested += (_, _) => _ = this.BeginMaintenanceAsync(LaunchAction.Uninstall);
                 this.window.ReplacePreviewRequested += (_, _) => _ = this.ReplacePreviousPreviewAsync();
@@ -134,11 +139,21 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
     private void SubscribeToEngine()
     {
+        this.DetectBegin += (_, _) => this.upgradeDetection.Reset();
+        this.DetectRelatedMsiPackage += (_, args) => this.upgradeDetection.Observe(args.PackageId,
+            args.PerMachine, args.Operation == RelatedOperation.MajorUpgrade, args.Version);
         this.DetectPackageComplete += this.OnDetectPackageComplete;
         this.DetectComplete += this.OnDetectComplete;
         this.PlanComplete += this.OnPlanComplete;
         this.PlanPackageBegin += (_, args) =>
         {
+            if (this.retiringSupersededBundle)
+            {
+                // MSI replacement and the new bundle already own the runtime.
+                // Only retire this superseded Burn registration and its cache.
+                args.State = RequestState.Absent;
+                return;
+            }
             try
             {
                 if (NativeHostPreparation.SkipPackage(args.PackageId, this.preparationTier, this.plannedAction == LaunchAction.Uninstall))
@@ -223,9 +238,23 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
                 return;
             }
             this.relatedOnly = inspection.Value.RelatedOnly;
+            try
+            {
+                this.upgrading = this.command.Action is not (LaunchAction.Repair or LaunchAction.Uninstall)
+                    && this.upgradeDetection.CanUpgrade(this.installed, this.relatedOnly,
+                    this.IsHermesOnly(), NativeMaintenance.SupportsImmutableInstallation);
+            }
+            catch (Exception)
+            {
+                this.result = 1;
+                this.Ui(() => this.window?.ShowFailure("Setup could not verify the installed runtime for upgrade. No changes were started.", this.BundleLogPath()));
+                return;
+            }
+            if (this.upgrading) this.relatedOnly = false;
             this.Ui(() => {
                 this.window?.SetDataRemovalAvailable(inspection.Value.RemovalAvailable);
                 this.window?.SetMaintenanceContext(this.relatedOnly);
+                this.window?.SetUpgradeContext(this.upgrading);
                 this.window?.SetReplacementSetupAvailable(new[] { "openclaw", "hermes" }.Where(agent =>
                     !this.installed && !this.relatedOnly
                     && ((agent == "openclaw" && this.replacedPreviousPreview) || NativeSetupOperations.HasSavedSetup(agent))));
@@ -243,8 +272,58 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         {
             requested = this.installed ? LaunchAction.Repair : LaunchAction.Install;
         }
+        this.retiringSupersededBundle = NativeHermesUpgrade.RetireSupersededBundle(this.IsHermesOnly(),
+            this.installed, this.command?.Relation == RelationType.Upgrade, requested == LaunchAction.Uninstall);
+        var retirementDetection = this.Engine.GetVariableNumeric("NemoClawRetireSuperseded") == 1;
+        if (retirementDetection && !this.retiringSupersededBundle)
+        {
+            this.result = 1;
+            this.Engine.Log(LogLevel.Error, "The superseded product changed during detection. No removal was planned.");
+            this.StopDispatchersForHeadless();
+            return;
+        }
+        if (this.retiringSupersededBundle)
+        {
+            if (!retirementDetection)
+            {
+                // Re-detect absent transaction sentinels so Burn naturally
+                // unregisters this old bundle without touching the new runtime.
+                this.Engine.SetVariableNumeric("NemoClawRetireSuperseded", 1);
+                this.Engine.Detect();
+                return;
+            }
+            this.plannedAction = LaunchAction.Uninstall;
+            this.Engine.Plan(LaunchAction.Uninstall);
+            return;
+        }
+        if (requested == LaunchAction.Install && !this.installed && this.IsHermesOnly())
+        {
+            try
+            {
+                if (NativeMaintenance.HasRelatedInstallation())
+                {
+                    if (!this.upgradeDetection.CanUpgrade(false, true, true, NativeMaintenance.SupportsImmutableInstallation))
+                        throw new InvalidOperationException("This preview requires interactive retained-data replacement before an in-place upgrade is supported.");
+                    this.upgrading = true;
+                    _ = this.BeginMaintenanceAsync(LaunchAction.Install);
+                    return;
+                }
+            }
+            catch (Exception error)
+            {
+                this.result = 1;
+                this.Engine.Log(LogLevel.Error, error.Message);
+                this.StopDispatchersForHeadless();
+                return;
+            }
+        }
         if (requested is LaunchAction.Repair or LaunchAction.Uninstall) _ = this.PrepareHeadlessMaintenanceAsync(requested);
         else _ = this.BeginPlanAsync(requested);
+    }
+
+    private bool IsHermesOnly()
+    {
+        return this.runtimeAvailability.CanSelect("hermes") && !this.runtimeAvailability.CanSelect("openclaw");
     }
 
     private async Task BeginPlanAsync(LaunchAction action)
@@ -316,7 +395,9 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         catch (Exception error)
         {
             this.result = 1;
-            this.ShowRecoverableMaintenanceError(error);
+            if (this.upgrading) this.window?.ShowFailure(error.Message, this.BundleLogPath());
+            else this.ShowRecoverableMaintenanceError(error);
+            this.StopDispatchersForHeadless();
         }
         finally
         {
@@ -504,7 +585,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
                 try { NativeDesktopIntegration.Repair(NativeSetupOperations.InstalledLauncher()); }
                 catch (Exception) { this.Engine.Log(LogLevel.Error, "The installed application is available, but desktop shortcuts could not be refreshed safely."); }
             }
-            if (this.plannedAction == LaunchAction.Uninstall)
+            if (this.plannedAction == LaunchAction.Uninstall && !this.retiringSupersededBundle)
             {
                 try { NativeDesktopIntegration.RemoveOwned(NativeSetupOperations.InstalledLauncher()); }
                 catch (Exception) { this.Engine.Log(LogLevel.Error, "NemoClaw was removed, but a desktop shortcut could not be removed safely."); }

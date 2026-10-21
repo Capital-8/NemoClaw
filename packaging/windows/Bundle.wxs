@@ -20,6 +20,7 @@
       <Payload Name="NemoClaw.MxcProbe.exe" SourceFile="$(var.WxcExecPath)" />
     </BootstrapperApplication>
     <Variable Name="NemoClawPreparationAttempt" Type="string" Value="" />
+    <Variable Name="NemoClawRetireSuperseded" Type="numeric" Value="0" />
     <!-- Keep transactional rollback; omit the separate per-install OS restore point. -->
     <Chain DisableSystemRestore="yes">
       <?if $(var.SystemDriveMetadataPreparation) = "true" ?>
@@ -67,7 +68,7 @@
         SourceFile="$(var.RuntimeFinalizerPath)"
         InstallArguments="--runtime-bundle rollback $(var.RuntimeId)"
         UninstallArguments="--runtime-bundle complete-remove $(var.RuntimeId)"
-        DetectCondition="1"
+        DetectCondition="NemoClawRetireSuperseded = 0"
         PerMachine="yes"
         Compressed="yes"
         Vital="yes" />
@@ -117,7 +118,7 @@
         SourceFile="$(var.RuntimeFinalizerPath)"
         InstallArguments="--runtime-bundle rollback $(var.RuntimeId)"
         UninstallArguments="--runtime-bundle begin-remove $(var.RuntimeId)"
-        DetectCondition="1"
+        DetectCondition="NemoClawRetireSuperseded = 0"
         PerMachine="yes"
         Compressed="yes"
         Vital="yes" />

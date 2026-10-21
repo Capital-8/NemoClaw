@@ -17,6 +17,37 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal static class WindowRecoveryControls
 {
+    private static void AssertSupersededBundleCallbacks()
+    {
+        var type = typeof(MainWindow).Assembly.GetType("Nvidia.NemoClaw.Bootstrapper.NemoClawBootstrapperApplication")!;
+        var application = Activator.CreateInstance(type, nonPublic: true)!;
+        type.GetField("retiringSupersededBundle", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(application, true);
+        type.GetMethod("SubscribeToEngine", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(application, null);
+        var callback = type.BaseType!.GetMethod("OnPlanPackageBegin", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        foreach (var package in new[] { "MxcSystemDrivePreparation", "MxcNullDevicePreparation",
+            "NemoClawRuntimeRemovalCommit", "NemoClawRuntimeTransactionBegin", "NemoClawArm64Msi",
+            "NemoClawRuntimeTransactionComplete", "NemoClawRuntimeRemovalBegin" })
+        {
+            var args = new WixToolset.BootstrapperApplicationApi.PlanPackageBeginEventArgs(package,
+                WixToolset.BootstrapperApplicationApi.PackageState.Absent, true, 0, 0,
+                WixToolset.BootstrapperApplicationApi.RequestState.None, 0,
+                WixToolset.BootstrapperApplicationApi.RequestState.None, 0, false);
+            callback.Invoke(application, new object[] { args });
+            if (args.Cancel || args.State != WixToolset.BootstrapperApplicationApi.RequestState.Absent)
+                throw new InvalidOperationException("Superseded package planning retained cache registration or requested installation.");
+        }
+        var bundle = System.Xml.Linq.XDocument.Load(Path.Combine(Directory.GetCurrentDirectory(), "packaging", "windows", "Bundle.wxs"));
+        System.Xml.Linq.XNamespace ns = "http://wixtoolset.org/schemas/v4/wxs";
+        var retirement = bundle.Descendants(ns + "Variable").Single(value => (string?)value.Attribute("Name") == "NemoClawRetireSuperseded");
+        if ((string?)retirement.Attribute("Type") != "numeric" || (string?)retirement.Attribute("Value") != "0"
+            || (string?)retirement.Attribute("Persisted") == "yes")
+            throw new InvalidOperationException("Retirement must default off and must not survive a new installer process.");
+        foreach (var id in new[] { "NemoClawRuntimeRemovalBegin", "NemoClawRuntimeRemovalCommit" })
+            if ((string?)bundle.Descendants(ns + "ExePackage").Single(value => (string?)value.Attribute("Id") == id).Attribute("DetectCondition")
+                != "NemoClawRetireSuperseded = 0")
+                throw new InvalidOperationException("Superseded detection could still execute an old runtime removal helper.");
+    }
+
     private static bool HasRenderedContent(byte[] pixels, int width, int height)
     {
         var colors = new HashSet<int>();
@@ -59,6 +90,26 @@ internal static class WindowRecoveryControls
         (typeof(MainWindow).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException($"Missing Setup operation: {method}."))
         .Invoke(window, arguments);
+
+    private static void AssertUpgradePresentation()
+    {
+        var window = new MainWindow();
+        try
+        {
+            var button = (Button)window.FindName("InstallButton");
+            Invoke(window, "SetUpgradeContext", true);
+            if (button.Content as string != "Upgrade NemoClaw")
+                throw new InvalidOperationException("A genuine upgrade was presented as a new installation.");
+            Invoke(window, "SetReplacementSetupAvailable", (object)new[] { "hermes" });
+            Invoke(window, "AgentSelected", new RadioButton { Tag = "hermes" }, new RoutedEventArgs());
+            if (((CheckBox)window.FindName("KeepSavedSetup")).IsChecked != true || button.Content as string != "Upgrade NemoClaw")
+                throw new InvalidOperationException("Upgrade lost the retained-setup default or action label.");
+            Invoke(window, "SetUpgradeContext", false);
+            if (button.Content as string != "Install NemoClaw")
+                throw new InvalidOperationException("Legacy replacement retained the upgrade action.");
+        }
+        finally { window.ShowReady(false); window.Close(); }
+    }
 
     private static void AssertCompletionPresentation(MainWindow window)
     {
@@ -673,6 +724,8 @@ internal static class WindowRecoveryControls
                 AssertPixelGuard();
                 if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NEMOCLAW_SETUP_PRESENTATION_EVIDENCE")))
                     RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+                AssertUpgradePresentation();
+                AssertSupersededBundleCallbacks();
                 window = new MainWindow();
                 AssertCompletionPresentation(window);
                 AssertProviderChoices(window);
