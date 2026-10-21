@@ -596,7 +596,7 @@ describe("exportSandboxSessions", () => {
         format: "tar",
       }),
     ).rejects.toThrow(
-      /Refusing to export: sessions are listed in the agent index but their transcript files are absent from the sandbox store: sid-b\.jsonl/,
+      /Refusing to export: sessions are listed in the agent index but their transcript files are missing or not regular, non-symlink files in the sandbox store: sid-b\.jsonl/,
     );
 
     const captureCall = captureMock.mock.calls[1]?.[0] as string[];
@@ -627,7 +627,7 @@ describe("exportSandboxSessions", () => {
         format: "dir",
       }),
     ).rejects.toThrow(
-      /Refusing to export: sessions are listed in the agent index but their transcript files are absent from the sandbox store: sid-b\.jsonl/,
+      /Refusing to export: sessions are listed in the agent index but their transcript files are missing or not regular, non-symlink files in the sandbox store: sid-b\.jsonl/,
     );
 
     // The export must stop before any per-file download starts.

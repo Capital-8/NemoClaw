@@ -263,7 +263,7 @@ async function exportSandboxSessionsUnlocked(
   );
   if (missingTranscripts.length > 0) {
     throw new Error(
-      `Refusing to export: sessions are listed in the agent index but their transcript files are absent from the sandbox store: ${missingTranscripts.join(", ")}. ` +
+      `Refusing to export: sessions are listed in the agent index but their transcript files are missing or not regular, non-symlink files in the sandbox store: ${missingTranscripts.join(", ")}. ` +
         `The turn may have completed before OpenClaw flushed its transcript to disk. ` +
         `Re-run the turn, or inspect ${sourceDir} in the sandbox.`,
     );
