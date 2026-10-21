@@ -71,7 +71,7 @@ it("forwards UDP and TCP controls, changes real DNS answers, and closes twice", 
         client.write(payload);
       });
       client.on("data", (chunk) => {
-        bytes = Buffer.concat([bytes, chunk]);
+        bytes = Buffer.concat([bytes, typeof chunk === "string" ? Buffer.from(chunk) : chunk]);
       });
       client.on("end", () => resolve(bytes));
     });

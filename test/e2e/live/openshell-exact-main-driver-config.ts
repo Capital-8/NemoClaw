@@ -10,6 +10,7 @@ import { parse as parseToml } from "smol-toml";
 
 import { REQUIRED_OPENSHELL_MCP_FEATURES } from "../../../src/lib/onboard/openshell-feature-gate.ts";
 import { getDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/docker-driver-gateway-local-tls.ts";
+import { getTrustedActiveOpenShellGatewayUserServicePid } from "../../../src/lib/onboard/docker-driver-gateway-service.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -251,8 +252,11 @@ function readRenderedGatewayConfig(proof: ExactMainDriverConfigProof): ParsedGat
   };
 }
 
-function readGatewayPid(): number {
-  const raw = fs.readFileSync(path.join(gatewayStateDir(), GATEWAY_PID_NAME), "utf8").trim();
+export function readGatewayPid(): number {
+  const raw = String(
+    getTrustedActiveOpenShellGatewayUserServicePid() ??
+      fs.readFileSync(path.join(gatewayStateDir(), GATEWAY_PID_NAME), "utf8"),
+  ).trim();
   if (!/^[1-9][0-9]*$/.test(raw)) throw new Error(`invalid OpenShell gateway pid '${raw}'`);
   const pid = Number(raw);
   process.kill(pid, 0);

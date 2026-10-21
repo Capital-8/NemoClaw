@@ -5,7 +5,6 @@ import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import { registeredCompatibleResponseCommand } from "../fixtures/registered-inference.ts";
 import {
   INFERENCE_CURL_HTTP_CODE_MARKER,
-  isExpectedMcpCurlPolicyDenial,
   waitForMcpCurlPolicyDenial,
 } from "../fixtures/curl-policy-denial.ts";
 import fs from "node:fs";
@@ -1023,6 +1022,7 @@ test(
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
       max_tokens: 50,
     });
+    const redirectAuditBefore = await readDnsAudit("before-private-redirect");
     const redirect = await sandbox.exec(
       sandboxName,
       registeredCompatibleResponseCommand(sandboxName, model, redirectPayload, true),
@@ -1035,7 +1035,14 @@ test(
     );
     const redirectText = resultText(redirect);
     expect(
-      isExpectedMcpCurlPolicyDenial(redirect, INFERENCE_CURL_HTTP_CODE_MARKER, "302"),
+      await waitForMcpCurlPolicyDenial(
+        redirect,
+        redirectAuditBefore,
+        readDnsAudit,
+        privateTarget.hostname,
+        INFERENCE_CURL_HTTP_CODE_MARKER,
+        "302",
+      ),
       redirectText,
     ).toBe(true);
     expect(redirectText).toMatch(/HTTP\/1\.[01] 302/u);

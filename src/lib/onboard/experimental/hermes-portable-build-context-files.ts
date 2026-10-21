@@ -142,7 +142,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/managed-startup-hold.sh", mode: "100755" },
   { path: "scripts/patch-bundled-npm-brace-expansion.mts", mode: "100755" },
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
-  { path: "scripts/security/security-package-inventory.mts", mode: "100644" },
+  { path: "scripts/security/standalone-security-package-inventory.mts", mode: "100644" },
   { path: "scripts/upgrade-bundled-npm.mts", mode: "100755" },
   {
     path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.3.json",
@@ -430,7 +430,6 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/utils.ts", mode: "100644" },
   { path: "src/lib/tool-disclosure.ts", mode: "100644" },
   { path: "src/lib/providerless-inference.ts", mode: "100644" },
-  { path: "src/lib/sandbox-base-image/security-package-specs.ts", mode: "100644" },
   {
     path: "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
     mode: "100644",

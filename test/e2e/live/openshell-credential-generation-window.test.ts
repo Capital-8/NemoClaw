@@ -292,7 +292,7 @@ async function updateProviderCredential(
 ): Promise<void> {
   const args =
     credentialEnv === CREDENTIAL_WINDOW_ENV_NAME
-      ? buildCredentialWindowProviderUpdateArgs(providerName, expiresAtMs, secret.length === 0)
+      ? buildCredentialWindowProviderUpdateArgs(providerName, expiresAtMs)
       : [
           "provider",
           "update",
@@ -360,7 +360,7 @@ test(
         "prove a retained credential generation expires",
         "prove an expired inference credential cannot delete the source sandbox",
         "rotate beyond the retained generation window",
-        "prove key and bridge removal revoke access",
+        "prove current credential expiry and bridge removal revoke access",
         "re-add the bridge and keep the old process revoked",
         "rebuild the sandbox and confirm credential reuse",
         "remove the MCP bridge and audit denied requests",
@@ -769,33 +769,33 @@ test(
         ),
       ).toEqual(currentCredential);
 
-      progress.phase("prove key and bridge removal revoke access");
+      progress.phase("prove current credential expiry and bridge removal revoke access");
       await updateProviderCredential(
         sandbox,
         providerName,
-        "",
-        0,
+        rotatedSecret,
+        Date.now() - 1,
         allSecrets,
-        "credential-window-remove-current-key",
+        "credential-window-expire-current-key",
       );
       await expectFreshCredentialAbsent(
         sandbox,
-        "credential-window-fresh-credential-absent-after-key-removal",
+        "credential-window-fresh-credential-absent-after-current-expiry",
       );
       await writeControl(
         sandbox,
-        CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
-        "credential-window-signal-after-key-removal",
+        CREDENTIAL_WINDOW_STEPS.deniedAfterCurrentExpiry,
+        "credential-window-signal-after-current-expiry",
       );
       await waitForAcknowledgement(
         sandbox,
-        CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
+        CREDENTIAL_WINDOW_STEPS.deniedAfterCurrentExpiry,
         "denied",
       );
       expect(
         requestEvidence(
           fakeMcp,
-          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval),
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterCurrentExpiry),
           rotatedSecret,
         ).seen,
       ).toBe(false);

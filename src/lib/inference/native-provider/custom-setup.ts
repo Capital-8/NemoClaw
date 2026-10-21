@@ -21,6 +21,8 @@ import {
 } from "../bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../bedrock-runtime-adapter";
 
+export { isCustomNativeEndpoint };
+
 /** Existing shared-route sandboxes retain their route until recreated. */
 export function usesCustomNativeOnboarding(
   provider: string,

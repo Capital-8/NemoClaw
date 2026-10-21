@@ -70,23 +70,39 @@ export function isExpectedMcpDnsPolicyDenial(
   after: DnsDenialProbe,
   hostname: string,
   httpCodeMarker = MCP_CURL_HTTP_CODE_MARKER,
+  connectDeniedHttpCode: "000" | "302" = "000",
 ): boolean {
+  const lines = result.stdout.split(/\r?\n/u);
+  const codes = lines.filter((line) => line.startsWith(httpCodeMarker));
+  const locations = lines.filter((line) => /^location:/iu.test(line));
+  const location = locations[0]?.slice("location:".length).trim() ?? "";
+  const expectedResponse =
+    connectDeniedHttpCode === "000"
+      ? result.stdout.trim() === `${httpCodeMarker}000`
+      : codes.length === 1 &&
+        codes[0] === `${httpCodeMarker}302` &&
+        /^HTTP\/1\.[01] 302 /mu.test(result.stdout) &&
+        locations.length === 1 &&
+        URL.canParse(location) &&
+        new URL(location).hostname === hostname;
   if (
     result.timedOut ||
     result.signal !== null ||
     result.exitCode !== 6 ||
-    result.stdout.trim() !== `${httpCodeMarker}000` ||
+    !expectedResponse ||
     !result.stderr.split(/\r?\n/u).includes(`curl: (6) Could not resolve host: ${hostname}`) ||
     [before, after].some((logs) => logs.timedOut || logs.signal !== null || logs.exitCode !== 0)
   )
     return false;
   // OpenShell 0.1.3 filters resolved addresses before issuing a synthetic DNS
   // answer. Curl exit 6 alone cannot distinguish that denial from broken DNS.
-  const event = `NET:REFUSE [MED] DENIED ${hostname} [reason:policy_dns_no_valid_address]`;
+  const events = ["policy_dns_no_valid_address", "policy_dns_ineligible"].map(
+    (reason) => `NET:REFUSE [MED] DENIED ${hostname} [reason:${reason}]`,
+  );
   const previous = new Set(resultText(before).split(/\r?\n/u));
   return resultText(after)
     .split(/\r?\n/u)
-    .some((line) => line.endsWith(event) && !previous.has(line));
+    .some((line) => events.some((event) => line.endsWith(event)) && !previous.has(line));
 }
 
 /** Confirm one request; only repeat audit reads while its DNS refusal reaches the gateway. */
@@ -96,8 +112,9 @@ export async function waitForMcpCurlPolicyDenial(
   readDnsAudit: (suffix: string) => Promise<DnsDenialProbe>,
   hostname: string,
   httpCodeMarker = MCP_CURL_HTTP_CODE_MARKER,
+  connectDeniedHttpCode: "000" | "302" = "000",
 ): Promise<boolean> {
-  let policyDenied = isExpectedMcpCurlPolicyDenial(result, httpCodeMarker);
+  let policyDenied = isExpectedMcpCurlPolicyDenial(result, httpCodeMarker, connectDeniedHttpCode);
   for (let attempt = 1; !policyDenied && result.exitCode === 6 && attempt <= 5; attempt += 1) {
     policyDenied = isExpectedMcpDnsPolicyDenial(
       result,
@@ -105,6 +122,7 @@ export async function waitForMcpCurlPolicyDenial(
       await readDnsAudit(`after-${attempt}`),
       hostname,
       httpCodeMarker,
+      connectDeniedHttpCode,
     );
     if (!policyDenied && attempt < 5) await new Promise((resolve) => setTimeout(resolve, 250));
   }

@@ -201,7 +201,10 @@ request_count() {
 python_probe_source() {
   cat <<'PY'
 import sys
+import json
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 
 # Preserve the managed exec environment so this probe uses the same OpenShell
@@ -215,6 +218,13 @@ request = urllib.request.Request(
     headers={"content-type": "application/x-protobuf"},
 )
 try:
+    target = urllib.parse.urlsplit(url)
+    port = target.port or (443 if target.scheme == "https" else 80)
+    try:
+        addresses = sorted({item[4][0] for item in socket.getaddrinfo(target.hostname, port, type=socket.SOCK_STREAM)})
+    except socket.gaierror as error:
+        raise urllib.error.URLError(error) from error
+    print("NEMOCLAW_OTLP_PROBE_DNS=" + json.dumps({"hostname": target.hostname, "port": port, "addresses": addresses}))
     with urllib.request.urlopen(request, timeout=10) as response:
         print(f"REACHED:{response.status}")
 except urllib.error.HTTPError as error:
@@ -245,15 +255,18 @@ expect_blocked_without_capture() {
   local url="$3"
   local before output status after denial_state
   before="$(request_count)"
+  openshell logs "$SANDBOX_NAME" -n 500 --source sandbox --since 2m >"${CAPTURE_DIR}/dns-before.log"
   set +e
   output="$(sandbox_python_probe "$method" "$url" "NEMOCLAW_OTLP_DENIED_PROBE" 2>&1)"
   status=$?
   set -e
   sleep 1
+  openshell logs "$SANDBOX_NAME" -n 500 --source sandbox --since 2m >"${CAPTURE_DIR}/dns-after.log"
   after="$(request_count)"
   [ "$status" -ne 0 ] || fail "$label unexpectedly returned success: $output"
   [ "$after" = "$before" ] || fail "$label reached the host capture server"
-  denial_state="$(printf '%s\n' "$output" | "$TSX" "$CONTRACT_HELPER" denial-state)" \
+  denial_state="$(printf '%s\n' "$output" | "$TSX" "$CONTRACT_HELPER" denial-state "$status" \
+    "${CAPTURE_DIR}/dns-before.log" "${CAPTURE_DIR}/dns-after.log" "$url")" \
     || fail "$label denial classifier failed: $output"
   [ "$denial_state" = "policy-denied" ] \
     || fail "$label failed without confirmed OpenShell policy-denial evidence: $output"

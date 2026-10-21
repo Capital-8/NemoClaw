@@ -22,7 +22,7 @@ export const CREDENTIAL_WINDOW_STEPS = {
   allowedBeforeExpiry: "allowed-before-expiry",
   deniedAfterExpiry: "denied-after-expiry",
   fallbackAfterEviction: "fallback-after-eviction",
-  deniedAfterKeyRemoval: "denied-after-key-removal",
+  deniedAfterCurrentExpiry: "denied-after-current-expiry",
   deniedAfterDetach: "denied-after-detach",
   deniedAfterReadd: "denied-after-readd",
   stop: "stop",
@@ -32,7 +32,7 @@ export type CredentialWindowRequestStep =
   | (typeof CREDENTIAL_WINDOW_STEPS)["allowedBeforeExpiry"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterExpiry"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["fallbackAfterEviction"]
-  | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterKeyRemoval"]
+  | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterCurrentExpiry"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterDetach"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterReadd"];
 
@@ -53,14 +53,13 @@ export function credentialWindowRequestId(step: CredentialWindowRequestStep): st
 export function buildCredentialWindowProviderUpdateArgs(
   providerName: string,
   expiresAtMs: number,
-  removeCredential = false,
 ): string[] {
   return [
     "provider",
     "update",
     providerName,
     "--credential",
-    removeCredential ? `${CREDENTIAL_WINDOW_ENV_NAME}=` : CREDENTIAL_WINDOW_ENV_NAME,
+    CREDENTIAL_WINDOW_ENV_NAME,
     "--credential-expires-at",
     `${CREDENTIAL_WINDOW_ENV_NAME}=${expiresAtMs}`,
   ];
@@ -156,7 +155,7 @@ const requestSteps = new Set([
   config.steps.allowedBeforeExpiry,
   config.steps.deniedAfterExpiry,
   config.steps.fallbackAfterEviction,
-  config.steps.deniedAfterKeyRemoval,
+  config.steps.deniedAfterCurrentExpiry,
   config.steps.deniedAfterDetach,
   config.steps.deniedAfterReadd,
 ]);

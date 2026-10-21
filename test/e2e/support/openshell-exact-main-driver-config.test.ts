@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as gatewayService from "../../../src/lib/onboard/docker-driver-gateway-service.ts";
 
 import { resolveOpenShellSiblingComponents } from "../../helpers/openshell-components.ts";
 import { createOpenShellDriverConfigTestWrapper } from "../live/openshell-driver-config-test-wrapper.ts";
@@ -18,6 +19,7 @@ import {
   EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV,
   EXACT_MAIN_TMPFS_MOUNT,
   prepareExactMainDriverConfigProof,
+  readGatewayPid,
 } from "../live/openshell-exact-main-driver-config.ts";
 
 const originalProofEnv = process.env[EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV];
@@ -31,6 +33,38 @@ afterEach(() => {
 });
 
 describe("OpenShell driver configuration for main-branch E2E", () => {
+  it.each(["service", "standalone"])("verifies the active %s gateway PID", (manager) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-pid-"));
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", directory);
+    vi.spyOn(gatewayService, "getTrustedActiveOpenShellGatewayUserServicePid").mockReturnValue(
+      manager === "service" ? 12345 : null,
+    );
+    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+    fs.writeFileSync(path.join(directory, "openshell-gateway.pid"), "23456\n");
+    try {
+      const expected = manager === "service" ? 12345 : 23456;
+      expect(readGatewayPid()).toBe(expected);
+      expect(kill).toHaveBeenCalledWith(expected, 0);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a missing PID file when no trusted gateway service exists", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-pid-"));
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", directory);
+    vi.spyOn(gatewayService, "getTrustedActiveOpenShellGatewayUserServicePid").mockReturnValue(
+      null,
+    );
+    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+    try {
+      expect(() => readGatewayPid()).toThrow(/ENOENT/);
+      expect(kill).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(["sandbox", "supervisor"] as const)("selects exactly one scoped %s", async (role) => {
     const command = vi.fn(async (_command: string, _args: string[]) => ({
       exitCode: 0,

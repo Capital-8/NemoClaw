@@ -214,6 +214,19 @@ function policySubmissionStatus(captured: CapturedOpenShellCommandResult): strin
   );
 }
 
+function safeAmbiguousPolicyDetail(
+  detail: string,
+  captured: CapturedOpenShellCommandResult,
+): string {
+  const diagnostic = stripAnsi(detail).replace(
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu,
+    " ",
+  );
+  return /network endpoint ambiguity validation failed/iu.test(diagnostic)
+    ? "OpenShell did not confirm the policy submission: network endpoint ambiguity validation failed."
+    : `OpenShell did not confirm the policy submission (${policySubmissionStatus(captured)})`;
+}
+
 function parsePolicySet(
   captured: CapturedOpenShellCommandResult,
 ): OpenShellSandboxPolicySetSubmission {
@@ -221,10 +234,7 @@ function parsePolicySet(
   if (outcome.kind === "rejected") {
     outcome = { ...outcome, message: redactCredentialText(outcome.message) };
   } else if (outcome.kind === "ambiguous") {
-    outcome = {
-      kind: "ambiguous",
-      detail: `OpenShell did not confirm the policy submission (${policySubmissionStatus(captured)})`,
-    };
+    outcome = { kind: "ambiguous", detail: safeAmbiguousPolicyDetail(outcome.detail, captured) };
   }
   return { status: captured.status, outcome };
 }

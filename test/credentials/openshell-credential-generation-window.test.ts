@@ -157,14 +157,14 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction));
-    expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval));
+    expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterCurrentExpiry));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterDetach));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.stop));
     expect(script).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
   });
 
-  it("builds explicit bounded expiry and attached-key-removal updates", () => {
+  it("builds explicit credential expiry and expiry-clearing updates", () => {
     expect(CREDENTIAL_WINDOW_EXPIRY_DELAY_MS).toBe(3 * 60_000);
     expect(buildCredentialWindowProviderUpdateArgs("owned-provider", 123_456)).toEqual([
       "provider",
@@ -175,12 +175,12 @@ describe("OpenShell exact-main credential generation-window proof", () => {
       "--credential-expires-at",
       "FAKE_MCP_SECRET=123456",
     ]);
-    expect(buildCredentialWindowProviderUpdateArgs("owned-provider", 0, true)).toEqual([
+    expect(buildCredentialWindowProviderUpdateArgs("owned-provider", 0)).toEqual([
       "provider",
       "update",
       "owned-provider",
       "--credential",
-      "FAKE_MCP_SECRET=",
+      "FAKE_MCP_SECRET",
       "--credential-expires-at",
       "FAKE_MCP_SECRET=0",
     ]);
@@ -274,7 +274,7 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(liveTarget).toContain('NEMOCLAW_AGENT: "openclaw"');
     expect(liveTarget).toContain('["nemoclaw-start", "node", "-e"');
     expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry");
-    expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval");
+    expect(liveTarget).toContain("CREDENTIAL_WINDOW_STEPS.deniedAfterCurrentExpiry");
     expect(liveTarget).toContain('[SANDBOX_NAME, "mcp", "remove", SERVER_NAME]');
     expect(liveTarget).toMatch(/\[\s*SANDBOX_NAME,\s*"mcp",\s*"add",\s*SERVER_NAME,/u);
     expect(liveTarget).not.toContain('["sandbox", "provider", "detach"');

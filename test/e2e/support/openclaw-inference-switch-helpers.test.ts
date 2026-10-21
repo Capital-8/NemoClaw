@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { redactString } from "../fixtures/redaction.ts";
 import { patchOpenClawInferenceConfig } from "../../../src/lib/actions/inference-set.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { PUBLIC_NVIDIA_SWITCH_MODEL } from "../live/public-nvidia-switch-provider.ts";
 
 import { OPERATOR_SWITCH_API_KEY } from "../fixtures/registered-inference.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -508,7 +509,7 @@ it.each([
 ])(
   "checks the native model budget with a scoped handle from any retained revision: %s",
   async (handle) => {
-    const model = "nvidia/nemotron-3-super-120b-a12b";
+    const model = PUBLIC_NVIDIA_SWITCH_MODEL;
     const config: any = {};
     patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
     config.models.providers.inference.apiKey = handle;
@@ -596,7 +597,7 @@ it.each([
   "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY",
   null,
 ])("rejects an incorrect native OpenClaw credential value after redaction: %s", async (value) => {
-  const model = "nvidia/nemotron-3-super-120b-a12b";
+  const model = PUBLIC_NVIDIA_SWITCH_MODEL;
   const config: any = {};
   patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
   config.models.providers.inference.apiKey = value;
@@ -613,7 +614,7 @@ it.each([
 it.each(["", "nvapi-fixture-secret", "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY"])(
   "rejects a missing or unscoped native handle even when config matches: %s",
   async (handle) => {
-    const model = "nvidia/nemotron-3-super-120b-a12b";
+    const model = PUBLIC_NVIDIA_SWITCH_MODEL;
     const config: any = {};
     patchOpenClawInferenceConfig(config, "nvidia-prod", model, "openai-completions");
     config.models.providers.inference.apiKey = handle;
