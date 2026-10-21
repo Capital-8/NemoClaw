@@ -323,6 +323,9 @@ describe("prepareRebuildTargetPreflights", () => {
       "qwen3.5:9b",
       18080,
     );
+    expect(mocks.stageManagedWorkloadRebuildProfile.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({ openClawContextWindow: 131_072 }),
+    );
   });
 
   it("passes legacy Station authority from the source registry row into rebuild readiness (#10370)", async () => {
