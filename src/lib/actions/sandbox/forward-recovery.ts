@@ -573,7 +573,18 @@ export async function ensureSandboxPortForward(
   sandboxName: string,
   options: SandboxForwardRecoveryOptions = {},
 ): Promise<boolean> {
-  const port = resolveSandboxDashboardPort(sandboxName);
+  return ensureSandboxDashboardForwardForPort(
+    sandboxName,
+    resolveSandboxDashboardPort(sandboxName),
+    options,
+  );
+}
+
+async function ensureSandboxDashboardForwardForPort(
+  sandboxName: string,
+  port: number,
+  options: SandboxForwardRecoveryOptions,
+): Promise<boolean> {
   const sandbox = readForwardSandbox(sandboxName);
   const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
   const bind = resolveDashboardForwardBind(sandbox, {
@@ -848,9 +859,17 @@ export async function ensureHermesDashboardPortForwardIfEnabled(
   return ensureHermesDashboardPortForward(sandboxName, {
     getRecoveryConfig: (name) => getHermesDashboardRecoveryConfig(name, readForwardSandbox),
     isPortForwardHealthy: (name, port) =>
-      isSandboxPortForwardHealthy(name, port, undefined, runtimeSelection),
+      isSandboxPortForwardHealthy(
+        name,
+        port,
+        resolveDashboardForwardBind(readForwardSandbox(name), {
+          requestedBind: process.env.NEMOCLAW_DASHBOARD_BIND,
+          wsl: isWsl(),
+        }),
+        runtimeSelection,
+      ),
     ensurePortForward: (name, port) =>
-      ensureSandboxPortForwardForPort(name, port, { runtimeSelection }),
+      ensureSandboxDashboardForwardForPort(name, port, { runtimeSelection }),
   });
 }
 

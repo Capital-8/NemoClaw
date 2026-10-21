@@ -14,9 +14,13 @@ import type {
 } from "../../adapters/openshell/forward";
 import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 
+import type { HermesDashboardRecoveryConfig } from "./hermes-dashboard-recovery";
+
 const mocks = vi.hoisted(() => ({
   createAdapter: vi.fn(),
-  getHermesDashboardRecoveryConfig: vi.fn(() => null),
+  getHermesDashboardRecoveryConfig: vi.fn<(name: string) => HermesDashboardRecoveryConfig | null>(
+    () => null,
+  ),
   getRegisteredAgent: vi.fn(),
   getSessionAgent: vi.fn(),
   getSandbox: vi.fn(),
@@ -404,7 +408,29 @@ describe("forward recovery through the typed adapter", () => {
     });
   });
 
-  it("refuses remote exposure when onboarding did not prepare it", async () => {
+  it.each(["owned", "absent"] as const)(
+    "recovers the prepared Hermes dashboard from %s using its remote bind",
+    async (state) => {
+      states.set(18_789, state);
+      mocks.getSandbox.mockReturnValue(
+        sandboxEntry({ agent: "hermes", dashboardRemoteBindPrepared: true }),
+      );
+      mocks.getHermesDashboardRecoveryConfig.mockReturnValue({
+        publicPort: 18_789,
+        internalPort: 28_789,
+      });
+      const { ensureHermesDashboardPortForwardIfEnabled } = await import("./forward-recovery");
+      await expect(ensureHermesDashboardPortForwardIfEnabled("box")).resolves.toBe(true);
+      expect(mocks.observeForwards.mock.calls[0]?.[0].forwards[0]).toMatchObject({
+        localHost: "0.0.0.0",
+        port: 18_789,
+      });
+      expect(mocks.startForward).toHaveBeenCalledTimes(state === "owned" ? 0 : 1);
+    },
+  );
+
+  it.each(["openclaw", "hermes"])("refuses unprepared remote exposure for %s", async (agent) => {
+    mocks.getSandbox.mockReturnValue(sandboxEntry({ agent }));
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const { ensureSandboxPortForward } = await import("./forward-recovery");
