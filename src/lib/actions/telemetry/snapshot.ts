@@ -27,6 +27,7 @@ import type {
   ValueStatus,
 } from "../../domain/telemetry/event";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { readAppliedPolicySelection } from "../../domain/telemetry/provenance";
 import { DCODE_OBSERVABILITY_FEATURE } from "../../onboard/observability-policy-presets";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
@@ -48,6 +49,15 @@ import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { getMcpProviderInspectionRuntimeSelection } from "../sandbox/mcp-bridge-provider-inspection";
 
 const MAX_CONCURRENT_RUNTIME_OBSERVATIONS = 4;
+
+/** Recorded provider whose native NVIDIA or hosted attachment receipt is valid for it. */
+function nativeAttachedProvider(entry: SandboxEntry): string | undefined {
+  try {
+    return recordedNativeProviderAttachment(entry) && entry.provider ? entry.provider : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function booleanSetting(value: unknown): {
   value: "true" | "false" | "unknown";
@@ -325,7 +335,11 @@ async function collectRuntime(
         runtime,
         raw.status === "fulfilled" ? raw.value : null,
         roster.status === "fulfilled" ? roster.value : undefined,
-        { ...entry, metadataErrors: options.metadataErrors },
+        {
+          ...entry,
+          nativeAttachedProvider: nativeAttachedProvider(entry),
+          metadataErrors: options.metadataErrors,
+        },
       ),
     );
     if (raw.status === "rejected" || roster.status === "rejected") row.status = "collection_error";

@@ -95,9 +95,8 @@ export interface RuntimeRouteAuthority {
   modelSelectionProvenance?: unknown;
   nativeModelSelectionProvenance?: unknown;
   modelAssignmentSelections?: unknown;
-  nativeNvidiaProviderAttachment?: unknown;
-  nativeHostedProviderAttachment?: unknown;
-  nativeLocalProviderAttachment?: unknown;
+  /** Logical provider of the validated native attachment receipt, if one is recorded. */
+  nativeAttachedProvider?: string;
   metadataErrors?: readonly TelemetryMetadataError[];
 }
 
@@ -110,14 +109,6 @@ type ModelReference = {
   attached?: boolean;
   nativeConfiguration?: unknown;
 };
-
-function hasNativeProviderAttachment(authority: RuntimeRouteAuthority): boolean {
-  return [
-    authority.nativeNvidiaProviderAttachment,
-    authority.nativeHostedProviderAttachment,
-    authority.nativeLocalProviderAttachment,
-  ].some((receipt) => dataRecord(receipt) !== null);
-}
 
 type AssignmentSources = {
   selections: Map<string, ModelAssignmentSelection>;
@@ -570,7 +561,8 @@ export function projectRuntimeAgents(
       attached:
         model.provider === "custom" &&
         model.default === authority.model &&
-        hasNativeProviderAttachment(authority),
+        typeof authority.provider === "string" &&
+        authority.nativeAttachedProvider === authority.provider,
     };
   } else if (runtime.agentHarnessId === "langchain-deepagents-code") {
     const models = dataRecord(root.models);

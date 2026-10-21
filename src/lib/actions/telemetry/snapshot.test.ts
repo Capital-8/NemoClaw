@@ -387,37 +387,61 @@ const nvidiaAttachment = {
   providerId: "11111111-2222-4333-8444-555555555555",
 } as const;
 
-it.each([
+const nvidiaRoute = { provider: "nvidia-prod", model: "nvidia/nemotron-3-ultra-550b-a55b" };
+const forged = <T>(value: unknown) => value as T;
+
+it.each<{ name: string; entry: Partial<SandboxEntry>; providerProfile: string }>([
   {
     name: "an attached native NVIDIA route",
-    model: "nvidia/nemotron-3-ultra-550b-a55b",
-    attachment: nvidiaAttachment,
+    entry: { ...nvidiaRoute, nativeNvidiaProviderAttachment: nvidiaAttachment },
     providerProfile: "nvidia",
   },
   {
     name: "a native config for another recorded model",
-    model: "other/model",
-    attachment: nvidiaAttachment,
+    entry: {
+      ...nvidiaRoute,
+      model: "other/model",
+      nativeNvidiaProviderAttachment: nvidiaAttachment,
+    },
     providerProfile: "custom",
   },
   {
     name: "a native config without an attachment",
-    model: "nvidia/nemotron-3-ultra-550b-a55b",
-    attachment: undefined,
+    entry: nvidiaRoute,
+    providerProfile: "custom",
+  },
+  {
+    name: "an NVIDIA receipt recorded for another provider",
+    entry: {
+      ...nvidiaRoute,
+      provider: "openai-api",
+      nativeNvidiaProviderAttachment: nvidiaAttachment,
+    },
+    providerProfile: "custom",
+  },
+  {
+    name: "an empty NVIDIA receipt",
+    entry: { ...nvidiaRoute, nativeNvidiaProviderAttachment: forged({}) },
+    providerProfile: "custom",
+  },
+  {
+    name: "an NVIDIA receipt stored as a hosted attachment",
+    entry: { ...nvidiaRoute, nativeHostedProviderAttachment: forged(nvidiaAttachment) },
+    providerProfile: "custom",
+  },
+  {
+    name: "an unrelated local attachment",
+    entry: { ...nvidiaRoute, nativeLocalProviderAttachment: forged({ profileId: "unrelated" }) },
     providerProfile: "custom",
   },
 ])(
   "reports the Hermes custom adapter for $name as $providerProfile (#13577)",
-  async ({ model, attachment, providerProfile }) => {
+  async ({ entry, providerProfile }) => {
     const event = await collectNativeConfiguration(
       "hermes",
       "/sandbox/.hermes/config.yaml",
       hermesNvidiaConfig,
-      {
-        provider: "nvidia-prod",
-        model,
-        ...(attachment ? { nativeNvidiaProviderAttachment: attachment } : {}),
-      },
+      entry,
     );
     expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
       modelId: "nvidia/nemotron-3-ultra-550b-a55b",
