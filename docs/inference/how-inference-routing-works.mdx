@@ -83,7 +83,9 @@ Legacy Model Router sandboxes without a native attachment require a backup and f
 NemoClaw preserves their legacy volumes and does not automatically copy the data.
 Native Model Router resume and model changes verify the existing provider and router ownership; uncertain ownership stops the operation and preserves recovery state.
 See [Set Up Model Router](hosted-inference/set-up-model-router) for its model pool and process lifecycle.
-New Local NVIDIA NIM sandboxes use their recorded native attachment for resume and rebuild. Back up and recreate older NIM sandboxes before upgrading OpenShell.
+New Local NVIDIA NIM sandboxes use their recorded native attachment for resume and rebuild.
+For older NIM sandboxes without a native attachment, preserve backups, the existing installation, and sandbox data.
+Follow the [OpenShell upgrade restrictions](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path).
 Legacy Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible routes without a native attachment cannot resume or rebuild.
 Back up required sandbox state before running `nemohermes onboard --fresh --name <sandbox-name> --recreate-sandbox` to replace the sandbox with a native attachment.
 Remaining custom shared selections retain their shared route on OpenShell `0.0.x`.

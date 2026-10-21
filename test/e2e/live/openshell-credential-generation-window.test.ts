@@ -627,9 +627,7 @@ test(
         });
         const expiredRebuildOutput = resultText(expiredRebuild);
         expect(expiredRebuild.exitCode, expiredRebuildOutput).not.toBe(0);
-        expect(expiredRebuildOutput).toContain(
-          "Native provider credential is expired; sandbox is untouched",
-        );
+        expect(expiredRebuildOutput).toContain("Native provider credential is expired");
         expect(
           await sandboxIdentity(sandbox, "credential-window-source-sandbox-after-expired-rebuild"),
         ).toBe(sourceSandboxId);

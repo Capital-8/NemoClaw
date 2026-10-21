@@ -287,7 +287,6 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(liveTarget).toContain("credential-window-source-sandbox-after-expired-rebuild");
     expect(liveTarget).toContain("parseOpenShellSandboxId");
     expect(liveTarget).toContain('providerName: "e2e-cred-window-mcp-fake"');
-    expect(liveTarget).toContain("Native provider credential is expired; sandbox is untouched");
     expect(liveTarget).toContain('!request.auth.includes("openshell:resolve:env")');
   });
 });

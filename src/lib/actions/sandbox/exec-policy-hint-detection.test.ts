@@ -16,6 +16,9 @@ const DENIED_GIT_LINE =
   "[1783046885.833] [sandbox] [OCSF ] [ocsf] NET:OPEN [MED] DENIED /usr/lib/git-core/git-remote-http(3973) -> github.com:443 [policy:- engine:opa] [reason:endpoint github.com:443 is not allowed by any policy]";
 const SSH_RELAY_INFO_LINE =
   "[1783046565.338] [sandbox] [OCSF ] [ocsf] NET:OPEN [INFO] [msg:ssh relay open (channel_id=8e95bfe4, target=unix:/run/openshell/ssh.sock)]";
+// OpenShell 0.1.3 policy_dns::build_dns_denial_event and OCSF shorthand format.
+const DNS_POLICY_DENIAL_LINE =
+  "[1783046573.602] [sandbox] [OCSF ] [ocsf] NET:REFUSE [MED] DENIED host.openshell.internal [reason:policy_dns_ineligible]";
 // Exact proxy JSON body captured alongside the OCSF lines above. Keep this
 // fixture strict: speculative wording variants would widen false positives.
 const PROXY_JSON_LINE =
@@ -56,6 +59,24 @@ const START_AFTER_DENIAL = 1783046800000;
 describe("isPolicyDenialLine (#5978)", () => {
   it.each([
     ["OCSF NET:OPEN DENIED audit line", DENIED_CURL_LINE, true],
+    ["OCSF policy DNS refusal", DNS_POLICY_DENIAL_LINE, true],
+    ...[
+      "policy_dns_upstream_nxdomain",
+      "policy_dns_upstream_no_data",
+      "policy_dns_upstream_timeout",
+      "policy_dns_trusted_gateway_unavailable",
+      "policy_dns_ineligible_extra",
+    ].map(
+      (reason) =>
+        [reason, DNS_POLICY_DENIAL_LINE.replace("policy_dns_ineligible", reason), false] as const,
+    ),
+    [
+      "DNS error without a policy event",
+      "FAILED:URLError:<urlopen error [Errno -5] No address associated with hostname>",
+      false,
+    ],
+    ["allowed DNS event", DNS_POLICY_DENIAL_LINE.replace("DENIED", "ALLOWED"), false],
+    ["DNS policy text in a message", `[msg:${DNS_POLICY_DENIAL_LINE}]`, false],
     [
       "bracketed OCSF NET:OPEN DENIED audit line",
       "[policy:-] [NET:OPEN] DENIED [reason:example.com:443 is not allowed by any policy]",
@@ -363,6 +384,16 @@ describe("extractDeniedEndpoint (#5978)", () => {
 });
 
 describe("findRecentPolicyDenial (#5978)", () => {
+  it.each([
+    [1783046573602, { endpoint: null }],
+    [1783046573603, null],
+  ])(
+    "correlates DNS policy denial with command start %i without inventing a port",
+    (startedAt, expected) => {
+      expect(findRecentPolicyDenial(DNS_POLICY_DENIAL_LINE, startedAt)).toEqual(expected);
+    },
+  );
+
   it("matches a denial logged after the command started and returns its endpoint", () => {
     const match = findRecentPolicyDenial(
       [SSH_RELAY_INFO_LINE, DENIED_CURL_LINE].join("\n"),

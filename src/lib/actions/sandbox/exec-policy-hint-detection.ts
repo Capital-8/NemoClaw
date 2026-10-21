@@ -25,6 +25,10 @@ function isSafeEndpoint(candidate: string): boolean {
 // Require DENIED in the OCSF decision slot. This rejects allowed events whose
 // unrelated metadata happens to contain the word DENIED.
 const OCSF_NETWORK_DENIAL_RE = /\bNET:OPEN\b\]?(?:\s+\[[^\]\r\n]*\])*\s+DENIED(?=\s|$)/;
+// OpenShell 0.1.3 refuses ineligible host aliases during policy DNS lookup.
+// Other DNS refusals include upstream failures and do not prove policy denial.
+const OCSF_DNS_POLICY_DENIAL_RE =
+  /(?:^|\]\s+)NET:REFUSE \[MED\] DENIED [a-z0-9][a-z0-9._-]{0,252} \[reason:policy_dns_ineligible\]$/u;
 const PROXY_DENIAL_DETAIL_RE =
   /^CONNECT\s+(\[[^\]\s]+\]:\d{1,5}|[^\s:]+:\d{1,5})\s+not\s+(?:allowed|permitted)\s+by\s+(?:any\s+)?policy$/i;
 const PROXY_HTTP_DENIAL_DETAIL_RE =
@@ -204,7 +208,7 @@ function structuredJsonPolicyDenial(line: string): Record<string, unknown> | nul
  * exec cannot inherit a misleading breadcrumb.
  */
 export function isPolicyDenialLine(line: string): boolean {
-  if (OCSF_NETWORK_DENIAL_RE.test(line)) return true;
+  if (OCSF_NETWORK_DENIAL_RE.test(line) || OCSF_DNS_POLICY_DENIAL_RE.test(line)) return true;
   return structuredJsonPolicyDenial(line) !== null;
 }
 

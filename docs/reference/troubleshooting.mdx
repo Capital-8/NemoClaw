@@ -1919,7 +1919,7 @@ When you run a command through `$$nemoclaw <name> exec -- ...` and it exits non-
 ```text
 curl: (56) CONNECT tunnel failed, response 403
 $$nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'oc-fresh'.
-  The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.
+  Match the denial's destination and time to the failed request before changing policy.
   See the denied flow:    $$nemoclaw oc-fresh logs --tail 50
   Review applied presets: $$nemoclaw oc-fresh policy list
   Allow the host:         $$nemoclaw oc-fresh policy add <preset>
@@ -1928,6 +1928,9 @@ $$nemoclaw: recent network policy denial detected for example.com:443 inside san
 
 If the log probe fails, no breadcrumb is added. Unsafe endpoint data is omitted from the breadcrumb, and an invalid sandbox name is shown as `<name>`.
 The breadcrumb reports a recent denial. Match its destination and time to the failed request before treating policy as the cause.
+
+On OpenShell `0.1.3`, a fresh `NET:REFUSE` audit event with `policy_dns_ineligible` also produces the hint, without a destination.
+A DNS resolution error alone does not confirm a policy denial.
 
 An IPv6 target is named in its RFC 3986 bracketed form:
 
