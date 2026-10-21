@@ -7,6 +7,7 @@
 // expected-token matching, and pre-contract provider-validation skip
 // classification without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
+import { parseJsonFromText } from "./json-envelope.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   runBoundedRetry,
@@ -955,6 +956,23 @@ export async function validateOpenClawAgentAttemptEvidence(
     attempt: { passed: true },
     evidence: toolEvidence ? { reply: options.reply, toolEvidence } : { reply: options.reply },
   };
+}
+
+/** Validate the structured research answer independently of the reply-key smoke check. */
+export function isUnavailableSearchReply(reply: string): boolean {
+  try {
+    const answer = parseJsonFromText(reply);
+    return (
+      answer !== null &&
+      typeof answer === "object" &&
+      "searchStatus" in answer &&
+      answer.searchStatus === "unavailable" &&
+      "installationDocumentation" in answer &&
+      answer.installationDocumentation === null
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function parseChatContent(raw: string): string {

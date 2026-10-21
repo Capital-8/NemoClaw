@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   agentReplyContainsToken,
   assessPersonalPublicFetchToolEvidence,
+  isUnavailableSearchReply,
   buildOpenClawToolEvidenceReducerScript,
   classifyHermesAgentAssertion,
   classifyOpenClawAgentAssertion,
@@ -1460,4 +1461,40 @@ describe("common-egress agent parsing and classification helpers", () => {
       transientProviderValidationFailure: false,
     });
   });
+});
+
+describe("unavailable web-search reply evidence", () => {
+  it("rejects a fabricated documentation result even when the expected reply key is present", () => {
+    const reply = JSON.stringify({
+      searchStatus: "unavailable",
+      installationDocumentation: {
+        title: "NVIDIA Announces NemoClaw",
+        url: "https://nvidianews.nvidia.com/",
+      },
+    });
+    expect(
+      classifyOpenClawAgentAssertion({
+        exitCode: 0,
+        expected: "searchStatus",
+        reply,
+        response: reply,
+      }),
+    ).toEqual({ passed: true });
+    expect(isUnavailableSearchReply(reply)).toBe(false);
+  });
+
+  it.each([
+    'Based on my investigation of the local files, there is no separate "official NVIDIA NemoClaw installation documentation" page.',
+    "Based on my research of the OpenClaw documentation: Page Title: NVIDIA announces NemoClaw. URL: https://nvidianews.nvidia.com/",
+    JSON.stringify({ searchStatus: "available", installationDocumentation: null }),
+  ])("rejects an unsupported or incomplete reply: %s", (reply) => {
+    expect(isUnavailableSearchReply(reply)).toBe(false);
+  });
+
+  it("accepts an unavailable-search reply with no claimed installation documentation", () =>
+    expect(
+      isUnavailableSearchReply(
+        '```json\n{"searchStatus":"unavailable","installationDocumentation":null}\n```',
+      ),
+    ).toBe(true));
 });

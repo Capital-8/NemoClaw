@@ -29,6 +29,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   assessPersonalPublicFetchToolEvidence,
+  isUnavailableSearchReply,
   classifyHermesAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
@@ -602,6 +603,7 @@ describe.sequential("common-egress agent live targets", () => {
           "verify balanced egress excludes weather",
           "add weather egress policy",
           "run verified weather agent turn",
+          "report unavailable search without claiming installation documentation",
         ],
       },
     },
@@ -617,6 +619,7 @@ describe.sequential("common-egress agent live targets", () => {
           "explicit policy-add weather applies the weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
           "a real OpenClaw agent turn validates one wttr.in response and leaves its body as proof",
+          "without a search provider or retrieved content, a fresh OpenClaw turn discloses unavailable search and returns no installation-documentation result",
         ],
       });
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_BALANCED_SANDBOX);
@@ -729,6 +732,45 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
       );
       expect(weatherProof.exitCode, text(weatherProof)).toBe(0);
       expect(weatherProof.stdout.trim()).toMatch(/^[a-f0-9]{64}\s+/);
+      progress.phase("report unavailable search without claiming installation documentation");
+      const searchConfig = await sandbox.exec(
+        OPENCLAW_BALANCED_SANDBOX,
+        [
+          "node",
+          "-e",
+          'const fs = require("node:fs"); const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8")); process.exit(config.tools?.web?.search?.enabled === false ? 0 : 1);',
+        ],
+        { artifactName: "c1-disabled-search-config", env: commandEnv(), timeoutMs: 30_000 },
+      );
+      expect(
+        searchConfig.exitCode,
+        "The installed OpenClaw search configuration must be disabled",
+      ).toBe(0);
+      const research = await runOpenClawAgentAssertion(host, sandbox, artifacts, {
+        apiKey,
+        expected: "searchStatus",
+        label: "c1-agent-unavailable-search",
+        persistCommandArtifacts: false,
+        redactOutputInFailure: true,
+        sandboxName: OPENCLAW_BALANCED_SANDBOX,
+        prompt: `Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.
+Format the answer as JSON with searchStatus (available, unavailable, or unknown) and installationDocumentation (an object with title and url, or null).`,
+        publicFetchExpectation: { url: "https://docs.nvidia.com/nemoclaw/", content: "" },
+        toolEvidenceValidator: (evidence) =>
+          evidence.errors.length === 0 &&
+          evidence.finalStatuses.length === 1 &&
+          evidence.finalStatuses[0] === "success" &&
+          !evidence.webFetchResults.some((result) => result.resultSuccess || result.httpSuccess) &&
+          ![...evidence.toolCalls, ...evidence.toolExecutions].some((call) =>
+            /web_search|brave|tavily/iu.test(call.name),
+          ),
+      });
+      const unavailableSearchReply = isUnavailableSearchReply(research.reply);
+      await artifacts.writeJson("c1-unavailable-search-reply.json", { unavailableSearchReply });
+      expect(
+        unavailableSearchReply,
+        "The agent must disclose unavailable search and return no unsupported documentation result",
+      ).toBe(true);
       await artifacts.target.complete({
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",

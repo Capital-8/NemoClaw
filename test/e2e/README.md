@@ -902,6 +902,10 @@ The execution profile owns the credentials available to its target step:
   The reusable workflow enforces this boundary; an authenticated same-repository PR caller sets `trusted_main` to `true`.
 
 `common-egress-agent` runs 4 isolated scenario shards.
+The balanced OpenClaw shard also checks the installed no-search configuration and sends a fresh documentation-search request.
+Its structured reply must report unavailable search and contain no installation-documentation result; reduced tool evidence must show no successful fetch or search-provider invocation.
+The source hook tests own prompt construction, while this agent turn owns model compliance after unavailable search.
+The reply artifact retains only a pass/fail boolean; the raw session remains inside the sandbox.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
 The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. OpenShell SSH configuration stays in a private temporary file outside the artifact directory. The assertion attempts removal after it finishes and fails if the directory remains. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
