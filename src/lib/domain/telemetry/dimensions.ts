@@ -96,7 +96,9 @@ export interface RuntimeRouteAuthority {
   nativeModelSelectionProvenance?: unknown;
   modelAssignmentSelections?: unknown;
   /** Provider and endpoint proved by a validated native attachment receipt. */
-  nativeAttachedRoute?: { provider: string; endpoint: string };
+  nativeAttachedRoute?: { provider: string; endpoint: string } | undefined;
+  /** A recorded native attachment receipt failed validation. */
+  nativeAttachmentInvalid?: boolean;
   metadataErrors?: readonly TelemetryMetadataError[];
 }
 
@@ -107,6 +109,8 @@ type ModelReference = {
   managed: boolean;
   /** A native reference that NemoClaw attached for the recorded provider and model. */
   attached?: boolean;
+  /** The provider cannot be classified because the recorded attachment is invalid. */
+  attachmentInvalid?: boolean;
   nativeConfiguration?: unknown;
 };
 
@@ -245,8 +249,9 @@ function projectModel(
     gatewayReceipt.provider === authority.provider
       ? gatewayReceipt.providerProfile
       : undefined;
-  const provider =
-    reference.managed || reference.attached
+  const provider = reference.attachmentInvalid
+    ? "unknown"
+    : reference.managed || reference.attached
       ? (bound?.providerProfile ?? gatewayProvider ?? classifyTelemetryProvider(authority.provider))
       : reference.providerKey
         ? (NATIVE_PROVIDERS[reference.providerKey] ?? "custom")
@@ -543,6 +548,12 @@ export function projectRuntimeAgents(
       anthropic_messages: "anthropic-messages",
       codex_responses: "openai-responses",
     };
+    const managed =
+      typeof model.base_url === "string" &&
+      /^https:\/\/inference\.local(?:\/v1)?\/?$/.test(model.base_url);
+    // NemoClaw writes every Hermes route with the `custom` adapter, so the
+    // adapter name does not identify the selected provider.
+    const nativeCustom = !managed && model.provider === "custom";
     reference = {
       model: model.default,
       providerKey: typeof model.provider === "string" ? model.provider : "",
@@ -553,19 +564,16 @@ export function projectRuntimeAgents(
           : typeof model.api_mode === "string"
             ? (modes[model.api_mode] ?? model.api_mode)
             : model.api_mode,
-      managed:
-        typeof model.base_url === "string" &&
-        /^https:\/\/inference\.local(?:\/v1)?\/?$/.test(model.base_url),
-      // NemoClaw writes every Hermes route with the `custom` adapter, so the
-      // adapter name does not identify the selected provider.
+      managed,
       attached:
-        model.provider === "custom" &&
+        nativeCustom &&
         model.default === authority.model &&
         typeof model.base_url === "string" &&
         typeof authority.provider === "string" &&
         authority.nativeAttachedRoute?.provider === authority.provider &&
         model.base_url.replace(/\/+$/, "") ===
           authority.nativeAttachedRoute.endpoint.replace(/\/+$/, ""),
+      attachmentInvalid: nativeCustom && authority.nativeAttachmentInvalid === true,
     };
   } else if (runtime.agentHarnessId === "langchain-deepagents-code") {
     const models = dataRecord(root.models);

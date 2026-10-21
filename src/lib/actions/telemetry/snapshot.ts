@@ -15,6 +15,7 @@ import {
   parseRuntimeRoster,
   projectRuntimeAgents,
   projectCurrentInferenceRoute,
+  type RuntimeRouteAuthority,
   unknownModel,
 } from "../../domain/telemetry/dimensions";
 import type {
@@ -50,15 +51,23 @@ import { getMcpProviderInspectionRuntimeSelection } from "../sandbox/mcp-bridge-
 
 const MAX_CONCURRENT_RUNTIME_OBSERVATIONS = 4;
 
-/** Recorded provider and endpoint proved by a valid native NVIDIA or hosted attachment. */
-function nativeAttachedRoute(
-  entry: SandboxEntry,
-): { provider: string; endpoint: string } | undefined {
+/**
+ * Route proved by a valid native NVIDIA or hosted attachment, or an invalid-receipt marker.
+ * Both keys are always set so registry fields with the same names cannot reach telemetry.
+ */
+function nativeAttachmentEvidence(entry: SandboxEntry): {
+  nativeAttachedRoute: RuntimeRouteAuthority["nativeAttachedRoute"];
+  nativeAttachmentInvalid: boolean;
+} {
   try {
     const endpoint = recordedNativeProviderEndpoint(entry);
-    return endpoint && entry.provider ? { provider: entry.provider, endpoint } : undefined;
+    return {
+      nativeAttachedRoute:
+        endpoint && entry.provider ? { provider: entry.provider, endpoint } : undefined,
+      nativeAttachmentInvalid: false,
+    };
   } catch {
-    return undefined;
+    return { nativeAttachedRoute: undefined, nativeAttachmentInvalid: true };
   }
 }
 
@@ -340,7 +349,7 @@ async function collectRuntime(
         roster.status === "fulfilled" ? roster.value : undefined,
         {
           ...entry,
-          nativeAttachedRoute: nativeAttachedRoute(entry),
+          ...nativeAttachmentEvidence(entry),
           metadataErrors: options.metadataErrors,
         },
       ),

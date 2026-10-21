@@ -401,6 +401,7 @@ it.each<{
   entry: Partial<SandboxEntry>;
   baseUrl?: string;
   providerProfile: string;
+  providerStatus?: string;
 }>([
   {
     name: "an attached native NVIDIA route",
@@ -444,26 +445,46 @@ it.each<{
       provider: "openai-api",
       nativeNvidiaProviderAttachment: nvidiaAttachment,
     },
-    providerProfile: "custom",
+    providerProfile: "unknown",
+    providerStatus: "collection_error",
   },
   {
     name: "an empty NVIDIA receipt",
     entry: { ...nvidiaRoute, nativeNvidiaProviderAttachment: forged({}) },
-    providerProfile: "custom",
+    providerProfile: "unknown",
+    providerStatus: "collection_error",
   },
   {
     name: "an NVIDIA receipt stored as a hosted attachment",
     entry: { ...nvidiaRoute, nativeHostedProviderAttachment: forged(nvidiaAttachment) },
-    providerProfile: "custom",
+    providerProfile: "unknown",
+    providerStatus: "collection_error",
   },
   {
     name: "an unrelated local attachment",
     entry: { ...nvidiaRoute, nativeLocalProviderAttachment: forged({ profileId: "unrelated" }) },
     providerProfile: "custom",
   },
+  {
+    name: "a shared-route config with an invalid NVIDIA receipt",
+    entry: { ...nvidiaRoute, nativeNvidiaProviderAttachment: forged({}) },
+    baseUrl: "https://inference.local/v1",
+    providerProfile: "nvidia",
+  },
+  {
+    name: "a registry entry that carries its own attached route",
+    entry: forged({
+      ...nvidiaRoute,
+      nativeAttachedRoute: {
+        provider: "nvidia-prod",
+        endpoint: "https://integrate.api.nvidia.com/v1",
+      },
+    }),
+    providerProfile: "custom",
+  },
 ])(
   "reports the Hermes custom adapter for $name as $providerProfile (#13577)",
-  async ({ entry, baseUrl, providerProfile }) => {
+  async ({ entry, baseUrl, providerProfile, providerStatus }) => {
     const event = await collectNativeConfiguration(
       "hermes",
       "/sandbox/.hermes/config.yaml",
@@ -473,7 +494,7 @@ it.each<{
     expect(event.parameters.configurations[0].agents[0].models[0]).toMatchObject({
       modelId: "nvidia/nemotron-3-ultra-550b-a55b",
       providerProfile,
-      providerStatus: "reported",
+      providerStatus: providerStatus ?? "reported",
     });
     expect(isOperationEvent(event)).toBe(true);
   },
