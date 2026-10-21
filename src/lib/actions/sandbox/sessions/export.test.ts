@@ -13,6 +13,7 @@ vi.mock("../gateway-state", () => ({
 
 vi.mock("../../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
+  OPENSHELL_PROBE_TIMEOUT_MS: 30_000,
   runOpenshell: vi.fn(),
 }));
 
@@ -43,7 +44,11 @@ vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
   withMcpLifecycleLock: withLifecycleLockMock,
 }));
 
-import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+  runOpenshell,
+} from "../../../adapters/openshell/runtime";
 import type { OpenShellSandboxTransferCompletion } from "../../../adapters/openshell/sandbox-transfer";
 import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit, getKnownSandboxTargetGatewayName } from "../gateway-state";
@@ -314,7 +319,16 @@ describe("exportSandboxSessions", () => {
       // Staging directory inside /sandbox keeps openshell's workspace check happy
       // and the umask + chmod chain seals the staging tarball to owner-only.
       expect(command).toMatch(
-        /^umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && tar -czf \/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz/,
+        /^umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging/,
+      );
+      // The archive step re-check that each transcript is a regular, non-symlink
+      // file runs before tar, so a file replaced between the preflight probe and
+      // the archive is refused (exit 3) rather than bundled as a directory or link.
+      expect(command).toMatch(
+        /\[ -f \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] && \[ ! -L \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] \|\| \{ printf 'refusing non-regular transcript %s\\n' .* >&2; exit 3; \}/,
+      );
+      expect(command).toMatch(
+        /&& tar -czf \/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz/,
       );
       expect(command).toMatch(/-- \.\/sid-a\.jsonl \.\/sid-b\.jsonl/);
       expect(command).toMatch(
@@ -616,8 +630,43 @@ describe("exportSandboxSessions", () => {
     expect(shellCommand(captureCall)).toContain('[ -f "$dir/$f" ] && [ ! -L "$dir/$f" ]');
     expect(captureCall).toContain("/sandbox/.openclaw/agents/main/sessions");
     expect(captureCall).toContain("sid-b.jsonl");
+    // The preflight probe is bounded so a stalled gateway or sandbox cannot
+    // block sessions export indefinitely.
+    expect(captureMock.mock.calls[1]?.[1]).toMatchObject({
+      ignoreError: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
     // The export must stop before building any tarball.
     expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses export when a requested trajectory transcript is absent", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: "sid-a" },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-c" },
+        ]),
+      ),
+    );
+    // The probe reports only the trajectory file missing for an explicitly
+    // requested trajectory export.
+    captureMock.mockReturnValueOnce(makeCapture("sid-c.trajectory.jsonl\n", 1));
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        keys: ["agent:main:telegram:t-1"],
+        out: "./out",
+        format: "dir",
+        includeTrajectory: true,
+      }),
+    ).rejects.toThrow(
+      /Refusing to export: sessions are listed in the agent index but their transcript files are missing or not regular, non-symlink files in the sandbox store: sid-c\.trajectory\.jsonl/,
+    );
+
+    // The export must stop before any per-file download starts.
+    expect(transferRunMock).not.toHaveBeenCalled();
   });
 
   it("refuses a dir-format export when a listed session has no on-disk transcript file", async () => {
@@ -861,6 +910,24 @@ describe("exportSandboxSessions", () => {
     expect(cleanupCall?.[0]).toContain("rm");
     expect(cleanupCall?.[0]).toContain("-f");
     expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
+  });
+
+  it("refuses a tar export when a transcript is replaced by a non-regular file between preflight and archive", async () => {
+    // The preflight probe passes (default), but the archive-step re-check fails
+    // with exit 3 because a sandbox process replaced the transcript with a
+    // directory or symlink. No bundle is published (no download starts).
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    runMock.mockReturnValueOnce(makeRun(3));
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      }),
+    ).rejects.toThrow(/Failed to tar sessions/);
+    expect(transferRunMock).not.toHaveBeenCalled();
   });
 
   it("still cleans up the staging tarball when the host download exits non-zero", async () => {

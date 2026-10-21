@@ -48,7 +48,11 @@ import type {
   OpenShellSandboxTransferExecutor,
   OpenShellSandboxTransferRequest,
 } from "../../../adapters/openshell/sandbox-transfer";
-import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+  runOpenshell,
+} from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
 import {
   deferSandboxLifecycleExit,
@@ -302,7 +306,12 @@ async function exportSandboxSessionsUnlocked(
             "--",
             "sh",
             "-c",
-            buildShellInvocation(tarArgv, tarballRemote),
+            buildShellInvocation({
+              tarArgv,
+              tarRelpaths: resolvedFiles,
+              tarballRemote,
+              sourceDir,
+            }),
           ],
           target,
         ),
@@ -679,16 +688,36 @@ export function buildSandboxTarArgv(input: {
   return argv;
 }
 
-function buildShellInvocation(tarArgv: readonly string[], tarballRemote: string): string {
+function buildShellInvocation(input: {
+  tarArgv: readonly string[];
+  tarRelpaths: readonly string[];
+  tarballRemote: string;
+  sourceDir: string;
+}): string {
+  const { tarArgv, tarRelpaths, tarballRemote, sourceDir } = input;
   // umask 077 restricts the staging tarball (mode 600) so a concurrent
   // sandbox user cannot read another agent's session JSONL between the tar
   // step and the download step. The mkdir + chmod 700 pair guarantees the
   // staging directory itself is owner-only even if a previous run (or an
   // unrelated tool) created it with a broader mode.
+  //
+  // The archive operation re-verifies each transcript is a regular,
+  // non-symlink file immediately before tar reads it, using absolute paths
+  // under sourceDir. The early preflight probe is a diagnostic; this loop
+  // closes the sandbox-filesystem race where a transcript is replaced by a
+  // directory or symlink between the probe and tar, which would otherwise
+  // make tar recurse a directory or pack an attacker-controlled link.
   const quoted = tarArgv.map(shellQuote).join(" ");
   const quotedTarball = shellQuote(tarballRemote);
   const quotedStagingDir = shellQuote(STAGING_DIR_IN_SANDBOX);
-  return `umask 077 && mkdir -p ${quotedStagingDir} && chmod 700 ${quotedStagingDir} && ${quoted} && chmod 600 ${quotedTarball}`;
+  const validation = tarRelpaths
+    .map((relpath) => `${shellQuote(sourceDir)}/${shellQuote(relpath)}`)
+    .map(
+      (abs) =>
+        `[ -f ${abs} ] && [ ! -L ${abs} ] || { printf 'refusing non-regular transcript %s\\n' ${abs} >&2; exit 3; }`,
+    )
+    .join(" ");
+  return `umask 077 && mkdir -p ${quotedStagingDir} && chmod 700 ${quotedStagingDir} && ${validation} && ${quoted} && chmod 600 ${quotedTarball}`;
 }
 
 function shellQuote(value: string): string {
@@ -863,7 +892,7 @@ function missingTranscriptFiles(
       ],
       target,
     ),
-    { ignoreError: true },
+    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
   );
   if (result.status === 0) return [];
   const missing = (result.output ?? "")
