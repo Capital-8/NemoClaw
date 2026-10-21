@@ -65,6 +65,7 @@ describe("inference set telemetry for native NVIDIA selections (#13598)", () => 
       const request = { provider: "nvidia-prod", model: "nvidia/test-model", sandboxName: agent };
       await runInferenceSet({ ...request, noVerify: true }, deps);
       telemetry.targets.length = 0;
+      deps.calls.restartSandboxGateway.mockClear();
 
       await runInferenceSet({ ...request, noVerify: true }, deps);
 
@@ -73,8 +74,42 @@ describe("inference set telemetry for native NVIDIA selections (#13598)", () => 
         outcome: "no_change",
         state: "unchanged",
       });
+      expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
     },
   );
+
+  it("reports completed when a repeated native selection repairs its attachment", async () => {
+    const deps = nativeDeps("openclaw");
+    const adapter = deps.providerAdapter;
+    let attached = false;
+    deps.providerAdapter = {
+      ...adapter,
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true as const,
+        value: { names: attached ? [AUTHORITY.providerName] : [] },
+      })),
+      attachProvider: vi.fn(async () => {
+        attached = true;
+        return { ok: true as const };
+      }),
+    };
+
+    await runInferenceSet(
+      {
+        provider: "nvidia-prod",
+        model: "nvidia/test-model",
+        sandboxName: "openclaw",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    expect(telemetry.targets.at(-1)).toMatchObject({
+      sandboxName: "openclaw",
+      outcome: "completed",
+      state: "applied",
+    });
+  });
 
   it("reports completed when a native selection changes the model", async () => {
     const deps = nativeDeps("hermes");

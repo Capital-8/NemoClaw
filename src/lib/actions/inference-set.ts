@@ -866,6 +866,22 @@ function clearOpenClawConfigSyncPending(
   }
 }
 
+function clearHermesGatewayRestartPending(
+  sandboxName: string,
+  deps: Pick<InferenceSetDeps, "updateSandbox">,
+): void {
+  try {
+    if (!deps.updateSandbox(sandboxName, { hermesGatewayRestartPending: undefined })) {
+      throw new Error("sandbox registry entry is unavailable");
+    }
+  } catch {
+    throw new InferenceSetError(
+      `The Hermes gateway restarted, but its pending restart record could not be cleared. ` +
+        `Retry the same inference set command to finish recovery.`,
+    );
+  }
+}
+
 function failOpenClawInferenceConfigSync(
   agentName: string,
   sandboxName: string,
@@ -1524,6 +1540,7 @@ async function runInferenceSetWithoutHostLock(
   // Capture before registry writes: a retry already has the new route, while
   // the sandbox config can still carry the previous endpoint's context window.
   const retryingOpenClawConfigSync = entry.openClawConfigSyncPending === true;
+  const retryingHermesGatewayRestart = entry.hermesGatewayRestartPending === true;
   const openClawConfigSyncPending =
     agentName === "openclaw" &&
     (retryingOpenClawConfigSync ||
@@ -1989,6 +2006,20 @@ async function runInferenceSetWithoutHostLock(
       );
     }
 
+    const hermesGatewayRestartRequired =
+      agentName === "hermes" &&
+      (retryingHermesGatewayRestart ||
+        (Boolean(selectingNative || previousNativeAttachment || previousNativeLocalAttachment) &&
+          (patched.changed || nativeAttachmentChanged || nativeLocalAttachmentChanged)));
+    if (
+      hermesGatewayRestartRequired &&
+      !deps.updateSandbox(sandboxName, { hermesGatewayRestartPending: true })
+    ) {
+      throw new InferenceSetError(
+        `Failed to record the pending Hermes gateway restart for sandbox '${sandboxName}'.`,
+      );
+    }
+
     deps.log(
       agentName === "hermes"
         ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
@@ -2052,13 +2083,11 @@ async function runInferenceSetWithoutHostLock(
         // A prior failed native response or receipt write can leave the new config on disk
         // without ever activating it in the running gateway.
         configChanged: patched.changed || retryingOpenClawConfigSync,
-        // A new native attachment refreshes credentials for new processes only.
-        // Restart on retries too: an earlier attempt may have committed the config.
-        hermesGatewayRestart:
-          agentName === "hermes" &&
-          (selectingNative || previousNativeAttachment || previousNativeLocalAttachment)
-            ? { gatewayName: expectedGatewayName }
-            : undefined,
+        // Native attachment and config changes reach Hermes only after a restart.
+        // The durable pending marker preserves restart recovery without disrupting a true no-op.
+        hermesGatewayRestart: hermesGatewayRestartRequired
+          ? { gatewayName: expectedGatewayName }
+          : undefined,
         openClawPairingTarget:
           agentName === "openclaw"
             ? {
@@ -2100,6 +2129,9 @@ async function runInferenceSetWithoutHostLock(
       [
         patched.changed,
         retryingOpenClawConfigSync,
+        nativeAttachmentChanged,
+        nativeLocalAttachmentChanged,
+        hermesGatewayRestartRequired,
         appliedProvider,
         sharedRouteSelectionChanged({
           nativeProvider: selectingNative,
@@ -2286,6 +2318,9 @@ export async function runInferenceSet(
     // device-scope convergence.
     try {
       await completeInferencePostCommit(mutation, deps);
+      if (mutation.hermesGatewayRestart) {
+        clearHermesGatewayRestartPending(selected.sandboxName, deps);
+      }
       // The agent config has converged once post-commit work succeeds. Do not
       // leave its recovery marker pending if later provider cleanup fails.
       if (mutation.openClawConfigSyncPending) {
