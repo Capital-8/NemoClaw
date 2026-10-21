@@ -26,7 +26,6 @@ import {
   cleanupGpu,
   cleanupOllama,
   createGpuPrivateHome,
-  detectOllamaModel,
   ensureOllama,
   env,
   hasExactReadyPhase,
@@ -243,7 +242,7 @@ test(
     ).toBe("");
 
     progress.phase("run sandbox native Ollama chat");
-    const model = await detectOllamaModel(host);
+    const model = env().NEMOCLAW_MODEL!;
     const chat = await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(gpuOllamaChatCommand(route!, model)),

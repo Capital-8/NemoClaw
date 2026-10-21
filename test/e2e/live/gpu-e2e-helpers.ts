@@ -481,19 +481,3 @@ curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http:/
     },
   );
 }
-
-export async function detectOllamaModel(host: HostCliClient): Promise<string> {
-  return (
-    process.env.NEMOCLAW_MODEL ||
-    (
-      await host.command(
-        "bash",
-        [
-          "-lc",
-          'curl -sf http://127.0.0.1:11434/api/tags | python3 -c \'import json,sys; m=json.load(sys.stdin).get("models",[]); print(m[0]["name"] if m else "")\'',
-        ],
-        { artifactName: "detect-ollama-model", env: env(), timeoutMs: 30_000 },
-      )
-    ).stdout.trim()
-  );
-}
