@@ -175,6 +175,9 @@ runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
           `Hermes dashboard is unreachable after onboarding\n${resultText(initialDashboard)}`,
         ).toBe(0);
 
+        expect(await isSandboxPortForwardHealthy(sandboxName, Number(apiPort), "127.0.0.1")).toBe(
+          true,
+        );
         const apiHealth = await host.command(
           "curl",
           [
@@ -280,6 +283,9 @@ runDashboardRemoteBindTest.for(["openclaw", "hermes"] as const)(
     progress.phase("verify agent security boundary");
     switch (agent) {
       case "hermes": {
+        expect(await isSandboxPortForwardHealthy(sandboxName, Number(apiPort), "127.0.0.1")).toBe(
+          true,
+        );
         const apiHealth = await host.command(
           "curl",
           [
