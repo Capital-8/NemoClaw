@@ -728,6 +728,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     owningPaths: [
       ...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS,
+      "src/lib/agent/hermes-api-forward.ts",
       "src/lib/onboard/agent-dashboard-forward.ts",
       "src/lib/onboard/dashboard.ts",
       "src/lib/onboard/dashboard-runtime.ts",
@@ -770,6 +771,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
         "src/lib/onboard/dashboard.ts",
         "src/lib/onboard/dashboard-forward-control.ts",
         "src/lib/onboard/dashboard-runtime.ts",
+        "src/lib/agent/hermes-api-forward.ts",
         "src/lib/onboard/agent-dashboard-forward.ts",
         "src/lib/onboard/sandbox-reuse.ts",
       ],

@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
 import { canReuseDashboardForwardForAgent } from "./dashboard-runtime";
+import { createOnboardDashboardHelpers } from "./dashboard";
+import { loadAgent } from "../agent/defs";
+import type { OpenShellForwardAdapter } from "../adapters/openshell/forward";
 
 describe("agent dashboard forward reuse eligibility", () => {
   it.each([
@@ -22,7 +25,84 @@ describe("agent dashboard forward reuse eligibility", () => {
 describe("ensureAgentDashboardForward", () => {
   afterEach(() => {
     delete process.env.CHAT_UI_URL;
+    vi.unstubAllEnvs();
   });
+
+  it.each([8642, 8643])(
+    "migrates the registered Hermes API on port %i during onboarding",
+    async (port) => {
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+      const sandbox = {
+        name: "hm",
+        agent: "hermes",
+        hermesApiPort: port,
+        dashboardRemoteBindPrepared: true,
+      };
+      const events: string[] = [];
+      let wildcard = true;
+      const adapter: OpenShellForwardAdapter = {
+        observeForwards: async (request) => {
+          await request.assertCurrent?.();
+          events.push(
+            request.forwards[0]?.port === port ? "observe-wildcard" : "observe-dashboard",
+          );
+          return request.forwards.map((forward) => ({ state: "owned", forward }));
+        },
+        retireLegacyForward: async (request) => {
+          await request.assertCurrent?.();
+          await request.authorize(request.forward);
+          expect(request.forward.localHost).toBe("0.0.0.0");
+          expect(request.migrateToLoopback).toBe(true);
+          events.push("retire-wildcard");
+          wildcard = false;
+          return { state: "retired", forward: request.forward };
+        },
+        startForward: async (request) => {
+          await request.assertCurrent?.();
+          switch (request.forward.port) {
+            case 18789:
+              expect(request.forward.localHost).toBe("0.0.0.0");
+              events.push("reuse-dashboard");
+              return { state: "reused", forward: request.forward };
+          }
+          expect(request.forward.localHost).toBe("127.0.0.1");
+          expect(request.forward.port).toBe(port);
+          events.push(wildcard ? "refuse-loopback" : "start-loopback");
+          return wildcard
+            ? { state: "refused", observation: { state: "foreign", forward: request.forward } }
+            : { state: "reused", forward: request.forward };
+        },
+        verifyForwardRelease: vi.fn(),
+      };
+      const helpers = createOnboardDashboardHelpers({
+        runCaptureOpenshell: vi.fn(() => ""),
+        cliName: () => "nemoclaw",
+        agentProductName: () => "NemoClaw",
+        getProviderLabel: (provider) => provider,
+        note: vi.fn(),
+        isWsl: () => true,
+        redact: String,
+        sleep: vi.fn(),
+        printAgentDashboardUi: vi.fn(),
+        listSandboxes: () => ({ sandboxes: [sandbox] }),
+        getSandbox: () => sandbox,
+        getGatewayForwardRuntimeAuthority: () => ({ gatewayEndpoint: "https://127.0.0.1:8080" }),
+        resolveForwardGatewayName: () => "nemoclaw",
+        forwardAdapterForAuthority: () => adapter,
+      });
+      await expect(helpers.ensureAgentDashboardForward("hm", loadAgent("hermes"))).resolves.toBe(
+        18789,
+      );
+      expect(events).toEqual([
+        "observe-dashboard",
+        "reuse-dashboard",
+        "refuse-loopback",
+        "observe-wildcard",
+        "retire-wildcard",
+        "start-loopback",
+      ]);
+    },
+  );
 
   it.each([false, true])("forwards Hermes ports with reuse=%s", async (reuseExistingForward) => {
     const ensureLoopbackForward = vi.fn();

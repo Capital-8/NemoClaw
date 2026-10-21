@@ -37,6 +37,10 @@ import {
   retargetHermesApiPortInUrl,
 } from "../../onboard/hermes-api-port";
 import { resolveDashboardForwardBind } from "../../onboard/dashboard-runtime";
+import {
+  createHermesApiForwardMigration,
+  isRegisteredHermesApiForward,
+} from "../../agent/hermes-api-forward";
 import { isWsl } from "../../platform";
 import * as registry from "../../state/registry";
 export type SandboxForwardHealth = boolean;
@@ -771,9 +775,7 @@ export async function ensureSandboxPortForwardForPort(
   const sandbox = readForwardSandbox(sandboxName);
   const canMigrateApi =
     listener === "foreign" &&
-    sandbox?.agent === "hermes" &&
-    port === resolveSandboxHermesApiPort(sandbox) &&
-    (expectedBind ?? "127.0.0.1") === "127.0.0.1" &&
+    isRegisteredHermesApiForward(sandbox, port, expectedBind ?? "127.0.0.1") &&
     !forwardTarget.startsWith("0.0.0.0:");
   if (listener === "indeterminate" || (listener === "foreign" && !canMigrateApi)) {
     console.error(nonOwnedForwardListenerRefusal(sandboxName, port));
@@ -792,33 +794,25 @@ export async function ensureSandboxPortForwardForPort(
       expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
     );
     const adapter = createOpenShellForwardAdapterForAuthority(runtime);
-    const assertCurrent = async () => {
-      assertSandboxForwardAuthorityCurrent(sandboxName, gatewayName, authority);
-      if (canMigrateApi) {
-        const current = readForwardSandbox(sandboxName);
-        if (current?.agent !== "hermes" || resolveSandboxHermesApiPort(current) !== port) {
-          throw new Error("Hermes API forward authority changed during migration");
-        }
-      }
-    };
+    const migration = createHermesApiForwardMigration({
+      adapter,
+      forward,
+      readSandbox: () => (canMigrateApi ? readForwardSandbox(sandboxName) : null),
+      requireRegisteredApi: canMigrateApi,
+      assertCurrent: () =>
+        assertSandboxForwardAuthorityCurrent(sandboxName, gatewayName, authority),
+    });
+    const { assertCurrent } = migration;
     if (canMigrateApi) {
-      // Loopback observation calls wildcard listeners foreign. Prove the exact
-      // wildcard identity before allowing the adapter to retire an owned PID.
-      const wildcard = { ...forward, localHost: "0.0.0.0" as const };
-      const [previous] = await adapter.observeForwards({ forwards: [wildcard], assertCurrent });
-      if (previous?.state !== "owned" && previous?.state !== "stale") {
+      const started = await migration.migrate();
+      if (started === null) {
         console.error(nonOwnedForwardListenerRefusal(sandboxName, port));
         return false;
       }
-      const retirement = await adapter.retireLegacyForward({
-        forward: wildcard,
-        migrateToLoopback: true,
-        assertCurrent,
-        authorize: async () => assertCurrent(),
-      });
-      if (retirement.state !== "retired" && retirement.state !== "not_needed") {
-        throw new Error(forwardOperationFailureMessage(retirement));
+      if (started.state !== "started" && started.state !== "reused") {
+        throw new Error(forwardOperationFailureMessage(started));
       }
+      return acceptSuccessfulForward();
     }
     if (listener === "stale") {
       const retirement = await adapter.retireLegacyForward({

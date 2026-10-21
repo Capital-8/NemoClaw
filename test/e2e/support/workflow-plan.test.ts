@@ -825,6 +825,7 @@ describe("E2E workflow plan", () => {
     "src/lib/adapters/openshell/forward-cli.ts",
     "src/lib/adapters/openshell/forward-runtime.ts",
     "src/lib/adapters/openshell/forward.ts",
+    "src/lib/agent/hermes-api-forward.ts",
     "src/lib/onboard/agent-dashboard-forward.ts",
     "src/lib/onboard/dashboard.ts",
     "src/lib/onboard/dashboard-runtime.ts",

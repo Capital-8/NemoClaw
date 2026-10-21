@@ -49,7 +49,7 @@ import {
   ensureMessagingHostForwardForSandbox,
   productionForwardServiceRegistryContext,
 } from "./messaging-host-forward";
-import { resolveSandboxHermesApiPort } from "./hermes-api-port";
+import { createHermesApiForwardMigration } from "../agent/hermes-api-forward";
 import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -418,15 +418,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     forward: OpenShellForwardIdentity,
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-    migrateToLoopback = false,
+    allowHermesApiMigration = false,
   ): Promise<void> {
     const adapter = forwardAdapterForAuthority(authority);
-    const assertCurrent = () =>
-      assertForwardGatewayCurrent(
-        authority,
-        revalidateSandboxIdentity,
-        `accept ${label} forward ${String(forward.port)} for sandbox '${sandboxName}'`,
-      );
+    const migration = createHermesApiForwardMigration({
+      adapter,
+      forward,
+      readSandbox: () => (allowHermesApiMigration ? getSandbox?.(sandboxName) : null),
+      assertCurrent: () =>
+        assertForwardGatewayCurrent(
+          authority,
+          revalidateSandboxIdentity,
+          `accept ${label} forward ${String(forward.port)} for sandbox '${sandboxName}'`,
+        ),
+    });
+    const { assertCurrent } = migration;
     let result = await adapter.startForward({ forward, assertCurrent });
     if (result.state === "refused" && result.observation.state === "stale") {
       const retirement = await adapter.retireLegacyForward({
@@ -445,21 +451,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       }
       result = await adapter.startForward({ forward, assertCurrent });
     }
-    if (migrateToLoopback && result.state === "refused" && result.observation.state === "foreign") {
-      const wildcard = { ...forward, localHost: "0.0.0.0" as const };
-      const [previous] = await adapter.observeForwards({ forwards: [wildcard], assertCurrent });
-      if (previous?.state === "owned" || previous?.state === "stale") {
-        const retirement = await adapter.retireLegacyForward({
-          forward: wildcard,
-          migrateToLoopback: true,
-          assertCurrent,
-          authorize: async () => assertCurrent(),
-        });
-        if (retirement.state !== "retired" && retirement.state !== "not_needed") {
-          throw new Error(forwardResultMessage(retirement));
-        }
-        result = await adapter.startForward({ forward, assertCurrent });
-      }
+    if (result.state === "refused" && result.observation.state === "foreign") {
+      result = (await migration.migrate()) ?? result;
     }
     if (result.state !== "started" && result.state !== "reused") {
       throw new Error(forwardResultMessage(result));
@@ -697,23 +690,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         `start ${label} forward ${String(port)} for sandbox '${sandboxName}'`,
       );
       const authority = getForwardRuntimeAuthority(sandboxName, gatewayName);
-      const isRegisteredHermesApi = () => {
-        const sandbox = getSandbox?.(sandboxName);
-        return sandbox?.agent === "hermes" && resolveSandboxHermesApiPort(sandbox) === port;
-      };
-      const migrateToLoopback = isRegisteredHermesApi();
       await reconcileForward(
         sandboxName,
         authority,
         forwardIdentity(sandboxName, authority, port, "loopback"),
         label,
-        (operation) => {
-          revalidateSandboxIdentity?.(operation);
-          if (migrateToLoopback && !isRegisteredHermesApi()) {
-            throw new Error("Hermes API forward authority changed during migration");
-          }
-        },
-        migrateToLoopback,
+        revalidateSandboxIdentity,
+        true,
       );
       return true;
     } catch (error) {
