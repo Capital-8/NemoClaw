@@ -25,6 +25,17 @@ vi.mock("../../../state/registry", () => ({
   getSandbox: vi.fn(() => null),
 }));
 
+// `assertHermesPortableCommandUnavailable` walks the on-disk Hermes portable
+// receipt tree (O_NOFOLLOW/O_DIRECTORY probes) before every export; on local
+// Windows checkouts that probe fails for environmental reasons unrelated to
+// this module. Mock it to a no-op (it already is a no-op for non-Hermes
+// sandboxes) exactly as inference-set-hermes-run.test.ts does, so the session
+// export behaviour under test is what drives the suite.
+vi.mock("../../../onboard/experimental/portable-agent-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal()),
+  assertHermesPortableCommandUnavailable: vi.fn(),
+}));
+
 const withLifecycleLockMock = vi.hoisted(() =>
   vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
 );
@@ -55,6 +66,11 @@ let processExitSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   captureMock.mockReset();
+  // Fallback for the transcript-existence probe: by default every resolved
+  // transcript exists (empty missing list, exit 0), so tests that only care
+  // about the list/tar/download flow do not need to stub the extra call.
+  // Individual tests override the probe with mockReturnValueOnce.
+  captureMock.mockReturnValue(makeCapture("", 0));
   runMock.mockReset();
   runMock.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   transferRunMock.mockReset();
@@ -267,7 +283,7 @@ describe("exportSandboxSessions", () => {
         force: true,
       });
 
-      expect(captureMock).toHaveBeenCalledTimes(1);
+      expect(captureMock).toHaveBeenCalledTimes(2);
       const captureCall = captureMock.mock.calls[0]?.[0] as string[];
       expect(captureCall.slice(0, 7)).toEqual([
         "sandbox",
@@ -559,6 +575,63 @@ describe("exportSandboxSessions", () => {
     expect(command).not.toMatch(/sid-1\.jsonl/);
     expect(result.selectedKeys).toEqual(["agent:main:telegram:t-1"]);
     expect(result.resolvedFiles).toEqual(["sid-2.jsonl", "sid-2.trajectory.jsonl"]);
+  });
+
+  it("refuses export when a listed session has no on-disk transcript file", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: "sid-a" },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-b" },
+        ]),
+      ),
+    );
+    // The transcript-existence probe reports sid-b.jsonl missing.
+    captureMock.mockReturnValueOnce(makeCapture("sid-b.jsonl\n", 1));
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      }),
+    ).rejects.toThrow(
+      /Refusing to export: sessions are listed in the agent index but their transcript files are absent from the sandbox store: sid-b\.jsonl/,
+    );
+
+    const captureCall = captureMock.mock.calls[1]?.[0] as string[];
+    expect(shellCommand(captureCall)).toContain("dir=$1; shift");
+    expect(shellCommand(captureCall)).toContain('[ -f "$dir/$f" ] && [ ! -L "$dir/$f" ]');
+    expect(captureCall).toContain("/sandbox/.openclaw/agents/main/sessions");
+    expect(captureCall).toContain("sid-b.jsonl");
+    // The export must stop before building any tarball.
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a dir-format export when a listed session has no on-disk transcript file", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: "sid-a" },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-b" },
+        ]),
+      ),
+    );
+    // The transcript-existence probe reports sid-b.jsonl missing.
+    captureMock.mockReturnValueOnce(makeCapture("sid-b.jsonl\n", 1));
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out",
+        format: "dir",
+      }),
+    ).rejects.toThrow(
+      /Refusing to export: sessions are listed in the agent index but their transcript files are absent from the sandbox store: sid-b\.jsonl/,
+    );
+
+    // The export must stop before any per-file download starts.
+    expect(transferRunMock).not.toHaveBeenCalled();
   });
 
   it("treats alias keys under the --agent flag as canonical", async () => {

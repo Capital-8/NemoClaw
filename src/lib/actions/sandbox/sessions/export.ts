@@ -255,6 +255,20 @@ async function exportSandboxSessionsUnlocked(
     throw new Error(`Refusing to export: agent '${agent}' has no sessions to bundle.`);
   }
 
+  const missingTranscripts = missingTranscriptFiles(
+    opts.sandboxName,
+    target,
+    sourceDir,
+    resolvedFiles,
+  );
+  if (missingTranscripts.length > 0) {
+    throw new Error(
+      `Refusing to export: sessions are listed in the agent index but their transcript files are absent from the sandbox store: ${missingTranscripts.join(", ")}. ` +
+        `The turn may have completed before OpenClaw flushed its transcript to disk. ` +
+        `Re-run the turn, or inspect ${sourceDir} in the sandbox.`,
+    );
+  }
+
   const hostDest = resolveHostDestination(opts.out, opts.sandboxName, agent, format);
 
   let bundleBytes: number | null = null;
@@ -799,6 +813,69 @@ function readSessionIndex(
     );
   }
   return parsed;
+}
+
+/**
+ * Probe the sandbox session store for every resolved transcript file and
+ * return the absent basenames. OpenClaw registers a session in its
+ * `sessions.json` index as the turn starts, while the transcript body lands in
+ * a separate `<sessionId>.jsonl` per write; a listed session can therefore
+ * have no on-disk transcript yet, and exporting it then fails with a low-level
+ * download/tar error that names no session. Returning the absent files lets the
+ * caller surface an actionable error instead.
+ */
+function missingTranscriptFiles(
+  sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
+  sourceDir: string,
+  files: readonly string[],
+): string[] {
+  // The source dir travels as $1 and the file basenames as the remaining $@
+  // operands — never interpolated into the script — so a crafted basename
+  // cannot inject shell. Prints one abnormal basename per line and exits
+  // non-zero when any file is missing, a symlink, or not a regular file.
+  // The dir-format download path rejects links and only transfers files, and
+  // tar should pack the transcript file itself (not a directory), so the probe
+  // narrows to regular non-link files to keep "probe passes" and "export
+  // succeeds" aligned.
+  const probe = [
+    "dir=$1; shift",
+    "missing=0",
+    'for f in "$@"; do',
+    '  [ -f "$dir/$f" ] && [ ! -L "$dir/$f" ] || { printf \'%s\\n\' "$f"; missing=1; }',
+    "done",
+    "exit $missing",
+  ].join("\n");
+  const result = captureOpenshell(
+    scopeSandboxCommandToTarget(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--",
+        "sh",
+        "-c",
+        probe,
+        "sh",
+        sourceDir,
+        ...files,
+      ],
+      target,
+    ),
+    { ignoreError: true },
+  );
+  if (result.status === 0) return [];
+  const missing = (result.output ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (missing.length === 0) {
+    throw new Error(
+      `Failed to verify session transcripts in sandbox '${sandboxName}' (exit ${result.status}). Verify the sandbox is live with \`${CLI_NAME} ${sandboxName} status\`.`,
+    );
+  }
+  return missing;
 }
 
 function stagingTarballPath(agent: string): string {
