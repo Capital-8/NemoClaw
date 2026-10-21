@@ -27,7 +27,7 @@ import type {
   ValueStatus,
 } from "../../domain/telemetry/event";
 import { resolveRegisteredAgentDefinition } from "../../agent/runtime";
-import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
+import { recordedNativeProviderEndpoint } from "../../inference/native-provider/recorded-selection";
 import { readAppliedPolicySelection } from "../../domain/telemetry/provenance";
 import { DCODE_OBSERVABILITY_FEATURE } from "../../onboard/observability-policy-presets";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
@@ -50,10 +50,13 @@ import { getMcpProviderInspectionRuntimeSelection } from "../sandbox/mcp-bridge-
 
 const MAX_CONCURRENT_RUNTIME_OBSERVATIONS = 4;
 
-/** Recorded provider whose native NVIDIA or hosted attachment receipt is valid for it. */
-function nativeAttachedProvider(entry: SandboxEntry): string | undefined {
+/** Recorded provider and endpoint proved by a valid native NVIDIA or hosted attachment. */
+function nativeAttachedRoute(
+  entry: SandboxEntry,
+): { provider: string; endpoint: string } | undefined {
   try {
-    return recordedNativeProviderAttachment(entry) && entry.provider ? entry.provider : undefined;
+    const endpoint = recordedNativeProviderEndpoint(entry);
+    return endpoint && entry.provider ? { provider: entry.provider, endpoint } : undefined;
   } catch {
     return undefined;
   }
@@ -337,7 +340,7 @@ async function collectRuntime(
         roster.status === "fulfilled" ? roster.value : undefined,
         {
           ...entry,
-          nativeAttachedProvider: nativeAttachedProvider(entry),
+          nativeAttachedRoute: nativeAttachedRoute(entry),
           metadataErrors: options.metadataErrors,
         },
       ),

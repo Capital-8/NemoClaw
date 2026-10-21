@@ -95,8 +95,8 @@ export interface RuntimeRouteAuthority {
   modelSelectionProvenance?: unknown;
   nativeModelSelectionProvenance?: unknown;
   modelAssignmentSelections?: unknown;
-  /** Logical provider of the validated native attachment receipt, if one is recorded. */
-  nativeAttachedProvider?: string;
+  /** Provider and endpoint proved by a validated native attachment receipt. */
+  nativeAttachedRoute?: { provider: string; endpoint: string };
   metadataErrors?: readonly TelemetryMetadataError[];
 }
 
@@ -561,8 +561,11 @@ export function projectRuntimeAgents(
       attached:
         model.provider === "custom" &&
         model.default === authority.model &&
+        typeof model.base_url === "string" &&
         typeof authority.provider === "string" &&
-        authority.nativeAttachedProvider === authority.provider,
+        authority.nativeAttachedRoute?.provider === authority.provider &&
+        model.base_url.replace(/\/+$/, "") ===
+          authority.nativeAttachedRoute.endpoint.replace(/\/+$/, ""),
     };
   } else if (runtime.agentHarnessId === "langchain-deepagents-code") {
     const models = dataRecord(root.models);
