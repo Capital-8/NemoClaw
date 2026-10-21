@@ -5,7 +5,6 @@ import { GATEWAY_PORT } from "../../core/ports";
 import {
   registryEntryGatewayPort,
   resolveGatewayName,
-  resolveGatewayPortFromName,
   resolveSandboxGatewayName,
   type SandboxGatewayBinding,
 } from "../../onboard/gateway-binding";
@@ -42,24 +41,16 @@ export function getPersistedSandboxTargetGatewayName(sandbox: SandboxGatewayBind
   return resolveSandboxGatewayName(sandbox);
 }
 
-/** Reject conflicting persisted identity before a managed rebuild probes its runtime. */
-export function getValidatedPersistedSandboxTargetGatewayPort(
-  sandbox: SandboxGatewayBinding & { name: string },
-): number {
-  return registryEntryGatewayPort(sandbox);
-}
-
 /** Resolve the complete canonical gateway binding from one persisted sandbox row. */
-export function getPersistedSandboxTargetGateway(sandbox: SandboxGatewayBinding): {
+export function getPersistedSandboxTargetGateway(
+  sandbox: SandboxGatewayBinding & { name: string },
+): {
   gatewayName: string;
   gatewayPort: number;
   selectedInProcess: boolean;
 } {
-  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  const gatewayPort = resolveGatewayPortFromName(gatewayName);
-  if (gatewayPort === null) {
-    throw new Error(`Invalid persisted OpenShell gateway '${gatewayName}'.`);
-  }
+  const gatewayPort = registryEntryGatewayPort(sandbox);
+  const gatewayName = resolveGatewayName(gatewayPort);
   return { gatewayName, gatewayPort, selectedInProcess: gatewayPort === GATEWAY_PORT };
 }
 
