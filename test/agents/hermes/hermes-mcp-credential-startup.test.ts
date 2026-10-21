@@ -66,6 +66,15 @@ describe.skipIf(process.platform === "win32")("Hermes MCP credential startup ref
     return yaml.load(fs.readFileSync(fixture.configPath, "utf8")) as HermesConfig;
   }
 
+  function readConfigSnapshot() {
+    const fd = fs.openSync(fixture.configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      return { contents: fs.readFileSync(fd, "utf8"), inode: fs.fstatSync(fd).ino };
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
   function refresh(env: Record<string, string>, args: string[] = ["--refresh-native-local"]) {
     return spawnSync(
       "python3",
@@ -197,14 +206,12 @@ module.write_config_transaction(home, strict, state, expected, sys.stdin.buffer.
     { name: "trailing newline", env: { QMD_MCP_TOKEN: `${handle("v6")}\n` } },
   ])("leaves MCP headers unchanged for $name", ({ env, args }) => {
     persistConfig();
-    const original = fs.readFileSync(fixture.configPath);
-    const originalInode = fs.statSync(fixture.configPath).ino;
+    const original = readConfigSnapshot();
 
     const result = refresh(env, args);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(fixture.configPath)).toEqual(original);
-    expect(fs.statSync(fixture.configPath).ino).toBe(originalInode);
+    expect(readConfigSnapshot()).toEqual(original);
     expect(strictHashIsValid(fixture)).toBe(true);
     expect(result.stdout + result.stderr).not.toContain("synthetic-raw-secret");
   });
