@@ -56,6 +56,8 @@ import {
 } from "./generate-managed-startup-profile-fixture.mts";
 import {
   configureLocalInferenceRoute,
+  assertLocalInferenceAgentResponse,
+  localInferenceAgentCommand,
   localInferenceProbe,
   verifyManagedImageLocalInferenceRoute,
   type ManagedImageOpenShellE2eInputs,
@@ -1292,6 +1294,24 @@ function assertProtectedLocalInference(
   if (result.status !== 0) {
     throw new Error(`sandbox native local completion failed: ${commandDetail(result)}`);
   }
+  // The fresh sandbox has one verified provider attachment. Use the generated
+  // agent configuration without endpoint, credential, or model overrides.
+  const agentResult = commandResult(
+    onboard.openshellArgv([
+      "sandbox",
+      "exec",
+      "--name",
+      input.sandbox,
+      "--",
+      ...localInferenceAgentCommand(input),
+    ]),
+    env,
+    210_000,
+  );
+  if (agentResult.status !== 0) {
+    throw new Error(`sandbox native agent completion failed: ${commandDetail(agentResult)}`);
+  }
+  assertLocalInferenceAgentResponse(input, String(agentResult.stdout ?? ""));
 }
 
 export function managedImageHarnessContainerListArgs(

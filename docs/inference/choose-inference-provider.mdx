@@ -104,7 +104,8 @@ The documented support applies to the NemoClaw adapter rather than every compati
 ## Routed Inference
 
 Use [Model Router](../hosted-inference/set-up-model-router) when you want a host-side router to select from a configured model pool.
-The router registers as an OpenAI-compatible provider while the sandbox remains on `inference.local`.
+New Model Router selections use a sandbox-attached OpenAI-compatible provider.
+The agent calls the configured router endpoint, normally `http://host.openshell.internal:4000/v1`.
 
 ## Next Step
 

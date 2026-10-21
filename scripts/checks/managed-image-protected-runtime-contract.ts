@@ -311,6 +311,58 @@ export function localInferenceProbe(input: ManagedImageOpenShellE2eInputs): stri
   ].join("\n");
 }
 
+export function localInferenceAgentCommand(input: ManagedImageOpenShellE2eInputs): string[] {
+  const prompt = "Reply with exactly one word: PONG";
+  switch (input.agent) {
+    case "openclaw":
+      return [
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--thinking",
+        "off",
+        "--session-id",
+        `protected-${input.sandbox}`,
+        "-m",
+        prompt,
+      ];
+    case "hermes":
+      return ["hermes", "-z", prompt];
+    case "langchain-deepagents-code":
+      return ["dcode", "-n", prompt, "--json"];
+  }
+}
+
+export function assertLocalInferenceAgentResponse(
+  input: ManagedImageOpenShellE2eInputs,
+  stdout: string,
+): void {
+  let response: unknown = stdout;
+  if (input.agent === "openclaw") {
+    const envelope = JSON.parse(stdout);
+    const result = envelope?.result;
+    if (
+      envelope?.status !== "ok" ||
+      result?.meta?.aborted !== false ||
+      result?.meta?.agentMeta?.provider !== "inference" ||
+      result?.meta?.agentMeta?.model !== input.model
+    )
+      throw new Error("OpenClaw did not complete through its configured local model");
+    response = result.payloads?.map((payload: { text?: string }) => payload.text ?? "").join("\n");
+  } else if (input.agent === "langchain-deepagents-code") {
+    const envelope = JSON.parse(stdout);
+    if (envelope?.data?.status !== "success" || envelope?.data?.exit_code !== 0)
+      throw new Error("LangChain Deep Agents Code did not complete its local inference turn");
+    response = envelope.data.response;
+  }
+  // Hermes oneshot stdout contains only its final response. JSON agents expose
+  // assistant output separately; a prompt echoed in metadata cannot pass.
+  if (typeof response !== "string" || !/^PONG[.!]?$/iu.test(response.trim()))
+    throw new Error(`${input.agent} local inference did not return PONG`);
+}
+
 export async function verifyManagedImageLocalInferenceRoute(
   run: NonNullable<Parameters<typeof createManagedProviderAdapter>[0]>,
   sandboxName: string,

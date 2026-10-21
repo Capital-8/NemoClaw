@@ -12,6 +12,8 @@ import { describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   configureLocalInferenceRoute,
+  assertLocalInferenceAgentResponse,
+  localInferenceAgentCommand,
   localInferenceProbe,
   managedImageLocalInferenceBaseUrl,
   createManagedImageSandboxWithDiagnostics,
@@ -237,6 +239,82 @@ function runNativeQualificationProbe(handle: string) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }
+
+describe("protected local inference agent response", () => {
+  const openclaw = {
+    status: "ok",
+    result: {
+      meta: { aborted: false, agentMeta: { provider: "inference", model: "fixture-model" } },
+      payloads: [{ text: "PONG" }],
+    },
+  };
+  const dcode = { data: { status: "success", exit_code: 0, response: "PONG" } };
+  const input = (agent: "openclaw" | "hermes" | "langchain-deepagents-code") => ({
+    agent,
+    image: IMAGE,
+    sandbox: VALID_SANDBOX,
+    localProvider: "ollama" as const,
+    model: "fixture-model",
+  });
+
+  it.each([
+    ["openclaw", JSON.stringify(openclaw), "openclaw"],
+    ["hermes", "PONG\n", "hermes"],
+    ["langchain-deepagents-code", JSON.stringify(dcode), "dcode"],
+  ] as const)(
+    "uses %s's configured route and accepts its assistant response",
+    (agent, stdout, binary) => {
+      const command = localInferenceAgentCommand(input(agent));
+      expect(command[0]).toBe(binary);
+      expect(command).not.toContain("--model");
+      expect(command).not.toContain("--provider");
+      expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).not.toThrow();
+    },
+  );
+
+  it.each([
+    [
+      "openclaw",
+      JSON.stringify({ ...openclaw, result: { ...openclaw.result, payloads: [], prompt: "PONG" } }),
+    ],
+    ["hermes", "request failed; prompt was PONG"],
+    [
+      "langchain-deepagents-code",
+      JSON.stringify({ data: { ...dcode.data, response: "", prompt: "PONG" } }),
+    ],
+    [
+      "langchain-deepagents-code",
+      JSON.stringify({ data: { ...dcode.data, status: "turn_limit" } }),
+    ],
+    ["langchain-deepagents-code", JSON.stringify({ data: { ...dcode.data, exit_code: 1 } })],
+    ["openclaw", "not JSON"],
+    ["langchain-deepagents-code", "null"],
+  ] as const)("rejects %s diagnostics or an incomplete turn", (agent, stdout) => {
+    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).toThrow();
+  });
+
+  it.each([
+    ["aborted", { ...openclaw.result.meta, aborted: true }],
+    [
+      "wrong provider",
+      { ...openclaw.result.meta, agentMeta: { provider: "nvidia", model: "fixture-model" } },
+    ],
+    [
+      "wrong model",
+      { ...openclaw.result.meta, agentMeta: { provider: "inference", model: "other-model" } },
+    ],
+  ])("rejects an OpenClaw %s result even when its text is PONG", (_reason, meta) => {
+    expect(() =>
+      assertLocalInferenceAgentResponse(
+        input("openclaw"),
+        JSON.stringify({
+          ...openclaw,
+          result: { ...openclaw.result, meta },
+        }),
+      ),
+    ).toThrow("configured local model");
+  });
+});
 
 it.each([
   "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
