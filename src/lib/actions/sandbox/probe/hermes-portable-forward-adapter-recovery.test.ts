@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   OpenShellForwardAdapter,
@@ -125,13 +125,17 @@ function wildcardApiFixture(apiPort = 8_642) {
   let wildcard = true;
   vi.mocked(test.input.deps.adapter.observeForwards).mockImplementation(async (request) => {
     await request.assertCurrent?.();
-    return request.forwards.map((target) => ({
-      state:
-        target.port === apiPort && wildcard && target.localHost === "127.0.0.1"
-          ? ("foreign" as const)
-          : ("owned" as const),
-      forward: target,
-    }));
+    return request.forwards.map((target) => {
+      const state =
+        target.port === apiPort && wildcard
+          ? target.localHost === "127.0.0.1"
+            ? ("foreign" as const)
+            : ("owned" as const)
+          : (test.states.get(target.port) ?? "absent");
+      return state === "indeterminate"
+        ? { state, forward: target, error: AUTHORITY_ERROR }
+        : { state, forward: target };
+    });
   });
   test.retireLegacyForward.mockImplementation(async (request) => {
     await request.assertCurrent?.();
@@ -150,6 +154,7 @@ function wildcardApiFixture(apiPort = 8_642) {
 }
 
 describe("Hermes Portable typed forward recovery", () => {
+  afterEach(() => vi.restoreAllMocks());
   it("verifies an already-owned forward set without a mutation", async () => {
     const test = fixture(
       new Map([
@@ -203,6 +208,101 @@ describe("Hermes Portable typed forward recovery", () => {
       expect(test.states.get(18_789)).toBe("owned");
     },
   );
+
+  it("reconciles an absent API after its first loopback start fails", async () => {
+    const test = wildcardApiFixture();
+    test.startForward.mockResolvedValueOnce({
+      state: "failed",
+      effect: "none",
+      forward: forward(8_642),
+      error: { kind: "command", message: "The OpenShell forward command failed." },
+      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+    });
+    const prepared = await prepareHermesPortableLaunchForwards(test.input);
+    expect(prepared.result).toEqual({ kind: "restored", restoredPorts: [8_642] });
+    expect(test.startForward).toHaveBeenCalledTimes(2);
+    expect(test.startForward.mock.calls.map(([request]) => request.forward.localHost)).toEqual([
+      "127.0.0.1",
+      "127.0.0.1",
+    ]);
+    expect(test.states.get(8_642)).toBe("owned");
+    await prepared.rollback();
+    expect(test.states.get(8_642)).toBe("absent");
+  });
+
+  it("bounds loopback reconciliation and preserves the original startup diagnostic", async () => {
+    const test = wildcardApiFixture();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    test.startForward.mockResolvedValue({
+      state: "failed",
+      effect: "none",
+      forward: forward(8_642),
+      error: { kind: "command", message: "The OpenShell forward command failed." },
+      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+    });
+    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+      failure: "recovery-failed",
+      context: { startupFailure: { exitStatus: 17 } },
+    });
+    expect(test.startForward).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("forward-start startup/child_exited status=17"),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("loopback reconciliation could not prove restoration"),
+    );
+    expect(test.states.get(8_642)).toBe("absent");
+  });
+
+  it("does not retry a replacement whose cleanup is uncertain", async () => {
+    const test = wildcardApiFixture();
+    test.startForward.mockResolvedValueOnce({
+      state: "cleanup_uncertain",
+      effect: "possible",
+      forward: forward(8_642),
+      error: { kind: "cleanup", message: "NemoClaw could not prove OpenShell forward cleanup." },
+    });
+    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+      failure: "restoration-unproved",
+    });
+    expect(test.startForward).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry when a foreign listener appears after retirement", async () => {
+    const test = wildcardApiFixture();
+    test.startForward.mockImplementationOnce(async () => {
+      test.states.set(8_642, "foreign");
+      return {
+        state: "failed",
+        effect: "none",
+        forward: forward(8_642),
+        error: { kind: "command", message: "The OpenShell forward command failed." },
+      };
+    });
+    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+      failure: "recovery-failed",
+    });
+    expect(test.startForward).toHaveBeenCalledOnce();
+    expect(test.states.get(8_642)).toBe("foreign");
+  });
+
+  it("refuses reconciliation after the registered API identity changes", async () => {
+    const test = wildcardApiFixture();
+    test.startForward.mockImplementationOnce(async () => {
+      test.sandbox.hermesApiPort = 8_643;
+      return {
+        state: "failed",
+        effect: "none",
+        forward: forward(8_642),
+        error: { kind: "command", message: "The OpenShell forward command failed." },
+      };
+    });
+    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+      failure: "recovery-failed",
+    });
+    expect(test.startForward).toHaveBeenCalledOnce();
+    expect(test.states.get(8_642)).toBe("absent");
+  });
 
   it.each([
     { agent: "openclaw", hermesApiPort: 8_642 },

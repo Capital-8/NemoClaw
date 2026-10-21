@@ -6,6 +6,7 @@ import type {
   OpenShellForwardIdentity,
   OpenShellForwardStartResult,
 } from "../adapters/openshell/forward";
+import { formatOpenShellForwardStartFailure } from "../adapters/openshell/forward";
 import { resolveSandboxHermesApiPort } from "../onboard/hermes-api-port";
 
 type HermesForwardSandbox = { agent?: string | null; hermesApiPort?: number | null };
@@ -70,7 +71,28 @@ export function createHermesApiForwardMigration(options: {
         }
         throw new Error("NemoClaw could not prove the OpenShell forward state.");
       }
-      return await adapter.startForward({ forward, assertCurrent });
+      const started = await adapter.startForward({ forward, assertCurrent });
+      // An uncertain child may still bind later. Reconcile only a start that
+      // proved it had no effect, and never restore the external API bind.
+      if (started.state !== "failed") return started;
+      const startupDetail =
+        "failure" in started && started.failure
+          ? ` [${formatOpenShellForwardStartFailure(started.failure)}]`
+          : "";
+      console.warn(
+        `Hermes API wildcard forward was retired, but loopback startup failed: ${started.error.message}${startupDetail}`,
+      );
+      const [current] = await adapter.observeForwards({ forwards: [forward], assertCurrent });
+      await assertCurrent();
+      if (current?.state === "owned") return { state: "reused", forward };
+      if (current?.state !== "absent") return started;
+      const retried = await adapter.startForward({ forward, assertCurrent });
+      if (retried.state !== "started" && retried.state !== "reused") {
+        console.warn(
+          `Hermes API loopback reconciliation could not prove restoration. Resolve the startup error, then run nemoclaw ${forward.sandboxName} recover.`,
+        );
+      }
+      return retried;
     },
   };
 }

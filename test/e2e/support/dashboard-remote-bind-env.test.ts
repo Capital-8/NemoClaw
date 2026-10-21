@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildDashboardRemoteBindEnv,
@@ -149,5 +150,17 @@ describe("remote API refusal probe", () => {
       }
     },
     15_000,
+  );
+});
+
+it("selects dashboard-remote-bind when its host-network probe helper changes", () => {
+  const plan = buildE2eWorkflowPlan(
+    {},
+    {
+      changedFiles: ["test/e2e/live/dashboard-remote-bind-env.ts"],
+    },
+  );
+  expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+    "dashboard-remote-bind",
   );
 });

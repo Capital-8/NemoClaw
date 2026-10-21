@@ -732,6 +732,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/agent-dashboard-forward.ts",
       "src/lib/onboard/dashboard.ts",
       "src/lib/onboard/dashboard-runtime.ts",
+      "test/e2e/live/dashboard-remote-bind-env.ts",
       "test/e2e/live/json-envelope.ts",
     ],
     environment: {
