@@ -32,12 +32,6 @@ API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 MCP_AUTHORIZATION_SCHEME = "Bearer "
-MCP_MANAGED_ENTRY_FIELDS = {
-    "enabled": True,
-    "timeout": 120,
-    "connect_timeout": 60,
-    "tools": {"resources": True, "prompts": True},
-}
 MCP_SCOPED_HANDLE_RE = re.compile(
     r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_([A-Za-z_][A-Za-z0-9_]{0,127})"
 )
@@ -3457,17 +3451,34 @@ def _native_local_config_refresh_text(text: str, reference: str) -> str | None:
     return updated_text
 
 
+def managed_mcp_entry(url: object, headers: dict) -> dict[str, object]:
+    """Build the canonical NemoClaw-managed Hermes MCP server entry.
+
+    The MCP transaction writes entries through this function, and startup
+    refresh recognizes managed entries by comparing against it.
+    """
+    entry: dict[str, object] = {
+        "url": url,
+        "enabled": True,
+        "timeout": 120,
+        "connect_timeout": 60,
+        "tools": {"resources": True, "prompts": True},
+    }
+    if headers:
+        entry["headers"] = headers
+    return entry
+
+
 def _mcp_authorization_handle(server: object) -> tuple[str, str] | None:
     """Return the env key and scoped handle of a managed MCP bearer header.
 
-    Only an entry with the exact shape that the MCP transaction writes
-    (`_managed_candidate`) qualifies. User-authored entries stay unchanged.
+    Only an entry equal to `managed_mcp_entry` qualifies. User-authored
+    entries stay unchanged.
     """
     if (
         not isinstance(server, dict)
-        or set(server) != {"url", "headers", *MCP_MANAGED_ENTRY_FIELDS}
-        or not isinstance(server["url"], str)
-        or any(server[name] != value for name, value in MCP_MANAGED_ENTRY_FIELDS.items())
+        or not isinstance(server.get("url"), str)
+        or server != managed_mcp_entry(server["url"], server.get("headers"))
     ):
         return None
     headers = server["headers"]
@@ -3573,11 +3584,16 @@ def _native_local_startup_config_matches(
     model = current.get("model")
     reference = model.get("api_key") if isinstance(model, dict) else None
     servers = current.get("mcp_servers")
-    mcp_handles: dict[str, str] = {}
+    handles_by_env_key: dict[str, set[str]] = {}
     for server in servers.values() if isinstance(servers, dict) else ():
         found = _mcp_authorization_handle(server)
         if found is not None:
-            mcp_handles.setdefault(*found)
+            handles_by_env_key.setdefault(found[0], set()).add(found[1])
+    mcp_handles = {
+        env_key: next(iter(handles))
+        for env_key, handles in handles_by_env_key.items()
+        if len(handles) == 1
+    }
     replayed, _native_changed, _mcp_env_keys = _startup_config_refresh_text(
         preimage,
         reference if isinstance(reference, str) else None,

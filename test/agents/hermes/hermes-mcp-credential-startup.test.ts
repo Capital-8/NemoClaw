@@ -24,6 +24,12 @@ const handle = (scope: string, envKey = "QMD_MCP_TOKEN") =>
 const bearer = (scope: string, envKey?: string) => `Bearer ${handle(scope, envKey)}`;
 const stable = `s${"a".repeat(64)}`;
 const localHandle = (scope: string) => handle(scope, "NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+const localRoute = {
+  upstreamProvider: "vllm-local",
+  baseUrl: "http://host.openshell.internal:8000/v1",
+  inferenceApi: "openai-completions",
+  model: "selected-model",
+};
 
 function managedServer(scope: string, envKey?: string): McpServer {
   return {
@@ -166,7 +172,7 @@ module.write_config_transaction(home, strict, state, expected, sys.stdin.buffer.
     );
   }
 
-  it("recognizes exactly the managed entry shape written by the MCP transaction", () => {
+  it("recognizes the managed entry that the MCP transaction builds through the guard", () => {
     const script = String.raw`
 import importlib.util, sys
 def load(name, source):
@@ -175,15 +181,16 @@ def load(name, source):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
-guard = load("hermes_guard_parity", sys.argv[1])
-transaction = load("hermes_transaction_parity", sys.argv[2])
+guard = load("hermes_guard_owner", sys.argv[1])
+transaction = load("hermes_transaction_owner", sys.argv[2])
+transaction.GUARD_PATH = sys.argv[1]
 entry = {"url": "https://mcp.example.test/mcp", "headers": {"Authorization": sys.argv[3]}}
 candidate = transaction._managed_candidate(entry)
-assert candidate == {**entry, **guard.MCP_MANAGED_ENTRY_FIELDS}, sorted(candidate)
+assert candidate == guard.managed_mcp_entry(entry["url"], entry["headers"]), sorted(candidate)
 assert guard._mcp_authorization_handle(candidate) == ("QMD_MCP_TOKEN", sys.argv[3][len("Bearer "):])
-assert guard._mcp_authorization_handle({**candidate, "enabled": False}) is None
-assert guard._mcp_authorization_handle(entry) is None
-print("parity-ok")
+changed = [{**candidate, "enabled": False}, {**candidate, "timeout": 30}, {**candidate, "connect_timeout": 1}, {**candidate, "tools": {"resources": False, "prompts": True}}, {**candidate, "extra": True}, entry]
+assert [guard._mcp_authorization_handle(value) for value in changed] == [None] * len(changed)
+print("owner-ok")
 `;
     const result = spawnSync(
       "python3",
@@ -199,7 +206,7 @@ print("parity-ok")
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("parity-ok");
+    expect(result.stdout.trim()).toBe("owner-ok");
   });
 
   it.each(["v6", stable])(
@@ -280,13 +287,29 @@ print("parity-ok")
     expect(result.stdout + result.stderr).not.toContain(handle("v6"));
   });
 
+  it("keeps distinct same-key MCP handles when replaying a native local refresh", () => {
+    applyHermesManagedRoute(config, localRoute);
+    config.mcp_servers = {
+      qmd: managedServer("v5"),
+      mirror: { ...managedServer("v6"), url: "https://mirror.example.test/mcp" },
+    };
+    prepareMutableConfig();
+    const env = { NEMOCLAW_LOCAL_INFERENCE_TOKEN: localHandle("v7") };
+    compatStartup(env);
+    const refreshed = readConfig();
+    expect(refreshed.mcp_servers).toEqual(config.mcp_servers);
+    expect(refreshed.model).toMatchObject({ api_key: localHandle("v7") });
+    const candidate = { ...refreshed, temperature: 0.2 };
+
+    const result = managedWrite(yaml.dump(candidate), env);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readConfig()).toEqual(candidate);
+    expect(strictHashIsValid(fixture)).toBe(true);
+  });
+
   it("replays a combined native local and MCP startup refresh during a host config write", () => {
-    applyHermesManagedRoute(config, {
-      upstreamProvider: "vllm-local",
-      baseUrl: "http://host.openshell.internal:8000/v1",
-      inferenceApi: "openai-completions",
-      model: "selected-model",
-    });
+    applyHermesManagedRoute(config, localRoute);
     prepareMutableConfig();
     const env = { QMD_MCP_TOKEN: handle("v6"), NEMOCLAW_LOCAL_INFERENCE_TOKEN: localHandle("v7") };
     compatStartup(env);
