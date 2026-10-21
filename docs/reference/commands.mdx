@@ -3144,7 +3144,7 @@ Mismatched `--agent` plus canonical-key combinations are refused before any down
 
 The export keeps its original success or failure result, so a cleanup warning after a successful download does not make the export fail.
 
-Before creating any output, NemoClaw verifies that every selected transcript is a regular, non-symlink file in the session store. If any selected transcript is missing, a symlink, or not a regular file, the command writes no export, names the affected file, and refuses the whole export rather than producing a partial bundle. The archive step re-checks each file immediately before reading it, so a file replaced in the sandbox between the preflight and the archive is refused rather than bundled. Wait a moment and retry the export (the transcript may not have flushed yet); if it is still absent, inspect the named session directory in the sandbox, or re-run the affected turn.
+Before creating any output, NemoClaw verifies that every selected transcript is a regular, non-symlink file in the session store. If any selected transcript is missing, a symlink, or not a regular file, the command writes no export, names the affected file, and refuses the whole export rather than producing a partial bundle. The archive step re-checks each file immediately before reading it, so a file replaced in the sandbox between the preflight and the archive is refused rather than bundled. Wait a moment and retry the export (the transcript may not have flushed yet); if it is still absent, inspect the named transcript in the session store in the sandbox, or re-run the affected turn.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

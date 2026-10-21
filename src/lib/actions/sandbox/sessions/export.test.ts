@@ -327,6 +327,11 @@ describe("exportSandboxSessions", () => {
       expect(command).toMatch(
         /\[ -f \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] && \[ ! -L \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] \|\| \{ printf 'refusing non-regular transcript %s\\n' .* >&2; exit 3; \}/,
       );
+      // Each re-check is command-separated with `&&` so a multi-session archive
+      // does not collapse the validation snippets into one broken shell line.
+      expect(command).toMatch(
+        /exit 3; \} && \[ -f \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-b\.jsonl \]/,
+      );
       expect(command).toMatch(
         /&& tar -czf \/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz/,
       );

@@ -716,7 +716,7 @@ function buildShellInvocation(input: {
       (abs) =>
         `[ -f ${abs} ] && [ ! -L ${abs} ] || { printf 'refusing non-regular transcript %s\\n' ${abs} >&2; exit 3; }`,
     )
-    .join(" ");
+    .join(" && ");
   return `umask 077 && mkdir -p ${quotedStagingDir} && chmod 700 ${quotedStagingDir} && ${validation} && ${quoted} && chmod 600 ${quotedTarball}`;
 }
 
