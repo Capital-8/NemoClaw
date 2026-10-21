@@ -761,3 +761,175 @@ fn binary_budgets_bound_each_binary_summed_across_partitions_and_each_of_its_tes
         timing.report
     );
 }
+
+/// A credential-shaped value that a failing live test printed.
+const SENTINEL: &str = "nvapi-PRIVATE_SENTINEL_0123456789abcdefghijklmnopqrstuv";
+
+#[test]
+fn a_live_run_record_names_its_inputs_and_outcomes_and_no_failure_output() {
+    use serde_json::{Value, json};
+    use sha2::{Digest, Sha256};
+    // This checkout's pins, and a bundle manifest in the SDK's format.
+    let root = tempfile::tempdir().unwrap();
+    let manifest = br#"{"Version":"0.1.0-dev.0123456789abcdef","Files":{"bin/nemoclaw":"aa"}}"#;
+    let versions = include_str!("../../../versions.json");
+    let dockerfile = include_str!("../../../image/fabric/Dockerfile");
+    for (path, contents) in [
+        ("dist/linux_amd64/manifest.json", &manifest[..]),
+        ("versions.json", versions.as_bytes()),
+        ("image/fabric/Dockerfile", dockerfile.as_bytes()),
+    ] {
+        let path = root.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+    let commit = "b31a1940b890bc96e6eba3b2c43cb4a4689b1e16";
+    let environment = std::collections::BTreeMap::from([
+        ("GITHUB_SHA", commit),
+        ("GITHUB_RUN_ID", "18843210123"),
+        ("GITHUB_RUN_ATTEMPT", "2"),
+        ("RUNNER_OS", "Linux"),
+        ("RUNNER_ARCH", "X64"),
+        ("ImageOS", "ubuntu24"),
+        ("ImageVersion", "20261012.1"),
+        ("NVIDIA_API_KEY", SENTINEL),
+    ]);
+    // One test failed and printed the sentinel.
+    let junit = format!(
+        r#"<testsuites name="nextest-run" tests="2" failures="1" errors="0" time="86.842">
+    <testsuite name="nemoclaw-e2e::integration" tests="2" failures="1" errors="0">
+        <testcase name="kubernetes_chart::renders" classname="nemoclaw-e2e::integration" time="1.993"/>
+        <testcase name="kubernetes_live::installs" classname="nemoclaw-e2e::integration" time="60.282">
+            <failure message="gateway refused {SENTINEL}">bearer {SENTINEL} was rejected</failure>
+            <system-out>applying with token {SENTINEL}</system-out>
+        </testcase>
+    </testsuite>
+</testsuites>"#
+    );
+    let digest = format!("sha256:{}", "c".repeat(64));
+    let agent = format!("nc-live-0123-agent@{digest}");
+    let sandbox_sha256 = "a".repeat(64);
+    let record = ci::record::build(&ci::record::Inputs {
+        suite: Step::LiveKind,
+        platform: "linux_amd64",
+        root: root.path(),
+        passed: false,
+        junit: Some(&junit),
+        agent_image: Some(&agent),
+        harness: "nvidia.fabric.pi",
+        agent_sandbox: ("https://example.test/agent-sandbox.yaml", &sandbox_sha256),
+        env: &|name| environment.get(name).map(|value| (*value).to_owned()),
+        git: &|args| match args {
+            ["rev-parse", "HEAD"] => Some("0".repeat(40)),
+            _ => Some(" M versions.json\n".into()),
+        },
+    });
+    let text = serde_json::to_string(&record).unwrap();
+    assert!(!text.contains("PRIVATE_SENTINEL"), "{text}");
+
+    let versions: Value = serde_json::from_str(versions).unwrap();
+    let image = |name: &str| versions["images"][name].clone();
+    let fabric = dockerfile
+        .lines()
+        .find_map(|line| line.strip_prefix("ARG FABRIC_REVISION="));
+    let pins = json!({
+        "gateway": image("gateway"),
+        "supervisor": image("supervisor"),
+        "sandbox_runtime": image("sandboxRuntime"),
+        "gateway_chart": image("gatewayChart"),
+        "openshell_revision": versions["openshellRevision"],
+        "fabric_revision": fabric,
+        "kind": versions["platforms"]["linux_amd64"]["kind"],
+        "kind_node": image("kindNode"),
+        "agent_sandbox": {"url": "https://example.test/agent-sandbox.yaml", "sha256": sandbox_sha256},
+    });
+    assert!(!pins.to_string().contains("null"), "{pins}");
+    let test = |name: &str, outcome: &str, seconds: f64| json!({"binary": "nemoclaw-e2e::integration", "name": name, "outcome": outcome, "seconds": seconds});
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap(),
+        json!({
+            "schema_version": 1,
+            "suite": "live-kind",
+            "platform": "linux_amd64",
+            "revision": {"commit": commit, "dirty": true, "run_id": 18843210123u64, "run_attempt": 2},
+            "bundle": {
+                "version": "0.1.0-dev.0123456789abcdef",
+                "manifest_sha256": nemoclaw_build::hex(&Sha256::digest(manifest)),
+            },
+            "pins": pins,
+            "agent": {"image_digest": digest, "harness": "nvidia.fabric.pi"},
+            "runner": {"RUNNER_OS": "Linux", "RUNNER_ARCH": "X64", "ImageOS": "ubuntu24", "ImageVersion": "20261012.1"},
+            "outcome": "failed",
+            "wall_seconds": 86.842,
+            "tests": [
+                test("kubernetes_chart::renders", "passed", 1.993),
+                test("kubernetes_live::installs", "failed", 60.282),
+            ],
+            "limitations": ["pi-substitutes-for-openclaw", "no-inference-request", "openshift-profile-not-enforced"],
+        })
+    );
+}
+
+// A file that is missing or not JSON, and a value that is not one short token,
+// or not the commit or digest its field holds, each leave their field null
+// instead of failing the run. A `GITHUB_SHA` that is not a commit gives way to
+// `HEAD`.
+#[test]
+fn a_live_run_record_leaves_what_it_cannot_read_null() {
+    use sha2::{Digest, Sha256};
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("dist/linux_arm64")).unwrap();
+    for path in ["versions.json", "dist/linux_arm64/manifest.json"] {
+        std::fs::write(root.path().join(path), "not json").unwrap();
+    }
+    let free_text = format!("free text {SENTINEL}");
+    let agent = format!("nc-live-0123@sha256:{SENTINEL}");
+    let head = "d39e5270d0123456789abcdef0123456789abcde";
+    for suite in [Step::LiveDocker, Step::LiveKind] {
+        let record = ci::record::build(&ci::record::Inputs {
+            suite,
+            platform: "linux_arm64",
+            root: root.path(),
+            passed: true,
+            junit: Some("not a JUnit report"),
+            agent_image: Some(&agent),
+            harness: &free_text,
+            agent_sandbox: (&free_text, SENTINEL),
+            env: &|name| match name {
+                "GITHUB_SHA" => Some(SENTINEL.into()),
+                "ImageVersion" => Some("1".repeat(257)),
+                _ => Some(free_text.clone()),
+            },
+            git: &|args| match args {
+                ["rev-parse", "HEAD"] => Some(head.into()),
+                _ => Some(String::new()),
+            },
+        });
+        let mut expected = serde_json::json!({
+            "schema_version": 1,
+            "suite": "live-docker",
+            "platform": "linux_arm64",
+            "revision": {"commit": head, "dirty": false, "run_id": null, "run_attempt": null},
+            "bundle": {"version": null, "manifest_sha256": nemoclaw_build::hex(&Sha256::digest("not json"))},
+            "pins": {
+                "gateway": null, "supervisor": null, "sandbox_runtime": null,
+                "gateway_chart": null, "openshell_revision": null, "fabric_revision": null,
+            },
+            "agent": {"image_digest": null, "harness": null},
+            "runner": {"RUNNER_OS": null, "RUNNER_ARCH": null, "ImageOS": null, "ImageVersion": null},
+            "outcome": "passed",
+            "wall_seconds": null,
+            "tests": [],
+            "limitations": ["pi-substitutes-for-openclaw", "no-inference-request"],
+        });
+        if suite == Step::LiveKind {
+            expected["suite"] = "live-kind".into();
+            for pin in ["kind", "kind_node", "agent_sandbox"] {
+                expected["pins"][pin] = serde_json::Value::Null;
+            }
+            let limitations = expected["limitations"].as_array_mut().unwrap();
+            limitations.push("openshift-profile-not-enforced".into());
+        }
+        assert_eq!(serde_json::to_value(record).unwrap(), expected);
+    }
+}

@@ -64,3 +64,11 @@ runs:
         path: target/nextest/${{ inputs.suite }}/${{ inputs.suite }}.xml
         if-no-files-found: ignore
         retention-days: 14
+    - name: Upload the live run record
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.suite }}-record-${{ inputs.platform }}-${{ github.run_attempt }}
+        path: target/nextest/${{ inputs.suite }}/run.json
+        if-no-files-found: ignore
+        retention-days: 14

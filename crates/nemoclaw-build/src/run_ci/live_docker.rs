@@ -325,6 +325,7 @@ pub(super) fn run_live_docker(
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
     images: Option<&Path>,
+    agent_image: &mut Option<String>,
 ) -> Result<()> {
     let bundle = std::path::absolute(Path::new("dist").join(platform))?;
     if !bundle.join("manifest.json").is_file() {
@@ -338,6 +339,10 @@ pub(super) fn run_live_docker(
         uids: Vec::new(),
     };
     let environment = prepare(pins, platform, &bundle, inputs.path(), images, &mut owned)?;
+    *agent_image = environment
+        .iter()
+        .find(|(key, _)| key == "NEMOCLAW_TEST_CACHE_IMAGE")
+        .map(|(_, image)| image.clone());
     let documents: Vec<String> = environment
         .iter()
         .find(|(key, _)| key == GATEWAY_DOCUMENTS)

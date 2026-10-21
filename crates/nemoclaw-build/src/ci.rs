@@ -173,6 +173,7 @@ impl Step {
 }
 
 pub mod live;
+pub mod record;
 pub mod timing;
 
 /// The nextest release target for a bundle platform.

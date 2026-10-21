@@ -11,9 +11,9 @@
 use super::*;
 
 /// Agent Sandbox release the tests run against, as a platform would.
-const AGENT_SANDBOX_URL: &str =
+pub(super) const AGENT_SANDBOX_URL: &str =
     "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.0/manifest.yaml";
-const AGENT_SANDBOX_SHA256: &str =
+pub(super) const AGENT_SANDBOX_SHA256: &str =
     "ccfe3649de8b33f0ee0ec635e2c7b40e1c468ad9fde6aac7c7379501327d9c4c";
 
 fn tool_directory(name: &str) -> PathBuf {
@@ -67,6 +67,7 @@ pub(super) async fn run_live_kind(
     configure: &dyn Fn(&mut Command),
     archive: Option<&Path>,
     images: Option<&Path>,
+    agent_image: &mut Option<String>,
 ) -> Result<()> {
     if !platform.starts_with("linux_") {
         return Err("the Kubernetes live tests run on Linux only".into());
@@ -170,6 +171,7 @@ pub(super) async fn run_live_kind(
         }
     };
     let image = format!("docker.io/library/{prefix}@{}", id.trim());
+    *agent_image = Some(image.clone());
     // kind loads the image by tag only; name it by digest too, so a sandbox
     // that references the digest finds it on the node instead of pulling.
     run(Command::new("docker").args([

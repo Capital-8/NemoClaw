@@ -175,6 +175,19 @@ This requires Docker to report its containerd address and namespace, `sudo -n ct
 The archive retains the image contents, names, digests, and attestations; the job logs archive size and export, compression, and cleanup timings.
 Then pass `--images .build/ci/live-images.tar.zst` to `cargo ci live-docker` or `cargo ci live-kind`: each loads the archive and names the images it needs under its own fresh prefix instead of building them, so its cleanup still removes only what it created.
 
+### Live Run Records
+
+Once its step starts, each live suite writes `target/nextest/SUITE/run.json` whatever the outcome, and CI keeps it for 14 days in the `SUITE-record-PLATFORM-ATTEMPT` artifact, apart from the JUnit report and its test output.
+[`record.rs`](../../crates/nemoclaw-build/src/ci/record.rs) defines its fields: the revision and GitHub Actions run, the bundle, the pins from `versions.json` and `image/fabric/Dockerfile` (with the kind executable, node image, and Agent Sandbox release for `live-kind`), the agent image's digest and harness, the runner, the step's outcome after its time budget, each test's outcome and time, and these limitations:
+
+| Limitation | Suites | Meaning |
+|---|---|---|
+| `pi-substitutes-for-openclaw` | Both | The suite runs Pi in place of OpenClaw, which doesn't start in an OpenShell sandbox with the pinned Fabric ([#13372](https://github.com/NVIDIA/NemoClaw/issues/13372)). |
+| `no-inference-request` | Both | No test requests inference. |
+| `openshift-profile-not-enforced` | `live-kind` | kind does not enforce OpenShift security context constraints, so the OpenShift-profile tests do not establish OpenShift admission. |
+
+The record keeps a string only when it is one token of at most 256 letters, digits, and `._:/@+-`; a value it cannot read is `null` and does not fail the step.
+
 ## Budgets and Per-Test Limits
 
 [`.config/test-budgets.yaml`](../../.config/test-budgets.yaml) gives each test step a wall-clock budget and a limit for any one test, in seconds:

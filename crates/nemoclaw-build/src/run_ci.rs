@@ -157,6 +157,7 @@ fn export_to_github(tools: &Tools<'_>) -> Result<()> {
 }
 
 /// Run one step with the pinned tools, without inheriting stdin.
+/// `agent_image` receives the agent image that live-docker deploys.
 fn run_step(
     tools: &Tools<'_>,
     platform: &str,
@@ -164,6 +165,7 @@ fn run_step(
     partition: Option<&str>,
     archive_file: Option<&Path>,
     images: Option<&Path>,
+    agent_image: &mut Option<String>,
 ) -> Result<()> {
     let protoc = protoc_command(tools.protobuf);
     let path = tool_path(tools)?;
@@ -184,6 +186,7 @@ fn run_step(
                 &configure,
                 archive_file,
                 images,
+                agent_image,
             );
         }
         Step::LiveImages => return live_images::build(platform),
@@ -362,22 +365,51 @@ pub(super) fn report_lifecycle_suite(
     Ok(())
 }
 
+/// The JUnit report a test step wrote after `begun`. A report from an earlier
+/// run would misstate this one.
+fn fresh_junit(step: Step, begun: Instant) -> Option<PathBuf> {
+    let (profile, file) = step.junit()?;
+    let path = Path::new("target").join("nextest").join(profile).join(file);
+    let started = std::time::SystemTime::now() - begun.elapsed();
+    std::fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .is_ok_and(|modified| modified >= started)
+        .then_some(path)
+}
+
+/// Write a live suite's record beside its JUnit report. A record that cannot
+/// be written does not fail the step.
+fn record_live_run(step: Step, platform: &str, begun: Instant, passed: bool, agent: Option<&str>) {
+    use live_kind::{AGENT_SANDBOX_SHA256, AGENT_SANDBOX_URL};
+    let junit = fresh_junit(step, begun).and_then(|path| fs::read_to_string(path).ok());
+    let record = ci::record::build(&ci::record::Inputs {
+        suite: step,
+        platform,
+        root: Path::new("."),
+        passed,
+        junit: junit.as_deref(),
+        agent_image: agent,
+        harness: live_images::agent().1,
+        agent_sandbox: (AGENT_SANDBOX_URL, AGENT_SANDBOX_SHA256),
+        env: &|name| std::env::var(name).ok(),
+        git: &ci::record::git,
+    });
+    let directory = Path::new("target").join("nextest").join(step.name());
+    let json = serde_json::to_vec_pretty(&record);
+    let written =
+        fs::create_dir_all(&directory).and_then(|()| fs::write(directory.join("run.json"), json?));
+    if let Err(error) = written {
+        eprintln!("cannot write the {} run record: {error}", step.name());
+    }
+}
+
 /// Report where a test step, or its lifecycle `partition`, spent its time,
 /// from the JUnit report it wrote after `begun`, and add the report to the
 /// GitHub job summary. Returns what exceeds the step's budget, if any.
 fn report_timing(step: Step, partition: Option<&str>, begun: Instant) -> Vec<String> {
-    let Some((profile, file)) = step.junit() else {
+    let Some(path) = fresh_junit(step, begun) else {
         return Vec::new();
     };
-    let path = Path::new("target").join("nextest").join(profile).join(file);
-    let started = std::time::SystemTime::now() - begun.elapsed();
-    // A report from an earlier run would misstate this one.
-    let fresh = std::fs::metadata(&path)
-        .and_then(|metadata| metadata.modified())
-        .is_ok_and(|modified| modified >= started);
-    if !fresh {
-        return Vec::new();
-    }
     let budgets = read_budgets();
     let run = match std::fs::read_to_string(&path)
         .map_err(|error| error.to_string())
@@ -479,6 +511,7 @@ pub(super) async fn run_steps(
     for step in steps {
         let begun = Instant::now();
         eprintln!("==> {} ({platform})", step.name());
+        let mut agent = None;
         let result = if step == Step::Tools {
             install_tools(&tools, &platform).await
         } else if step == Step::LiveKind {
@@ -487,9 +520,25 @@ pub(super) async fn run_steps(
             let configure = |command: &mut Command| {
                 command.env("PROTOC", &protoc).env("PATH", &path);
             };
-            live_kind::run_live_kind(tools.pins, &platform, &configure, archive_file, images).await
+            live_kind::run_live_kind(
+                tools.pins,
+                &platform,
+                &configure,
+                archive_file,
+                images,
+                &mut agent,
+            )
+            .await
         } else {
-            run_step(&tools, &platform, step, partition, archive_file, images)
+            run_step(
+                &tools,
+                &platform,
+                step,
+                partition,
+                archive_file,
+                images,
+                &mut agent,
+            )
         };
         let elapsed = begun.elapsed().as_secs();
         if matches!(step, Step::Build | Step::Bundle) {
@@ -511,6 +560,9 @@ pub(super) async fn run_steps(
                 .into())
             }
         });
+        if matches!(step, Step::LiveDocker | Step::LiveKind) {
+            record_live_run(step, &platform, begun, result.is_ok(), agent.as_deref());
+        }
         if let Err(error) = result {
             eprintln!("FAILED {} after {elapsed}s: {error}", step.name());
             eprintln!("Rerun it with: cargo ci {}", step.name());

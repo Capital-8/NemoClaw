@@ -74,6 +74,10 @@ if [ "$1 $2" = 'nextest list' ]; then
     exit "${CARGO_RESULT:-0}"
 fi
 printf '%s\n' "$NEMOCLAW_TEST_BUNDLE" "${NEMOCLAW_TEST_TOFU-unset}" "${NEMOCLAW_TEST_PROVIDER-unset}" > inputs
+if [ -n "$LIVE_DOCKER_JUNIT" ]; then
+    /bin/mkdir -p target/nextest/live-docker
+    printf '%s\n' "$LIVE_DOCKER_JUNIT" > target/nextest/live-docker/live-docker.xml
+fi
 exit "${CARGO_RESULT:-0}"
 "#,
             ),
@@ -158,7 +162,11 @@ case "$1 $2" in
             done
         fi ;;
     'run '*) printf '{"protocol":1}\n' ;;
-    'image inspect') printf 'sha256:0123456789abcdef\n' ;;
+    'image inspect')
+        case "$5" in
+            *:pi) printf 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n' ;;
+            *) printf 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' ;;
+        esac ;;
     'image ls') printf 'nc-live-images:unneeded\n' ;;
     'save '*) printf 'saved %s\n' "$*" ;;
     'load '*) while IFS= read -r line; do printf '%s\n' "$line" >> docker.stdin; done ;;
@@ -611,6 +619,96 @@ fn live_docker_loads_prebuilt_images_under_its_own_names_instead_of_building() {
             .any(|line| line == "image rm nc-live-images:unneeded"),
         "{log}"
     );
+}
+
+// Once the live step starts, its record is written whatever the outcome,
+// without Git to name the revision, and with no tests from an earlier report.
+#[test]
+fn a_live_suite_that_fails_before_its_tests_still_writes_its_record() {
+    use std::io::Write;
+    let fixture = Fixture::new();
+    let directory = fixture.0.path().join("target/nextest/live-kind");
+    fs::create_dir_all(&directory).unwrap();
+    let mut earlier = fs::File::create(directory.join("live-kind.xml")).unwrap();
+    earlier.write_all(PASSING_JUNIT.as_bytes()).unwrap();
+    let an_hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    earlier.set_modified(an_hour_ago).unwrap();
+    let output = fixture.run(&["live-kind"]);
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("build the bundle first"), "{error}");
+    let record = fs::read(directory.join("run.json")).expect("the run record");
+    let record: serde_json::Value = serde_json::from_slice(&record).unwrap();
+    assert_eq!(record["outcome"], "failed");
+    assert_eq!(record["revision"]["dirty"], serde_json::Value::Null);
+    assert_eq!(record["tests"], serde_json::json!([]));
+    assert_ne!(record["pins"]["agent_sandbox"], serde_json::Value::Null);
+    let versions: serde_json::Value =
+        serde_json::from_slice(include_bytes!("../../../versions.json")).unwrap();
+    assert_eq!(
+        record["pins"]["kind"],
+        versions["platforms"]["linux_arm64"]["kind"]
+    );
+}
+
+/// A nextest report of one passing test.
+const PASSING_JUNIT: &str = r#"<testsuites name="nextest-run" tests="1" failures="0" errors="0" time="2.5"><testsuite name="nemoclaw-e2e::integration" tests="1" failures="0" errors="0"><testcase name="docker_live::slow" classname="nemoclaw-e2e::integration" time="2.5"/></testsuite></testsuites>"#;
+
+// The record's outcome is the step's, which the time budget can fail after
+// every test passed. The record also names the checkout's commit, the run,
+// the bundle, and the agent image the tests deployed.
+#[test]
+fn a_live_run_records_its_step_outcome_after_the_time_budget() {
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    let slow = json!({"binary": "nemoclaw-e2e::integration", "name": "docker_live::slow", "outcome": "passed", "seconds": 2.5});
+    for (test_seconds, outcome) in [(60, "passed"), (1, "failed")] {
+        let fixture = Fixture::new();
+        fixture.fake_container_tools();
+        fixture.seed_live_inputs();
+        // Git names HEAD and a clean checkout, and fails anything else.
+        let git = fixture.0.path().join("bin/git");
+        let script = format!(
+            "#!/bin/sh\ncase \"$*\" in\n    'rev-parse HEAD') printf '{head}\\n' ;;\n    'status --porcelain') ;;\n    *) exit 1 ;;\nesac\n"
+        );
+        fs::write(&git, script).unwrap();
+        fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(fixture.0.path().join("images.tar.zst"), "prebuilt images\n").unwrap();
+        fs::create_dir(fixture.0.path().join(".config")).unwrap();
+        fs::write(
+            fixture.0.path().join(".config/test-budgets.yaml"),
+            format!("live-docker:\n  wall_seconds: 360\n  test_seconds: {test_seconds}\n"),
+        )
+        .unwrap();
+        let output = fixture
+            .command(&["live-docker", "--images", "images.tar.zst"])
+            .env("GITHUB_ACTIONS", "true")
+            .env("LIVE_DOCKER_JUNIT", PASSING_JUNIT)
+            .env_remove("GITHUB_SHA")
+            .env("GITHUB_RUN_ID", "7")
+            .env("GITHUB_RUN_ATTEMPT", "2")
+            .output()
+            .unwrap();
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.success(), outcome == "passed", "{error}");
+        let path = fixture.0.path().join("target/nextest/live-docker/run.json");
+        let record: serde_json::Value =
+            serde_json::from_slice(&fs::read(path).expect("the run record")).unwrap();
+        assert_eq!(record["outcome"], outcome);
+        assert_eq!(
+            record["revision"],
+            json!({"commit": head, "dirty": false, "run_id": 7, "run_attempt": 2})
+        );
+        assert_eq!(
+            record["bundle"]["manifest_sha256"],
+            nemoclaw_build::hex(&Sha256::digest("{}"))
+        );
+        assert_eq!(
+            record["agent"],
+            json!({"image_digest": format!("sha256:{}", "0123456789abcdef".repeat(4)), "harness": "nvidia.fabric.pi"})
+        );
+        assert_eq!(record["tests"][0], slow, "{record}");
+    }
 }
 
 #[test]
