@@ -881,7 +881,12 @@ export function createCliOpenShellProviderAdapter(
         message: `The supplied credential names are not declared by the OpenShell provider profile. Declared credential names: ${declaredCredentialNames(credentialKeys)}.`,
       });
     }
-    if (supplied !== undefined && !request.expectedProfile) {
+    const expectedProfile = request.expectedProfile;
+    if (expectedProfile) {
+      rememberVerifiedProfile(request.target, request.profileType, (exported) =>
+        exportedProviderProfileMatchesContract(exported, expectedProfile),
+      );
+    } else if (supplied !== undefined) {
       const snapshot: unknown = JSON.parse(commandStdout(result));
       rememberVerifiedProfile(request.target, request.profileType, (exported) =>
         isDeepStrictEqual(JSON.parse(exported) as unknown, snapshot),
