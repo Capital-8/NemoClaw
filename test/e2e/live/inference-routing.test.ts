@@ -802,8 +802,8 @@ test(
         "start the public HTTPS compatible endpoint",
         "onboard with the placeholder endpoint",
         "switch to the DNS-backed HTTPS endpoint",
-        "verify authenticated inference and DNS rebinding",
-        "verify private redirect rejection",
+        "verify authenticated inference and private redirect rejection",
+        "verify DNS rebinding rejection",
       ],
     },
   },
@@ -929,7 +929,7 @@ test(
       inferenceSet.exitCode,
       `TC-INF-11 inference set https-pin endpoint failed\n${redactedResultText(inferenceSet)}`,
     ).toBe(0);
-    progress.phase("verify authenticated inference and DNS rebinding");
+    progress.phase("verify authenticated inference and private redirect rejection");
     const hostsFixture = await setupDnsRebindingHostsFixture(host, sandboxName, endpointHostname);
     cleanup.add(`restore https-pin DNS rebinding hosts fixture for ${sandboxName}`, () =>
       restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture),
@@ -961,16 +961,6 @@ test(
         { interval: 5_000, timeout: 11_000 },
       )
       .toBe(true);
-    // OpenShell re-resolves DNS and rejects answers outside allowed_ips.
-    // Unlike the old pinning adapter, this route must fail after the rebind.
-    await remapDnsRebindingHostname(
-      host,
-      sandboxName,
-      hostsFixture,
-      "192.0.2.1",
-      "tc-inf-11-dns-rebind-after-inference-set",
-    );
-    const rebindRequestOffset = fake.requests().length;
     const readDnsAudit = (suffix: string) =>
       sandbox.openshell(
         ["logs", sandboxName, "-n", "500", "--source", "sandbox", "--since", "2m"],
@@ -981,37 +971,6 @@ test(
           timeoutMs: 30_000,
         },
       );
-    const dnsAuditBefore = await readDnsAudit("before");
-    const rebind = await sandbox.exec(
-      sandboxName,
-      registeredCompatibleResponseCommand(
-        sandboxName,
-        model,
-        JSON.stringify({
-          model,
-          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-          max_tokens: 50,
-        }),
-        false,
-      ),
-      {
-        artifactName: "tc-inf-11-dns-rebinding-denial",
-        env: buildAvailabilityProbeEnv(),
-        redactionValues: [apiKey],
-        timeoutMs: 90_000,
-      },
-    );
-    const policyDenied = await waitForMcpCurlPolicyDenial(
-      rebind,
-      dnsAuditBefore,
-      readDnsAudit,
-      endpointHostname,
-      INFERENCE_CURL_HTTP_CODE_MARKER,
-    );
-    expect(policyDenied && hostsFixture.server.answers() > 0, resultText(rebind)).toBe(true);
-    expect(fake.requests()).toHaveLength(rebindRequestOffset);
-    await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
-    progress.phase("verify private redirect rejection");
     const privateTargetRequestOffset = placeholder.requests().length;
     const privateTarget = new URL("chat/completions", `${placeholder.baseUrl}/`);
     privateTarget.hostname = "host.openshell.internal";
@@ -1048,6 +1007,47 @@ test(
     expect(redirectText).toMatch(/HTTP\/1\.[01] 302/u);
     expect(redirectText.toLowerCase()).toContain(`location: ${redirectTarget}`.toLowerCase());
     expect(placeholder.requests()).toHaveLength(privateTargetRequestOffset);
+    fake.setChatRedirect(null);
+    progress.phase("verify DNS rebinding rejection");
+    // OpenShell re-resolves DNS and rejects answers outside allowed_ips.
+    // Unlike the old pinning adapter, this route must fail after the rebind.
+    await remapDnsRebindingHostname(
+      host,
+      sandboxName,
+      hostsFixture,
+      "192.0.2.1",
+      "tc-inf-11-dns-rebind-after-inference-set",
+    );
+    const rebindRequestOffset = fake.requests().length;
+    const dnsAuditBefore = await readDnsAudit("before");
+    const rebind = await sandbox.exec(
+      sandboxName,
+      registeredCompatibleResponseCommand(
+        sandboxName,
+        model,
+        JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          max_tokens: 50,
+        }),
+        false,
+      ),
+      {
+        artifactName: "tc-inf-11-dns-rebinding-denial",
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 90_000,
+      },
+    );
+    const policyDenied = await waitForMcpCurlPolicyDenial(
+      rebind,
+      dnsAuditBefore,
+      readDnsAudit,
+      endpointHostname,
+      INFERENCE_CURL_HTTP_CODE_MARKER,
+    );
+    expect(policyDenied && hostsFixture.server.answers() > 0, resultText(rebind)).toBe(true);
+    expect(fake.requests()).toHaveLength(rebindRequestOffset);
   },
 );
 
