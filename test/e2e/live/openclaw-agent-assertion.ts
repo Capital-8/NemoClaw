@@ -41,6 +41,7 @@ export interface OpenClawAgentAssertionOptions {
   persistCommandArtifacts?: boolean;
   publicFetchExpectation?: OpenClawPublicFetchExpectation;
   redactOutputInFailure?: boolean;
+  recordReplyEvidence?: (reply: string, attempt: number) => Promise<void>;
   sandboxName: string;
   toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
 }
@@ -62,9 +63,6 @@ export async function runOpenClawAgentAssertion(
   artifacts: ArtifactSink,
   args: OpenClawAgentAssertionOptions,
 ): Promise<OpenClawAgentAssertionEvidence> {
-  if (args.toolEvidenceValidator && !args.publicFetchExpectation) {
-    throw new Error(`${args.label}: tool evidence validation requires a public fetch expectation`);
-  }
   const sshConfig = await sandbox.openshell(["sandbox", "ssh-config", args.sandboxName], {
     artifactName: `ssh-config-${args.label}`,
     env: commandEnv(),
@@ -116,6 +114,7 @@ export async function runOpenClawAgentAssertion(
       );
       const combined = text(agent);
       const reply = parseOpenClawAgentText(agent.stdout);
+      await args.recordReplyEvidence?.(reply, attempt);
       lastFailure = args.redactOutputInFailure
         ? `agent output omitted; exit=${agent.exitCode}`
         : `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(

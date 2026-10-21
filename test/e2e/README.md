@@ -935,7 +935,9 @@ Its structured reply must report unavailable search and contain no installation-
 The source hook tests own prompt construction, while this agent turn owns model compliance after unavailable search.
 The reply must contain only the two requested JSON fields, with an optional Markdown code fence; surrounding claims or extra fields fail validation.
 Changes to `nemoclaw/src/runtime-context.ts` select this balanced OpenClaw shard.
-The reply artifact retains only a pass/fail boolean; the raw session remains inside the sandbox.
+Each attempt records bounded reply diagnostics before validation, including parse and surrounding-prose status, expected field names, extra-field count, search-status category, and documentation value type.
+Artifacts retain no raw reply, arbitrary field names, queries, URLs, or retrieved content.
+The negative-path reducer uses no expected fetch URL; its validator checks the unavailable-search behavior directly.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
 The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. OpenShell SSH configuration stays in a private temporary file outside the artifact directory. The assertion attempts removal after it finishes and fails if the directory remains. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.

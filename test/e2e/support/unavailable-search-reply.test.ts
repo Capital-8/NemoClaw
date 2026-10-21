@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyOpenClawAgentAssertion,
   isUnavailableSearchReply,
+  projectUnavailableSearchReplyArtifact,
 } from "../live/common-egress-agent-helpers.ts";
 
 describe("unavailable web-search reply evidence", () => {
@@ -59,4 +60,110 @@ describe("unavailable web-search reply evidence", () => {
         '```json\n{"searchStatus":"unavailable","installationDocumentation":null}\n```',
       ),
     ).toBe(true));
+});
+
+describe("unavailable-search reply diagnostics", () => {
+  it.each([
+    [
+      "not JSON",
+      {
+        jsonParseStatus: "invalid",
+        surroundingProse: "unknown",
+        fields: [],
+        searchStatus: "missing",
+        installationDocumentationType: "missing",
+      },
+    ],
+    [
+      '{"searchStatus":"available","installationDocumentation":null}',
+      {
+        jsonParseStatus: "valid",
+        surroundingProse: "absent",
+        fields: ["searchStatus", "installationDocumentation"],
+        searchStatus: "available",
+        installationDocumentationType: "null",
+      },
+    ],
+    [
+      '{"searchStatus":"unknown"}',
+      {
+        jsonParseStatus: "valid",
+        searchStatus: "unknown",
+        installationDocumentationType: "missing",
+      },
+    ],
+    [
+      '{"searchStatus":"private-query","installationDocumentation":{"url":"https://private.test/?token=secret"}}',
+      { searchStatus: "other", installationDocumentationType: "object" },
+    ],
+    [
+      '{"searchStatus":"unavailable","installationDocumentation":[]} ',
+      { searchStatus: "unavailable", installationDocumentationType: "array" },
+    ],
+    [
+      '{"searchStatus":"unavailable","installationDocumentation":"private-content"}',
+      { installationDocumentationType: "string" },
+    ],
+    [
+      '{"searchStatus":"unavailable","installationDocumentation":false}',
+      { installationDocumentationType: "boolean" },
+    ],
+    [
+      '{"searchStatus":"unavailable","installationDocumentation":42}',
+      { installationDocumentationType: "number" },
+    ],
+    [
+      '{"searchStatus":"unavailable","installationDocumentation":null}\nprivate prose',
+      {
+        jsonParseStatus: "invalid",
+        surroundingProse: "present",
+        searchStatus: "unavailable",
+        installationDocumentationType: "null",
+      },
+    ],
+    [
+      '{"searchStatus":"unavailable","installationDocumentation":null,"https://private.test/?secret":true}',
+      { fields: ["searchStatus", "installationDocumentation"], unexpectedFieldCount: 1 },
+    ],
+    ["null", { jsonParseStatus: "valid", fields: [], searchStatus: "missing" }],
+    ["[]", { jsonParseStatus: "valid", fields: [], searchStatus: "missing" }],
+  ])("classifies a rejected reply without retaining its contents: %s", (reply, diagnostic) => {
+    const artifact = projectUnavailableSearchReplyArtifact(reply);
+    expect(artifact).toMatchObject({
+      schemaVersion: 1,
+      unavailableSearchReply: false,
+      ...diagnostic,
+    });
+    expect(JSON.stringify(artifact)).not.toMatch(/private|secret|https:|token=/u);
+  });
+
+  it("bounds diagnostics when a reply contains many arbitrary fields", () => {
+    const reply = JSON.stringify(
+      Object.fromEntries(Array.from({ length: 1200 }, (_, i) => [`private-${i}`, "secret"])),
+    );
+    const artifact = projectUnavailableSearchReplyArtifact(reply);
+    expect(artifact).toMatchObject({
+      fields: [],
+      unexpectedFieldCount: 1000,
+      unavailableSearchReply: false,
+    });
+    expect(JSON.stringify(artifact).length).toBeLessThan(400);
+  });
+
+  it("reports a fully fenced unavailable-search answer as valid", () => {
+    expect(
+      projectUnavailableSearchReplyArtifact(
+        '```json\n{"searchStatus":"unavailable","installationDocumentation":null}\n```',
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      unavailableSearchReply: true,
+      jsonParseStatus: "valid",
+      fields: ["searchStatus", "installationDocumentation"],
+      unexpectedFieldCount: 0,
+      searchStatus: "unavailable",
+      installationDocumentationType: "null",
+      surroundingProse: "absent",
+    });
+  });
 });

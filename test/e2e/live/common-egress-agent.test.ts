@@ -30,6 +30,7 @@ import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.t
 import {
   assessPersonalPublicFetchToolEvidence,
   isUnavailableSearchReply,
+  projectUnavailableSearchReplyArtifact,
   classifyHermesAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
@@ -755,7 +756,12 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         prompt: `Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.
 Format the answer as JSON with searchStatus (available, unavailable, or unknown) and installationDocumentation (an object with title and url, or null).`,
-        publicFetchExpectation: { url: "https://docs.nvidia.com/nemoclaw/", content: "" },
+        recordReplyEvidence: async (reply, attempt) => {
+          await artifacts.writeJson(
+            `actions/c1-unavailable-search-reply-attempt-${attempt}.json`,
+            projectUnavailableSearchReplyArtifact(reply),
+          );
+        },
         toolEvidenceValidator: (evidence) =>
           evidence.errors.length === 0 &&
           evidence.finalStatuses.length === 1 &&
@@ -766,7 +772,6 @@ Format the answer as JSON with searchStatus (available, unavailable, or unknown)
           ),
       });
       const unavailableSearchReply = isUnavailableSearchReply(research.reply);
-      await artifacts.writeJson("c1-unavailable-search-reply.json", { unavailableSearchReply });
       expect(
         unavailableSearchReply,
         "The agent must disclose unavailable search and return no unsupported documentation result",

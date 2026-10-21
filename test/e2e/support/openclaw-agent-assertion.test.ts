@@ -19,6 +19,11 @@ import { describe, expect, it, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
+import {
+  OPENCLAW_TOOL_EVIDENCE_MARKER,
+  reduceOpenClawToolEvidence,
+  projectUnavailableSearchReplyArtifact,
+} from "../live/common-egress-agent-helpers.ts";
 import { runOpenClawAgentAssertion } from "../live/openclaw-agent-assertion.ts";
 
 const SECRET_SENTINEL = "nvidia-api-key-must-not-remain";
@@ -137,6 +142,105 @@ describe("OpenClaw agent assertion", () => {
       remove.mockRestore();
       vi.unstubAllEnvs();
       rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+});
+
+function replyFixture(reply: string) {
+  const root = mkdtempSync(join(tmpdir(), "nemoclaw-search-reply-"));
+  const result = {
+    artifacts: { result: "", stderr: "", stdout: "" },
+    command: [],
+    durationMs: 1,
+    exitCode: 0,
+    signal: null,
+    stderr: "",
+    stdout: "Host openshell-test",
+    timedOut: false,
+  };
+  const evidence = reduceOpenClawToolEvidence("", "");
+  const sandbox = {
+    openshell: vi.fn().mockResolvedValue(result),
+    exec: vi.fn().mockResolvedValue({
+      ...result,
+      stdout: OPENCLAW_TOOL_EVIDENCE_MARKER + JSON.stringify(evidence),
+    }),
+  };
+  const host = {
+    command: vi.fn().mockResolvedValue({
+      ...result,
+      stdout: JSON.stringify({ payloads: [{ text: reply }], meta: {} }),
+    }),
+  };
+  const options = {
+    apiKey: SECRET_SENTINEL,
+    expected: "searchStatus",
+    label: "unavailable-search",
+    prompt: "report unavailable search",
+    persistCommandArtifacts: false,
+    redactOutputInFailure: true,
+    sandboxName: "test",
+  };
+  return {
+    root,
+    evidence,
+    sandbox,
+    host,
+    options,
+    artifacts: new ArtifactSink(join(root, "artifacts")),
+  };
+}
+
+describe("unavailable-search assertion wiring", () => {
+  it("reduces negative-path tool evidence without an expected fetch", async () => {
+    const f = replyFixture('{"searchStatus":"unavailable","installationDocumentation":null}');
+    const validator = vi.fn().mockReturnValue(true);
+    try {
+      await runOpenClawAgentAssertion(
+        f.host as unknown as HostCliClient,
+        f.sandbox as unknown as SandboxClient,
+        f.artifacts,
+        {
+          ...f.options,
+          toolEvidenceValidator: validator,
+        },
+      );
+      expect(validator).toHaveBeenCalledWith(f.evidence);
+      expect(f.sandbox.exec.mock.calls[0]?.[1][2]).toContain("const expectedFetch = null");
+    } finally {
+      rmSync(f.root, { force: true, recursive: true });
+    }
+  });
+
+  it("records reply evidence before a rejected reply can end the attempt", async () => {
+    const f = replyFixture("unparseable reply with a private query");
+    const recordReplyEvidence = vi.fn(async (reply: string, attempt: number) => {
+      await f.artifacts.writeJson(
+        `reply-${attempt}.json`,
+        projectUnavailableSearchReplyArtifact(reply),
+      );
+    });
+    try {
+      await expect(
+        runOpenClawAgentAssertion(
+          f.host as unknown as HostCliClient,
+          f.sandbox as unknown as SandboxClient,
+          f.artifacts,
+          {
+            ...f.options,
+            recordReplyEvidence,
+          },
+        ),
+      ).rejects.toThrow(/agent output omitted/u);
+      expect(recordReplyEvidence).toHaveBeenCalledWith("unparseable reply with a private query", 1);
+      const artifact = readFileSync(join(f.root, "artifacts", "reply-1.json"), "utf8");
+      expect(JSON.parse(artifact)).toMatchObject({
+        jsonParseStatus: "invalid",
+        unavailableSearchReply: false,
+      });
+      expect(artifact).not.toContain("private query");
+    } finally {
+      rmSync(f.root, { force: true, recursive: true });
     }
   });
 });
