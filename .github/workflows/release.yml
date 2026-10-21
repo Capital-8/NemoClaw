@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Stage a v1 release from a semver tag such as v1.0.0-rc1. Promote the images
-# CI checked on the tagged v1 history to v1/<image>:<tag>, build the runtime
+# Stage a release from a semver tag such as v0.1.0-rc1 on the v1 branch. Promote
+# the images CI checked on the tagged history to v1/<image>:<tag>, build the runtime
 # images, and create a draft release listing every digest. Nothing here makes a
 # package or the release public, and nothing pushes to a package an
 # administrator hasn't created as internal: packages a workflow creates inherit
@@ -9,7 +9,7 @@
 name: Release / Stage
 on:
   push:
-    tags: ["v1.*"]
+    tags: ["v0.1.*"]
 permissions:
   contents: read
 concurrency:
@@ -43,8 +43,9 @@ jobs:
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           source=
           for commit in $(git rev-list --first-parent --max-count=200 "$GITHUB_SHA"); do
-            if docker buildx imagetools inspect "$CI_PACKAGE:openclaw-$commit-arm64" > /dev/null 2>&1 &&
-              docker buildx imagetools inspect "$CI_PACKAGE:openclaw-$commit-amd64" > /dev/null 2>&1; then
+            # The checked images push the proxy last, so its tags mark a complete push.
+            if docker buildx imagetools inspect "$CI_PACKAGE:ollama-proxy-$commit-arm64" > /dev/null 2>&1 &&
+              docker buildx imagetools inspect "$CI_PACKAGE:ollama-proxy-$commit-amd64" > /dev/null 2>&1; then
               source=$commit
               break
             fi
@@ -129,7 +130,10 @@ jobs:
           persist-credentials: false
       - name: List the release images
         id: images
-        run: echo "names=$(docker buildx bake --print agents | jq -er '.target | keys[]' | xargs) ollama-proxy vllm ollama" >> "$GITHUB_OUTPUT"
+        run: |
+          agents=$(docker buildx bake --print agents | jq -er '.target | keys[]' | xargs)
+          echo "agents=$agents" >> "$GITHUB_OUTPUT"
+          echo "names=$agents ollama-proxy vllm ollama" >> "$GITHUB_OUTPUT"
       - name: Require internal packages
         uses: ./.github/actions/internal-packages
         with:
@@ -140,17 +144,22 @@ jobs:
       - name: Join each image's platforms and draft the release
         env:
           NAMES: ${{ steps.images.outputs.names }}
+          AGENTS: ${{ steps.images.outputs.agents }}
           GH_TOKEN: ${{ github.token }}
           SOURCE: ${{ needs.select.outputs.source }}
           TAG: ${{ github.ref_name }}
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           notes="$RUNNER_TEMP/notes.md"
+          bundles="$RUNNER_TEMP/bundles"
+          mkdir "$bundles"
           {
             echo "Staged from \`$GITHUB_SHA\`. The agent and proxy images are the ones CI checked at \`$SOURCE\`."
             echo
-            echo "| Image | Reference |"
-            echo "|---|---|"
+            echo "A Kubernetes sandbox names its agent image's metadata bundle in \`image.metadata\`; each one is attached to this release."
+            echo
+            echo "| Image | Reference | Kubernetes metadata |"
+            echo "|---|---|---|"
           } > "$notes"
           for image in $NAMES; do
             case "$image" in
@@ -161,7 +170,17 @@ jobs:
             docker buildx imagetools create --tag "$target" \
               "$CI_PACKAGE:$image-$from-arm64" "$CI_PACKAGE:$image-$from-amd64"
             digest=$(docker buildx imagetools inspect "$target" --format '{{.Manifest.Digest}}')
-            echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` |" >> "$notes"
+            metadata=—
+            # Each agent image's bundle covers both platforms of its index.
+            case " $AGENTS " in *" $image "*) agent=true ;; *) agent=false ;; esac
+            if [ "$agent" = true ]; then
+              NEMOCLAW_REGISTRY_USERNAME="$GITHUB_ACTOR" NEMOCLAW_REGISTRY_PASSWORD="$GH_TOKEN" \
+                cargo run --locked -q -p nemoclaw-build --no-default-features -- \
+                images export-metadata --registry "$RELEASE_NAMESPACE/$image@$digest" \
+                --output "$bundles/$image.metadata.json"
+              metadata="\`$image.metadata.json\`"
+            fi
+            echo "| \`$image\` | \`$RELEASE_NAMESPACE/$image@$digest\` | $metadata |" >> "$notes"
           done
           docker logout ghcr.io
           cat "$notes" >> "$GITHUB_STEP_SUMMARY"
@@ -177,3 +196,4 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft $prerelease --verify-tag \
               --title "NemoClaw $TAG" --notes-file "$notes"
           fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$bundles"/*.metadata.json

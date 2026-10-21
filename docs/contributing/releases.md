@@ -17,7 +17,7 @@ A package that a workflow's token creates inherits this public repository's visi
 Before the first push, an organization administrator creates each package as internal and grants this repository's Actions write access:
 
 - `v1-ci`, which holds every per-commit image.
-- `v1/<image>` for each agent image (`claude`, `codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
+- `v1/<image>` for each agent image (`claude`, `codex`, `deepagents`, `hermes`, `mini-swe-agent`, `nooa`, `nooa-bench`, `openclaw`, `opencode`, `pi`, `remote-agent`), and for `ollama-proxy`, `vllm`, and `ollama`.
 - Create a package by pushing any image to it with a personal token that has `write:packages`; it starts internal.
 - Then, in the package's settings under **Manage Actions access**, add `NVIDIA/NemoClaw` with the **Write** role.
 
@@ -26,11 +26,12 @@ Until every package exists, `v1` pushes skip pushing images with a warning, and 
 
 ## Stage From a Tag
 
-Push a semver tag on a `v1` commit, starting with `v1.0.0-rc1`:
+Push a semver tag on a `v1` commit, starting with `v0.1.0-rc1`; the `v1` branch ships 0.1 releases.
+Version tags are permanent: a repository rule forbids deleting them.
 
 ```sh
-git tag v1.0.0-rc1 <commit>
-git push origin v1.0.0-rc1
+git tag v0.1.0-rc1 <commit>
+git push origin v0.1.0-rc1
 ```
 
 The [staging workflow](../../.github/workflows/release.yml):
@@ -38,7 +39,7 @@ The [staging workflow](../../.github/workflows/release.yml):
 1. Finds the latest commit in the tag's `v1` history with per-commit images, and checks with `nemoclaw-build changes images` that nothing since could change them; otherwise it builds and checks the images at the tag.
 2. Builds the vLLM and Ollama runtime images on each native platform; their builds are reproducible.
 3. Joins each image's ARM64 and AMD64 images into one index at `ghcr.io/nvidia/nemoclaw/v1/<image>:<tag>`, without rebuilding.
-4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one. Rerunning the workflow updates the draft; a published release is never changed.
+4. Creates a draft release listing every image digest, marked as a prerelease when the tag has one, and attaches each agent image's Kubernetes metadata bundle as `<image>.metadata.json`. Rerunning the workflow updates the draft; a published release is never changed.
 
 Only users with push access see a draft release, and the `v1` packages stay internal.
 

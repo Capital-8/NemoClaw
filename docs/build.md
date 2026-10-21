@@ -73,7 +73,7 @@ Rebuild a bundle from the recorded source revision if the removed tools are need
 Use Docker with Buildx on a native host that matches the selected image target.
 Pass `--platform linux/arm64` or `--platform linux/amd64` to the agent image builder.
 Direct Bake builds and checks use the host's platform unless the `AGENT_PLATFORM` environment variable selects the other one.
-Both platforms select all ten harnesses.
+Both platforms build every harness in the Bake file's `HARNESSES` map.
 Agent images share a Python 3.13.16 base without pip.
 Only OpenClaw, Hermes, and Pi add Node.js 24.22.0 LTS: OpenClaw's CLI and Pi's adapter run on it, and Hermes's browser tool and `npx`-launched MCP servers require it.
 Image qualification checks that interpreter against every Python adapter’s declared version range in the pinned Fabric source.
@@ -125,9 +125,11 @@ The proxy image holds only the statically linked `nemoclaw-ollama-proxy` binary 
 Set `IMAGE_PREFIX=nc-my-build` before the builder to use your own local repository name without replacing another build's tags.
 
 A Kubernetes or OpenShift sandbox names a metadata bundle in `image.metadata`, since no local engine can be inspected there.
-Write one for a local image with `cargo images export-metadata IMAGE --platform linux/arm64 --output PATH`, where `PATH` is a new file.
-The bundle holds the image's index, the manifest for that platform and its configuration, and no layers; the SDK checks it against the digest in `image.ref`.
+Write one for a local image with `cargo images export-metadata IMAGE --output PATH`, where `PATH` is a new file.
+The bundle holds the image's index, each Linux platform's manifest and configuration, and no layers; the SDK checks it against the digest in `image.ref`.
+The platforms of an index must declare the same catalog, because the cluster chooses the platform each node runs.
 Run it before pushing the image, and use the same digest in `image.ref`.
+For an image already in a registry, pass `--registry` and its `HOST/REPOSITORY@sha256:DIGEST` reference instead; `NEMOCLAW_REGISTRY_USERNAME` and `NEMOCLAW_REGISTRY_PASSWORD`, when set, answer the registry's token challenge.
 
 [The Bake file](../docker-bake.hcl) selects the target platform, qualified harnesses and named stages in the [shared agent Dockerfile](../image/fabric/Dockerfile).
 Common Fabric wheels and base layers are shared; images other than Hermes export dependencies from Fabric's frozen root lock, selecting the Python adapter's extra when present.
@@ -184,8 +186,8 @@ IMAGE_PREFIX=nc-contract cargo images build --platform linux/arm64 agents
 
 Use `linux/amd64` on a native AMD64 host.
 The build adds the `io.nemoclaw.fabric.catalog` label to every image.
-NemoClaw checks how each production image is assembled, not whether Fabric's adapters work: the [image checks](contributing/testing.md#image-source-checks) run `image/test_image.py` in each image, offline.
-Fabric's runtime and adapters are Fabric's to test, so `cargo images qualify` accepts only the reference image.
+NemoClaw checks how each image is assembled, not whether Fabric's adapters work: `cargo images qualify IMAGE...` checks every image offline, and runs one runtime's lifecycle only in the reference image, with NemoClaw's test adapter.
+Fabric's runtime and adapters are Fabric's to test.
 A passing reference lifecycle does not establish that a runtime stays healthy: Fabric reports no runtime status.
 See [upstream ownership](design/fabric-management.md#upstream-ownership) for the remaining Fabric and OpenShell work.
 
