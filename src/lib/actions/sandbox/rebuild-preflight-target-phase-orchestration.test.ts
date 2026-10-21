@@ -247,7 +247,7 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(mocks.ensureRebuildTargetGatewaySelected).not.toHaveBeenCalled();
   });
 
-  it("resolves the Ollama context window through target preparation", async () => {
+  it("resolves the Ollama context window only for a consistent recorded gateway", async () => {
     const catalogHandoff = {
       agent: "openclaw",
       previousProfile: {
@@ -301,17 +301,18 @@ describe("prepareRebuildTargetPreflights", () => {
       inferenceCompat: {},
     });
 
+    const sandboxEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-18080",
+      gatewayPort: 18080,
+      openshellDriver: "docker",
+      workload: { kind: "managed-image" },
+    } as const;
     await expect(
       prepareRebuildTargetPreflights({
         sandboxName: "alpha",
-        sandboxEntry: {
-          name: "alpha",
-          agent: "openclaw",
-          gatewayName: "nemoclaw-18080",
-          gatewayPort: 18080,
-          openshellDriver: "docker",
-          workload: { kind: "managed-image" },
-        } as never,
+        sandboxEntry: sandboxEntry as never,
         rebuildAgent: "openclaw",
         autoYes: true,
         log: vi.fn(),
@@ -326,6 +327,25 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(mocks.stageManagedWorkloadRebuildProfile.mock.calls[0]?.[3]).toEqual(
       expect.objectContaining({ openClawContextWindow: 131_072 }),
     );
+
+    mocks.bail.mockClear();
+    mocks.resolveContextWindowForModel.mockClear();
+    mocks.stageManagedWorkloadRebuildProfile.mockClear();
+    await expect(
+      prepareRebuildTargetPreflights({
+        sandboxName: "alpha",
+        sandboxEntry: { ...sandboxEntry, gatewayName: "nemoclaw-18081" } as never,
+        rebuildAgent: "openclaw",
+        autoYes: true,
+        log: vi.fn(),
+        bail: mocks.bail as never,
+      }),
+    ).resolves.toBeNull();
+    expect(mocks.bail).toHaveBeenCalledWith(
+      expect.stringContaining("conflicting gateway identity"),
+    );
+    expect(mocks.resolveContextWindowForModel).not.toHaveBeenCalled();
+    expect(mocks.stageManagedWorkloadRebuildProfile).not.toHaveBeenCalled();
   });
 
   it("passes legacy Station authority from the source registry row into rebuild readiness (#10370)", async () => {
