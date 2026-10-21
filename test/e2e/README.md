@@ -905,6 +905,8 @@ The execution profile owns the credentials available to its target step:
 The balanced OpenClaw shard also checks the installed no-search configuration and sends a fresh documentation-search request.
 Its structured reply must report unavailable search and contain no installation-documentation result; reduced tool evidence must show no successful fetch or search-provider invocation.
 The source hook tests own prompt construction, while this agent turn owns model compliance after unavailable search.
+The reply must contain only the two requested JSON fields, with an optional Markdown code fence; surrounding claims or extra fields fail validation.
+Changes to `nemoclaw/src/runtime-context.ts` select this balanced OpenClaw shard.
 The reply artifact retains only a pass/fail boolean; the raw session remains inside the sandbox.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
