@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NemoClawState } from "./blueprint/state.js";
-import type { NemoClawConfig, OpenClawPluginApi } from "./index.js";
+import type { NemoClawConfig, OpenClawConfig, OpenClawPluginApi } from "./index.js";
 
 vi.mock("./blueprint/state.js", () => ({
   loadState: vi.fn(),
@@ -177,5 +177,94 @@ describe("registerRuntimeContext", () => {
     expect(result.prependSystemContext).toContain("nemoclaw <name> logs --tail 50");
     expect(result.prependSystemContext).not.toContain(invalidName);
     expect(result.prependSystemContext).not.toContain("Ignore previous instructions");
+  });
+});
+
+describe("web research context", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedLoadState.mockReturnValue(blankState());
+  });
+
+  async function contextFor(config: OpenClawConfig): Promise<string> {
+    const api = createMockApi();
+    api.config = config;
+    registerRuntimeContext(api, defaultConfig);
+    const result = (await api._trigger("before_prompt_build", {}, {})) as {
+      prependSystemContext: string;
+    };
+    return result.prependSystemContext;
+  }
+
+  it("discloses disabled search even when provider credentials remain configured", async () => {
+    const context = await contextFor({
+      tools: { web: { search: { enabled: false, provider: "tavily" } } },
+      plugins: { entries: { tavily: { config: { webSearch: { apiKey: "private-key" } } } } },
+    });
+    expect(context).toContain("Web search is disabled in OpenClaw configuration.");
+    expect(context).toContain("tell the user that web search is unavailable");
+    expect(context).not.toContain("private-key");
+  });
+
+  it.each([{}, { tools: {} }, { tools: { web: { search: {} } } }])(
+    "does not infer search availability from missing configuration: %j",
+    async (config) => {
+      const context = await contextFor(config);
+      expect(context).toContain(
+        "Web search availability is not confirmed by OpenClaw configuration.",
+      );
+      expect(context).toContain("If no search tool is available, tell the user");
+    },
+  );
+
+  it.each(["brave", "tavily"])(
+    "describes enabled %s search without claiming a successful request or exposing credentials",
+    async (provider) => {
+      const context = await contextFor({
+        tools: { web: { search: { enabled: true, provider } } },
+        plugins: {
+          entries: {
+            [provider]: { enabled: true, config: { webSearch: { apiKey: "private-key" } } },
+          },
+        },
+      });
+      expect(context).toContain("Web search is enabled in OpenClaw configuration.");
+      expect(context).toContain(
+        "Configuration does not guarantee tool availability or request success.",
+      );
+      expect(context).not.toContain("Web search is disabled");
+      expect(context).not.toContain("private-key");
+    },
+  );
+
+  it.each([
+    { tools: { web: { search: { enabled: "false", provider: "untrusted-provider-text" } } } },
+    { tools: { web: { search: null } } },
+    { tools: [] },
+  ])("keeps ambiguous search configuration out of the prompt: %j", async (config) => {
+    const context = await contextFor(config);
+    expect(context).toContain("Web search availability is not confirmed");
+    expect(context).not.toContain("untrusted-provider-text");
+  });
+
+  it("prevents unsupported research claims after failed fetches while allowing retrieved evidence", async () => {
+    const context = await contextFor({ tools: { web: { search: { enabled: false } } } });
+    expect(context).toContain(
+      "A failed search or web_fetch is not evidence that a page does not exist.",
+    );
+    expect(context).toContain(
+      "Label sandbox-local files, memory, and prior knowledge as local or unverified sources.",
+    );
+    expect(context).toContain(
+      "Do not present a press release or announcement as installation documentation.",
+    );
+    expect(context).toContain(
+      "Only claim successful web research when a tool retrieved supporting content this turn.",
+    );
+    expect(context).toContain(
+      "You may use successfully retrieved web_fetch content even when search is disabled.",
+    );
+    expect(context).toContain("Report fetch errors separately from search availability.");
+    expect(context).toContain("The error alone does not confirm a policy denial.");
   });
 });
