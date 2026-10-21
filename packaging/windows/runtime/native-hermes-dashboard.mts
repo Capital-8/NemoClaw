@@ -67,9 +67,21 @@ export function hermesDashboardPythonSource(): string[] {
                 class AcceptedPipeProtocol(config.http_protocol_class):
                     def connection_made(self, transport):
                         super().connection_made(transport)
-                        # Proactor replenishes its accept instance before this callback.
-                        # Admit the next private relay connection only after that point.
-                        transport.write(b'\x00')
+                        self._native_accept_pending = True
+
+                    def data_received(self, data):
+                        if not data:
+                            return
+                        if self._native_accept_pending:
+                            self._native_accept_pending = False
+                            # Ordinary in-container HTTP/WebSocket clients share this
+                            # listener. Only the private relay requests an acknowledgment.
+                            if data[0] == 0:
+                                # Proactor has replenished its next accept instance.
+                                self.transport.write(b'\x00')
+                                data = data[1:]
+                        if data:
+                            super().data_received(data)
 
                 def create_protocol():
                     return AcceptedPipeProtocol(

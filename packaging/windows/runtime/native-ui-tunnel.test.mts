@@ -31,13 +31,14 @@ for (const ending of ["invalid", "abort"] as const)
     async () => {
       const relayRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-pipe-readiness-"));
       const sockets = new Set<Socket>();
+      const prefaces: Buffer[] = [];
       let accepted: Socket | undefined;
       const server = net.createServer((socket) => {
         accepted = socket;
         sockets.add(socket);
         socket.once("close", () => sockets.delete(socket));
         socket.on("error", () => {});
-        socket.resume();
+        socket.on("data", (chunk: Buffer) => prefaces.push(chunk));
       });
       const stop = new AbortController();
       let tunnel: Promise<unknown> | undefined;
@@ -56,6 +57,7 @@ for (const ending of ["invalid", "abort"] as const)
         while (!accepted && Date.now() < deadline) await delay(10);
         assert(accepted);
         await delay(30);
+        assert.deepEqual(Buffer.concat(prefaces), Buffer.from([0]));
         assert(!fs.existsSync(path.join(relayRoot, "ready")));
         if (ending === "invalid") accepted.write(Buffer.from([1]));
         else stop.abort();
@@ -102,9 +104,16 @@ for (const ending of [
         accepted.push(socket);
         socket.once("close", () => sockets.delete(socket));
         socket.on("error", () => {});
-        // Hold the first real stream after readiness to inspect the admission queue.
-        if (accepted.length !== 2) socket.write(Buffer.from([0]));
+        const position = accepted.length;
+        let preface = true;
         socket.on("data", (chunk: Buffer) => {
+          if (preface) {
+            preface = false;
+            assert.deepEqual(chunk, Buffer.from([0]));
+            // Hold the first real stream to inspect the admission queue.
+            if (position !== 2) socket.write(Buffer.from([0]));
+            return;
+          }
           received.push(chunk);
           socket.write(chunk);
         });

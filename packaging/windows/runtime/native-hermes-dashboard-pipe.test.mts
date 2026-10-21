@@ -41,6 +41,8 @@ class Protocol:
     def connection_made(self, transport):
         events.append(('connection_made', transport))
         if getattr(transport, 'failure', None): raise transport.failure
+        self.transport = transport
+    def data_received(self, data): events.append(('data_received', data))
 
 def build(host, port, *, ssh_isolated):
     events.append(('build', host, port, ssh_isolated))
@@ -178,7 +180,7 @@ asyncio.run(run())
 `);
 });
 
-test("dashboard acknowledges private pipe acceptance only after Uvicorn initializes the connection", () => {
+test("dashboard acknowledges only a requested private handshake after connection initialization", () => {
   check(String.raw`
 install('8123')
 async def run():
@@ -186,12 +188,44 @@ async def run():
     writes = []
     transport = NS(write=lambda data: writes.append((data, events[-1])))
     protocols[0].connection_made(transport)
+    assert writes == []
+    protocols[0].data_received(b'')
+    assert writes == []
+    protocols[0].data_received(b'\x00')
     assert writes == [(b'\x00', ('connection_made', transport))]
     assert config.http_protocol_class is Protocol
+    protocols[0].data_received(b'GET / HTTP/1.1\r\n')
+    protocols[0].data_received(b'\x00body')
+    assert events[-2:] == [('data_received', b'GET / HTTP/1.1\r\n'), ('data_received', b'\x00body')]
+    assert len(writes) == 1
     writes.clear()
     transport.failure = RuntimeError('initialization failed')
     rejects(lambda: protocols[0].connection_made(transport), 'initialization failed')
     assert writes == []
+asyncio.run(run())
+`);
+});
+
+test("dashboard leaves ordinary HTTP and WebSocket bytes unchanged without unsolicited acknowledgment", () => {
+  check(String.raw`
+install('8123')
+async def run():
+    for request in (b'GET / HTTP/1.1\r\n', b'GET /api/ws HTTP/1.1\r\nUpgrade: websocket\r\n'):
+        _, _, _, protocols = await scenario()
+        writes = []
+        protocol = protocols[0]
+        protocol.connection_made(NS(write=writes.append))
+        protocol.data_received(request[:1])
+        protocol.data_received(request[1:])
+        assert writes == []
+        assert events[-2:] == [('data_received', request[:1]), ('data_received', request[1:])]
+    _, _, _, protocols = await scenario()
+    writes = []
+    protocol = protocols[0]
+    protocol.connection_made(NS(write=writes.append))
+    protocol.data_received(b'\x00GET / HTTP/1.1\r\n')
+    assert writes == [b'\x00']
+    assert events[-1] == ('data_received', b'GET / HTTP/1.1\r\n')
 asyncio.run(run())
 `);
 });

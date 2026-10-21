@@ -133,7 +133,10 @@ export async function startNativeUiTunnel({
       const connected = await new Promise<boolean>((resolvePromise, reject) => {
         const socket = net.createConnection({ ...target, signal });
         socket.once("connect", () => {
-          if (pipeAcceptance) return;
+          if (pipeAcceptance) {
+            socket.write(Buffer.from([0]));
+            return;
+          }
           socket.destroy();
           resolvePromise(true);
         });
@@ -300,7 +303,8 @@ export async function startNativeUiTunnel({
           };
           streams.set(entry, state);
           socket.once("connect", () => {
-            if (!pipeAcceptance) state.connected = true;
+            if (pipeAcceptance) socket.write(Buffer.from([0]));
+            else state.connected = true;
           });
           socket.on("drain", () => {
             state.blocked = false;
