@@ -212,7 +212,7 @@ describe("locked npm cache seed materialization", () => {
     ]);
   });
 
-  it("does not download a separately resolved archive for an inBundle dependency", async () => {
+  it("preserves an upstream bundled version despite an exact root override", async () => {
     const alpha = archive("alpha", "alpha archive");
     const beta = archive("beta", "beta archive already inside alpha");
     const lockfile = writeLock(testRoot, [alpha.locked, beta.locked]);
@@ -228,6 +228,10 @@ describe("locked npm cache seed materialization", () => {
     };
     delete lock.packages["node_modules/beta"];
     writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+    writeFileSync(
+      path.join(testRoot, "package.json"),
+      `${JSON.stringify({ overrides: { beta: "2.0.0" } })}\n`,
+    );
     const downloadArchive = vi.fn(async () => alpha.bytes);
     const seed = path.join(testRoot, "seed");
 
