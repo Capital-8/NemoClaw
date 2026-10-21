@@ -320,7 +320,7 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
       RAW_OPENSHELL_REBIND_HOSTNAME,
       RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER,
     );
-    expect(policyDenied, resultText(denial)).toBe(true);
+    expect(policyDenied && hostsFixture.server.answers() > 0, resultText(denial)).toBe(true);
     expect(
       server.requestCount(),
       "raw OpenShell allowed_ips denial must record no additional upstream requests",

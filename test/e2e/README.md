@@ -421,12 +421,15 @@ reject mixed cohorts, another run, a future attempt, and another candidate revis
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
-On OpenShell 0.1.3, the full-suite DNS fixture selects the workload's supervisor by
-sandbox ID and namespace. It backs up and updates that container's engine-owned
-hosts file on the Linux test host without changing the supervisor's read-only
-mounts. Remapping and restoration retain the selected container ID and hosts path;
-a replacement container never receives the old backup. Host DNS restoration is
-mandatory; a vanished ephemeral container is left to the sandbox cleanup owner.
+On OpenShell 0.1.3, the full-suite DNS fixture selects the workload's supervisor by sandbox ID and namespace, then verifies its cgroup and upstream resolver.
+A loopback DNS forwarder overrides only the selected fixture hostname with an IPv4 address and returns no AAAA answer for it.
+Other queries use the supervisor's existing upstream resolver over UDP or TCP.
+Temporary owned `iptables` or `ip6tables` rules redirect queries to the loopback forwarder.
+They match only the verified supervisor cgroup, selected upstream address, and TCP or UDP port `53`.
+The host `/etc/hosts` mapping remains for host-side admission checks.
+Denial checks require generated override answers as well as the existing policy-denial and no-arrival evidence; IP pins remain unchanged.
+Cleanup verifies that owned rules are absent, restores the host's hosts file, and closes the forwarder.
+Unconfirmed cleanup fails the fixture.
 The trusted-private fixture uses its existing host HTTPS listener for the 0.1.3
 host-network supervisor. Its discovered interface address must be routed-private,
 not the Podman gateway's link-local alias. Legacy bridged workloads retain the relay.

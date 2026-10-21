@@ -931,6 +931,10 @@ test(
       `TC-INF-11 inference set https-pin endpoint failed\n${redactedResultText(inferenceSet)}`,
     ).toBe(0);
     progress.phase("verify authenticated inference and DNS rebinding");
+    const hostsFixture = await setupDnsRebindingHostsFixture(host, sandboxName, endpointHostname);
+    cleanup.add(`restore https-pin DNS rebinding hosts fixture for ${sandboxName}`, () =>
+      restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture),
+    );
     const sandboxRequestOffset = fake.requests().length;
     // Retain bounded propagation polling and require a new authenticated request.
     let routeProbeAttempt = 0;
@@ -960,10 +964,6 @@ test(
       .toBe(true);
     // OpenShell re-resolves DNS and rejects answers outside allowed_ips.
     // Unlike the old pinning adapter, this route must fail after the rebind.
-    const hostsFixture = await setupDnsRebindingHostsFixture(host, sandboxName, endpointHostname);
-    cleanup.add(`restore https-pin DNS rebinding hosts fixture for ${sandboxName}`, () =>
-      restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture),
-    );
     await remapDnsRebindingHostname(
       host,
       sandboxName,
@@ -1009,7 +1009,7 @@ test(
       endpointHostname,
       INFERENCE_CURL_HTTP_CODE_MARKER,
     );
-    expect(policyDenied, resultText(rebind)).toBe(true);
+    expect(policyDenied && hostsFixture.server.answers() > 0, resultText(rebind)).toBe(true);
     expect(fake.requests()).toHaveLength(rebindRequestOffset);
     await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
     progress.phase("verify private redirect rejection");

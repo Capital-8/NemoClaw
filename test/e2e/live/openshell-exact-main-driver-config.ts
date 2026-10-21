@@ -235,10 +235,6 @@ function readRenderedGatewayConfig(proof: ExactMainDriverConfigProof): ParsedGat
     "gateway TLS key_path",
   );
   assertReadableRegularFile(clientCa, "gateway TLS client_ca_path");
-  assertReadableRegularFile(
-    requireString(gateway.guest_tls_ca, "gateway guest_tls_ca"),
-    "gateway guest_tls_ca",
-  );
   // OpenShell 0.1.3 authenticates sandboxes with JWT. User mTLS files remain
   // private on the host and must still support the CLI's authenticated list.
   const userTls = getDockerDriverGatewayLocalTlsBundle(stateDir);

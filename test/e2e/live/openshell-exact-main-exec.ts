@@ -140,14 +140,7 @@ function assertChildProofReport(
   surface: ExactMainChildProofReport["surface"],
 ): void {
   expectExitZero(result, `exact-main ${surface} child security boundary`);
-  let report: ExactMainChildProofReport;
-  try {
-    report = JSON.parse(result.stdout.trim()) as ExactMainChildProofReport;
-  } catch (error) {
-    throw new Error(`exact-main ${surface} child emitted an invalid proof report`, {
-      cause: error,
-    });
-  }
+  const report = JSON.parse(result.stdout.trim()) as ExactMainChildProofReport;
   if (report.surface !== surface) {
     throw new Error(`exact-main child proof reported ${report.surface} instead of ${surface}`);
   }

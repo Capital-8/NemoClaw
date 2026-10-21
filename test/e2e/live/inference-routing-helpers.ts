@@ -316,16 +316,6 @@ function expectOnboardFailure(result: RawRunResult, label: string): void {
   expect(result.exitCode, `${label} unexpectedly succeeded\n${redacted}`).not.toBe(0);
 }
 
-function parseJsonBody(body: string, label: string): unknown {
-  try {
-    return JSON.parse(body);
-  } catch (error) {
-    throw new Error(
-      `${label} response was not JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
 export function openAiContent(json: unknown): string {
   if (!json || typeof json !== "object") return "";
   const choices = (json as { choices?: unknown }).choices;
@@ -385,7 +375,7 @@ async function expectOpenAiChatThroughSandbox(
       ? gatewayRun?.provider === "inference" && gatewayRun.model === model
         ? gatewayRun.text
         : ""
-      : openAiContent(parseJsonBody(response.stdout, artifactName));
+      : openAiContent(JSON.parse(response.stdout));
   expect(content, `unexpected chat content in response: ${response.stdout.slice(0, 500)}`).toBe(
     "PONG",
   );
@@ -398,21 +388,6 @@ export function requireProviderSmokeSelected(provider: "openrouter", skip: SkipF
       skip,
       `set NEMOCLAW_INFERENCE_ROUTING_PROVIDER_SMOKE=${provider} to run ${label} smoke`,
     );
-  }
-}
-
-export async function verifyProcessListCredentialIsolation(
-  artifacts: ArtifactSink,
-  processList: RawRunResult,
-  apiKey: string,
-): Promise<void> {
-  if (processList.exitCode === 0 && processList.stdout.trim()) {
-    expect(processList.stdout.includes(apiKey), redactedResultText(processList)).toBe(false);
-  } else {
-    await artifacts.writeJson("tc-inf-05-process-list-skipped.json", {
-      reason: "ps not available in hardened sandbox",
-      exitCode: processList.exitCode,
-    });
   }
 }
 

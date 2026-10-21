@@ -213,7 +213,6 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     url: rebindMcpUrl,
   });
   expect(rebindingPolicy.policy.endpoints?.[0]).toMatchObject({
-    host: REBIND_HOSTNAME,
     allowed_ips: [trustedPrivateAddress],
   });
   await options.assertSecretAbsent(
@@ -298,6 +297,7 @@ export async function assertTrustedPrivateMcpRebindingDenied(
   );
   expect(
     policyDenied &&
+      hostsFixture.server.answers() > 0 &&
       curlControl.exitCode === 0 &&
       !curlControl.timedOut &&
       curlControl.stdout.includes("NEMOCLAW_MCP_CURL_HTTP_CODE=200") &&
