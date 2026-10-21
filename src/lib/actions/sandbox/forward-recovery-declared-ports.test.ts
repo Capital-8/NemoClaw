@@ -7,6 +7,7 @@ import type {
   ObserveOpenShellForwardsRequest,
   OpenShellForwardIdentity,
   OpenShellForwardObservation,
+  OpenShellLegacyForwardRetirementResult,
   RetireLegacyOpenShellForwardRequest,
   StartOpenShellForwardRequest,
   VerifyOpenShellForwardReleaseRequest,
@@ -316,11 +317,16 @@ describe("forward recovery through the typed adapter", () => {
         observation(forward, forward.localHost === "0.0.0.0" ? "owned" : "foreign"),
       ),
     );
-    mocks.retireLegacyForward.mockResolvedValue({
-      state: "failed",
-      effect: "unknown",
-      error: { kind: "ownership", message: "release unproved" },
-    });
+    mocks.retireLegacyForward.mockImplementation(
+      async (
+        request: RetireLegacyOpenShellForwardRequest,
+      ): Promise<OpenShellLegacyForwardRetirementResult> => ({
+        state: "release_unproved",
+        forward: request.forward,
+        effect: "possible",
+        error: { kind: "cleanup", message: "NemoClaw could not prove OpenShell forward cleanup." },
+      }),
+    );
     const { ensureSandboxPortForwardForPort } = await import("./forward-recovery");
     await expect(ensureSandboxPortForwardForPort("box", 8_642)).resolves.toBe(false);
     expect(mocks.retireLegacyForward).toHaveBeenCalledOnce();
