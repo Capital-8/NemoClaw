@@ -198,6 +198,7 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
           sandboxes: [
             {
               name: "hermes-test",
+              agent: "hermes",
               dashboardPort: 18_790,
               hermesApiPort: apiPort,
               dashboardRemoteBindPrepared: persistedRemoteBind,
@@ -238,6 +239,7 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
           sandboxes: [
             {
               name: "hermes-test",
+              agent: "hermes",
               dashboardPort: 18_790,
               hermesApiPort: apiPort,
               dashboardRemoteBindPrepared: true,
@@ -271,12 +273,75 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
     },
   );
 
+  it.each([
+    { agent: "openclaw", hermesApiPort: 8_643 },
+    { agent: undefined, hermesApiPort: 8_643 },
+    { agent: "hermes", hermesApiPort: 8_644 },
+  ])("refuses wildcard finalization outside the registered Hermes API: %j", async (entry) => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const test = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "hermes-test", dashboardPort: 18_790, ...entry }],
+      }),
+      initialStates: new Map([[8_643, "owned"]]),
+      initialHosts: new Map([[8_643, "0.0.0.0"]]),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(
+      test.helpers.ensureAgentFixedForward("hermes-test", 8_643, "messaging"),
+    ).resolves.toBe(false);
+    expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    expect(test.hosts.get(8_643)).toBe("0.0.0.0");
+  });
+
+  it("leaves an owned wildcard non-Hermes fixed forward untouched during finalization", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const test = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "openclaw-test", agent: "openclaw", dashboardPort: 18_789 }],
+      }),
+      initialStates: new Map([[8_643, "owned"]]),
+      initialHosts: new Map([[8_643, "0.0.0.0"]]),
+    });
+    const agent = { ...loadAgent("openclaw")!, forward_ports: [18_789, 8_643] };
+    await expect(
+      test.helpers.ensureFinalizationAgentDashboardForward("openclaw-test", agent),
+    ).rejects.toThrow("foreign listener");
+    expect(test.retireLegacyForward).not.toHaveBeenCalled();
+    expect(test.hosts.get(8_643)).toBe("0.0.0.0");
+  });
+
+  it.each([
+    { field: "agent", update: { agent: "openclaw" } },
+    { field: "port", update: { hermesApiPort: 8_644 } },
+  ])("refuses API migration after registered $field changes", async ({ update }) => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const entry = { name: "hermes-test", agent: "hermes", hermesApiPort: 8_643 };
+    const test = harness({
+      listSandboxes: () => ({ sandboxes: [entry] }),
+      initialStates: new Map([[8_643, "owned"]]),
+      initialHosts: new Map([[8_643, "0.0.0.0"]]),
+    });
+    test.observeForwards.mockImplementationOnce(async (request) => {
+      Object.assign(entry, update);
+      return request.forwards.map((forward) => observation(forward, "owned"));
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(
+      test.helpers.ensureAgentFixedForward("hermes-test", 8_643, "agent API"),
+    ).resolves.toBe(false);
+    expect(test.hosts.get(8_643)).toBe("0.0.0.0");
+  });
+
   it("does not replace a wildcard API forward whose release cannot be proved (#13441)", async () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const test = harness({
       listSandboxes: () => ({
-        sandboxes: [{ name: "hermes-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
+        sandboxes: [
+          { name: "hermes-test", agent: "hermes", dashboardPort: 18_790, hermesApiPort: 8_643 },
+        ],
       }),
       initialStates: new Map([
         [18_790, "owned"],
@@ -330,7 +395,9 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
       const test = harness({
         isWsl: true,
         listSandboxes: () => ({
-          sandboxes: [{ name: "hermes-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
+          sandboxes: [
+            { name: "hermes-test", agent: "hermes", dashboardPort: 18_790, hermesApiPort: 8_643 },
+          ],
         }),
         initialStates: new Map([
           [18_790, "owned"],
@@ -355,7 +422,9 @@ describe("finalization dashboard ForwardTcp reconciliation", () => {
     const test = harness({
       isWsl: true,
       listSandboxes: () => ({
-        sandboxes: [{ name: "hermes-test", dashboardPort: 18_790, hermesApiPort: 8_643 }],
+        sandboxes: [
+          { name: "hermes-test", agent: "hermes", dashboardPort: 18_790, hermesApiPort: 8_643 },
+        ],
       }),
     });
     let changed = false;

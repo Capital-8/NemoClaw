@@ -48,6 +48,7 @@ import {
   ensureMessagingHostForwardForSandbox,
   productionForwardServiceRegistryContext,
 } from "./messaging-host-forward";
+import { resolveSandboxHermesApiPort } from "./hermes-api-port";
 import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -88,6 +89,7 @@ export interface OnboardDashboardDeps {
   /** Sandbox lookup used to resolve the per-sandbox Hermes API port. */
   getSandbox?(name: string):
     | {
+        agent?: string | null;
         gatewayName?: string | null;
         gatewayPort?: number | null;
         dashboardPort?: number | null;
@@ -693,13 +695,23 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         `start ${label} forward ${String(port)} for sandbox '${sandboxName}'`,
       );
       const authority = getForwardRuntimeAuthority(sandboxName, gatewayName);
+      const isRegisteredHermesApi = () => {
+        const sandbox = getSandbox?.(sandboxName);
+        return sandbox?.agent === "hermes" && resolveSandboxHermesApiPort(sandbox) === port;
+      };
+      const migrateToLoopback = isRegisteredHermesApi();
       await reconcileForward(
         sandboxName,
         authority,
         forwardIdentity(sandboxName, authority, port, "loopback"),
         label,
-        revalidateSandboxIdentity,
-        true,
+        (operation) => {
+          revalidateSandboxIdentity?.(operation);
+          if (migrateToLoopback && !isRegisteredHermesApi()) {
+            throw new Error("Hermes API forward authority changed during migration");
+          }
+        },
+        migrateToLoopback,
       );
       return true;
     } catch (error) {
