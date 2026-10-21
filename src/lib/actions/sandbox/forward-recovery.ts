@@ -147,6 +147,7 @@ export function createHermesPortableForwardRecoveryInput(input: {
       }),
       assertCurrent,
       assertRollbackCurrent,
+      readSandbox: () => readForwardSandbox(input.sandboxName),
     },
   };
 }

@@ -26,7 +26,10 @@ export function isRegisteredHermesApiForward(
 export function createHermesApiForwardMigration(options: {
   forward: OpenShellForwardIdentity;
   readSandbox: () => HermesForwardSandbox | null | undefined;
-  adapter: OpenShellForwardAdapter;
+  adapter: Pick<
+    OpenShellForwardAdapter,
+    "observeForwards" | "retireLegacyForward" | "startForward"
+  >;
   assertCurrent: () => void | Promise<void>;
   /** Preserve recovery eligibility established before its beforeStart callback. */
   requireRegisteredApi?: boolean;

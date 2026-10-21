@@ -170,6 +170,7 @@ beforeEach(() => {
 
 describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => {
   it("binds every requested forward to the exact executable and gateway authority", async () => {
+    mocks.getSandbox.mockReturnValue(sandboxEntry({ agent: "hermes", hermesApiPort: 8_643 }));
     const { createHermesPortableForwardRecoveryInput } = await import("./forward-recovery");
     const input = createHermesPortableForwardRecoveryInput({
       assertCurrent: vi.fn(),
@@ -202,6 +203,9 @@ describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => 
       },
     );
     expect(input.deps.adapter).toEqual(mocks.createAdapter.mock.results[0]?.value);
+    expect(input.deps.readSandbox?.()).toMatchObject({ agent: "hermes", hermesApiPort: 8_643 });
+    mocks.getSandbox.mockReturnValue(sandboxEntry({ agent: "hermes", hermesApiPort: 8_644 }));
+    expect(input.deps.readSandbox?.()).toMatchObject({ hermesApiPort: 8_644 });
   });
 
   it("rejects gateway owner drift after composition", async () => {
