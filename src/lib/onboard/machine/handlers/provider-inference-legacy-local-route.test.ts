@@ -17,7 +17,78 @@ import type { SandboxEntry } from "../../../state/registry";
 import { handleProviderInferenceState } from "./provider-inference";
 import { baseOptions, createDeps } from "./provider-inference.test-support";
 
-describe("legacy local inference resume", () => {
+function retainedPublicCustomResume(provider: string, version: string | null) {
+  vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue(
+    version === null
+      ? { ok: false, error: { kind: "unavailable", message: "unavailable" } }
+      : { ok: true, version },
+  );
+  const session = createSession({
+    agent: "openclaw",
+    sandboxName: "my-assistant",
+    provider,
+    model: "served-model",
+    endpointUrl: "https://integrate.api.nvidia.com/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
+  });
+  session.steps.provider_selection.status = "complete";
+  const recorded = {
+    name: "my-assistant",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    createdAt: "2026-09-01T00:00:00Z",
+    provider: session.provider,
+    model: session.model,
+    endpointUrl: session.endpointUrl,
+    credentialEnv: session.credentialEnv,
+    preferredInferenceApi: session.preferredInferenceApi,
+  } as SandboxEntry;
+  const before = structuredClone({ session, recorded });
+  const { deps, calls } = createDeps({
+    getSandboxRegistryEntry: () => recorded,
+    getInstalledOpenshellVersion,
+    hydrateCredentialEnv: vi.fn(() => "host-key"),
+    isInferenceRouteReady: vi.fn(() => true),
+  });
+  calls.complete.mockResolvedValue(session);
+  const result = handleProviderInferenceState({
+    ...baseOptions(deps, session),
+    resume: true,
+    agent: { name: "openclaw" },
+    sandboxName: "my-assistant",
+    selectedMessagingChannels: ["telegram"],
+  });
+  return { result, calls, session, recorded, before };
+}
+
+describe("legacy shared inference resume", () => {
+  it.each([
+    { provider: "compatible-endpoint", version: "0.1.3" },
+    { provider: "compatible-anthropic-endpoint", version: "0.1.3" },
+    { provider: "compatible-endpoint", version: null },
+  ])(
+    "refuses retained public $provider resume before setup on OpenShell $version",
+    async ({ provider, version }) => {
+      const { result, calls, session, recorded, before } = retainedPublicCustomResume(
+        provider,
+        version,
+      );
+      await expect(result).rejects.toThrow(/Back up|back up/);
+      expect(calls.setupInference).not.toHaveBeenCalled();
+      expect(calls.startStep).not.toHaveBeenCalled();
+      expect(calls.updateSandbox).not.toHaveBeenCalled();
+      expect(calls.reserveRoute).not.toHaveBeenCalled();
+      expect({ session, recorded }).toEqual(before);
+    },
+  );
+
+  it("resumes a retained public compatible route on verified OpenShell 0.0.x", async () => {
+    const { result, calls } = retainedPublicCustomResume("compatible-endpoint", "0.0.116");
+    await expect(result).resolves.toBeDefined();
+    expect(calls.setupInference).toHaveBeenCalled();
+  });
+
   it("keeps a fresh Pi local selection on the native provider path", async () => {
     const { deps, calls } = createDeps({
       setupNim: vi.fn(async () => ({

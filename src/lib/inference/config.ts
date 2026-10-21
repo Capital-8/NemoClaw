@@ -44,7 +44,10 @@ export {
   isPersistedPiSharedLocalInferenceRoute,
   normalizeNativeLocalProviderAttachment,
 } from "./native-local/contract";
-export { hasLegacySharedLocalInferenceRoute } from "./selection";
+export {
+  hasLegacySharedLocalInferenceRoute,
+  hasLegacySharedCustomInferenceRoute,
+} from "./selection";
 export type { NativeLocalProviderAttachment } from "./native-local/contract";
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
 export { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../inference-credential";

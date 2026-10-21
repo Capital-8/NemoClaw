@@ -388,6 +388,28 @@ describe("custom native endpoint ownership", () => {
     expect(onCredentialPersisted).not.toHaveBeenCalled();
   });
 
+  it("removes a new attachment when its profile changes before verification", async () => {
+    const h = harness();
+    const receipt = await prepareCustomNativeProvider(h.input);
+    const provider = nativeProviderLifecycle(customNativeProvider(binding));
+    h.adapter.importProviderProfile.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "command", reason: "profile_incompatible", message: "collision" },
+    });
+    await expect(
+      provider.ensureNativeProviderAttached({
+        adapter: h.input.adapter,
+        target: { kind: "named", gatewayName: "gateway" },
+        sandboxName: "selected",
+        expected: receipt,
+      }),
+    ).rejects.toThrow("conflicts with NemoClaw's checked-in security boundary");
+    expect(h.adapter.attachProvider).toHaveBeenCalledOnce();
+    expect(h.adapter.detachProvider).toHaveBeenCalledOnce();
+    expect(h.attachments.get("selected")).toEqual([]);
+    expect(h.attachments.get("other")).toEqual(["unrelated-provider"]);
+  });
+
   it("rejects profile collisions before provider or attachment changes", async () => {
     const h = harness();
     h.adapter.importProviderProfile.mockResolvedValue({

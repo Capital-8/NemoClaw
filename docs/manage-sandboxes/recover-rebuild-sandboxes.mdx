@@ -317,6 +317,14 @@ Correct the reported configuration or route error, then rerun `$$nemoclaw <sandb
 
 Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state. When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`. At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
 
+Retained `compatible-endpoint` and `compatible-anthropic-endpoint` selections without a native attachment require a verified OpenShell `0.0.x` installation for shared-route resume or rebuild.
+Existing host-local route restrictions still apply.
+For any other or unverified OpenShell version, resume stops before changing provider or sandbox state, and rebuild stops before backup or deletion.
+Valid native attachments continue through the normal verification path.
+Preserve the existing installation and sandbox data.
+Follow the [OpenShell upgrade restrictions](update-sandboxes#use-the-automatic-upgrade-path).
+NemoClaw does not automatically migrate these providers or their state volumes.
+
 For a remote inference provider other than Hermes Provider, preflight checks the selected credential's non-secret expiration metadata from OpenShell.
 For these providers, a provider that no longer exposes the recorded credential key, an expired credential, or expiration metadata that NemoClaw cannot verify stops rebuild before backup or deletion, including with `--force`.
 A provider that exposes the recorded credential key without an expiration entry is treated as non-expiring. That credential or one with a future expiration continues through the remaining preflight checks.

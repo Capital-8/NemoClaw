@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cliOpenShellInstalledVersionObserver } from "../../adapters/openshell/installed-version-cli";
 
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
-import { blockRebuildOnLegacySharedLocalRoute } from "./rebuild-preflight-phase";
+import { blockRebuildOnLegacySharedRoute } from "./rebuild-preflight-phase";
+import { customNativeProvider } from "../../inference/native-provider/custom";
 
 import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import type {
@@ -298,7 +299,7 @@ describe("rebuild legacy local route preflight", () => {
         ...state,
       } as RebuildSandboxEntry;
 
-      expect(() => blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toThrow(
+      expect(() => blockRebuildOnLegacySharedRoute("alpha", entry, bail)).toThrow(
         "Legacy shared local inference cannot be rebuilt safely",
       );
       expect(error.mock.calls.flat().join("\n")).toContain("Back up the sandbox");
@@ -317,7 +318,7 @@ describe("rebuild legacy local route preflight", () => {
       model: "nim-model",
       nimContainer: "nim-alpha",
     } as RebuildSandboxEntry;
-    expect(() => blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toThrow(
+    expect(() => blockRebuildOnLegacySharedRoute("alpha", entry, bail)).toThrow(
       "Legacy shared local inference cannot be rebuilt safely",
     );
     expect(bail).toHaveBeenCalledOnce();
@@ -335,19 +336,82 @@ describe("rebuild legacy local route preflight", () => {
       model: "local-model",
       nativeLocalProviderAttachment: {},
     } as RebuildSandboxEntry;
-    expect(blockRebuildOnLegacySharedLocalRoute("alpha", entry, bail)).toBe(false);
+    expect(blockRebuildOnLegacySharedRoute("alpha", entry, bail)).toBe(false);
     expect(
-      blockRebuildOnLegacySharedLocalRoute(
-        "alpha",
-        { ...entry, pendingRouteReservation: true },
-        bail,
-      ),
+      blockRebuildOnLegacySharedRoute("alpha", { ...entry, pendingRouteReservation: true }, bail),
     ).toBe(false);
     expect(bail).not.toHaveBeenCalled();
   });
 });
 
-describe("Pi shared local rebuild compatibility", () => {
+describe("retained shared rebuild compatibility", () => {
+  it("keeps a verified older runtime eligible for shared custom rebuild", () => {
+    vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
+      ok: true,
+      version: "0.0.116",
+    });
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    expect(
+      blockRebuildOnLegacySharedRoute(
+        "alpha",
+        {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "compatible-endpoint",
+          endpointUrl: "https://custom.example/v1",
+        } as RebuildSandboxEntry,
+        bail,
+      ),
+    ).toBe(false);
+    expect(bail).not.toHaveBeenCalled();
+  });
+
+  it("verifies the recorded custom attachment before admitting a native rebuild", () => {
+    const custom = {
+      provider: "compatible-endpoint",
+      endpointUrl: "https://custom.example/v1",
+      api: "openai-completions",
+      credentialEnv: "TEAM_KEY",
+      allowedIps: ["8.8.8.8"],
+    } as const;
+    const definition = customNativeProvider(custom);
+    const attachment = {
+      schemaVersion: 1,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "provider-id",
+      endpointUrl: definition.endpointUrl,
+      allowedIps: definition.allowedIps,
+      custom,
+    } as const;
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      provider: custom.provider,
+      endpointUrl: custom.endpointUrl,
+      credentialEnv: custom.credentialEnv,
+      preferredInferenceApi: custom.api,
+      nativeHostedProviderAttachment: attachment,
+    } as RebuildSandboxEntry;
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    expect(blockRebuildOnLegacySharedRoute("alpha", entry, bail)).toBe(false);
+    expect(() =>
+      blockRebuildOnLegacySharedRoute(
+        "alpha",
+        {
+          ...entry,
+          endpointUrl: "https://different.example/v1",
+        },
+        bail,
+      ),
+    ).toThrow("does not match");
+    expect(bail).not.toHaveBeenCalled();
+  });
+
   it("keeps a published Pi shared route eligible for rebuild on OpenShell 0.0.116 (#12975)", () => {
     vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue({
       ok: true,
@@ -357,7 +421,7 @@ describe("Pi shared local rebuild compatibility", () => {
       throw new Error(message);
     });
     expect(
-      blockRebuildOnLegacySharedLocalRoute(
+      blockRebuildOnLegacySharedRoute(
         "alpha",
         {
           name: "alpha",

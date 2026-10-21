@@ -211,6 +211,41 @@ describe("rebuildSandbox flow: target session", () => {
     },
   );
 
+  it.each([
+    { provider: "compatible-endpoint", version: "0.1.3" },
+    { provider: "compatible-anthropic-endpoint", version: "0.1.3" },
+    { provider: "compatible-endpoint", version: null },
+  ])(
+    "refuses retained public $provider rebuild before deletion on OpenShell $version",
+    async ({ provider, version }) => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          agent: "openclaw",
+          provider,
+          model: "served-model",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          createdAt: "2026-09-01T00:00:00Z",
+          nativeHostedProviderAttachment: undefined,
+          nativeNvidiaProviderAttachment: undefined,
+        },
+      });
+      vi.spyOn(cliOpenShellInstalledVersionObserver, "observeInstalledVersion").mockReturnValue(
+        version === null
+          ? { ok: false, error: { kind: "unavailable", message: "OpenShell binary not found." } }
+          : { ok: true, version },
+      );
+      const before = structuredClone(harness.session);
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Legacy shared custom inference cannot be rebuilt safely");
+      expectNoSandboxDelete(harness.runOpenshellSpy);
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.session).toEqual(before);
+    },
+  );
+
   it("uses the exact preflighted agent base image only for the recreate", async () => {
     const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
     const restoreEnv = snapshotEnv([overrideEnvVar]);

@@ -7,6 +7,7 @@ import type { ModelSelectionProvenance } from "../../../domain/telemetry/provena
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import {
   hasLegacySharedLocalInferenceRoute,
+  hasLegacySharedCustomInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
   resolveAgentProviderInferenceApi,
   usesNativeLocalInference,
@@ -1364,7 +1365,7 @@ function nativeLocalAgentOptions(
     : {};
 }
 
-function assertNoLegacySharedLocalResume(
+function assertNoLegacySharedResume(
   deps: Pick<
     ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
     "getSandboxRegistryEntry" | "getInstalledOpenshellVersion"
@@ -1374,14 +1375,15 @@ function assertNoLegacySharedLocalResume(
 ): void {
   const recorded =
     effectiveResume && sandboxName ? deps.getSandboxRegistryEntry?.(sandboxName) : null;
-  if (
-    recorded &&
-    recorded.pendingRouteReservation !== true &&
-    hasLegacySharedLocalInferenceRoute(recorded) &&
-    (recorded.agent !== "pi" || !/^0\.0\.\d+$/.test(deps.getInstalledOpenshellVersion?.() ?? ""))
-  ) {
+  if (!recorded || recorded.pendingRouteReservation === true) return;
+  const local = hasLegacySharedLocalInferenceRoute(recorded);
+  const custom = hasLegacySharedCustomInferenceRoute(recorded);
+  if (!local && !custom) return;
+  const oldRuntime = /^0\.0\.\d+$/.test(deps.getInstalledOpenshellVersion?.() ?? "");
+  if ((local && (recorded.agent !== "pi" || !oldRuntime)) || (custom && !oldRuntime)) {
+    const route = local ? "local" : "custom";
     throw new Error(
-      `Sandbox ${sandboxName} uses a legacy shared local inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider before upgrading OpenShell.`,
+      `Sandbox ${sandboxName} uses a legacy shared ${route} inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider.`,
     );
   }
 }
@@ -1497,7 +1499,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
-  assertNoLegacySharedLocalResume(deps, effectiveResume, sandboxName);
+  assertNoLegacySharedResume(deps, effectiveResume, sandboxName);
   const preservesLegacyPiRoute = createPersistedPiRouteSelector(
     deps.getSandboxRegistryEntry,
     effectiveResume,
@@ -1655,7 +1657,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     forceInferenceSetup ||=
       completeRecoveredReviewSelectionAfterInference || reviewRecoveredInteractively;
     let managedLlamaCppRecovered = false;
-    assertNoLegacySharedLocalResume(deps, effectiveResume, sandboxName);
+    assertNoLegacySharedResume(deps, effectiveResume, sandboxName);
     if (resumeProviderSelection) {
       assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(
