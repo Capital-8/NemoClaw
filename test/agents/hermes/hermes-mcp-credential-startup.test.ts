@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import yaml from "js-yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyHermesManagedRoute } from "../../../src/lib/hermes-managed-route";
@@ -50,6 +51,7 @@ describe.skipIf(process.platform === "win32")("Hermes MCP credential startup ref
           url: "https://other.example.test/mcp",
           headers: { Authorization: bearer("v5"), "X-Extra": "1" },
         },
+        user: { url: "https://user.example.test/mcp", headers: { Authorization: bearer("v5") } },
       },
     };
   });
@@ -164,22 +166,63 @@ module.write_config_transaction(home, strict, state, expected, sys.stdin.buffer.
     );
   }
 
-  it.each(["v6", stable])("rebinds a stale managed MCP header to %s at fresh startup", (scope) => {
-    persistConfig();
-    const result = refresh({ QMD_MCP_TOKEN: handle(scope) });
+  it("recognizes exactly the managed entry shape written by the MCP transaction", () => {
+    const script = String.raw`
+import importlib.util, sys
+def load(name, source):
+    spec = importlib.util.spec_from_file_location(name, source)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+guard = load("hermes_guard_parity", sys.argv[1])
+transaction = load("hermes_transaction_parity", sys.argv[2])
+entry = {"url": "https://mcp.example.test/mcp", "headers": {"Authorization": sys.argv[3]}}
+candidate = transaction._managed_candidate(entry)
+assert candidate == {**entry, **guard.MCP_MANAGED_ENTRY_FIELDS}, sorted(candidate)
+assert guard._mcp_authorization_handle(candidate) == ("QMD_MCP_TOKEN", sys.argv[3][len("Bearer "):])
+assert guard._mcp_authorization_handle({**candidate, "enabled": False}) is None
+assert guard._mcp_authorization_handle(entry) is None
+print("parity-ok")
+`;
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        script,
+        RUNTIME_CONFIG_GUARD,
+        path.join(path.dirname(RUNTIME_CONFIG_GUARD), "mcp-config-transaction.py"),
+        bearer("v5"),
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(readConfig()).toEqual({
-      ...config,
-      mcp_servers: { ...config.mcp_servers, qmd: managedServer(scope) },
-    });
-    expect(strictHashIsValid(fixture)).toBe(true);
-    expect(fs.readFileSync(fixture.hashPath, "utf8")).toBe(
-      fs.readFileSync(fixture.compatHashPath, "utf8"),
-    );
-    expect(result.stderr).toContain("Refreshed Hermes MCP credential reference for QMD_MCP_TOKEN");
-    expect(result.stdout + result.stderr).not.toContain(handle(scope));
+    expect(result.stdout.trim()).toBe("parity-ok");
   });
+
+  it.each(["v6", stable])(
+    "rebinds a stale managed MCP header to %s and keeps user entries",
+    (scope) => {
+      persistConfig();
+      const result = refresh({ QMD_MCP_TOKEN: handle(scope) });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readConfig()).toEqual({
+        ...config,
+        mcp_servers: { ...config.mcp_servers, qmd: managedServer(scope) },
+      });
+      expect(strictHashIsValid(fixture)).toBe(true);
+      expect(fs.readFileSync(fixture.hashPath, "utf8")).toBe(
+        fs.readFileSync(fixture.compatHashPath, "utf8"),
+      );
+      expect(result.stderr).toContain(
+        "Refreshed Hermes MCP credential reference for QMD_MCP_TOKEN",
+      );
+      expect(result.stdout + result.stderr).not.toContain(handle(scope));
+    },
+  );
 
   it("copies an aliased managed MCP mapping instead of mutating its other users", () => {
     const shared = managedServer("v5");
@@ -286,6 +329,12 @@ module.write_config_transaction(home, strict, state, expected, sys.stdin.buffer.
       name: "unrelated user header rebound",
       mutate: (current: HermesConfig) => {
         current.mcp_servers.custom.headers = { Authorization: bearer("v6"), "X-Extra": "1" };
+      },
+    },
+    {
+      name: "user-owned bearer-only header rebound",
+      mutate: (current: HermesConfig) => {
+        current.mcp_servers.user.headers = { Authorization: bearer("v6") };
       },
     },
   ])("refuses a host config write after non-root startup with $name", ({ mutate }) => {

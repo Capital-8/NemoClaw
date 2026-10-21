@@ -32,6 +32,12 @@ API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 MCP_AUTHORIZATION_SCHEME = "Bearer "
+MCP_MANAGED_ENTRY_FIELDS = {
+    "enabled": True,
+    "timeout": 120,
+    "connect_timeout": 60,
+    "tools": {"resources": True, "prompts": True},
+}
 MCP_SCOPED_HANDLE_RE = re.compile(
     r"openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_([A-Za-z_][A-Za-z0-9_]{0,127})"
 )
@@ -3452,8 +3458,19 @@ def _native_local_config_refresh_text(text: str, reference: str) -> str | None:
 
 
 def _mcp_authorization_handle(server: object) -> tuple[str, str] | None:
-    """Return the env key and scoped handle of a managed MCP bearer header."""
-    headers = server.get("headers") if isinstance(server, dict) else None
+    """Return the env key and scoped handle of a managed MCP bearer header.
+
+    Only an entry with the exact shape that the MCP transaction writes
+    (`_managed_candidate`) qualifies. User-authored entries stay unchanged.
+    """
+    if (
+        not isinstance(server, dict)
+        or set(server) != {"url", "headers", *MCP_MANAGED_ENTRY_FIELDS}
+        or not isinstance(server["url"], str)
+        or any(server[name] != value for name, value in MCP_MANAGED_ENTRY_FIELDS.items())
+    ):
+        return None
+    headers = server["headers"]
     if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
         return None
     value = headers["Authorization"]
