@@ -203,12 +203,8 @@ function reachablePackagePaths(
       throw new Error(`package-lock dependency is unresolved: ${edge.dependency}`);
     }
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
-    const exactVersion = exactDependencyVersion(edge.requested);
-    if (
-      exactVersion !== undefined &&
-      entry.version !== exactVersion &&
-      overrides[edge.dependency] !== entry.version
-    ) {
+    const exactVersion = exactDependencyVersion(overrides[edge.dependency] ?? edge.requested);
+    if (exactVersion !== undefined && entry.version !== exactVersion) {
       throw new Error(
         `package-lock exact dependency is unresolved: ${edge.dependency}@${exactVersion} from ${edge.fromPath || "root package"}`,
       );

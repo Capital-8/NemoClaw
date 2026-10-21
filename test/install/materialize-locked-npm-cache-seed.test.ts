@@ -442,6 +442,33 @@ describe("locked npm cache seed materialization", () => {
     });
   });
 
+  it("rejects a stale locked version when an exact root override requires a replacement", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const beta = archive("beta", "beta archive");
+    const lockfile = writeLock(testRoot, [alpha.locked, beta.locked]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    lock.packages[""].dependencies = { alpha: "1.0.0" };
+    lock.packages["node_modules/alpha"].dependencies = { beta: "1.0.0" };
+    writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+    writeFileSync(
+      path.join(testRoot, "package.json"),
+      `${JSON.stringify({ overrides: { beta: "2.0.0" } })}\n`,
+    );
+    const downloadArchive = vi.fn(async () => alpha.bytes);
+
+    await expect(
+      materializeLockedNpmCacheSeed({
+        downloadArchive,
+        lockfile,
+        output: path.join(testRoot, "seed"),
+        target: TARGET,
+      }),
+    ).rejects.toThrow("package-lock exact dependency is unresolved: beta@2.0.0");
+    expect(downloadArchive).not.toHaveBeenCalled();
+  });
+
   it("rejects a lock archive outside the exact npm registry origin", async () => {
     const alpha = archive("alpha", "alpha archive");
     const lockfile = writeLock(testRoot, [
