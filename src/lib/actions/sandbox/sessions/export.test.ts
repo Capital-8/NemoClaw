@@ -589,15 +589,27 @@ describe("exportSandboxSessions", () => {
     // The transcript-existence probe reports sid-b.jsonl missing.
     captureMock.mockReturnValueOnce(makeCapture("sid-b.jsonl\n", 1));
 
-    await expect(
-      exportSandboxSessions({
-        sandboxName: "alpha",
-        out: "./out.tgz",
-        format: "tar",
-      }),
-    ).rejects.toThrow(
+    const error = await exportSandboxSessions({
+      sandboxName: "alpha",
+      out: "./out.tgz",
+      format: "tar",
+    }).then(
+      () => null,
+      (value: unknown) => value as Error,
+    );
+    const message = error?.message ?? "";
+    expect(error).not.toBeNull();
+    expect(message).toMatch(
       /Refusing to export: sessions are listed in the agent index but their transcript files are missing or not regular, non-symlink files in the sandbox store: sid-b\.jsonl/,
     );
+    // Recovery guidance: retrying the export comes first, and inspecting the
+    // store or re-running the turn only if the transcript stays absent.
+    const retryIndex = message.indexOf("retry the export");
+    const inspectIndex = message.indexOf("inspect /sandbox/.openclaw/agents/main/sessions");
+    const rerunIndex = message.indexOf("re-run the affected turn");
+    expect(retryIndex).toBeGreaterThanOrEqual(0);
+    expect(inspectIndex).toBeGreaterThan(retryIndex);
+    expect(rerunIndex).toBeGreaterThan(inspectIndex);
 
     const captureCall = captureMock.mock.calls[1]?.[0] as string[];
     expect(shellCommand(captureCall)).toContain("dir=$1; shift");
