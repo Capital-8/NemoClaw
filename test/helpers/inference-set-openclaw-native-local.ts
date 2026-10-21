@@ -29,6 +29,7 @@ export function fixture(
   override: Partial<NativeLocalBinding> = {},
   credentialEnv?: string,
   endpointUrl?: string,
+  recordedAttachment?: NativeLocalProviderAttachment,
 ) {
   const selected = { ...binding, ...override };
   const recorded = {
@@ -61,7 +62,7 @@ export function fixture(
       endpointUrl: endpointUrl ?? selected.endpointUrl,
       ...(credentialEnv ? { credentialEnv } : {}),
       preferredInferenceApi: selected.api ?? "openai-completions",
-      nativeLocalProviderAttachment: recorded,
+      nativeLocalProviderAttachment: recordedAttachment ?? recorded,
     },
   });
 }
@@ -92,9 +93,9 @@ export function switchingFixture(
   };
   deps.resolveLocalSwitchRuntime = () => ({
     endpointUrl: next.endpointUrl,
-    credentialValue: "dummy",
+    credentialValue: nextBinding.provider === "ollama-local" ? "ollama" : "dummy",
     authMode: "sentinel",
-    ownedProxy: false,
+    ownedProxy: nextBinding.provider === "ollama-local",
   });
   const adapter = deps.providerAdapter;
   const original = { ...adapter };

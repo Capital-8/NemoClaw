@@ -17,6 +17,7 @@ import {
   detachNativeLocalProvider,
   ensureNativeLocalProviderAttached,
   normalizeNativeLocalProviderAttachment,
+  nativeLocalIdentity,
   retireNativeLocalProvider,
   type NativeLocalProviderAttachment,
   verifyNativeLocalProviderAttachment,
@@ -138,6 +139,8 @@ export async function resolveOpenClawLocalSwitch(input: {
       throw new InferenceSetError("Model Router ownership requires its configured credential.", 2);
     assertNativeModelRouterOwner(runtime.endpointUrl, runtime.credentialValue);
   }
+  if (previous.profileId !== nativeLocalIdentity(previous).profileId)
+    return { previous, prepare: true };
   return { selected: previous, previous };
 }
 

@@ -334,3 +334,42 @@ export function createOpenClawInferenceSwitchCleanup(input: {
     return cleanup;
   };
 }
+
+interface ChatCompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?: unknown;
+      reasoning_content?: unknown;
+      reasoning?: unknown;
+    };
+    text?: unknown;
+  }>;
+}
+
+interface AnthropicResponse {
+  content?: Array<{ text?: unknown }>;
+}
+
+export function parseChatContent(raw: string): string {
+  const response = JSON.parse(raw) as ChatCompletionResponse;
+  return (response.choices ?? [])
+    .map((choice) => {
+      const message = choice.message ?? {};
+      if (typeof message.content === "string") return message.content;
+      if (typeof message.reasoning_content === "string") return message.reasoning_content;
+      if (typeof message.reasoning === "string") return message.reasoning;
+      if (typeof choice.text === "string") return choice.text;
+      return "";
+    })
+    .join("\n")
+    .trim();
+}
+
+export function parseAnthropicContent(raw: string): string {
+  const response = JSON.parse(raw) as AnthropicResponse;
+  return (response.content ?? [])
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}

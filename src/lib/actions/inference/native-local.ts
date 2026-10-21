@@ -16,6 +16,7 @@ import {
 } from "../inference-set/local-runtime";
 import {
   normalizeNativeLocalProviderAttachment,
+  nativeLocalIdentity,
   usesNativeLocalInference,
   usesNativeLocalInferenceForAgent,
   type NativeLocalProvider,
@@ -102,13 +103,33 @@ export async function prepareNativeLocalSwitch(input: {
       assertNativeModelRouterOwner(runtime.endpointUrl, runtime.credentialValue);
     }
 
-    return {
-      ...(await ensureNativeLocalProviderAttached({
-        adapter: input.adapter,
-        expected: input.previous,
-        sandboxName: input.sandboxName,
-      })),
-      previousDetached: false,
+    if (input.previous.profileId === nativeLocalIdentity(input.previous).profileId)
+      return {
+        ...(await ensureNativeLocalProviderAttached({
+          adapter: input.adapter,
+          expected: input.previous,
+          sandboxName: input.sandboxName,
+        })),
+        previousDetached: false,
+      };
+  }
+  if (
+    !binding &&
+    input.provider === "compatible-endpoint" &&
+    input.previous?.provider === input.provider
+  ) {
+    const credentialEnv = input.credentialEnv ?? input.entry?.credentialEnv;
+    const token = credentialEnv ? input.resolveCredentialValue(credentialEnv) : "";
+    if (!credentialEnv || !token)
+      throw new InferenceSetError(
+        "The recorded compatible endpoint credential is required to replace its IPv4-only profile.",
+        2,
+      );
+    binding = {
+      baseUrl: input.previous.endpointUrl,
+      credentialEnv,
+      token,
+      providerType: "openai",
     };
   }
   const runtime = resolveHermesLocalSwitchRuntime(

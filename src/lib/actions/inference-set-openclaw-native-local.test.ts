@@ -267,6 +267,43 @@ describe("OpenClaw native local live selection", () => {
     expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalled();
   });
 
+  it("reselects the same Ollama endpoint with the dual-stack profile (#13544)", async () => {
+    const previous = { ...attachment, ...nativeLocalIdentity(attachment, 1) };
+    const { deps, next, isAttached } = switchingFixture(
+      { provider: "ollama-local", endpointUrl: previous.endpointUrl },
+      [previous, undefined, undefined, previous],
+    );
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "old-model", sandboxName: "alpha" }, deps),
+    ).resolves.toMatchObject({ provider: "ollama-local" });
+    expect(isAttached()).toBe(true);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeLocalProviderAttachment: next }),
+    );
+    expect(deps.calls.clearNativeLocalProviderAuthority).toHaveBeenCalledWith(previous);
+  });
+
+  it("restores the IPv4 attachment when dual-stack selection cannot save the registry (#13544)", async () => {
+    const previous = { ...attachment, ...nativeLocalIdentity(attachment, 1) };
+    const { deps, isAttached } = switchingFixture(
+      { provider: "ollama-local", endpointUrl: previous.endpointUrl },
+      [previous, undefined, undefined, previous],
+    );
+    deps.calls.updateSandbox.mockReturnValue(false);
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "old-model", sandboxName: "alpha" }, deps),
+    ).rejects.toThrow(/Failed to update NemoClaw registry/);
+    expect(isAttached()).toBe(false);
+    expect(
+      await deps.providerAdapter.listProviderAttachments({
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        sandboxName: "alpha",
+      }),
+    ).toMatchObject({ ok: true, value: { names: [previous.providerName] } });
+    expect(deps.calls.clearNativeLocalProviderAuthority).not.toHaveBeenCalledWith(previous);
+  });
+
   it("switches from Ollama to another local provider without changing the shared route", async () => {
     const { deps } = switchingFixture();
     await expect(
@@ -707,5 +744,39 @@ it.each([8080, 4000])(
     expect(create).not.toHaveBeenCalled();
     expect(detach).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "migrates a retained compatible profile with owned proxy=%s",
+  async (ownedProxy) => {
+    const selected = {
+      ...attachment,
+      provider: "compatible-endpoint" as const,
+      endpointUrl: ownedProxy
+        ? "http://host.openshell.internal:11435/v1"
+        : "http://host.openshell.internal:42103/v1",
+      authMode: "authenticated" as const,
+      api: "openai-responses" as const,
+    };
+    const previous = { ...selected, ...nativeLocalIdentity(selected, 1) };
+    const credentialEnv = ownedProxy ? "NEMOCLAW_OLLAMA_PROXY_TOKEN" : "COMPATIBLE_API_KEY";
+    const endpointUrl = ownedProxy ? "http://127.0.0.1:8000/v1" : selected.endpointUrl;
+    const { deps, next } = switchingFixture(selected, [
+      selected,
+      credentialEnv,
+      endpointUrl,
+      previous,
+    ]);
+    deps.calls.resolveCredentialValue.mockReturnValue("fixture-only-secret");
+    await runInferenceSet(
+      { provider: selected.provider, model: "old-model", sandboxName: "alpha" },
+      deps,
+    );
+    expect(deps.calls.resolveCredentialValue).toHaveBeenCalledWith(credentialEnv);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ nativeLocalProviderAttachment: next, endpointUrl }),
+    );
   },
 );
