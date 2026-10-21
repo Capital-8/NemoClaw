@@ -480,7 +480,8 @@ async function checkSandboxInference(
       : {
           model: SWITCH_MODEL,
           messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-          max_tokens: 100,
+          // Hosted reasoning models share this budget with their final answer.
+          max_tokens: 1024,
         };
   const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
   const curlCommand = nativeCustomEndpoint
