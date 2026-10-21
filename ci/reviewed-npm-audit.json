@@ -111,7 +111,7 @@
       "integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7"
+      "lockSha256": "1a34b03b0561ec12f4a44a6d49655766324b00cc06250752b436f5b027bf38a6"
     },
     {
       "id": "mcporter-runtime",
@@ -120,7 +120,7 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "3c81d752d50113a2781b2aa1e8f1faade088f6fe3ed0bdde6ad0fb67a364f958"
+      "lockSha256": "fb489a01077a2c93cd82bb141f4c491f7a39143a67997fbcce9865e7351a45f7"
     },
     {
       "id": "wechat-runtime",
@@ -138,11 +138,11 @@
     {
       "id": "mcp-tool-discovery-runtime",
       "label": "MCP tool discovery runtime locked production graph",
-      "packageSpec": "@modelcontextprotocol/sdk@1.31.0",
-      "integrity": "sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==",
-      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz",
+      "packageSpec": "@modelcontextprotocol/sdk@1.32.0",
+      "integrity": "sha512-8BviX/hK4Gd2eL1KdTwm0gfl4d3wdoErW0Jd00h6nomUAtk6IJk5vwQJc6kfWtJTzN5OEV/lgIiJKI8fiDGAlA==",
+      "tarballUrl": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
       "directory": "tools/mcp-tool-discovery-runtime",
-      "lockSha256": "ccb3c75ff554bb9a8c8b94e7f98205dde1456e58df6797fc8757c635e2c58413"
+      "lockSha256": "6631147d175dae27a3d99a06eb8e6d4b7071b4304453a25cb74f0ddd0c892983"
     }
   ],
   "sourceRegistryPackageReplacement": {

@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 import {
   LOCKED_NPM_CACHE_SEED_MANIFEST_NAME,
   lockedArchives,
+  readAdjacentPackageManifest,
   type NpmPlatformTarget,
 } from "../checks/materialize-locked-npm-cache-seed.mts";
 import { REVIEWED_NPM_VERSION } from "./reviewed-npm-identity.mts";
@@ -177,7 +178,11 @@ export function lockedArchivesFromDirectory(
     );
   }
 
-  const selectedArchives = lockedArchives(readFileSync(lockfilePath, "utf8"), target);
+  const selectedArchives = lockedArchives(
+    readFileSync(lockfilePath, "utf8"),
+    target,
+    readAdjacentPackageManifest(lockfilePath),
+  );
   const expectedByResolved = new Map(
     selectedArchives.map((archive) => [archive.resolved, archive.archive]),
   );
