@@ -10,6 +10,7 @@ import { performance } from "node:perf_hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createOpenClawPairingFixture } from "../../../../../test/helpers/openclaw-pairing-fixture";
+import { redactString } from "../../../../../test/e2e/fixtures/redaction.ts";
 
 import {
   buildAutoPairApprovalScript,
@@ -867,11 +868,13 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         status: spawn.mock.results[0]?.value.status,
         stdout: spawn.mock.results[0]?.value.stdout,
         diagnostic: diagnostic.mock.calls,
+        redactedDiagnostic: diagnostic.mock.calls.map(([message]) => redactString(message)),
         auth: JSON.parse(fs.readFileSync(authPath, "utf8")),
       }).toEqual({
         status: 4,
         stdout: `__NEMOCLAW_PAIRING_INCOMPATIBLE__=client-token:${reason}\n`,
-        diagnostic: [[`OpenClaw CLI pairing incompatible: client-token:${reason}.`]],
+        diagnostic: [[`OpenClaw CLI pairing incompatible: client-token / ${reason}.`]],
+        redactedDiagnostic: [`OpenClaw CLI pairing incompatible: client-token / ${reason}.`],
         auth: invalidAuth,
       });
     });

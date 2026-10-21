@@ -950,7 +950,9 @@ function runOpenClawPairingObservation(
       .match(
         /^__NEMOCLAW_PAIRING_INCOMPATIBLE__=(local-record-count|paired-metadata|paired-token|client-token(?::(?:missing-operator|role-set|token-mismatch|metadata))?|scope-set)$/,
       )?.[1];
-    console.error(`OpenClaw CLI pairing incompatible: ${reason ?? "unclassified"}.`);
+    console.error(
+      `OpenClaw CLI pairing incompatible: ${(reason ?? "unclassified").replace(":", " / ")}.`,
+    );
     throw new OpenClawPairingIncompatibleError();
   }
   if (result.error || result.signal || result.status !== 0) {
