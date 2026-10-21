@@ -1100,7 +1100,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     fi; \
     rm -f /tmp/mcporter-npm-audit.json /tmp/mcporter-npm-audit-policy.json
 
-# OpenClaw proxy patches for OpenShell sandbox egress (#1755, #4687).
+# Patch OpenClaw media fetch for proxy-only sandbox (#1755, #4687).
 # 1. Map strict media fetch exports to trusted-env-proxy mode. Direct
 #    DNS-pinned connections cannot cross the proxy-only sandbox network;
 #    local strict implementations retain their original behavior.
