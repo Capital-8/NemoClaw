@@ -230,29 +230,47 @@ describe("Hermes Portable typed forward recovery", () => {
     expect(test.states.get(8_642)).toBe("absent");
   });
 
-  it("bounds loopback reconciliation and preserves the original startup diagnostic", async () => {
-    const test = wildcardApiFixture();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    test.startForward.mockResolvedValue({
-      state: "failed",
-      effect: "none",
-      forward: forward(8_642),
-      error: { kind: "command", message: "The OpenShell forward command failed." },
-      failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
-    });
-    await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
-      failure: "recovery-failed",
-      context: { startupFailure: { exitStatus: 17 } },
-    });
-    expect(test.startForward).toHaveBeenCalledTimes(2);
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("forward-start startup/child_exited status=17"),
-    );
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("loopback reconciliation could not prove restoration"),
-    );
-    expect(test.states.get(8_642)).toBe("absent");
-  });
+  it.each([undefined, 23])(
+    "preserves startup diagnostics when the retry exit status is %s",
+    async (retryExitStatus) => {
+      const test = wildcardApiFixture();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      test.startForward.mockResolvedValueOnce({
+        state: "failed",
+        effect: "none",
+        forward: forward(8_642),
+        error: { kind: "command", message: "The OpenShell forward command failed." },
+        failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+      });
+      test.startForward.mockResolvedValueOnce({
+        state: "failed",
+        effect: "none",
+        forward: forward(8_642),
+        error: { kind: "command", message: "The OpenShell forward command failed." },
+        ...(retryExitStatus === undefined
+          ? {}
+          : {
+              failure: {
+                stage: "startup",
+                reason: "child_exited",
+                exitStatus: retryExitStatus,
+              } as const,
+            }),
+      });
+      await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+        failure: "recovery-failed",
+        context: { startupFailure: { exitStatus: retryExitStatus ?? 17 } },
+      });
+      expect(test.startForward).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("forward-start startup/child_exited status=17"),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("loopback reconciliation could not prove restoration"),
+      );
+      expect(test.states.get(8_642)).toBe("absent");
+    },
+  );
 
   it("does not retry a replacement whose cleanup is uncertain", async () => {
     const test = wildcardApiFixture();

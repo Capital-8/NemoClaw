@@ -92,6 +92,16 @@ export function createHermesApiForwardMigration(options: {
           `Hermes API loopback reconciliation could not prove restoration. Resolve the startup error, then run nemoclaw ${forward.sandboxName} recover.`,
         );
       }
+      if (
+        (retried.state === "failed" || retried.state === "cleanup_uncertain") &&
+        "failure" in started &&
+        started.failure
+      ) {
+        return {
+          ...retried,
+          failure: ("failure" in retried && retried.failure) || started.failure,
+        };
+      }
       return retried;
     },
   };

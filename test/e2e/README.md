@@ -622,6 +622,8 @@ distro so the masks survive a restart. The test script checks Docker again immed
 Vitest. The helper removes the masks and requires Docker health before the live step.
 
 The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
+WSL shard 1 also runs the Hermes case from `dashboard-remote-bind` through the production installer and OpenShell CLI.
+It checks remote dashboard reachability, loopback API health, and non-loopback API refusal before and after sandbox restart.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.
 Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.

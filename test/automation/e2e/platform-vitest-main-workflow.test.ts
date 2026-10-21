@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -103,6 +105,43 @@ describe("platform evidence workflow", () => {
     });
     expect(detection.run).toContain("-User $env:WSL_TEST_USER");
     expect(live.run).toContain("-User $env:WSL_TEST_USER");
+  });
+
+  it("runs Hermes remote-dashboard isolation before and after restart on WSL", () => {
+    const live = step("wsl-vitest", "Run WSL live E2E");
+    const command = live.run
+      ?.split("\n")
+      .find((line) => line.includes("test/e2e/live/dashboard-remote-bind.test.ts"));
+    expect(command).toBeDefined();
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+      dashboardArtifacts='wsl-evidence'
+      npx() {
+        printf '%s\n' "$E2E_ARTIFACT_DIR" "$NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND" "$@"
+        return 19
+      }
+      ${command}
+    `,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(result.status).toBe(19);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "wsl-evidence",
+      "1",
+      "vitest",
+      "run",
+      "--project",
+      "e2e-live",
+      "test/e2e/live/dashboard-remote-bind.test.ts",
+      "-t",
+      "hermes",
+      "--silent=false",
+      "--reporter=default",
+    ]);
   });
 
   it("keeps credentialed macOS E2E independent from non-live shard failures", () => {
