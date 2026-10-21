@@ -58,6 +58,13 @@ describe.skipIf(process.platform === "win32")("Hermes MCP credential startup ref
           headers: { Authorization: bearer("v5"), "X-Extra": "1" },
         },
         user: { url: "https://user.example.test/mcp", headers: { Authorization: bearer("v5") } },
+        plain: {
+          url: "https://plain.example.test/mcp",
+          enabled: true,
+          timeout: 120,
+          connect_timeout: 60,
+          tools: { resources: true, prompts: true },
+        },
       },
     };
   });
@@ -188,7 +195,7 @@ entry = {"url": "https://mcp.example.test/mcp", "headers": {"Authorization": sys
 candidate = transaction._managed_candidate(entry)
 assert candidate == guard.managed_mcp_entry(entry["url"], entry["headers"]), sorted(candidate)
 assert guard._mcp_authorization_handle(candidate) == ("QMD_MCP_TOKEN", sys.argv[3][len("Bearer "):])
-changed = [{**candidate, "enabled": False}, {**candidate, "timeout": 30}, {**candidate, "connect_timeout": 1}, {**candidate, "tools": {"resources": False, "prompts": True}}, {**candidate, "extra": True}, entry]
+changed = [{**candidate, "enabled": False}, {**candidate, "timeout": 30}, {**candidate, "connect_timeout": 1}, {**candidate, "tools": {"resources": False, "prompts": True}}, {**candidate, "extra": True}, entry, guard.managed_mcp_entry(entry["url"], {})]
 assert [guard._mcp_authorization_handle(value) for value in changed] == [None] * len(changed)
 print("owner-ok")
 `;

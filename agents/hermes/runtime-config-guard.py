@@ -3481,7 +3481,7 @@ def _mcp_authorization_handle(server: object) -> tuple[str, str] | None:
         or server != managed_mcp_entry(server["url"], server.get("headers"))
     ):
         return None
-    headers = server["headers"]
+    headers = server.get("headers")
     if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
         return None
     value = headers["Authorization"]
