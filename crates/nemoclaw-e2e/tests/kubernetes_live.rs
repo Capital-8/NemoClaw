@@ -8,6 +8,8 @@
 mod oidc;
 #[path = "kubernetes_registry.rs"]
 mod registry;
+#[path = "kubernetes_requests.rs"]
+mod requests;
 
 use k8s_openapi::api::{
     apps::v1::StatefulSet,
@@ -60,6 +62,51 @@ impl Secrets for Values {
 fn required(name: &str) -> String {
     std::env::var(name)
         .unwrap_or_else(|_| panic!("{name} is required; see docs/contributing/live-tests.md"))
+}
+
+fn random_hex(bytes: usize) -> String {
+    let mut buffer = vec![0u8; bytes];
+    getrandom::fill(&mut buffer).unwrap();
+    buffer.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Create a ConfigMap, Secret, Service or Deployment from its manifest, for a
+/// server that a test runs in its own namespace, as a platform would.
+async fn create(client: &kube::Client, object: Value) {
+    use k8s_openapi::api::{
+        apps::v1::Deployment,
+        core::v1::{ConfigMap, Service},
+    };
+    use kube::api::PostParams;
+    let namespace = object["metadata"]["namespace"].as_str().unwrap().to_owned();
+    let post = PostParams::default();
+    match object["kind"].as_str().unwrap() {
+        "ConfigMap" => {
+            Api::<ConfigMap>::namespaced(client.clone(), &namespace)
+                .create(&post, &serde_json::from_value(object).unwrap())
+                .await
+                .unwrap();
+        }
+        "Secret" => {
+            Api::<Secret>::namespaced(client.clone(), &namespace)
+                .create(&post, &serde_json::from_value(object).unwrap())
+                .await
+                .unwrap();
+        }
+        "Service" => {
+            Api::<Service>::namespaced(client.clone(), &namespace)
+                .create(&post, &serde_json::from_value(object).unwrap())
+                .await
+                .unwrap();
+        }
+        "Deployment" => {
+            Api::<Deployment>::namespaced(client.clone(), &namespace)
+                .create(&post, &serde_json::from_value(object).unwrap())
+                .await
+                .unwrap();
+        }
+        other => panic!("unexpected object {other}"),
+    }
 }
 
 /// State, generated credentials and plans stay in a private directory, including
@@ -310,8 +357,12 @@ async fn release_count(client: &kube::Client, namespace: &str, release: &str) ->
         .len()
 }
 
-async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
-    let connection = operations.connect(spec).await.unwrap();
+/// A client of a managed gateway through `connection`'s port-forward, with
+/// the token and TLS files in `environment`.
+fn gateway_client(
+    connection: &nemoclaw_sdk::kubernetes::Connection,
+    environment: BTreeMap<String, String>,
+) -> Result<OpenShell, ObservationError> {
     let file = |env: &str| FileRef { env: env.into() };
     let gateway = Gateway::External(ExternalGateway {
         endpoint: connection.endpoint().to_owned(),
@@ -325,11 +376,12 @@ async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
         }),
         ..Default::default()
     });
-    let client = OpenShell::connect(
-        &gateway.connection(),
-        Arc::new(Values(connection.environment())),
-    )
-    .unwrap();
+    OpenShell::connect(&gateway.connection(), Arc::new(Values(environment)))
+}
+
+async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
+    let connection = operations.connect(spec).await.unwrap();
+    let client = gateway_client(&connection, connection.environment()).unwrap();
     client
         .verify_gateway(ComputeDriver::Kubernetes)
         .await
@@ -347,7 +399,7 @@ async fn authenticated_gateway(operations: &Operations, spec: &Spec) {
     .token(time::OffsetDateTime::now_utc().unix_timestamp());
     let mut forged = connection.environment();
     forged.insert(TOKEN_ENV.into(), foreign);
-    let client = OpenShell::connect(&gateway.connection(), Arc::new(Values(forged))).unwrap();
+    let client = gateway_client(&connection, forged).unwrap();
     assert!(
         matches!(
             client.gateway_capabilities().await,
@@ -732,18 +784,24 @@ async fn sandbox_objects_left(
 }
 
 /// The document `deploy_image_and_export` applies: a managed gateway on
-/// `provider`, and one sandbox per `(sandbox, agent)` name pair running
-/// `image`'s agent, all sharing one inference profile. Each sandbox also
-/// grants an endpoint named for it, so no two sandboxes have the same policy.
+/// `provider` at a free loopback port, and one sandbox per `(sandbox, agent)`
+/// name pair running `image`'s agent, all sharing one inference profile with
+/// the keyless model server at `endpoint`. Each sandbox also grants an
+/// endpoint named for it, so no two sandboxes have the same policy.
 fn agent_document(
     provider: &str,
     uid: &str,
-    port: u16,
     namespace: &str,
     image: &str,
     pull_secrets: &[&str],
     sandboxes: &[(&str, &str)],
+    endpoint: &str,
 ) -> Document {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
     let harness = required("NEMOCLAW_TEST_AGENT_HARNESS");
     let sandboxes: String = sandboxes
         .iter()
@@ -788,14 +846,14 @@ spec:
       authentication: {{profile: development}}
       imagePullSecrets: {pull_secrets}
   inferenceProviders:
-    - name: hosted
+    - name: stub
       provider: openai
-      endpoint: https://inference.example.test/v1
+      endpoint: {endpoint}
   inferences:
     chat:
       routes:
         - name: primary
-          providerRef: hosted
+          providerRef: stub
           overrides:
             model: fixture-model
             maxTokens: 2048{extensions}
@@ -803,10 +861,11 @@ spec:
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
         pull_secrets = serde_json::to_string(pull_secrets).unwrap(),
-        // Pi needs a context window for a model it does not ship; OpenClaw
-        // declares no model extensions.
+        // Pi needs a context window and input types for a model it does not
+        // ship, as examples/fabric-pi.yaml declares; without `input`, Pi fails
+        // every request. OpenClaw declares no model extensions.
         extensions = if harness == "nvidia.fabric.pi" {
-            "\n            extensions:\n              context_window: 8192"
+            "\n            extensions:\n              context_window: 8192\n              input: [\"text\"]"
         } else {
             ""
         },
@@ -820,17 +879,21 @@ const ONE_AGENT: [(&str, &str); 1] = [("assistant", "main")];
 /// A full deployment on a real cluster through the public SDK: the managed
 /// gateway, then one agent sandbox per `(sandbox, agent)` name pair, each from
 /// an image built from this checkout and sharing one inference profile, as
-/// `examples/kubernetes/managed-development.yaml` does. Apply starts each
-/// agent through `fabric-agent-ctl`. Applying the document again, and then its
-/// export, must change nothing and keep each sandbox's ID and its agent's
-/// runtime ID; the first of these must also leave OpenTofu state as it was.
+/// `examples/kubernetes/managed-development.yaml` does. The profile names a
+/// fixed stub that the flow runs in its own namespace (see `requests`). Apply
+/// starts each agent through `fabric-agent-ctl`. Applying the document again,
+/// and then its export, must change nothing and keep each sandbox's ID and
+/// its agent's runtime ID; the first of these must also leave OpenTofu state
+/// as it was. After each of these two applies, every agent must answer one
+/// request from the runtime the first apply started, with the stub's reply.
 /// Each sandbox must have its own ID, and its agent must be bound to it.
 /// Export must recover the authored document; it also requires each sandbox's
 /// provider registrations and policy on the gateway to be the ones compiled
 /// for that sandbox, and the policies differ between sandboxes. Destroy must
 /// remove every `Sandbox` object and keep the gateway's storage: its
 /// namespace, encryption key and claims keep their UIDs. A failed apply
-/// prints the namespace's pods, events and log tails.
+/// prints the namespace's pods, events and log tails; a failed request also
+/// prints the stub's.
 ///
 /// `cargo ci live-kind` also provides:
 /// - `NEMOCLAW_TEST_BUNDLE`: the verified bundle
@@ -876,19 +939,15 @@ async fn deploy_image_and_export(
         &hex[20..]
     );
     let namespace = format!("nc-live-{}", &hex[..12]);
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let stub = requests::Stub::new(format!("nc-model-{}", &hex[..12]));
     let document = agent_document(
         provider,
         &uid,
-        port,
         &namespace,
         image,
         pull_secrets,
         sandboxes,
+        &stub.endpoint(),
     );
     // The SDK names the gateway's Helm release from metadata.uid alone.
     let release = format!("{}-gateway", document.workspace());
@@ -900,12 +959,19 @@ async fn deploy_image_and_export(
     let kubeconfig = std::path::absolute(required("NEMOCLAW_TEST_KUBECONFIG")).unwrap();
     let relative = from_root.join(kubeconfig.strip_prefix("/").unwrap());
     // Connect before deploying, so a bad kubeconfig leaves nothing to remove.
-    let cluster = connect(&ClusterTarget {
+    let target = ClusterTarget {
         kubeconfig,
         context: required("NEMOCLAW_TEST_KUBE_CONTEXT"),
-    })
-    .await
-    .unwrap();
+    };
+    let cluster = connect(&target).await.unwrap();
+    // The requests reach the gateway as the SDK's providers do, from the
+    // deployment's Kubernetes state.
+    let operations = Operations {
+        server: server(&target).unwrap(),
+        client: cluster.clone(),
+        state: state.path().join("kubernetes"),
+        openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
+    };
     let credentials = Values(BTreeMap::from([
         (
             "NEMOCLAW_TEST_KUBECONFIG".into(),
@@ -919,6 +985,8 @@ async fn deploy_image_and_export(
     )
     .with_secrets(Arc::new(credentials));
     let cancel = CancellationToken::new();
+    // The stub's pod starts while the deployment applies.
+    stub.place(&cluster).await;
 
     // Stop waiting on the caller's hook if apply fails first, so the error and
     // the namespace's state show. Every pod exists once apply succeeds, so
@@ -938,17 +1006,34 @@ async fn deploy_image_and_export(
         }
         () = &mut hook => apply.await,
     };
-    diagnosed(applied, &cluster, &namespace)
-        .await
-        .expect("the agent starts through fabric-agent-ctl");
+    let applied = diagnosed(applied, &cluster, &namespace).await;
+    // A failed first apply leaves the deployment, as before, but not the stub,
+    // whose state does not explain the failure.
+    if applied.is_err() {
+        stub.remove(&cluster).await;
+    }
+    applied.expect("the agent starts through fabric-agent-ctl");
     let state_file = state.path().join("terraform.tfstate");
     let state_snapshot = fs::read(&state_file).unwrap();
     let applied_identities = identities(state.path(), &document);
+    // Each request goes to the sandbox and runtime the first apply recorded.
+    let agents: Option<Vec<requests::Agent>> = applied_identities.as_ref().ok().map(|identities| {
+        sandboxes
+            .iter()
+            .map(|(sandbox, agent)| requests::Agent {
+                sandbox: (*sandbox).into(),
+                name: (*agent).into(),
+                binding: sandbox_binding(state.path(), sandbox),
+                runtime: identities[*sandbox].runtime.clone(),
+            })
+            .collect()
+    });
 
     // A complete deployment must apply unchanged, be exportable, and accept
-    // its export unchanged. Clean up before asserting so a failed check
-    // retains no live workload after this test. Storage is observed after
-    // these steps, so the comparison spans destroy alone.
+    // its export unchanged, and its agents must answer after each of these
+    // applies. Clean up before asserting so a failed check retains no live
+    // workload after this test. Storage is observed after these steps, so
+    // the comparison spans destroy alone.
     let unchanged = diagnosed(
         deployment.apply(&document, &cancel).await,
         &cluster,
@@ -956,6 +1041,14 @@ async fn deploy_image_and_export(
     )
     .await;
     let unchanged_state = fs::read(&state_file).unwrap();
+    let stub_ready = stub.ready(&cluster).await;
+    // Without the first apply's identities or the stub, no request is sent;
+    // both are asserted after destroy.
+    let requested = agents.as_deref().filter(|_| stub_ready.is_ok());
+    let after_unchanged = match requested {
+        Some(agents) => requests::round(&operations, agents, &[]).await,
+        None => Vec::new(),
+    };
     let exported = deployment.export(&cancel).await;
     let reapplied = match &exported {
         Ok(exported) => Some(
@@ -968,11 +1061,32 @@ async fn deploy_image_and_export(
         ),
         Err(_) => None,
     };
+    let after_export = match requested {
+        Some(agents) => requests::round(&operations, agents, &after_unchanged).await,
+        None => Vec::new(),
+    };
+    let unanswered: Vec<String> = requested
+        .into_iter()
+        .flat_map(|agents| {
+            [
+                ("after the unchanged apply", &after_unchanged),
+                ("after the export's apply", &after_export),
+            ]
+            .into_iter()
+            .flat_map(|(round, answers)| requests::problems(round, agents, answers, &stub.reply))
+        })
+        .collect();
+    if stub_ready.is_err() || !unanswered.is_empty() {
+        eprintln!("{}", namespace_diagnostics(&cluster, &stub.namespace).await);
+        eprintln!("{}", namespace_diagnostics(&cluster, &namespace).await);
+    }
     let reapplied_state = fs::read(&state_file).unwrap();
     let reapplied_identities = identities(state.path(), &document);
     let deployed_objects = sandbox_objects(&cluster, &namespace).await;
     let kept = retained(&cluster, &namespace, &release).await;
-    let destroyed = deployment.destroy(&cancel).await.unwrap();
+    let destroyed = deployment.destroy(&cancel).await;
+    stub.remove(&cluster).await;
+    let destroyed = destroyed.unwrap();
     let remaining = retained(&cluster, &namespace, &release).await;
     let objects_left = sandbox_objects_left(&cluster, &namespace).await;
     for change in &destroyed.changes {
@@ -1052,6 +1166,15 @@ async fn deploy_image_and_export(
             == remaining.expect("the gateway's storage is observable after destroy"),
         "namespace, encryption key and gateway PVC identities survive SDK destroy"
     );
+    stub_ready.unwrap_or_else(|error| panic!("{error}"));
+    // Fabric reports no runtime status, so a stopped runtime is found when it
+    // is next invoked: an answer from the first apply's runtime shows that it
+    // still runs. The stub's reply shows that the agent's request reached it.
+    assert!(
+        unanswered.is_empty(),
+        "each agent answers from its first runtime with the stub's reply:\n{}",
+        unanswered.join("\n")
+    );
     state_snapshot
 }
 
@@ -1068,11 +1191,14 @@ const THREE_AGENTS: [(&str, &str); 3] = [
 /// any cluster. The test writes the range itself once the namespace exists,
 /// as OpenShift would, then checks that the gateway and each sandbox's agent
 /// pod ran as its first UID. The shared flow checks that each agent keeps its
-/// own identities. The agents share this test's gateway to keep the live-kind
-/// suite within its 270-second budget.
+/// own identities and, after the unchanged apply and the export's apply,
+/// answers a request from the runtime the first apply started; a fixed stub
+/// replies, so no model runs. The agents share this test's gateway to keep
+/// the live-kind suite within its 270-second budget.
 #[tokio::test]
 #[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn on_openshift_three_agents_keep_separate_identities_and_run_as_the_namespace_uid() {
+async fn on_openshift_three_agents_keep_separate_identities_run_as_the_namespace_uid_and_answer_after_each_reapply()
+ {
     use k8s_openapi::api::core::v1::{Namespace, Pod};
     use kube::{
         Api,

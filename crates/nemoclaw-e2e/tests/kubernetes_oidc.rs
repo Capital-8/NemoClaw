@@ -4,10 +4,7 @@
 //! SDK's development issuer image, run in its own namespace as a stand-in for
 //! an identity provider.
 use super::*;
-use k8s_openapi::api::{
-    apps::v1::Deployment as KubeDeployment,
-    core::v1::{ConfigMap, Service},
-};
+use k8s_openapi::api::{apps::v1::Deployment as KubeDeployment, core::v1::ConfigMap};
 use kube::api::PostParams;
 use nemoclaw_sdk::kubernetes::{
     auth::{ADMIN_ROLE, Development, USER_ROLE},
@@ -16,12 +13,6 @@ use nemoclaw_sdk::kubernetes::{
 
 const TOKEN_ENV: &str = "NEMOCLAW_TEST_OIDC_TOKEN";
 const CA_CONFIG_MAP: &str = "existing-issuer-ca";
-
-fn random_hex(bytes: usize) -> String {
-    let mut buffer = vec![0u8; bytes];
-    getrandom::fill(&mut buffer).unwrap();
-    buffer.iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
 fn uuid() -> String {
     let mut uid = [0u8; 16];
@@ -52,41 +43,6 @@ async fn cluster_client() -> kube::Client {
             .unwrap(),
     )
     .unwrap()
-}
-
-/// Create one of the development issuer's objects. Its NetworkPolicy admits
-/// only a gateway in its own namespace, so an existing issuer omits it.
-async fn create(client: &kube::Client, object: Value) {
-    let namespace = object["metadata"]["namespace"].as_str().unwrap().to_owned();
-    let post = PostParams::default();
-    match object["kind"].as_str().unwrap() {
-        "ConfigMap" => {
-            Api::<ConfigMap>::namespaced(client.clone(), &namespace)
-                .create(&post, &serde_json::from_value(object).unwrap())
-                .await
-                .unwrap();
-        }
-        "Secret" => {
-            Api::<Secret>::namespaced(client.clone(), &namespace)
-                .create(&post, &serde_json::from_value(object).unwrap())
-                .await
-                .unwrap();
-        }
-        "Service" => {
-            Api::<Service>::namespaced(client.clone(), &namespace)
-                .create(&post, &serde_json::from_value(object).unwrap())
-                .await
-                .unwrap();
-        }
-        "Deployment" => {
-            Api::<KubeDeployment>::namespaced(client.clone(), &namespace)
-                .create(&post, &serde_json::from_value(object).unwrap())
-                .await
-                .unwrap();
-        }
-        "NetworkPolicy" => {}
-        other => panic!("unexpected issuer object {other}"),
-    }
 }
 
 fn document(uid: &str, namespace: &str, issuer: &str, audience: &str) -> Document {
@@ -179,8 +135,12 @@ async fn a_managed_gateway_accepts_an_existing_issuers_tokens_and_refuses_anothe
     let material = Development::new(keys.path().into(), "existing", &issuer_namespace, &audience)
         .ensure()
         .unwrap();
+    // The issuer's NetworkPolicy admits only a gateway in its own namespace,
+    // so an existing issuer omits it.
     for object in issuer::objects(&material, "existing", &issuer_namespace) {
-        create(&client, object).await;
+        if object["kind"] != "NetworkPolicy" {
+            create(&client, object).await;
+        }
     }
     let deployments = Api::<KubeDeployment>::namespaced(client.clone(), &issuer_namespace);
     let deadline = std::time::Instant::now() + Duration::from_secs(180);
