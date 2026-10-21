@@ -514,25 +514,42 @@ def _startup_process_identity_is_live(
 
 def _runtime_drm_groups(expected_uid: int) -> set[str]:
     # NVIDIA CDI adds nonzero groups for device nodes that are not world read/write.
-    # Only the runtime can create DRM character nodes under these pinned directories.
+    # Landlock denies /dev directory reads. Discover kernel device names through
+    # sysfs, then inspect metadata under pinned /dev directories without opening devices.
     descriptors: list[int] = []
     try:
-        descriptors.append(_open_directory("/dev"))
-        for name in (None, "dri"):
-            if name is not None:
-                descriptors.append(_open_child_directory(descriptors[-1], name, "/dev/dri"))
+        flags = os.O_PATH | _directory_flag() | _no_follow_flag() | _cloexec_flag()
+        for name in ("/dev", "dri"):
+            descriptors.append(os.open(
+                name, flags, dir_fd=descriptors[-1] if descriptors else None
+            ))
             directory = os.fstat(descriptors[-1])
             if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
                 return set()
+        device_directory = descriptors[-1]
+        descriptors.append(_open_directory("/sys/class/drm"))
+        directory = os.fstat(descriptors[-1])
+        if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
+            return set()
         groups: set[str] = set()
+        device_count = 0
         with os.scandir(descriptors[-1]) as entries:
             for index, entry in enumerate(entries):
-                if index >= 256:
+                # Sysfs includes connector entries and devices not assigned to this container.
+                if index >= 32768:
                     return set()
                 match = re.fullmatch(r"(?:card|renderD)([0-9]+)", entry.name)
                 if not match:
                     continue
-                device = entry.stat(follow_symlinks=False)
+                try:
+                    device = os.stat(
+                        entry.name, dir_fd=device_directory, follow_symlinks=False
+                    )
+                except FileNotFoundError:
+                    continue
+                device_count += 1
+                if device_count > 256:
+                    return set()
                 if (
                     stat.S_ISCHR(device.st_mode)
                     and os.major(device.st_rdev) == 226

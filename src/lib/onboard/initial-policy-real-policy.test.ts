@@ -410,6 +410,19 @@ describe("initial sandbox policy real preset merge", () => {
     expect(endpoints.every((endpoint) => endpoint.credential_binding === undefined)).toBe(true);
   });
 
+  it("grants Hermes DRM name discovery without GPU device access", () => {
+    const policy = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(repoPath("agents", "hermes", "policy-additions.yaml"), [], {
+        agentName: "hermes",
+      }),
+    );
+    const readOnly = policy.filesystem_policy?.read_only ?? [];
+    const readWrite = policy.filesystem_policy?.read_write ?? [];
+    expect(readOnly).toContain("/sys/class/drm");
+    expect([...readOnly, ...readWrite]).not.toEqual(expect.arrayContaining(["/dev/dri"]));
+    expect(readWrite).not.toContain("/sys/class/drm");
+  });
+
   it.each(shippingPolicyCases)(
     "prepares $agent policy $path with writable PTY devices but not their symlink",
     (policyCase) => {

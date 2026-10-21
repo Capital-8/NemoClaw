@@ -29,7 +29,12 @@ with tempfile.TemporaryDirectory() as tmp:
     dev = root / "dev"
     dev.mkdir()
     (dev / "dri").mkdir()
+    sysfs = root / "drm"
+    sysfs.mkdir()
     real_open, real_fstat, real_scandir = guard.os.open, guard.os.fstat, guard.os.scandir
+    real_path_flag = getattr(os, "O_PATH", None)
+    guard.os.O_PATH = real_path_flag or 0x200000
+    sysfs_inode = sysfs.stat().st_ino
     dev_inode, dri_inode = dev.stat().st_ino, (dev / "dri").stat().st_ino
     def open_device(path, flags, *args, **kwargs):
         if path == "/dev":
@@ -38,37 +43,61 @@ with tempfile.TemporaryDirectory() as tmp:
             path = str(dev)
         if path == "dri" and scenario == "bootstrap-drm-directory-symlink":
             raise OSError("symlink refused")
+        if path in (str(dev), "dri"):
+            if not flags & guard.os.O_PATH:
+                raise PermissionError("Landlock denies device directory reads")
+            if real_path_flag is None:
+                flags &= ~guard.os.O_PATH
+        if path == "/sys/class/drm":
+            if scenario == "bootstrap-drm-sysfs-unreadable":
+                raise PermissionError("sysfs denied")
+            if scenario == "bootstrap-drm-sysfs-symlink":
+                raise OSError("symlink refused")
+            path = str(sysfs)
         return real_open(path, flags, *args, **kwargs)
     def directory_metadata(fd):
         metadata = real_fstat(fd)
-        if metadata.st_ino in (dev_inode, dri_inode):
+        if metadata.st_ino in (dev_inode, dri_inode, sysfs_inode):
             values = list(metadata)
             values[4] = 1000 if scenario == "bootstrap-drm-directory-owner" else 0
             values[5] = 1000 if scenario == "bootstrap-drm-directory-group" else 0
             values[0] = stat.S_IFDIR | (0o777 if scenario == "bootstrap-drm-directory-writable" else 0o755)
+            if metadata.st_ino == sysfs_inode:
+                if scenario == "bootstrap-drm-sysfs-owner": values[4] = 1000
+                if scenario == "bootstrap-drm-sysfs-group": values[5] = 1000
+                if scenario == "bootstrap-drm-sysfs-writable": values[0] = stat.S_IFDIR | 0o777
             return os.stat_result(values)
         return metadata
+    devices = {"card0": (44, 0), "renderD128": (992, 128)}
+    if scenario == "bootstrap-drm-extended-minors":
+        devices = {"card256": (44, 256), "renderD257": (992, 257)}
+    if scenario == "bootstrap-drm-too-many":
+        devices = {f"card{n}": (44, n) for n in range(257)}
     class Devices:
         def __enter__(self):
-            if scenario == "bootstrap-drm-too-many":
-                return iter([types.SimpleNamespace(name="other")] * 257)
-            def entry(name, gid, minor):
-                mode = stat.S_IFCHR | 0o660
-                if scenario == "bootstrap-drm-node-symlink": mode = stat.S_IFLNK | 0o777
-                if scenario == "bootstrap-drm-regular-file": mode = stat.S_IFREG | 0o660
-                if scenario == "bootstrap-drm-world-rw": mode = stat.S_IFCHR | 0o666
-                metadata = types.SimpleNamespace(
-                    st_mode=mode,
-                    st_uid=1001 if scenario == "bootstrap-drm-device-owner" else 1000,
-                    st_gid=0 if scenario == "bootstrap-drm-device-root-group" else gid,
-                    st_rdev=os.makedev(1 if scenario == "bootstrap-drm-wrong-major" else 226,
-                        minor + 1 if scenario == "bootstrap-drm-wrong-minor" else minor),
-                )
-                return types.SimpleNamespace(name=name, stat=lambda *, follow_symlinks: metadata)
-            return iter([entry("card0", 44, 0), entry("renderD128", 992, 128)])
+            names = list(devices)
+            if scenario == "bootstrap-drm-unassigned-device":
+                names += ["card9999", "card0-HDMI-A-1"]
+            if scenario == "bootstrap-drm-sysfs-too-many":
+                names += ["connector"] * 32768
+            return iter(types.SimpleNamespace(name=name) for name in names)
         def __exit__(self, *_args): pass
+    def device_metadata(name):
+        if name not in devices: raise FileNotFoundError(name)
+        gid, minor = devices[name]
+        mode = stat.S_IFCHR | 0o660
+        if scenario == "bootstrap-drm-node-symlink": mode = stat.S_IFLNK | 0o777
+        if scenario == "bootstrap-drm-regular-file": mode = stat.S_IFREG | 0o660
+        if scenario == "bootstrap-drm-world-rw": mode = stat.S_IFCHR | 0o666
+        return types.SimpleNamespace(
+            st_mode=mode,
+            st_uid=1001 if scenario == "bootstrap-drm-device-owner" else 1000,
+            st_gid=0 if scenario == "bootstrap-drm-device-root-group" else gid,
+            st_rdev=os.makedev(1 if scenario == "bootstrap-drm-wrong-major" else 226,
+                minor + 1 if scenario == "bootstrap-drm-wrong-minor" else minor),
+        )
     def scan_devices(fd):
-        return Devices() if isinstance(fd, int) and real_fstat(fd).st_ino == dri_inode else real_scandir(fd)
+        return Devices() if isinstance(fd, int) and real_fstat(fd).st_ino == sysfs_inode else real_scandir(fd)
     guard.os.open, guard.os.fstat, guard.os.scandir = open_device, directory_metadata, scan_devices
     fields = {
         "Uid": "1000 1000 1000 1000", "Gid": "1000 1000 1000 1000",
@@ -120,6 +149,10 @@ with tempfile.TemporaryDirectory() as tmp:
     real_stat = guard.os.stat
     pid1_inode = real_stat(proc / "1").st_ino
     def metadata(name, **kwargs):
+        if isinstance(name, str) and name.startswith(("card", "renderD")):
+            assert kwargs == {"dir_fd": kwargs["dir_fd"], "follow_symlinks": False}
+            assert real_fstat(kwargs["dir_fd"]).st_ino == dri_inode
+            return device_metadata(name)
         observed = real_stat(name, **kwargs)
         if name == "status" and os.fstat(kwargs["dir_fd"]).st_ino == pid1_inode:
             values = list(observed)
@@ -140,6 +173,8 @@ with tempfile.TemporaryDirectory() as tmp:
     print(json.dumps(outcomes))
     guard.os.open, guard.os.fstat, guard.os.scandir = real_open, real_fstat, real_scandir
     guard.os.stat = real_stat
+    if real_path_flag is None: del guard.os.O_PATH
+    else: guard.os.O_PATH = real_path_flag
 `;
 
 describe("Hermes capability-free supervisor authority", () => {
@@ -165,6 +200,14 @@ describe("Hermes capability-free supervisor authority", () => {
     ["bootstrap-drm-wrong-major", false],
     ["bootstrap-drm-wrong-minor", false],
     ["bootstrap-drm-too-many", false],
+    ["bootstrap-drm-extended-minors", true],
+    ["bootstrap-drm-unassigned-device", true],
+    ["bootstrap-drm-sysfs-unreadable", false],
+    ["bootstrap-drm-sysfs-symlink", false],
+    ["bootstrap-drm-sysfs-owner", false],
+    ["bootstrap-drm-sysfs-group", false],
+    ["bootstrap-drm-sysfs-writable", false],
+    ["bootstrap-drm-sysfs-too-many", false],
     ["bootstrap-drm-unexplained", false],
     ["bootstrap-drm-repeated", false],
     ["bootstrap-extra-group", false],
