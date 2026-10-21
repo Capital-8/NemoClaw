@@ -159,6 +159,7 @@ describe("buildSandboxTarArgv", () => {
       "tar",
       "-czf",
       "/tmp/x.tgz",
+      "--no-recursion",
       "-C",
       "/sandbox/.openclaw/agents/main/sessions",
       "--",
@@ -288,7 +289,8 @@ describe("exportSandboxSessions", () => {
         force: true,
       });
 
-      expect(captureMock).toHaveBeenCalledTimes(2);
+      // sessions list + transcript probe + archive member check.
+      expect(captureMock).toHaveBeenCalledTimes(3);
       const captureCall = captureMock.mock.calls[0]?.[0] as string[];
       expect(captureCall.slice(0, 7)).toEqual([
         "sandbox",
@@ -304,6 +306,8 @@ describe("exportSandboxSessions", () => {
       expect(captureCall).toContain("list");
       expect(captureCall).toContain("--agent");
       expect(captureCall).toContain("main");
+      // The third capture is the post-tar archive member type check.
+      expect(shellCommand(captureMock.mock.calls[2]?.[0] as string[])).toContain("tar -tvzf");
 
       const tarCall = runMock.mock.calls[0]?.[0] as string[];
       expect(tarCall.slice(0, 7)).toEqual([
@@ -933,6 +937,53 @@ describe("exportSandboxSessions", () => {
       }),
     ).rejects.toThrow(/Failed to verify session transcripts/);
     expect(runMock).not.toHaveBeenCalled();
+    expect(transferRunMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the transcript probe returns diagnostic text instead of basenames", async () => {
+    // A nonzero probe with diagnostic stdout (gateway/sandbox failure) must not
+    // be mistaken for a missing transcript; it is a verification failure that
+    // preserves the diagnostic.
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    captureMock.mockReturnValueOnce(makeCapture("openshell: gateway unreachable\n", 1));
+
+    const error = await exportSandboxSessions({
+      sandboxName: "alpha",
+      out: "./out.tgz",
+      format: "tar",
+    }).then(
+      () => null,
+      (value: unknown) => value as Error,
+    );
+    expect(error).not.toBeNull();
+    expect(error?.message ?? "").toMatch(/Failed to verify session transcripts/);
+    expect(error?.message ?? "").toContain("openshell: gateway unreachable");
+    expect(runMock).not.toHaveBeenCalled();
+    expect(transferRunMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a tar export whose archive contains a non-regular member", async () => {
+    // The preflight passes and the re-check passes, but tar -tvzf reports a
+    // directory member (a transcript replaced mid-export), so no bundle is
+    // downloaded or published.
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    // Preflight probe passes; the archive member check reports a directory.
+    captureMock.mockReturnValueOnce(makeCapture("", 0));
+    captureMock.mockReturnValueOnce(
+      makeCapture("drwxr-xr-x root/root 0 2026-01-01 00:00 ./sid-a.jsonl", 0),
+    );
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      }),
+    ).rejects.toThrow(/archive contains non-regular members/);
     expect(transferRunMock).not.toHaveBeenCalled();
   });
 

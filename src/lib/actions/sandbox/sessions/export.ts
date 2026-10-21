@@ -322,6 +322,7 @@ async function exportSandboxSessionsUnlocked(
           `Failed to tar sessions for agent '${agent}' in sandbox '${opts.sandboxName}' (exit ${tarResult.status}).`,
         );
       }
+      assertAllArchiveMembersRegular(opts.sandboxName, target, tarballRemote);
 
       const downloadResult = await transfers.download({
         sandboxName: opts.sandboxName,
@@ -685,10 +686,21 @@ export function buildSandboxTarArgv(input: {
   tarballRemote: string;
   resolvedFiles: readonly string[];
 }): string[] {
-  // `--` separates tar options from operands so any file name that happens
-  // to start with `-` (even though SAFE_TOKEN_RE forbids that today) cannot
-  // be reinterpreted as a tar option.
-  const argv: string[] = ["tar", "-czf", input.tarballRemote, "-C", input.sourceDir, "--"];
+  // `--no-recursion` stops tar from descending into a directory, so a
+  // transcript replaced by a directory between the re-check and tar cannot
+  // expand the archive with files beneath the session store. `--` separates
+  // tar options from operands so any file name that happens to start with `-`
+  // (even though SAFE_TOKEN_RE forbids that today) cannot be reinterpreted as
+  // a tar option.
+  const argv: string[] = [
+    "tar",
+    "-czf",
+    input.tarballRemote,
+    "--no-recursion",
+    "-C",
+    input.sourceDir,
+    "--",
+  ];
   for (const file of input.resolvedFiles) argv.push(`./${file}`);
   return argv;
 }
@@ -901,16 +913,72 @@ function missingTranscriptFiles(
     { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
   );
   if (result.status === 0) return [];
-  const missing = (result.output ?? "")
+  // Only probe output lines that are one of the requested transcript
+  // basenames are valid "missing file" reports. A nonzero probe with empty
+  // output or diagnostic text (timeout, gateway, or sandbox failure) must
+  // fail closed as a verification error, not be surfaced as missing
+  // transcripts with a misleading recovery path.
+  const recognized = new Set(files);
+  const lines = (result.output ?? "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  if (missing.length === 0) {
+  const unrecognized = lines.filter((line) => !recognized.has(line));
+  if (lines.length === 0 || unrecognized.length > 0) {
+    const detail = lines.length > 0 ? `; probe output: ${unrecognized.join(", ")}` : "";
     throw new Error(
-      `Failed to verify session transcripts in sandbox '${sandboxName}' (exit ${result.status}). Verify the sandbox is live with \`${CLI_NAME} ${sandboxName} status\`.`,
+      `Failed to verify session transcripts in sandbox '${sandboxName}' (exit ${result.status})${detail}. Verify the sandbox is live with \`${CLI_NAME} ${sandboxName} status\`.`,
     );
   }
-  return missing;
+  return lines;
+}
+
+/**
+ * Verify every member of a built session archive is a regular file before the
+ * archive is downloaded. Combined with `--no-recursion`, this rejects a
+ * transcript replaced by a directory or symlink between the re-check and tar:
+ * the archive may contain an abnormal member, but it is refused here instead
+ * of being published.
+ */
+function assertAllArchiveMembersRegular(
+  sandboxName: string,
+  target: OpenShellSandboxTransferRequest["target"],
+  tarballRemote: string,
+): void {
+  const result = captureOpenshell(
+    scopeSandboxCommandToTarget(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--",
+        "sh",
+        "-c",
+        `tar -tvzf ${shellQuote(tarballRemote)}`,
+      ],
+      target,
+    ),
+    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `Failed to inspect the session archive in sandbox '${sandboxName}' (exit ${result.status}). The export was not written.`,
+    );
+  }
+  // `tar -tvzf` lists one line per member; the file-mode first character is
+  // `-` for a regular file, `d` for a directory, `l` for a symlink, etc.
+  const nonRegular = (result.output ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trimStart())
+    .filter((line) => line.length > 0)
+    .filter((line) => line[0] !== "-")
+    .map((line) => line.split(/\s+/).at(-1) ?? "?");
+  if (nonRegular.length > 0) {
+    throw new Error(
+      `Refusing to export: the session archive contains non-regular members (${nonRegular.join(", ")}). A transcript was likely replaced in the sandbox during the export. No export was written.`,
+    );
+  }
 }
 
 function stagingTarballPath(agent: string): string {
