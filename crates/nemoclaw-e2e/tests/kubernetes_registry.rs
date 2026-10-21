@@ -364,6 +364,7 @@ async fn a_private_agent_image_uses_cluster_secrets_without_credentials_in_state
         &image,
         metadata.to_str().unwrap(),
         &[SECRET],
+        &ONE_AGENT,
         async move |namespace| {
             let namespaces: Api<Namespace> = Api::all(caller.clone());
             let until = tokio::time::Instant::now() + Duration::from_secs(60);

@@ -21,15 +21,19 @@ cargo ci live-kind
 
 The runner builds Pi on ARM64 or OpenClaw on AMD64, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandbox from that image.
-The flow supplies a caller-relative kubeconfig and expects apply to complete with the agent started.
+The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
+Each sandbox also grants one endpoint named for it, so no two sandboxes have the same policy.
+The OpenShift-profile test deploys three sandboxes, `assistant`, `researcher`, and `reviewer`; the registry test deploys `assistant` alone.
+The flow supplies a caller-relative kubeconfig and expects apply to complete with every agent started.
 A second apply must report no changes.
 Its refresh records two values the first apply leaves for later: the sandbox's loaded policy hash and the auth resource's Helm release presence.
 Export must reproduce the authored configuration, and applying the export must report no changes and leave OpenTofu state as the second apply left it, apart from its serial and the order of check results.
-Each sandbox must keep its ID, and its agent its Fabric runtime ID, through the second apply and the export's apply.
-Destroy then keeps the namespace, encryption key, and gateway PVC with unchanged UIDs.
+Export refreshes each sandbox from the gateway and compares its provider registrations and policy with those NemoClaw compiles for it; this covers NemoClaw's mapping, not OpenShell's isolation.
+Each sandbox must have its own ID, with its agent bound to it, and keep that ID, the binding, and the agent's Fabric runtime ID through the second apply and the export's apply.
+Destroy must then remove every `Sandbox` object within 60 seconds and keep the namespace, encryption key, and gateway PVC with unchanged UIDs.
 If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, and the namespace's 15 most recent events; CI keeps that output in the suite's JUnit report for 14 days.
-The OpenShift-profile test also supplies namespace UID-range annotations on kind and checks that gateway and sandbox pods use the assigned UID.
+The OpenShift-profile test also supplies namespace UID-range annotations on kind and checks that the gateway pod and each sandbox's agent pod use the assigned UID.
+Its three agents share one gateway to keep the `live-kind` suite within its 270-second budget.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
 It checks anonymous and wrong-credential rejection, then deploys an agent with a caller-managed image pull Secret provisioned after namespace creation.
 A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.

@@ -13,10 +13,13 @@ use k8s_openapi::api::{
     apps::v1::StatefulSet,
     core::v1::{Namespace, PersistentVolumeClaim, Secret},
 };
-use kube::{Api, api::ListParams};
+use kube::{
+    Api,
+    api::{DynamicObject, ListParams},
+};
 use nemoclaw_e2e::{
     assert_same_deployment_state,
-    state::{runtime_id, sandbox_binding},
+    state::{agent_sandbox_id, runtime_id, sandbox_binding},
 };
 use nemoclaw_sdk::{
     ObservationError,
@@ -657,81 +660,115 @@ async fn diagnosed<T, E>(
     applied
 }
 
-/// Each sandbox's ID and its agent's Fabric runtime ID, by sandbox name, from
-/// the deployment's OpenTofu state. The readers panic on a missing record;
-/// the panic is returned so the caller can destroy before raising it.
+/// What OpenTofu state records about one sandbox and its agent.
+#[derive(Debug, PartialEq)]
+struct Identity {
+    /// The sandbox's ID.
+    sandbox: String,
+    /// The ID of the sandbox the agent is bound to.
+    agent_sandbox: String,
+    /// The agent's Fabric runtime ID.
+    runtime: String,
+}
+
+/// Each sandbox's identity, by sandbox name, from the deployment's OpenTofu
+/// state. The readers panic on a missing record; the panic is returned so the
+/// caller can destroy before raising it.
 fn identities(
     directory: &Path,
     document: &Document,
-) -> std::thread::Result<BTreeMap<String, (String, String)>> {
+) -> std::thread::Result<BTreeMap<String, Identity>> {
     std::panic::catch_unwind(|| {
         document
             .spec
             .sandboxes
             .iter()
             .map(|sandbox| {
-                let id = sandbox_binding(directory, &sandbox.name)["id"].clone();
-                let runtime = runtime_id(directory, &sandbox.name);
-                (sandbox.name.clone(), (id, runtime))
+                let identity = Identity {
+                    sandbox: sandbox_binding(directory, &sandbox.name)["id"].clone(),
+                    agent_sandbox: agent_sandbox_id(directory, &sandbox.name),
+                    runtime: runtime_id(directory, &sandbox.name),
+                };
+                (sandbox.name.clone(), identity)
             })
             .collect()
     })
 }
 
-/// A full deployment on a real cluster through the public SDK: the managed
-/// gateway, then an agent sandbox from an image built from this checkout.
-/// Apply starts the agent through `fabric-agent-ctl`. Applying the document
-/// again, and then its export, must change nothing and keep each sandbox's ID
-/// and its agent's runtime ID; the first of these must also leave OpenTofu
-/// state as it was. Export must recover the authored document, and destroy
-/// must keep the gateway's storage: its namespace, encryption key and claims
-/// keep their UIDs. A failed apply prints the namespace's pods, events and
-/// log tails.
-///
-/// `cargo ci live-kind` also provides:
-/// - `NEMOCLAW_TEST_BUNDLE`: the verified bundle
-/// - `NEMOCLAW_TEST_AGENT_IMAGE`: the agent image by digest, loaded into kind
-/// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
-/// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle
-async fn deploy_and_export(provider: &str, while_applying: impl AsyncFnOnce(&str)) {
-    let _ = deploy_image_and_export(
-        provider,
-        &required("NEMOCLAW_TEST_AGENT_IMAGE"),
-        &required("NEMOCLAW_TEST_AGENT_METADATA"),
-        &[],
-        while_applying,
+/// The names of the Agent Sandbox `Sandbox` objects in `namespace`, read in
+/// the version the cluster serves.
+async fn sandbox_objects(client: &kube::Client, namespace: &str) -> kube::Result<BTreeSet<String>> {
+    use kube::error::{DiscoveryError, Error};
+    // A missing kind is returned, not raised, so the caller still destroys.
+    let (resource, _) = kube::discovery::group(client, "agents.x-k8s.io")
+        .await?
+        .recommended_kind("Sandbox")
+        .ok_or_else(|| Error::Discovery(DiscoveryError::MissingKind("Sandbox".into())))?;
+    Ok(
+        Api::<DynamicObject>::namespaced_with(client.clone(), namespace, &resource)
+            .list(&ListParams::default())
+            .await?
+            .items
+            .into_iter()
+            .filter_map(|object| object.metadata.name)
+            .collect(),
     )
-    .await;
 }
 
-async fn deploy_image_and_export(
+/// The `Sandbox` objects left in `namespace` once none remain or 60 s pass,
+/// as their deletion can finish after destroy returns.
+async fn sandbox_objects_left(
+    client: &kube::Client,
+    namespace: &str,
+) -> kube::Result<BTreeSet<String>> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let left = sandbox_objects(client, namespace).await;
+        if left.as_ref().is_ok_and(BTreeSet::is_empty) || std::time::Instant::now() >= deadline {
+            return left;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// The document `deploy_image_and_export` applies: a managed gateway on
+/// `provider`, and one sandbox per `(sandbox, agent)` name pair running
+/// `image`'s agent, all sharing one inference profile. Each sandbox also
+/// grants an endpoint named for it, so no two sandboxes have the same policy.
+fn agent_document(
     provider: &str,
+    uid: &str,
+    port: u16,
+    namespace: &str,
     image: &str,
-    metadata: &str,
     pull_secrets: &[&str],
-    while_applying: impl AsyncFnOnce(&str),
-) -> Vec<u8> {
-    use nemoclaw_sdk::{CancellationToken, Deployment, config::Document};
-    let mut uid = [0u8; 16];
-    getrandom::fill(&mut uid).unwrap();
-    uid[6] = (uid[6] & 0x0f) | 0x40;
-    uid[8] = (uid[8] & 0x3f) | 0x80;
-    let hex: String = uid.iter().map(|byte| format!("{byte:02x}")).collect();
-    let uid = format!(
-        "{}-{}-{}-{}-{}",
-        &hex[..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..]
-    );
-    let namespace = format!("nc-live-{}", &hex[..12]);
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    sandboxes: &[(&str, &str)],
+) -> Document {
     let harness = required("NEMOCLAW_TEST_AGENT_HARNESS");
+    let sandboxes: String = sandboxes
+        .iter()
+        .map(|(sandbox, agent)| {
+            format!(
+                "
+    - name: {sandbox}
+      image:
+        ref: {image}
+        metadata: {{env: NEMOCLAW_TEST_AGENT_METADATA}}
+      network:
+        tier: isolated
+        grants:
+          {sandbox}:
+            endpoints:
+              - host: {sandbox}.example.test
+                port: 443
+      harness:
+        kind: {harness}
+      agent:
+        name: {agent}
+        inferenceRef: chat"
+            )
+        })
+        .collect();
     let yaml = format!(
         "apiVersion: nemoclaw.nvidia.com/v1alpha1
 kind: NemoClawConfig
@@ -754,38 +791,105 @@ spec:
     - name: hosted
       provider: openai
       endpoint: https://inference.example.test/v1
-  sandboxes:
-    - name: assistant
-      image:
-        ref: {image}
-        metadata: {{env: NEMOCLAW_TEST_AGENT_METADATA}}
-      network:
-        tier: isolated
-      harness:
-        kind: {harness}
-      agent:
-        name: main
-        inference:
-          routes:
-            - name: primary
-              providerRef: hosted
-              overrides:
-                model: fixture-model
-                maxTokens: 2048{extensions}
+  inferences:
+    chat:
+      routes:
+        - name: primary
+          providerRef: hosted
+          overrides:
+            model: fixture-model
+            maxTokens: 2048{extensions}
+  sandboxes:{sandboxes}
 ",
         context = required("NEMOCLAW_TEST_KUBE_CONTEXT"),
-        image = image,
         pull_secrets = serde_json::to_string(pull_secrets).unwrap(),
-        harness = harness,
         // Pi needs a context window for a model it does not ship; OpenClaw
         // declares no model extensions.
         extensions = if harness == "nvidia.fabric.pi" {
-            "\n                extensions:\n                  context_window: 8192"
+            "\n            extensions:\n              context_window: 8192"
         } else {
             ""
         },
     );
-    let document = Document::parse(yaml.as_bytes()).unwrap();
+    Document::parse(yaml.as_bytes()).unwrap()
+}
+
+/// The one sandbox, and its agent, that a deployment has unless a test needs more.
+const ONE_AGENT: [(&str, &str); 1] = [("assistant", "main")];
+
+/// A full deployment on a real cluster through the public SDK: the managed
+/// gateway, then one agent sandbox per `(sandbox, agent)` name pair, each from
+/// an image built from this checkout and sharing one inference profile, as
+/// `examples/kubernetes/managed-development.yaml` does. Apply starts each
+/// agent through `fabric-agent-ctl`. Applying the document again, and then its
+/// export, must change nothing and keep each sandbox's ID and its agent's
+/// runtime ID; the first of these must also leave OpenTofu state as it was.
+/// Each sandbox must have its own ID, and its agent must be bound to it.
+/// Export must recover the authored document; it also requires each sandbox's
+/// provider registrations and policy on the gateway to be the ones compiled
+/// for that sandbox, and the policies differ between sandboxes. Destroy must
+/// remove every `Sandbox` object and keep the gateway's storage: its
+/// namespace, encryption key and claims keep their UIDs. A failed apply
+/// prints the namespace's pods, events and log tails.
+///
+/// `cargo ci live-kind` also provides:
+/// - `NEMOCLAW_TEST_BUNDLE`: the verified bundle
+/// - `NEMOCLAW_TEST_AGENT_IMAGE`: the agent image by digest, loaded into kind
+/// - `NEMOCLAW_TEST_AGENT_HARNESS`: its Fabric adapter
+/// - `NEMOCLAW_TEST_AGENT_METADATA`: its metadata bundle
+async fn deploy_and_export(
+    provider: &str,
+    sandboxes: &[(&str, &str)],
+    while_applying: impl AsyncFnOnce(&str),
+) {
+    let _ = deploy_image_and_export(
+        provider,
+        &required("NEMOCLAW_TEST_AGENT_IMAGE"),
+        &required("NEMOCLAW_TEST_AGENT_METADATA"),
+        &[],
+        sandboxes,
+        while_applying,
+    )
+    .await;
+}
+
+async fn deploy_image_and_export(
+    provider: &str,
+    image: &str,
+    metadata: &str,
+    pull_secrets: &[&str],
+    sandboxes: &[(&str, &str)],
+    while_applying: impl AsyncFnOnce(&str),
+) -> Vec<u8> {
+    use nemoclaw_sdk::{CancellationToken, Deployment};
+    let mut uid = [0u8; 16];
+    getrandom::fill(&mut uid).unwrap();
+    uid[6] = (uid[6] & 0x0f) | 0x40;
+    uid[8] = (uid[8] & 0x3f) | 0x80;
+    let hex: String = uid.iter().map(|byte| format!("{byte:02x}")).collect();
+    let uid = format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    );
+    let namespace = format!("nc-live-{}", &hex[..12]);
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let document = agent_document(
+        provider,
+        &uid,
+        port,
+        &namespace,
+        image,
+        pull_secrets,
+        sandboxes,
+    );
     // The SDK names the gateway's Helm release from metadata.uid alone.
     let release = format!("{}-gateway", document.workspace());
     let state = tempfile::tempdir().unwrap();
@@ -817,14 +921,18 @@ spec:
     let cancel = CancellationToken::new();
 
     // Stop waiting on the caller's hook if apply fails first, so the error and
-    // the namespace's state show; after a successful apply, wait for the hook.
+    // the namespace's state show. Every pod exists once apply succeeds, so
+    // the hook then gets 30 s more; destroy still runs if it never finishes,
+    // before nextest stops the test.
     let apply = deployment.apply(&document, &cancel);
     let hook = while_applying(&namespace);
     tokio::pin!(apply, hook);
     let applied = tokio::select! {
         result = &mut apply => {
-            if result.is_ok() {
-                hook.await;
+            if result.is_ok()
+                && tokio::time::timeout(Duration::from_secs(30), &mut hook).await.is_err()
+            {
+                eprintln!("the caller's hook did not finish within 30 s of a successful apply");
             }
             result
         }
@@ -862,9 +970,11 @@ spec:
     };
     let reapplied_state = fs::read(&state_file).unwrap();
     let reapplied_identities = identities(state.path(), &document);
+    let deployed_objects = sandbox_objects(&cluster, &namespace).await;
     let kept = retained(&cluster, &namespace, &release).await;
     let destroyed = deployment.destroy(&cancel).await.unwrap();
     let remaining = retained(&cluster, &namespace, &release).await;
+    let objects_left = sandbox_objects_left(&cluster, &namespace).await;
     for change in &destroyed.changes {
         assert!(
             !change.resource.contains("kubernetes_storage"),
@@ -878,6 +988,10 @@ spec:
         "an unchanged apply changes nothing: {:?}",
         unchanged.changes
     );
+    // Export refreshes each sandbox from the gateway and compares its provider
+    // registrations and policy with those compiled for it. The policies differ
+    // between sandboxes, so a sandbox holding another's policy fails export,
+    // if the unchanged apply's refresh has not already failed.
     assert_eq!(
         exported.expect("export of the applied deployment must succeed"),
         document,
@@ -904,6 +1018,35 @@ spec:
         reapplied_identities, applied_identities,
         "unchanged applies keep each sandbox and its agent's runtime"
     );
+    let sandbox_ids: BTreeSet<_> = applied_identities
+        .values()
+        .map(|identity| &identity.sandbox)
+        .collect();
+    assert_eq!(
+        sandbox_ids.len(),
+        document.spec.sandboxes.len(),
+        "each sandbox has its own ID"
+    );
+    // Fabric makes runtime IDs unique only within one process, and each
+    // sandbox runs its own, so the binding identifies the agent instead.
+    for (name, identity) in &applied_identities {
+        assert_eq!(
+            identity.agent_sandbox, identity.sandbox,
+            "the agent in sandbox {name} is bound to that sandbox"
+        );
+    }
+    assert_eq!(
+        deployed_objects
+            .expect("Sandbox objects are observable before destroy")
+            .len(),
+        document.spec.sandboxes.len(),
+        "the namespace holds one Sandbox object per sandbox before destroy"
+    );
+    assert_eq!(
+        objects_left.expect("Sandbox objects are observable after destroy"),
+        BTreeSet::new(),
+        "destroy removes every Sandbox object"
+    );
     assert!(
         kept.expect("the gateway's storage is observable before destroy")
             == remaining.expect("the gateway's storage is observable after destroy"),
@@ -912,14 +1055,24 @@ spec:
     state_snapshot
 }
 
-/// The OpenShift profile on kind. kind does not enforce OpenShift's security
-/// policy, but the SDK and OpenShell both read the UID range OpenShift writes
-/// on each namespace, and that works on any cluster. The test writes the
-/// range itself once the namespace exists, as OpenShift would, then checks
-/// that the gateway and the sandbox both ran as its first UID.
+/// The sandboxes the OpenShift-profile test deploys, with their agents.
+const THREE_AGENTS: [(&str, &str); 3] = [
+    ("assistant", "main"),
+    ("researcher", "researcher"),
+    ("reviewer", "reviewer"),
+];
+
+/// Three agents on one gateway with the OpenShift profile, on kind. kind does
+/// not enforce OpenShift's security policy, but the SDK and OpenShell both
+/// read the UID range OpenShift writes on each namespace, and that works on
+/// any cluster. The test writes the range itself once the namespace exists,
+/// as OpenShift would, then checks that the gateway and each sandbox's agent
+/// pod ran as its first UID. The shared flow checks that each agent keeps its
+/// own identities. The agents share this test's gateway to keep the live-kind
+/// suite within its 270-second budget.
 #[tokio::test]
 #[ignore = "needs a Kubernetes cluster with Agent Sandbox and a loaded agent image; run through cargo ci live-kind"]
-async fn on_openshift_the_sandbox_runs_as_the_namespace_uid() {
+async fn on_openshift_three_agents_keep_separate_identities_and_run_as_the_namespace_uid() {
     use k8s_openapi::api::core::v1::{Namespace, Pod};
     use kube::{
         Api,
@@ -938,8 +1091,8 @@ async fn on_openshift_the_sandbox_runs_as_the_namespace_uid() {
             .unwrap(),
     )
     .unwrap();
-    let observed = std::sync::Mutex::new(None::<(Option<i64>, Option<i64>)>);
-    deploy_and_export("openshift", async |namespace| {
+    let observed = std::sync::Mutex::new(None::<(BTreeMap<&str, Option<i64>>, Option<i64>)>);
+    deploy_and_export("openshift", &THREE_AGENTS, async |namespace| {
         // Annotate the namespace as soon as the SDK creates it, as OpenShift
         // does when a project is created.
         let namespaces: Api<Namespace> = Api::all(client.clone());
@@ -963,7 +1116,7 @@ async fn on_openshift_the_sandbox_runs_as_the_namespace_uid() {
             );
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-        // Read the sandbox's and the gateway's users while they still run.
+        // Read each agent's and the gateway's users while they still run.
         let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
         loop {
@@ -991,26 +1144,34 @@ async fn on_openshift_the_sandbox_runs_as_the_namespace_uid() {
                             })
                     })
             };
-            if let (Some(sandbox), Some(gateway)) = (
-                user("--assistant", "agent"),
-                user("-gateway-0", "openshell-gateway"),
-            ) {
-                *observed.lock().unwrap() = Some((sandbox, gateway));
+            // Each sandbox's pod is named `<workspace>--<sandbox>`.
+            let agents: Option<BTreeMap<_, _>> = THREE_AGENTS
+                .iter()
+                .map(|(sandbox, _)| Some((*sandbox, user(&format!("--{sandbox}"), "agent")?)))
+                .collect();
+            if let (Some(agents), Some(gateway)) = (agents, user("-gateway-0", "openshell-gateway"))
+            {
+                *observed.lock().unwrap() = Some((agents, gateway));
                 break;
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "the sandbox and gateway pods never appeared"
+                "the agent and gateway pods never appeared"
             );
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     })
     .await;
-    let (sandbox, gateway) = observed.into_inner().unwrap().expect("pods observed");
+    let (agents, gateway) = observed
+        .into_inner()
+        .unwrap()
+        .expect("the agent and gateway pods appeared");
     assert_eq!(
-        sandbox,
-        Some(1_000_680_000),
-        "the sandbox runs as the namespace's first UID"
+        agents,
+        THREE_AGENTS
+            .map(|(sandbox, _)| (sandbox, Some(1_000_680_000)))
+            .into(),
+        "each sandbox's agent pod runs as the namespace's first UID"
     );
     assert_eq!(
         gateway,
