@@ -1070,6 +1070,19 @@ function observeInferenceRouteForSelection(input: {
   return observeInferenceRouteBeforeMutation(input.deps, input.gatewayName);
 }
 
+/** Native selections never read or write the shared route, so it cannot show a change (#13598). */
+function sharedRouteSelectionChanged(input: {
+  nativeProvider: boolean;
+  rollbackRoute: { provider: string; model: string } | null;
+  provider: string;
+  model: string;
+}): boolean {
+  if (input.nativeProvider) return false;
+  return (
+    input.rollbackRoute?.provider !== input.provider || input.rollbackRoute?.model !== input.model
+  );
+}
+
 function providerBackedRouteLacksRollbackTarget(input: {
   nativeProvider: boolean;
   directProviderBinding: boolean;
@@ -2088,8 +2101,12 @@ async function runInferenceSetWithoutHostLock(
         patched.changed,
         retryingOpenClawConfigSync,
         appliedProvider,
-        rollbackRoute?.provider !== provider,
-        rollbackRoute?.model !== model,
+        sharedRouteSelectionChanged({
+          nativeProvider: selectingNative,
+          rollbackRoute,
+          provider,
+          model,
+        }),
         previousProvider !== provider,
         previousModel !== model,
         previousInferenceApi !== preferredInferenceApi,
