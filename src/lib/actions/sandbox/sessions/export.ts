@@ -382,6 +382,9 @@ async function exportSandboxSessionsUnlocked(
     }
     const hostStagingDir = fs.mkdtempSync(path.join(hostDest, ".sessions-export-"));
     try {
+      // Download and verify every selected transcript into the private staging
+      // directory first. Publishing only after all downloads pass means a
+      // mid-loop transfer failure leaves no partial export in hostDest.
       for (const file of resolvedFiles) {
         const stagingPath = path.join(hostStagingDir, file);
         const downloadResult = await transfers.download({
@@ -398,7 +401,9 @@ async function exportSandboxSessionsUnlocked(
         // Session JSONL can contain pasted secrets — restrict each file to
         // owner-only before it is published (the rename preserves the mode).
         hardenPermissions(stagingPath);
-        fs.renameSync(stagingPath, path.join(hostDest, file));
+      }
+      for (const file of resolvedFiles) {
+        fs.renameSync(path.join(hostStagingDir, file), path.join(hostDest, file));
       }
     } finally {
       removeHostStagingDir(hostStagingDir);
@@ -703,10 +708,11 @@ function buildShellInvocation(input: {
   //
   // The archive operation re-verifies each transcript is a regular,
   // non-symlink file immediately before tar reads it, using absolute paths
-  // under sourceDir. The early preflight probe is a diagnostic; this loop
-  // closes the sandbox-filesystem race where a transcript is replaced by a
-  // directory or symlink between the probe and tar, which would otherwise
-  // make tar recurse a directory or pack an attacker-controlled link.
+  // under sourceDir. This is a best-effort re-check: the test and tar are
+  // separate commands, so a transcript replaced between them can still be
+  // bundled. It narrows, but does not eliminate, the window where tar could
+  // recurse a directory or pack a link; the preflight probe remains the
+  // primary diagnostic.
   const quoted = tarArgv.map(shellQuote).join(" ");
   const quotedTarball = shellQuote(tarballRemote);
   const quotedStagingDir = shellQuote(STAGING_DIR_IN_SANDBOX);

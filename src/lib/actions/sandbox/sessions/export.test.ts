@@ -917,6 +917,25 @@ describe("exportSandboxSessions", () => {
     expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
   });
 
+  it("fails closed when the transcript probe errors without naming a missing file", async () => {
+    // A nonzero probe with no output (timeout, gateway failure, or malformed
+    // result) must stop the export, not be mistaken for "all transcripts exist".
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    captureMock.mockReturnValueOnce(makeCapture("", 1));
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      }),
+    ).rejects.toThrow(/Failed to verify session transcripts/);
+    expect(runMock).not.toHaveBeenCalled();
+    expect(transferRunMock).not.toHaveBeenCalled();
+  });
+
   it("refuses a tar export when a transcript is replaced by a non-regular file between preflight and archive", async () => {
     // The preflight probe passes (default), but the archive-step re-check fails
     // with exit 3 because a sandbox process replaced the transcript with a
