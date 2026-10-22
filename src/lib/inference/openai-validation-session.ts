@@ -22,11 +22,12 @@ import {
   MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
   STREAMING_EVENT_PROBE_MAX_SECONDS,
 } from "./probe-http-helpers";
-import { RETRIABLE_HTTP_PROBE_STATUSES } from "./probe/transient-http-policy";
+import { isRetriableHttpProbeStatus } from "./probe/transient-http-policy";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
 export interface OpenAiValidationOptions {
+  provider?: string;
   authMode?: "bearer" | "query-param";
   extraHeaders?: readonly string[];
   requireResponsesToolCalling?: boolean;
@@ -196,6 +197,7 @@ async function requestWithHttpRetry(
   name: string,
   request: () => Promise<CurlProbeResult>,
   retryTransientHttp = true,
+  provider?: string,
 ): Promise<CurlProbeResult> {
   return retryUntilAsync(
     async (attempt) => {
@@ -212,7 +214,7 @@ async function requestWithHttpRetry(
       accept: (result) =>
         !retryTransientHttp ||
         result.curlStatus !== 0 ||
-        !RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus),
+        !isRetriableHttpProbeStatus(result.httpStatus, provider),
       retryDelaysMs: RETRY_DELAYS_MS,
       onRetry: (result, delayMs) => {
         console.log(
@@ -287,12 +289,16 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
         "nemoclaw.inference.validation_probe",
         { probe_name: "Responses API", api: "openai-responses" },
         () =>
-          requestWithHttpRetry("Responses API", () =>
-            session.request({
-              ...auth,
-              body: responsesPayload(model, options.requireResponsesToolCalling === true),
-              timeoutMs: deps.getResponsesTimeoutMs(options),
-            }),
+          requestWithHttpRetry(
+            "Responses API",
+            () =>
+              session.request({
+                ...auth,
+                body: responsesPayload(model, options.requireResponsesToolCalling === true),
+                timeoutMs: deps.getResponsesTimeoutMs(options),
+              }),
+            true,
+            options.provider,
           ),
       );
       if (responses.curlStatus !== 0) return nativeFailureFallback("native_responses_failure");
@@ -355,6 +361,7 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
                 ),
               }),
             retryTransientHttp,
+            options.provider,
           );
         const retryReasoningOnly = async (
           candidate: CurlProbeResult,
@@ -415,7 +422,10 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
         : nativeFailureFallback("native_chat_failure");
     }
     if (!chat.ok) {
-      return retriedReasoningTruncation
+      // Replaying an exhausted NVIDIA HTTP 500 through curl would reset the
+      // four-request budget without changing the request or endpoint.
+      return retriedReasoningTruncation ||
+        (options.provider === "nvidia-prod" && chat.httpStatus === 500)
         ? failedChatValidation(chat, chat.message)
         : nativeFailureFallback("native_terminal_http_failure");
     }
