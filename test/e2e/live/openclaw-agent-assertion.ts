@@ -21,6 +21,7 @@ import {
   classifyOpenClawAgentAssertion,
   projectOpenClawAgentFailureArtifact,
   projectPersonalPublicFetchToolEvidenceArtifact,
+  parseOpenClawToolEvidence,
   runOpenClawAgentAssertionRetry,
   text,
   type OpenClawPublicFetchExpectation,
@@ -140,11 +141,55 @@ export async function runOpenClawAgentAssertion(
         reply,
         response: combined,
       });
+      const reduceToolEvidence = () =>
+        sandbox.exec(
+          args.sandboxName,
+          [
+            "node",
+            "-e",
+            buildOpenClawToolEvidenceReducerScript(args.publicFetchExpectation),
+            OPENCLAW_MAIN_AGENT_DATABASE,
+            sessionId,
+          ],
+          { env: commandEnv(), persistArtifacts: false, timeoutMs: 30_000 },
+        );
       if (!classification.passed && args.persistCommandArtifacts === false) {
         await artifacts.writeJson(
           `actions/${args.label}-attempt-${attempt}-agent-failure.json`,
           projectOpenClawAgentFailureArtifact(attempt, classification, agent),
         );
+        if (args.toolEvidenceValidator) {
+          // A timed-out command may have persisted progress without returning JSON.
+          // Keep the read-only projection diagnostic; it cannot accept the failed turn.
+          let diagnostic: {
+            schemaVersion: 1;
+            state: string;
+            toolEvidence?: ReturnType<typeof projectPersonalPublicFetchToolEvidenceArtifact>;
+          } = { schemaVersion: 1, state: "command-failed" };
+          try {
+            const reduced = await reduceToolEvidence();
+            if (reduced.exitCode === 0) {
+              diagnostic.state = "output-invalid";
+              try {
+                diagnostic = {
+                  schemaVersion: 1,
+                  state: "collected",
+                  toolEvidence: projectPersonalPublicFetchToolEvidenceArtifact(
+                    parseOpenClawToolEvidence(reduced.stdout),
+                  ),
+                };
+              } catch {
+                // Parser errors can contain private session data.
+              }
+            }
+          } catch {
+            diagnostic.state = "command-threw";
+          }
+          await artifacts.writeJson(
+            `actions/${args.label}-attempt-${attempt}-failed-turn-trajectory.json`,
+            diagnostic,
+          );
+        }
       }
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
@@ -161,22 +206,7 @@ export async function runOpenClawAgentAssertion(
             projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence),
           );
         },
-        reduceToolEvidence: async () =>
-          sandbox.exec(
-            args.sandboxName,
-            [
-              "node",
-              "-e",
-              buildOpenClawToolEvidenceReducerScript(args.publicFetchExpectation),
-              OPENCLAW_MAIN_AGENT_DATABASE,
-              sessionId,
-            ],
-            {
-              env: commandEnv(),
-              persistArtifacts: false,
-              timeoutMs: 30_000,
-            },
-          ),
+        reduceToolEvidence,
         reply,
         toolEvidenceValidator: args.toolEvidenceValidator,
       });

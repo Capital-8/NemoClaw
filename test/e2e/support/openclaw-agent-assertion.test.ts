@@ -195,6 +195,100 @@ function replyFixture(reply: string, meta: Record<string, unknown> = {}) {
 }
 
 describe("unavailable-search assertion wiring", () => {
+  it.each([
+    {
+      state: "collected",
+      collect: async () => ({
+        exitCode: 0,
+        stdout:
+          OPENCLAW_TOOL_EVIDENCE_MARKER +
+          JSON.stringify(
+            reduceOpenClawToolEvidence(
+              JSON.stringify({
+                message: {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "toolCall",
+                      id: "call-1",
+                      name: "tavily_search",
+                      arguments: { query: SECRET_SENTINEL },
+                    },
+                  ],
+                },
+              }),
+              "",
+            ),
+          ),
+      }),
+      expected: {
+        state: "collected",
+        toolEvidence: { finalStatusCount: 0, forbiddenToolCount: 1 },
+      },
+    },
+    {
+      state: "command-failed",
+      collect: async () => ({ exitCode: 1, stdout: SECRET_SENTINEL }),
+      expected: { state: "command-failed" },
+    },
+    {
+      state: "output-invalid",
+      collect: async () => ({ exitCode: 0, stdout: SECRET_SENTINEL }),
+      expected: { state: "output-invalid" },
+    },
+    {
+      state: "command-threw",
+      collect: async () => {
+        throw new Error(SECRET_SENTINEL);
+      },
+      expected: { state: "command-threw" },
+    },
+  ])(
+    "retains $state trajectory diagnostics after a timed-out turn without accepting or retrying it",
+    async ({ collect, expected }) => {
+      const f = replyFixture("");
+      const validator = vi.fn().mockReturnValue(true);
+      f.host.command.mockResolvedValue({
+        artifacts: { result: "", stderr: "", stdout: "" },
+        command: [],
+        durationMs: 180_000,
+        exitCode: 255,
+        signal: null,
+        stderr: "",
+        stdout: "",
+        timedOut: true,
+      });
+      f.sandbox.exec.mockImplementation(collect);
+      try {
+        await expect(
+          runOpenClawAgentAssertion(
+            f.host as unknown as HostCliClient,
+            f.sandbox as unknown as SandboxClient,
+            f.artifacts,
+            { ...f.options, toolEvidenceValidator: validator },
+          ),
+        ).rejects.toThrow(/agent output omitted; exit=255/u);
+        const diagnostic = readFileSync(
+          join(
+            f.root,
+            "artifacts",
+            "actions",
+            "unavailable-search-attempt-1-failed-turn-trajectory.json",
+          ),
+          "utf8",
+        );
+        expect(JSON.parse(diagnostic)).toMatchObject({ schemaVersion: 1, ...expected });
+        expect(diagnostic).not.toContain("tavily_search");
+        expect(diagnostic).not.toContain(SECRET_SENTINEL);
+        expect(f.sandbox.exec).toHaveBeenCalledTimes(1);
+        expect(f.host.command).toHaveBeenCalledTimes(1);
+        expect(validator).not.toHaveBeenCalled();
+      } finally {
+        rmSync(f.root, { force: true, recursive: true });
+      }
+    },
+  );
+
   it("reduces negative-path tool evidence without an expected fetch", async () => {
     const f = replyFixture('{"searchStatus":"unavailable","installationDocumentation":null}');
     const validator = vi.fn().mockReturnValue(true);
