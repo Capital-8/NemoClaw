@@ -36,45 +36,24 @@ const unavailablePrivilegedExecutions = [
 ];
 
 describe("native-home destroy fallback", () => {
-  it.each([
-    {
-      agent: "langchain-deepagents-code",
-      initial: "owner permission failure",
-      openshellResult: {
-        status: 1,
-        stdout: "",
-        stderr: "rm: cannot remove root-owned managed state: Permission denied",
+  it.each(
+    [
+      {
+        initial: "owner permission failure",
+        openshellResult: {
+          status: 1,
+          stdout: "",
+          stderr: "rm: cannot remove root-owned managed state: Permission denied",
+        },
       },
-    },
-    {
-      agent: "langchain-deepagents-code",
-      initial: "unavailable OpenShell execution",
-      openshellResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
-    },
-    {
-      agent: "openclaw",
-      initial: "owner permission failure",
-      openshellResult: {
-        status: 1,
-        stdout: "",
-        stderr: "rm: cannot remove root-owned managed state: Permission denied",
+      {
+        initial: "unavailable OpenShell execution",
+        openshellResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
       },
-    },
-    {
-      agent: "openclaw",
-      initial: "unavailable OpenShell execution",
-      openshellResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
-    },
-    {
-      agent: "hermes",
-      initial: "sticky native-home permission failure",
-      openshellResult: {
-        status: 1,
-        stdout: "",
-        stderr: "rm: cannot remove '/sandbox/.hermes/runtime': Operation not permitted",
-      },
-    },
-  ])(
+    ].flatMap((scenario) =>
+      ["langchain-deepagents-code", "openclaw", "hermes"].map((agent) => ({ ...scenario, agent })),
+    ),
+  )(
     "completes $agent cleanup as the sandbox owner after $initial",
     ({ agent, openshellResult }) => {
       const runOpenshell = vi.fn(() => openshellResult);
@@ -136,10 +115,10 @@ describe("native-home destroy fallback", () => {
   });
 
   it.each([
-    ["langchain-deepagents-code", "LangChain Deep Agents Code"],
-    ["hermes", "Hermes Agent"],
-    ["openclaw", "OpenClaw"],
-  ])("fails closed when the pinned %s user cannot finish the wipe", (agent, displayName) => {
+    { agent: "langchain-deepagents-code", label: "LangChain Deep Agents Code" },
+    { agent: "openclaw", label: "OpenClaw" },
+    { agent: "hermes", label: "Hermes Agent" },
+  ])("fails closed when the pinned $agent user cannot finish the wipe", ({ agent, label }) => {
     const failure = { status: 1, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     const runAsSandboxUser = vi.fn(() => failure);
 
@@ -153,7 +132,7 @@ describe("native-home destroy fallback", () => {
         undefined,
         runAsSandboxUser,
       ),
-    ).toThrow(`Could not remove the sandbox-owned ${displayName} native home`);
+    ).toThrow(`Could not remove the sandbox-owned ${label} native home`);
     expect(runAsSandboxUser).toHaveBeenCalledOnce();
   });
 
