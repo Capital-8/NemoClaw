@@ -160,6 +160,19 @@ describe("OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT (#12673)", () => {
     expect(fs.existsSync(staging)).toBe(false);
   });
 
+  it("refuses a symlinked legacy session store", () => {
+    const elsewhere = path.join(root, "elsewhere");
+    fs.mkdirSync(elsewhere);
+    fs.writeFileSync(path.join(elsewhere, "sid-a.jsonl"), '{"type":"session"}\n');
+    fs.mkdirSync(path.join(root, ".openclaw", "agents", "main"), { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(root, ".openclaw", "agents", "main", "sessions"));
+
+    const result = runScript("sid-a.jsonl");
+
+    expect(result).toMatchObject({ status: 3, output: "" });
+    expect(fs.existsSync(staging)).toBe(false);
+  });
+
   it("accepts regular single-link legacy files in place", () => {
     writeLegacyStore();
 

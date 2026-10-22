@@ -18,8 +18,9 @@
 //   - When the database does not exist, it checks each file in the legacy
 //     store. It exits 0 with no output when every file is a regular file with
 //     one link. Otherwise it prints each affected file and exits 1.
-//   - It exits 3 for an unsafe path (including a database file or companion
-//     with more than one link) and 5 for an unsupported database schema. A
+//   - It exits 3 for an unsafe path (a symlinked path component, a database
+//     file or companion with more than one link, or a store path that is not
+//     a directory) and 5 for an unsupported database schema. A
 //     failure after it creates `<stagingDir>` removes the directory first.
 // The path checks follow OPENCLAW_SQLITE_COPY_SCRIPT in src/lib/state/sandbox.ts.
 
@@ -33,7 +34,7 @@ function fail(code, message) {
   process.stderr.write(message + "\n");
   process.exit(code);
 }
-function existingPath(relative) {
+function existingPath(relative, finalIsFile) {
   let cursor = root;
   const parts = relative.split("/");
   for (let index = 0; index < parts.length; index += 1) {
@@ -45,20 +46,18 @@ function existingPath(relative) {
       if (error && error.code === "ENOENT") return null;
       throw error;
     }
-    const final = index === parts.length - 1;
-    if (
-      stat.isSymbolicLink() ||
-      (final ? !stat.isFile() || stat.nlink !== 1 : !stat.isDirectory())
-    ) {
-      fail(3, "unsafe OpenClaw session database path");
+    const file = finalIsFile && index === parts.length - 1;
+    if (stat.isSymbolicLink() || (file ? !stat.isFile() || stat.nlink !== 1 : !stat.isDirectory())) {
+      fail(3, "unsafe OpenClaw session store path");
     }
   }
   return cursor;
 }
-const database = existingPath(".openclaw/agents/" + agent + "/agent/openclaw-agent.sqlite");
+const database = existingPath(".openclaw/agents/" + agent + "/agent/openclaw-agent.sqlite", true);
 if (database === null) {
-  const store = path.join(root, ".openclaw", "agents", agent, "sessions");
+  const store = existingPath(".openclaw/agents/" + agent + "/sessions", false);
   const abnormal = files.filter((file) => {
+    if (store === null) return true;
     try {
       const stat = fs.lstatSync(path.join(store, file));
       return !stat.isFile() || stat.nlink !== 1;

@@ -3210,8 +3210,11 @@ $$nemoclaw my-assistant download -- -report.txt ./
 
 ```bash
 $$nemoclaw my-assistant download /sandbox/.openclaw/workspace/SOUL.md ./
-$$nemoclaw my-assistant download /sandbox/.openclaw/agents/main/sessions/ ./sessions/
+$$nemoclaw my-assistant download /sandbox/.openclaw/workspace/ ./workspace/
 ```
+
+To copy session transcripts, use `sessions export`.
+OpenClaw 2026.9 and later keep transcripts in the agent's session database, not in `/sandbox/.openclaw/agents/main/sessions/`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
