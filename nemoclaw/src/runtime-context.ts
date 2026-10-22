@@ -70,7 +70,7 @@ function searchContext(config: OpenClawConfig): string[] {
   let availability = "Web search availability is not confirmed by OpenClaw configuration.";
   if (enabled === false) {
     availability =
-      "Web search is disabled in OpenClaw configuration. For web-search requests, tell the user that web search is unavailable.";
+      "Web search is disabled in OpenClaw configuration. For web-search requests, tell the user that web search is unavailable immediately. Do not use tool discovery to find the disabled search provider or retry searches. Do not inspect sandbox-local files, memory, or shell output to reconstruct web-search results.";
   } else if (enabled === true) {
     availability =
       "Web search is enabled in OpenClaw configuration. Configuration does not guarantee tool availability or request success.";

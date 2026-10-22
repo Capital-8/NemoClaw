@@ -206,6 +206,20 @@ describe("web research context", () => {
     expect(context).not.toContain("private-key");
   });
 
+  it("reports disabled search without probing for providers or reconstructing results locally", async () => {
+    const context = await contextFor({ tools: { web: { search: { enabled: false } } } });
+    expect(context).toContain("tell the user that web search is unavailable immediately");
+    expect(context).toContain(
+      "Do not use tool discovery to find the disabled search provider or retry searches.",
+    );
+    expect(context).toContain(
+      "Do not inspect sandbox-local files, memory, or shell output to reconstruct web-search results.",
+    );
+    expect(context).toContain(
+      "You may use successfully retrieved web_fetch content even when search is disabled.",
+    );
+  });
+
   it.each([{}, { tools: {} }, { tools: { web: { search: {} } } }])(
     "does not infer search availability from missing configuration: %j",
     async (config) => {
@@ -214,6 +228,9 @@ describe("web research context", () => {
         "Web search availability is not confirmed by OpenClaw configuration.",
       );
       expect(context).toContain("If no search tool is available, tell the user");
+      expect(context).not.toContain(
+        "Do not use tool discovery to find the disabled search provider",
+      );
     },
   );
 
@@ -233,6 +250,9 @@ describe("web research context", () => {
         "Configuration does not guarantee tool availability or request success.",
       );
       expect(context).not.toContain("Web search is disabled");
+      expect(context).not.toContain(
+        "Do not use tool discovery to find the disabled search provider",
+      );
       expect(context).not.toContain("private-key");
     },
   );
