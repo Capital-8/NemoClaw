@@ -212,6 +212,33 @@ describe("agents/hermes/start.sh provider placeholder refresh", () => {
     expect(result.stderr).toContain("guard-failed");
     expect(result.stdout).toContain("status=1");
   });
+
+  it("runs the guard and its MCP refresh when .env is absent (#12594)", () => {
+    const result = runHermesBashHarness(
+      [
+        "validate_hermes_env_secret_boundary() { echo boundary-ran; }",
+        'fake_guard_python() { echo "guard-ran $*"; }',
+        extractShellFunction(
+          fs.readFileSync(START_SCRIPT, "utf-8"),
+          "refresh_hermes_provider_placeholders",
+        ),
+        "_HERMES_PYTHON=fake_guard_python",
+        "_HERMES_RUNTIME_CONFIG_GUARD=guard.py",
+        "_HERMES_BOUNDARY_VALIDATOR=validator.py",
+        "refresh_hermes_provider_placeholders strict",
+        "echo status=$?",
+      ],
+      (tmpDir) => {
+        const hermesHome = path.join(tmpDir, ".hermes");
+        fs.mkdirSync(hermesHome);
+        return { HERMES_DIR: hermesHome, HERMES_HASH_FILE: path.join(tmpDir, "hash") };
+      },
+    );
+
+    expect(result.stdout).toContain("guard-ran -I guard.py provider-placeholders");
+    expect(result.stdout).toContain("--refresh-native-local");
+    expect(result.stdout).toContain("status=0");
+  });
 });
 
 describe("Hermes env-text secret boundary", () => {
