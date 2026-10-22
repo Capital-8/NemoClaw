@@ -3117,6 +3117,7 @@ $$nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
 
 Export an OpenClaw sandbox's session history from the running sandbox to the host.
 The command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only matching `<sessionId>.jsonl` files and optional `<sessionId>.trajectory.jsonl` files.
+OpenClaw 2026.9 and later store transcripts in the agent's session database (`agents/<id>/agent/openclaw-agent.sqlite`) instead of these files. For these releases, the command reads the selected sessions from the database without changing it and writes each one as `<sessionId>.jsonl` (and `<sessionId>.trajectory.jsonl`) in the same line format.
 It never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
 For a registered sandbox, session lookup, transfer, and staging cleanup use its recorded OpenShell gateway.
 NemoClaw reports success only after the OpenShell transfer process, artifact verification, host publication, transfer-process cleanup, and lifecycle-lock release.
@@ -3144,7 +3145,7 @@ Mismatched `--agent` plus canonical-key combinations are refused before any down
 
 The export keeps its original success or failure result, so a cleanup warning after a successful download does not make the export fail.
 
-Before creating any output, NemoClaw verifies that every selected transcript is a regular, non-symlink file in the session store. If any selected transcript is missing, a symlink, or not a regular file, the command writes no export, names the affected file, and refuses the whole export rather than producing a partial bundle. The archive is created in non-recursive mode so a transcript replaced by a directory during the export cannot expand the bundle with files beneath the session store, and the command inspects the archive members and refuses the export unless each is a regular file. Wait a moment and retry the export (the transcript may not have flushed yet); if it is still absent, inspect the named transcript in the session store in the sandbox, or re-run the affected turn.
+Before creating any output, NemoClaw checks every selected transcript. If the session database has no transcript for a selected session, the command writes no export, names the affected file, and refuses the whole export. Re-run the affected turn, or export the other sessions by key. For an earlier OpenClaw release, every selected transcript must be a regular file in the session store that is not a symlink or a hard link. If a selected transcript is missing, a symlink, a hard link, or not a regular file, the command writes no export, names the affected file, and refuses the whole export rather than producing a partial bundle. With `--format tar`, the archive is created in non-recursive mode so a transcript replaced by a directory during the export cannot expand the bundle with files beneath the session store, and the command inspects the archive members and refuses the export unless each is a regular file. Inspect the named transcript in the session store in the sandbox, or re-run the affected turn.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

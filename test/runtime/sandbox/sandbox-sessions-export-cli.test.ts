@@ -14,6 +14,7 @@ function buildStubOpenshell(
   logFile: string,
   sessionListJson: string,
   sessionListStderr = "",
+  transcriptProbe?: { output: string; status: number },
 ): string {
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
@@ -32,6 +33,14 @@ function buildStubOpenshell(
       `    printf '%s\\n' ${JSON.stringify(sessionListJson)}`,
       `    if [ -n ${JSON.stringify(sessionListStderr)} ]; then printf '%s\\n' ${JSON.stringify(sessionListStderr)} >&2; fi`,
       "    exit 0 ;;",
+      // The transcript locate step is the only `node -e` call; tests can make
+      // it report abnormal basenames.
+      ...(transcriptProbe
+        ? [
+            '  *"--name alpha -- node --no-warnings -e"*)',
+            `    printf '%s\\n' ${JSON.stringify(transcriptProbe.output)}; exit ${transcriptProbe.status} ;;`,
+          ]
+        : []),
       '  *"sandbox exec --name alpha -- sh -c"*) exit 0 ;;',
       '  "sandbox download"*)',
       // Create the destination so the host-side chmod/stat succeed (mirrors a
@@ -302,6 +311,40 @@ describe("sandbox sessions export CLI", () => {
 
       const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
       expect(calls).not.toMatch(/-- sh -c/);
+      expect(calls).not.toMatch(/sandbox download/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a tar export before tar or download when the transcript locate step reports a selected file (#12673)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-missing-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: "sid-a" },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-b" },
+        ]),
+        "",
+        { output: "sid-a.jsonl", status: 1 },
+      );
+
+      const out = path.join(home, "bundle.tgz");
+      const result = runWithEnv(`alpha sessions export --format tar --out ${out} 2>&1`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(/Refusing to export: .*: sid-a\.jsonl\./);
+      expect(fs.existsSync(out)).toBe(false);
+
+      const calls = fs.readFileSync(openshellLog, "utf8");
+      expect(calls).toContain("openclaw-agent.sqlite");
+      expect(calls).not.toMatch(/umask 077/);
       expect(calls).not.toMatch(/sandbox download/);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

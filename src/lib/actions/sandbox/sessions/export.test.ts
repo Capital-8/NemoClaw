@@ -44,16 +44,16 @@ vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
   withMcpLifecycleLock: withLifecycleLockMock,
 }));
 
-import {
-  captureOpenshell,
-  OPENSHELL_PROBE_TIMEOUT_MS,
-  runOpenshell,
-} from "../../../adapters/openshell/runtime";
+import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import type { OpenShellSandboxTransferCompletion } from "../../../adapters/openshell/sandbox-transfer";
 import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit, getKnownSandboxTargetGatewayName } from "../gateway-state";
 import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import { buildSandboxTarArgv, exportSandboxSessions } from "./export";
+import {
+  OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT,
+  OPENCLAW_TRANSCRIPT_SOURCE_TIMEOUT_MS,
+} from "./openclaw-transcript-source";
 
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const runMock = runOpenshell as unknown as ReturnType<typeof vi.fn>;
@@ -325,11 +325,12 @@ describe("exportSandboxSessions", () => {
       expect(command).toMatch(
         /^umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging/,
       );
-      // The archive step re-check that each transcript is a regular, non-symlink
-      // file runs before tar, so a file replaced between the preflight probe and
-      // the archive is refused (exit 3) rather than bundled as a directory or link.
+      // The archive step re-check that each transcript is a regular, non-symlink,
+      // hard-link-free file (link count 1) runs before tar, so a file replaced
+      // between the preflight probe and the archive is refused (exit 3) rather
+      // than bundled as a directory, link, or hard link.
       expect(command).toMatch(
-        /\[ -f \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] && \[ ! -L \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] \|\| \{ printf 'refusing non-regular transcript %s\\n' .* >&2; exit 3; \}/,
+        /\[ -f \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] && \[ ! -L \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] && \[ "\$\(stat -c %h \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl 2>\/dev\/null\)" = "1" \] \|\| \{ printf 'refusing non-regular transcript %s\\n' .* >&2; exit 3; \}/,
       );
       // Each re-check is command-separated with `&&` so a multi-session archive
       // does not collapse the validation snippets into one broken shell line.
@@ -623,27 +624,29 @@ describe("exportSandboxSessions", () => {
     const message = error?.message ?? "";
     expect(error).not.toBeNull();
     expect(message).toMatch(
-      /Refusing to export: sessions are listed in the agent index but their transcript files are missing or not regular, non-symlink files in the sandbox store: sid-b\.jsonl/,
+      /Refusing to export: sessions are listed in the agent index but their transcript files are missing, symlinks, hard links, or not regular files in the sandbox store: sid-b\.jsonl/,
     );
-    // Recovery guidance: retrying the export comes first, and inspecting the
-    // store or re-running the turn only if the transcript stays absent.
-    const retryIndex = message.indexOf("retry the export");
-    const inspectIndex = message.indexOf("inspect /sandbox/.openclaw/agents/main/sessions");
-    const rerunIndex = message.indexOf("re-run the affected turn");
-    expect(retryIndex).toBeGreaterThanOrEqual(0);
-    expect(inspectIndex).toBeGreaterThan(retryIndex);
-    expect(rerunIndex).toBeGreaterThan(inspectIndex);
+    expect(message).toContain(
+      "Inspect /sandbox/.openclaw/agents/main/sessions in the sandbox, or re-run the affected turn.",
+    );
+    expect(message).not.toContain("retry");
 
+    // The agent, staging directory, and basenames are argv operands of the
+    // in-sandbox locate script, not part of the script text.
     const captureCall = captureMock.mock.calls[1]?.[0] as string[];
-    expect(shellCommand(captureCall)).toContain("dir=$1; shift");
-    expect(shellCommand(captureCall)).toContain('[ -f "$dir/$f" ] && [ ! -L "$dir/$f" ]');
-    expect(captureCall).toContain("/sandbox/.openclaw/agents/main/sessions");
-    expect(captureCall).toContain("sid-b.jsonl");
-    // The preflight probe is bounded so a stalled gateway or sandbox cannot
+    const scriptIndex = captureCall.indexOf("-e") + 1;
+    expect(captureCall.slice(scriptIndex - 2, scriptIndex)).toEqual(["--no-warnings", "-e"]);
+    expect(captureCall[scriptIndex]).toBe(OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT);
+    expect(captureCall.slice(scriptIndex + 1, scriptIndex + 3)).toEqual(["/sandbox", "main"]);
+    expect(captureCall[scriptIndex + 3]).toMatch(
+      /^\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]{12}$/,
+    );
+    expect(captureCall.slice(scriptIndex + 4)).toEqual(["sid-a.jsonl", "sid-b.jsonl"]);
+    // The locate step is bounded so a stalled gateway or sandbox cannot
     // block sessions export indefinitely.
     expect(captureMock.mock.calls[1]?.[1]).toMatchObject({
       ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      timeout: OPENCLAW_TRANSCRIPT_SOURCE_TIMEOUT_MS,
     });
     // The export must stop before building any tarball.
     expect(runMock).not.toHaveBeenCalled();
@@ -671,7 +674,7 @@ describe("exportSandboxSessions", () => {
         includeTrajectory: true,
       }),
     ).rejects.toThrow(
-      /Refusing to export: sessions are listed in the agent index but their transcript files are missing or not regular, non-symlink files in the sandbox store: sid-c\.trajectory\.jsonl/,
+      /Refusing to export: sessions are listed in the agent index but their transcript files are missing, symlinks, hard links, or not regular files in the sandbox store: sid-c\.trajectory\.jsonl/,
     );
 
     // The export must stop before any per-file download starts.
@@ -697,7 +700,7 @@ describe("exportSandboxSessions", () => {
         format: "dir",
       }),
     ).rejects.toThrow(
-      /Refusing to export: sessions are listed in the agent index but their transcript files are missing or not regular, non-symlink files in the sandbox store: sid-b\.jsonl/,
+      /Refusing to export: sessions are listed in the agent index but their transcript files are missing, symlinks, hard links, or not regular files in the sandbox store: sid-b\.jsonl/,
     );
 
     // The export must stop before any per-file download starts.
@@ -936,7 +939,11 @@ describe("exportSandboxSessions", () => {
         format: "tar",
       }),
     ).rejects.toThrow(/Failed to verify session transcripts/);
-    expect(runMock).not.toHaveBeenCalled();
+    // Only the cleanup of a possibly created staging directory runs.
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(runMock.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["rm", "-rf", expect.stringMatching(/sessions-export-main-/)]),
+    );
     expect(transferRunMock).not.toHaveBeenCalled();
   });
 
@@ -960,7 +967,70 @@ describe("exportSandboxSessions", () => {
     expect(error).not.toBeNull();
     expect(error?.message ?? "").toMatch(/Failed to verify session transcripts/);
     expect(error?.message ?? "").toContain("openshell: gateway unreachable");
-    expect(runMock).not.toHaveBeenCalled();
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(transferRunMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses export when a transcript is a hard link", async () => {
+    // A hard link is a regular non-symlink file, so it must be caught by the
+    // link-count check (nlink != 1) rather than accepted as a valid transcript.
+    // The locate script reports the basename; the export must refuse before
+    // any transfer.
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-h" }])),
+    );
+    captureMock.mockReturnValueOnce(makeCapture("sid-h.jsonl\n", 1));
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out",
+        format: "dir",
+      }),
+    ).rejects.toThrow(
+      /Refusing to export: sessions are listed in the agent index but their transcript files are missing, symlinks, hard links, or not regular files in the sandbox store: sid-h\.jsonl/,
+    );
+    expect(transferRunMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["tar", "-C ", " --"],
+    ["dir", "", "/sid-a.jsonl"],
+  ] as const)(
+    "exports %s output from staged database transcripts and removes the staging directory (#12673)",
+    async (format, prefix, suffix) => {
+      captureMock.mockReturnValueOnce(
+        makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+      );
+      captureMock.mockReturnValueOnce(makeCapture("staged\n", 0));
+
+      await exportSandboxSessions({ sandboxName: "alpha", out: "./out", format });
+
+      const stagingDir = (captureMock.mock.calls[1]?.[0] as string[]).at(-2) as string;
+      expect(stagingDir).toMatch(
+        /^\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]{12}$/,
+      );
+      const transferred = [
+        ...runMock.mock.calls.map((call) => (call[0] as string[]).join(" ")),
+        ...transferRunMock.mock.calls.map((call) => String(call[0].source)),
+      ].join("\n");
+      expect(transferred).toContain(`${prefix}${stagingDir}${suffix}`);
+      expect(transferred).not.toContain("/sandbox/.openclaw/agents/main/sessions");
+      expect(runMock.mock.calls.at(-1)?.[0]).toEqual(
+        expect.arrayContaining(["rm", "-rf", stagingDir]),
+      );
+    },
+  );
+
+  it("refuses export when the session database has no transcript for a listed session (#12673)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    captureMock.mockReturnValueOnce(makeCapture("sid-a.jsonl\n", 2));
+
+    await expect(
+      exportSandboxSessions({ sandboxName: "alpha", out: "./out", format: "dir" }),
+    ).rejects.toThrow(/the OpenClaw session database has no transcript for: sid-a\.jsonl\./);
     expect(transferRunMock).not.toHaveBeenCalled();
   });
 
