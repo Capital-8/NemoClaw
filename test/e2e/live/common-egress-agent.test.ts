@@ -32,6 +32,8 @@ import {
   isUnavailableSearchReply,
   hasUnavailableSearchToolEvidence,
   projectUnavailableSearchReplyArtifact,
+  projectUnavailableSearchToolEvidenceArtifact,
+  projectPersonalPublicFetchToolEvidenceArtifact,
   classifyHermesAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
@@ -763,7 +765,10 @@ Format the answer as JSON with searchStatus (available, unavailable, or unknown)
             finalReply: projectUnavailableSearchReplyArtifact(finalVisibleReply),
           });
         },
-        toolEvidenceValidator: hasUnavailableSearchToolEvidence,
+        toolEvidence: {
+          validate: hasUnavailableSearchToolEvidence,
+          project: projectUnavailableSearchToolEvidenceArtifact,
+        },
       });
       const unavailableSearchReply = isUnavailableSearchReply(research.reply);
       expect(
@@ -983,8 +988,10 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         publicFetchExpectation: PERSONAL_PUBLIC_FETCH_EXPECTATION,
         redactOutputInFailure: true,
         sandboxName: OPENCLAW_PERSONAL_SANDBOX,
-        toolEvidenceValidator: (evidence) =>
-          assessPersonalPublicFetchToolEvidence(evidence).matches,
+        toolEvidence: {
+          validate: (evidence) => assessPersonalPublicFetchToolEvidence(evidence).matches,
+          project: projectPersonalPublicFetchToolEvidenceArtifact,
+        },
       });
       await artifacts.target.complete({
         id: "common-egress-agent",

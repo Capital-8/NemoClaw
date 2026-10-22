@@ -191,6 +191,10 @@ interface AgentAssertionRetryOptions {
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
+export type OpenClawToolEvidenceArtifact =
+  | PersonalPublicFetchToolEvidenceArtifact
+  | ReturnType<typeof projectUnavailableSearchToolEvidenceArtifact>;
+
 export interface OpenClawAgentAttemptEvidenceOptions {
   classification: AgentAssertionAttempt;
   label: string;
@@ -204,6 +208,7 @@ export interface OpenClawAgentAttemptEvidenceOptions {
   >;
   reply: string;
   toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
+  toolEvidenceProjector?: (evidence: OpenClawToolEvidence) => OpenClawToolEvidenceArtifact;
 }
 
 export interface OpenClawAgentAttemptEvidenceResult {
@@ -978,34 +983,15 @@ export async function validateOpenClawAgentAttemptEvidence(
     }
     await options.recordToolEvidence(toolEvidence);
     if (!options.toolEvidenceValidator(toolEvidence)) {
-      const assessment = projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence);
-      const counts = assessment.webFetchResultCounts;
-      const diagnostic = [
-        `errors=${toolEvidence.errors.length}`,
-        `finalStatuses=${toolEvidence.finalStatuses.length}`,
-        `finalSuccess=${assessment.finalSuccess}`,
-        `projectedTarget=${assessment.projectedTargetEvidence}`,
-        `controlTargetViolations=${assessment.controlTargetViolations}`,
-        `webFetchCalls=${assessment.webFetchCalls}`,
-        `webFetchExecutions=${assessment.webFetchExecutions}`,
-        `qualifying=${assessment.qualifyingWebFetchResults}`,
-        `unexpectedWebFetchCalls=${assessment.unexpectedWebFetchCalls}`,
-        `unexpectedWebFetchExecutions=${assessment.unexpectedWebFetchExecutions}`,
-        `unexpectedWebFetchResults=${assessment.unexpectedWebFetchResults}`,
-        `webFetchResults=${counts.total}`,
-        `expectedContentMatches=${counts.expectedContentMatches}`,
-        `expectedUrlMatches=${counts.expectedUrlMatches}`,
-        `httpSuccess=${counts.httpSuccess}`,
-        `maxCharsWithinLimit=${counts.maxCharsWithinLimit}`,
-        `paired=${counts.paired}`,
-        `publicHttpsTarget=${counts.publicHttpsTarget}`,
-        `resultSuccess=${counts.resultSuccess}`,
-        `forbiddenTools=${assessment.forbiddenToolCount}`,
-        `forbiddenProviders=${assessment.forbiddenProviderMentionCount}`,
-      ].join("; ");
+      const diagnostic = options.toolEvidenceProjector
+        ? ` (${JSON.stringify(
+            options.toolEvidenceProjector(toolEvidence),
+            (_key, value: unknown) => (typeof value === "string" ? undefined : value),
+          )})`
+        : "";
       return {
         attempt: { passed: false, failureClass: "deterministic" },
-        failure: `${options.label}: reduced tool evidence did not match the required trajectory (${diagnostic})`,
+        failure: `${options.label}: reduced tool evidence did not match the required trajectory${diagnostic}`,
       };
     }
   }
@@ -1074,7 +1060,7 @@ export function projectUnavailableSearchReplyArtifact(reply: string) {
   };
 }
 
-/** Require a completed turn without discovery, successful fetch, or search-provider evidence. */
+/** Require a completed turn that reports the known disabled-search state without tool activity. */
 export function hasUnavailableSearchToolEvidence(evidence: OpenClawToolEvidence): boolean {
   return (
     evidence.errors.length === 0 &&
@@ -1082,10 +1068,41 @@ export function hasUnavailableSearchToolEvidence(evidence: OpenClawToolEvidence)
     evidence.finalStatuses[0] === "success" &&
     !evidence.webFetchResults.some((result) => result.resultSuccess || result.httpSuccess) &&
     !evidence.providerMentions.some((provider) => /brave|tavily/iu.test(provider)) &&
-    ![...evidence.toolCalls, ...evidence.toolExecutions, ...evidence.toolResults].some((call) =>
-      /web_search|brave|tavily|^tool_(?:search|describe|call)$/iu.test(call.name),
-    )
+    evidence.toolCalls.length === 0 &&
+    evidence.toolExecutions.length === 0 &&
+    evidence.toolResults.length === 0
   );
+}
+
+/** Retain fixed counts for the same no-tool contract used by the unavailable-search validator. */
+export function projectUnavailableSearchToolEvidenceArtifact(evidence: OpenClawToolEvidence) {
+  const tools = [...evidence.toolCalls, ...evidence.toolExecutions, ...evidence.toolResults];
+  return {
+    schemaVersion: 1 as const,
+    contract: "unavailable-search" as const,
+    errorCount: Math.min(1_000, evidence.errors.length),
+    finalStatusCount: Math.min(1_000, evidence.finalStatuses.length),
+    finalSuccess: evidence.finalStatuses.length === 1 && evidence.finalStatuses[0] === "success",
+    toolCallCount: Math.min(1_000, evidence.toolCalls.length),
+    toolExecutionCount: Math.min(1_000, evidence.toolExecutions.length),
+    toolResultCount: Math.min(1_000, evidence.toolResults.length),
+    forbiddenToolCount: Math.min(1_000, tools.length),
+    discoveryToolCount: Math.min(
+      1_000,
+      tools.filter(({ name }) => /^tool_(?:search|describe|call)$/iu.test(name)).length,
+    ),
+    forbiddenProviderMentionCount: Math.min(
+      1_000,
+      evidence.providerMentions.filter((provider) => /brave|tavily/iu.test(provider)).length,
+    ),
+    successfulFetchResultCount: Math.min(
+      1_000,
+      evidence.webFetchResults.filter(
+        ({ resultSuccess, httpSuccess }) => resultSuccess || httpSuccess,
+      ).length,
+    ),
+    matches: hasUnavailableSearchToolEvidence(evidence),
+  };
 }
 
 /** Validate the complete research reply independently of the reply-key smoke check. */

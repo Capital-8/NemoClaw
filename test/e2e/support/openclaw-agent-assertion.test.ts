@@ -21,6 +21,8 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   OPENCLAW_TOOL_EVIDENCE_MARKER,
+  hasUnavailableSearchToolEvidence,
+  projectUnavailableSearchToolEvidenceArtifact,
   reduceOpenClawToolEvidence,
   projectUnavailableSearchReplyArtifact,
   projectOpenClawAgentFailureArtifact,
@@ -186,6 +188,7 @@ function replyFixture(reply: string, meta: Record<string, unknown> = {}) {
   };
   return {
     root,
+    result,
     evidence,
     sandbox,
     host,
@@ -195,6 +198,89 @@ function replyFixture(reply: string, meta: Record<string, unknown> = {}) {
 }
 
 describe("unavailable-search assertion wiring", () => {
+  it.each([
+    {
+      kind: "discovery",
+      session: {
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "discovery",
+              name: "tool_search",
+              arguments: { query: SECRET_SENTINEL },
+            },
+          ],
+        },
+      },
+      expected: { discoveryToolCount: 1, successfulFetchResultCount: 0 },
+    },
+    {
+      kind: "successful fetch",
+      session: {
+        message: {
+          role: "toolResult",
+          toolName: "web_fetch",
+          toolCallId: "orphan",
+          details: {
+            status: 200,
+            text: SECRET_SENTINEL,
+            url: "https://private.test/?token=secret",
+          },
+          content: [],
+        },
+      },
+      expected: { discoveryToolCount: 0, successfulFetchResultCount: 1 },
+    },
+  ])(
+    "records unavailable-search diagnostics for rejected $kind evidence",
+    async ({ session, expected }) => {
+      const f = replyFixture('{"searchStatus":"unavailable","installationDocumentation":null}');
+      const evidence = reduceOpenClawToolEvidence(
+        JSON.stringify(session),
+        JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
+      );
+      f.sandbox.exec.mockResolvedValue({
+        ...f.result,
+        stdout: OPENCLAW_TOOL_EVIDENCE_MARKER + JSON.stringify(evidence),
+      });
+      try {
+        await expect(
+          runOpenClawAgentAssertion(
+            f.host as unknown as HostCliClient,
+            f.sandbox as unknown as SandboxClient,
+            f.artifacts,
+            {
+              ...f.options,
+              toolEvidence: {
+                validate: hasUnavailableSearchToolEvidence,
+                project: projectUnavailableSearchToolEvidenceArtifact,
+              },
+            },
+          ),
+        ).rejects.toThrow(/required trajectory/u);
+        const artifact = readFileSync(
+          join(f.root, "artifacts", "actions", "unavailable-search-attempt-1-reduced.json"),
+          "utf8",
+        );
+        expect(JSON.parse(artifact)).toMatchObject({
+          contract: "unavailable-search",
+          matches: false,
+          forbiddenToolCount: 1,
+          ...expected,
+        });
+        expect(artifact).not.toMatch(
+          /qualifyingWebFetchResults|publicHttpsTargets|expectedContentMatches|private|secret|tool_search/u,
+        );
+        expect(artifact).not.toContain(SECRET_SENTINEL);
+        expect(f.host.command).toHaveBeenCalledTimes(1);
+      } finally {
+        rmSync(f.root, { force: true, recursive: true });
+      }
+    },
+  );
+
   it.each([
     {
       state: "collected",
@@ -223,7 +309,11 @@ describe("unavailable-search assertion wiring", () => {
       }),
       expected: {
         state: "collected",
-        toolEvidence: { finalStatusCount: 0, forbiddenToolCount: 1 },
+        toolEvidence: {
+          contract: "unavailable-search",
+          finalStatusCount: 0,
+          forbiddenToolCount: 1,
+        },
       },
     },
     {
@@ -265,7 +355,13 @@ describe("unavailable-search assertion wiring", () => {
             f.host as unknown as HostCliClient,
             f.sandbox as unknown as SandboxClient,
             f.artifacts,
-            { ...f.options, toolEvidenceValidator: validator },
+            {
+              ...f.options,
+              toolEvidence: {
+                validate: validator,
+                project: projectUnavailableSearchToolEvidenceArtifact,
+              },
+            },
           ),
         ).rejects.toThrow(/agent output omitted; exit=255/u);
         const diagnostic = readFileSync(
@@ -278,7 +374,9 @@ describe("unavailable-search assertion wiring", () => {
           "utf8",
         );
         expect(JSON.parse(diagnostic)).toMatchObject({ schemaVersion: 1, ...expected });
-        expect(diagnostic).not.toContain("tavily_search");
+        expect(diagnostic).not.toMatch(
+          /tavily_search|qualifyingWebFetchResults|publicHttpsTargets|expectedContentMatches/u,
+        );
         expect(diagnostic).not.toContain(SECRET_SENTINEL);
         expect(f.sandbox.exec).toHaveBeenCalledTimes(1);
         expect(f.host.command).toHaveBeenCalledTimes(1);
@@ -299,7 +397,10 @@ describe("unavailable-search assertion wiring", () => {
         f.artifacts,
         {
           ...f.options,
-          toolEvidenceValidator: validator,
+          toolEvidence: {
+            validate: validator,
+            project: projectUnavailableSearchToolEvidenceArtifact,
+          },
         },
       );
       expect(validator).toHaveBeenCalledWith(f.evidence);

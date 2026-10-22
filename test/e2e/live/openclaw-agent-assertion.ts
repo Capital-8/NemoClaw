@@ -20,12 +20,12 @@ import {
   buildOpenClawToolEvidenceReducerScript,
   classifyOpenClawAgentAssertion,
   projectOpenClawAgentFailureArtifact,
-  projectPersonalPublicFetchToolEvidenceArtifact,
   parseOpenClawToolEvidence,
   runOpenClawAgentAssertionRetry,
   text,
   type OpenClawPublicFetchExpectation,
   type OpenClawToolEvidence,
+  type OpenClawToolEvidenceArtifact,
   validateOpenClawAgentAttemptEvidence,
 } from "./common-egress-agent-helpers.ts";
 
@@ -53,7 +53,10 @@ export interface OpenClawAgentAssertionOptions {
     finalVisibleReply: string,
   ) => Promise<void>;
   sandboxName: string;
-  toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
+  toolEvidence?: {
+    validate: (evidence: OpenClawToolEvidence) => boolean;
+    project: (evidence: OpenClawToolEvidence) => OpenClawToolEvidenceArtifact;
+  };
 }
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -158,13 +161,13 @@ export async function runOpenClawAgentAssertion(
           `actions/${args.label}-attempt-${attempt}-agent-failure.json`,
           projectOpenClawAgentFailureArtifact(attempt, classification, agent),
         );
-        if (args.toolEvidenceValidator) {
+        if (args.toolEvidence) {
           // A timed-out command may have persisted progress without returning JSON.
           // Keep the read-only projection diagnostic; it cannot accept the failed turn.
           let diagnostic: {
             schemaVersion: 1;
             state: string;
-            toolEvidence?: ReturnType<typeof projectPersonalPublicFetchToolEvidenceArtifact>;
+            toolEvidence?: OpenClawToolEvidenceArtifact;
           } = { schemaVersion: 1, state: "command-failed" };
           try {
             const reduced = await reduceToolEvidence();
@@ -174,7 +177,7 @@ export async function runOpenClawAgentAssertion(
                 diagnostic = {
                   schemaVersion: 1,
                   state: "collected",
-                  toolEvidence: projectPersonalPublicFetchToolEvidenceArtifact(
+                  toolEvidence: args.toolEvidence.project(
                     parseOpenClawToolEvidence(reduced.stdout),
                   ),
                 };
@@ -201,14 +204,17 @@ export async function runOpenClawAgentAssertion(
           );
         },
         recordToolEvidence: async (toolEvidence) => {
-          await artifacts.writeJson(
-            `actions/${args.label}-attempt-${attempt}-reduced.json`,
-            projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence),
-          );
+          if (args.toolEvidence) {
+            await artifacts.writeJson(
+              `actions/${args.label}-attempt-${attempt}-reduced.json`,
+              args.toolEvidence.project(toolEvidence),
+            );
+          }
         },
         reduceToolEvidence,
         reply,
-        toolEvidenceValidator: args.toolEvidenceValidator,
+        toolEvidenceValidator: args.toolEvidence?.validate,
+        toolEvidenceProjector: args.toolEvidence?.project,
       });
       lastFailure = validation.failure ?? lastFailure;
       successfulEvidence = validation.evidence ?? successfulEvidence;

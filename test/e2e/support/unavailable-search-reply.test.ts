@@ -171,7 +171,17 @@ describe("unavailable-search reply diagnostics", () => {
 });
 
 describe("unavailable-search tool evidence", () => {
-  it.each(["tool_search", "tool_describe", "tool_call"])("rejects a %s discovery call", (name) => {
+  it.each([
+    "tool_search",
+    "tool_describe",
+    "tool_call",
+    "search",
+    "read",
+    "exec",
+    "memory_search",
+    "web_fetch",
+    "unrecognized_tool",
+  ])("rejects a %s tool call", (name) => {
     const evidence = reduceOpenClawToolEvidence(
       JSON.stringify({
         message: {
@@ -185,34 +195,48 @@ describe("unavailable-search tool evidence", () => {
     expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
   });
 
-  it.each(["tool_search", "tool_describe", "tool_call"])(
-    "rejects a %s discovery execution",
-    (name) => {
-      const evidence = reduceOpenClawToolEvidence(
-        "",
-        JSON.stringify({
-          type: "trace.artifacts",
-          data: { finalStatus: "success", toolMetas: [{ name }] },
-        }),
-      );
-      expect(evidence.toolExecutions).toContainEqual({ name });
-      expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
-    },
-  );
+  it.each([
+    "tool_search",
+    "tool_describe",
+    "tool_call",
+    "search",
+    "read",
+    "exec",
+    "memory_search",
+    "web_fetch",
+    "unrecognized_tool",
+  ])("rejects a %s tool execution", (name) => {
+    const evidence = reduceOpenClawToolEvidence(
+      "",
+      JSON.stringify({
+        type: "trace.artifacts",
+        data: { finalStatus: "success", toolMetas: [{ name }] },
+      }),
+    );
+    expect(evidence.toolExecutions).toContainEqual({ name });
+    expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+  });
 
-  it.each(["tool_search", "tool_describe", "tool_call"])(
-    "rejects an orphaned %s discovery result",
-    (name) => {
-      const evidence = reduceOpenClawToolEvidence(
-        JSON.stringify({
-          message: { role: "toolResult", toolName: name, toolCallId: "orphan", content: [] },
-        }),
-        JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
-      );
-      expect(evidence.toolResults).toContainEqual({ name });
-      expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
-    },
-  );
+  it.each([
+    "tool_search",
+    "tool_describe",
+    "tool_call",
+    "search",
+    "read",
+    "exec",
+    "memory_search",
+    "web_fetch",
+    "unrecognized_tool",
+  ])("rejects an orphaned %s tool result", (name) => {
+    const evidence = reduceOpenClawToolEvidence(
+      JSON.stringify({
+        message: { role: "toolResult", toolName: name, toolCallId: "orphan", content: [] },
+      }),
+      JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
+    );
+    expect(evidence.toolResults).toContainEqual({ name });
+    expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+  });
 
   it.each(["brave", "tavily"])("rejects a generic call with %s provider metadata", (provider) => {
     const evidence = reduceOpenClawToolEvidence(
@@ -277,7 +301,7 @@ describe("unavailable-search tool evidence", () => {
     },
   );
 
-  it("accepts a completed turn without search or fetched content", () => {
+  it("accepts a completed turn without tool activity", () => {
     const evidence = reduceOpenClawToolEvidence(
       "",
       JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
