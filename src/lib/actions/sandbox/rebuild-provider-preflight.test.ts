@@ -455,6 +455,31 @@ describe("shouldVerifyRebuildGatewayProvider", () => {
     expect(log).not.toHaveBeenCalled();
     expect(bail).not.toHaveBeenCalled();
   });
+
+  it("does not print malformed provider or credential identifiers", async () => {
+    const adapter = createCliOpenShellProviderAdapter();
+    vi.spyOn(adapter, "getProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "missing" },
+    });
+    vi.spyOn(managedProviderAdapter, "createManagedProviderAdapter").mockReturnValue(adapter);
+    const output: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((message = "") => output.push(String(message)));
+    const log = vi.fn((message: string) => output.push(message));
+    const secret = "nvapi-test-secret";
+
+    await expect(
+      checkRebuildGatewayProviderOrBail(
+        `provider\n${secret}`,
+        `CREDENTIAL\n${secret}`,
+        log,
+        throwingBail,
+      ),
+    ).rejects.toThrow("Missing gateway provider: unavailable");
+
+    expect(output.join("\n")).not.toContain(secret);
+    expect(output.join("\n")).toContain("provider 'unavailable'");
+  });
 });
 
 describe("canRecreateMissingRebuildGatewayProvider", () => {

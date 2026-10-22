@@ -60,7 +60,6 @@ export async function captureGpuInstallFailure(
         path.basename(directory).endsWith(expectedSuffix)
       ) {
         const file = path.join(directory, "sandbox-container.log");
-        const linked = fs.lstatSync(file);
         const fd = fs.openSync(
           file,
           fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
@@ -68,16 +67,14 @@ export async function captureGpuInstallFailure(
         try {
           const before = fs.fstatSync(fd);
           if (
-            linked.isFile() &&
-            linked.dev === before.dev &&
-            linked.ino === before.ino &&
             before.isFile() &&
             before.nlink === 1 &&
             before.uid === meta.uid &&
             (before.mode & 0o077) === 0 &&
             before.size <= 8192
           ) {
-            // Bind the file before opening it: a swapped parent cannot substitute another log.
+            // Read through the verified descriptor; accept output only after file and parent
+            // metadata remain stable.
             const buffer = Buffer.alloc(8193);
             const length = fs.readSync(fd, buffer, {
               offset: 0,

@@ -516,24 +516,27 @@ def _runtime_drm_groups(expected_uid: int) -> set[str]:
     # NVIDIA CDI adds nonzero groups for device nodes that are not world read/write.
     # Landlock denies /dev directory reads. Discover kernel device names through
     # sysfs, then inspect metadata under pinned /dev directories without opening devices.
-    descriptors: list[int] = []
+    dev_fd = -1
+    device_directory = -1
+    sysfs_directory = -1
     try:
         flags = os.O_PATH | _directory_flag() | _no_follow_flag() | _cloexec_flag()
-        for name in ("/dev", "dri"):
-            descriptors.append(os.open(
-                name, flags, dir_fd=descriptors[-1] if descriptors else None
-            ))
-            directory = os.fstat(descriptors[-1])
+        dev_fd = os.open("/dev", flags)
+        for descriptor in (dev_fd,):
+            directory = os.fstat(descriptor)
             if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
                 return set()
-        device_directory = descriptors[-1]
-        descriptors.append(_open_directory("/sys/class/drm"))
-        directory = os.fstat(descriptors[-1])
+        device_directory = os.open("dri", flags, dir_fd=dev_fd)
+        directory = os.fstat(device_directory)
+        if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
+            return set()
+        sysfs_directory = _open_directory("/sys/class/drm")
+        directory = os.fstat(sysfs_directory)
         if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
             return set()
         groups: set[str] = set()
         device_count = 0
-        with os.scandir(descriptors[-1]) as entries:
+        with os.scandir(sysfs_directory) as entries:
             for index, entry in enumerate(entries):
                 # Sysfs includes connector entries and devices not assigned to this container.
                 if index >= 32768:
@@ -563,8 +566,9 @@ def _runtime_drm_groups(expected_uid: int) -> set[str]:
     except (OSError, UnsafePathError):
         return set()
     finally:
-        for descriptor in reversed(descriptors):
-            os.close(descriptor)
+        for descriptor in (sysfs_directory, device_directory, dev_fd):
+            if descriptor >= 0:
+                os.close(descriptor)
 
 
 def _capability_free_supervisor_matches(

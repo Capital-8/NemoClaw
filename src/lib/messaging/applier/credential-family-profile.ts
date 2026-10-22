@@ -40,7 +40,9 @@ export function credentialFamilyProfileType(
   }
   if (sorted.length === 1) return baseType;
   const digest = createHash("sha256")
-    .update(JSON.stringify([baseType, primary, sorted]))
+    // This is a stable profile identifier over validated environment-variable names,
+    // not a password verifier or credential storage primitive.
+    .update(JSON.stringify([baseType, primary, sorted])) // codeql[js/insufficient-password-hash]
     .digest("hex")
     .slice(0, 32);
   return `${baseType}-${digest}`;

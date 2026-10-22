@@ -104,7 +104,7 @@ describe("CLI OpenShell forward observations", () => {
 
   it.each([
     ["legacy", legacyForwardList],
-    ["workspace", "WORKSPACE " + legacyForwardList.replace("\n", "\ndefault ")],
+    ["workspace", "WORKSPACE " + legacyForwardList.replaceAll("\n", "\ndefault ")],
   ])("returns stale only when the inspector owns the %s table PID", async (_case, output) => {
     const { adapter, inspect, inspectLegacy } = createHarness({
       run: async () => captured(0, output),
@@ -1190,7 +1190,7 @@ describe("CLI OpenShell direct forward start", () => {
 
 describe("CLI OpenShell legacy forward retirement", () => {
   it.each([
-    ["workspace table", "WORKSPACE " + legacyForwardList.replace("\n", "\nother "), forward],
+    ["workspace table", "WORKSPACE " + legacyForwardList.replaceAll("\n", "\nother "), forward],
     ["legacy table outside default", legacyForwardList, { ...forward, workspace: "other" }],
   ])(
     "refuses another workspace in %s without requesting authority or stopping",
@@ -1231,7 +1231,7 @@ describe("CLI OpenShell legacy forward retirement", () => {
 
   it.each([
     ["legacy", legacyForwardList],
-    ["workspace", "WORKSPACE " + legacyForwardList.replace("\n", "\ndefault ")],
+    ["workspace", "WORKSPACE " + legacyForwardList.replaceAll("\n", "\ndefault ")],
   ])(
     "checks authority, stops once, and verifies release for the %s table",
     async (_case, output) => {

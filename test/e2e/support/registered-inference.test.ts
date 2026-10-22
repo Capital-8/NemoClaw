@@ -69,7 +69,7 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
 function run(command: [string, ...string[]], env: Record<string, string>) {
-  return spawnSync(command[0], command.slice(1), {
+  const options = {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -78,7 +78,14 @@ function run(command: [string, ...string[]], env: Record<string, string>) {
       PATH: `${directory}:${process.env.PATH}`,
       ...env,
     },
-  });
+  } as const;
+  const executable = new Map([
+    ["bash", "bash"],
+    ["/bin/bash", "/bin/bash"],
+    ["curl", "curl"],
+  ]).get(command[0]);
+  expect(executable).toBeDefined();
+  return spawnSync(executable!, command.slice(1), options);
 }
 
 it("executes the local probe with its exact endpoint, payload and scoped credential", () => {
