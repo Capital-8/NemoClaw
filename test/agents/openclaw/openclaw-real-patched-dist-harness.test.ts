@@ -1099,8 +1099,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
             timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
           });
           requireRuntimeEqual(
-            workerStage.archived,
-            true,
+            String(workerStage.archived),
+            "true",
             "10.5 publishes its worker graph as an archive",
           );
           const archivedWorkerDirectory = workerStage.directory;
