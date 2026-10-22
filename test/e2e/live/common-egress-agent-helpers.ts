@@ -138,6 +138,10 @@ export interface OpenClawAgentFailureArtifact {
     responseRecordCount: number;
     payloadCount: number;
     incompleteTurn: boolean;
+    timeoutPhase: "none" | "provider" | "tool" | "post_turn" | "other";
+    abandoned: boolean;
+    replayRisk: boolean;
+    incompleteTurnError: boolean;
     assistantReplyPresent: boolean;
   };
   schemaVersion: 1;
@@ -223,6 +227,8 @@ export function projectOpenClawAgentFailureArtifact(
     const response = openClawAgentResponseRecord(document);
     return response ? [response] : [];
   });
+  const incomplete = openClawAgentIncompleteTurnSignal(result.stdout);
+  const phase = incomplete?.timeoutPhase;
   // Keep response framing evidence after sandbox cleanup without retaining model or tool text.
   const boundedCount = (count: number) => Math.min(1_000, count);
   return {
@@ -238,7 +244,17 @@ export function projectOpenClawAgentFailureArtifact(
           0,
         ),
       ),
-      incompleteTurn: openClawAgentIncompleteTurnSignal(result.stdout) !== null,
+      incompleteTurn: incomplete !== null,
+      timeoutPhase:
+        phase === undefined
+          ? "none"
+          : phase === "provider" || phase === "tool" || phase === "post_turn"
+            ? phase
+            : "other",
+      abandoned: incomplete?.markers.some((marker) => marker.startsWith("livenessState=")) ?? false,
+      replayRisk: incomplete?.markers.includes("replayInvalid=true") ?? false,
+      incompleteTurnError:
+        incomplete?.markers.some((marker) => marker.startsWith("error.kind=")) ?? false,
       assistantReplyPresent: parseOpenClawAgentText(result.stdout).length > 0,
     },
     schemaVersion: 1,
@@ -1053,6 +1069,19 @@ export function projectUnavailableSearchReplyArtifact(reply: string) {
           : typeof documentation,
     surroundingProse,
   };
+}
+
+/** Require a completed turn with no successful fetch or search-provider evidence. */
+export function hasUnavailableSearchToolEvidence(evidence: OpenClawToolEvidence): boolean {
+  return (
+    evidence.errors.length === 0 &&
+    evidence.finalStatuses.length === 1 &&
+    evidence.finalStatuses[0] === "success" &&
+    !evidence.webFetchResults.some((result) => result.resultSuccess || result.httpSuccess) &&
+    ![...evidence.toolCalls, ...evidence.toolExecutions, ...evidence.toolResults].some((call) =>
+      /web_search|brave|tavily/iu.test(call.name),
+    )
+  );
 }
 
 /** Validate the complete research reply independently of the reply-key smoke check. */

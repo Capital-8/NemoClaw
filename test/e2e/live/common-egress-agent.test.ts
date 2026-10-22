@@ -30,6 +30,7 @@ import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.t
 import {
   assessPersonalPublicFetchToolEvidence,
   isUnavailableSearchReply,
+  hasUnavailableSearchToolEvidence,
   projectUnavailableSearchReplyArtifact,
   classifyHermesAgentAssertion,
   classifyPreContractProviderValidationSkip,
@@ -762,14 +763,7 @@ Format the answer as JSON with searchStatus (available, unavailable, or unknown)
             projectUnavailableSearchReplyArtifact(reply),
           );
         },
-        toolEvidenceValidator: (evidence) =>
-          evidence.errors.length === 0 &&
-          evidence.finalStatuses.length === 1 &&
-          evidence.finalStatuses[0] === "success" &&
-          !evidence.webFetchResults.some((result) => result.resultSuccess || result.httpSuccess) &&
-          ![...evidence.toolCalls, ...evidence.toolExecutions].some((call) =>
-            /web_search|brave|tavily/iu.test(call.name),
-          ),
+        toolEvidenceValidator: hasUnavailableSearchToolEvidence,
       });
       const unavailableSearchReply = isUnavailableSearchReply(research.reply);
       expect(

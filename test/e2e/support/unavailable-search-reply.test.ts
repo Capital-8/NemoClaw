@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   classifyOpenClawAgentAssertion,
   isUnavailableSearchReply,
+  hasUnavailableSearchToolEvidence,
+  reduceOpenClawToolEvidence,
   projectUnavailableSearchReplyArtifact,
 } from "../live/common-egress-agent-helpers.ts";
 
@@ -165,5 +167,30 @@ describe("unavailable-search reply diagnostics", () => {
       installationDocumentationType: "null",
       surroundingProse: "absent",
     });
+  });
+});
+
+describe("unavailable-search tool evidence", () => {
+  it.each(["web_search", "brave_search", "tavily_search"])(
+    "rejects an orphaned %s tool result",
+    (name) => {
+      const evidence = reduceOpenClawToolEvidence(
+        JSON.stringify({
+          type: "message",
+          message: { role: "toolResult", toolName: name, toolCallId: "orphan", content: [] },
+        }),
+        JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
+      );
+      expect(evidence.toolResults).toContainEqual({ name });
+      expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+    },
+  );
+
+  it("accepts a completed turn without search or fetched content", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      "",
+      JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
+    );
+    expect(hasUnavailableSearchToolEvidence(evidence)).toBe(true);
   });
 });

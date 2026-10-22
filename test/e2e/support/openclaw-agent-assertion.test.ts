@@ -251,6 +251,10 @@ describe("unavailable-search assertion wiring", () => {
         responseRecordCount: 1,
         payloadCount: 1,
         incompleteTurn: false,
+        timeoutPhase: "none",
+        abandoned: false,
+        replayRisk: false,
+        incompleteTurnError: false,
         assistantReplyPresent: true,
       });
       expect(failureArtifact).not.toContain("private query");
@@ -359,8 +363,124 @@ describe("OpenClaw agent failure diagnostics", () => {
       responseRecordCount: fixture.responses,
       payloadCount: fixture.payloads,
       incompleteTurn: fixture.incomplete,
+      timeoutPhase: fixture.incomplete ? "other" : "none",
+      abandoned: false,
+      replayRisk: false,
+      incompleteTurnError: fixture.incomplete,
       assistantReplyPresent: fixture.reply,
     });
     expect(JSON.stringify(artifact)).not.toMatch(/private|provider notice|nvidia-api-key/u);
+  });
+});
+
+describe("incomplete-turn failure categories", () => {
+  it.each([
+    {
+      meta: { timeoutPhase: "provider" },
+      phase: "provider",
+      abandoned: false,
+      replayRisk: false,
+      error: false,
+    },
+    {
+      meta: { timeoutPhase: "tool" },
+      phase: "tool",
+      abandoned: false,
+      replayRisk: false,
+      error: false,
+    },
+    {
+      meta: { timeoutPhase: "post_turn" },
+      phase: "post_turn",
+      abandoned: false,
+      replayRisk: false,
+      error: false,
+    },
+    {
+      meta: { timeoutPhase: "private-phase" },
+      phase: "other",
+      abandoned: false,
+      replayRisk: false,
+      error: false,
+    },
+    {
+      meta: { livenessState: "abandoned" },
+      phase: "none",
+      abandoned: true,
+      replayRisk: false,
+      error: false,
+    },
+    {
+      meta: { replayInvalid: true },
+      phase: "none",
+      abandoned: false,
+      replayRisk: true,
+      error: false,
+    },
+    {
+      meta: { error: { kind: "incomplete_turn", message: "private-message" } },
+      phase: "none",
+      abandoned: false,
+      replayRisk: false,
+      error: true,
+    },
+    { meta: {}, phase: "none", abandoned: false, replayRisk: false, error: false },
+  ])("retains fixed categories for $meta", (fixture) => {
+    const artifact = projectOpenClawAgentFailureArtifact(
+      1,
+      { passed: false },
+      {
+        exitCode: 0,
+        signal: null,
+        stderr: SECRET_SENTINEL,
+        timedOut: false,
+        stdout: JSON.stringify({
+          status: "ok",
+          result: { payloads: [{ text: "private-reply" }], meta: fixture.meta },
+        }),
+      },
+    );
+    expect(artifact.response).toMatchObject({
+      timeoutPhase: fixture.phase,
+      abandoned: fixture.abandoned,
+      replayRisk: fixture.replayRisk,
+      incompleteTurnError: fixture.error,
+    });
+    expect(JSON.stringify(artifact)).not.toMatch(/private|nvidia-api-key/u);
+  });
+
+  it("ignores incomplete markers in tool output and superseded responses", () => {
+    const artifact = projectOpenClawAgentFailureArtifact(
+      1,
+      { passed: false },
+      {
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        timedOut: false,
+        stdout: [
+          JSON.stringify({ payloads: [], meta: { timeoutPhase: "provider", replayInvalid: true } }),
+          JSON.stringify({
+            payloads: [
+              {
+                role: "tool",
+                content: {
+                  timeoutPhase: "private-phase",
+                  livenessState: "abandoned",
+                  error: { kind: "incomplete_turn" },
+                },
+              },
+            ],
+            meta: {},
+          }),
+        ].join("\n"),
+      },
+    );
+    expect(artifact.response).toMatchObject({
+      timeoutPhase: "none",
+      abandoned: false,
+      replayRisk: false,
+      incompleteTurnError: false,
+    });
   });
 });
