@@ -521,16 +521,23 @@ def _runtime_drm_groups(expected_uid: int) -> set[str]:
     sysfs_directory = -1
     try:
         flags = os.O_PATH | _directory_flag() | _no_follow_flag() | _cloexec_flag()
-        dev_fd = os.open("/dev", flags)
+        # CodeQL does not associate these descriptor variables with the guarded
+        # close loop in finally. Each successful open assigns its descriptor
+        # before any operation that can return from this function.
+        dev_fd = os.open("/dev", flags)  # codeql[py/file-not-closed]
         for descriptor in (dev_fd,):
             directory = os.fstat(descriptor)
             if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
                 return set()
-        device_directory = os.open("dri", flags, dir_fd=dev_fd)
+        device_directory = os.open(  # codeql[py/file-not-closed]
+            "dri", flags, dir_fd=dev_fd
+        )
         directory = os.fstat(device_directory)
         if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
             return set()
-        sysfs_directory = _open_directory("/sys/class/drm")
+        sysfs_directory = _open_directory(  # codeql[py/file-not-closed]
+            "/sys/class/drm"
+        )
         directory = os.fstat(sysfs_directory)
         if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
             return set()

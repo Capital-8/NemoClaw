@@ -11,6 +11,11 @@ import { parseCheckedInProviderProfileContract } from "../../adapters/openshell/
 
 const CREDENTIAL_KEY = /^[A-Z][A-Z0-9_]{0,127}$/u;
 
+/** Build a stable identifier from validated names, never from credential values. */
+function profileIdentityDigest(value: string): string {
+  return createHash("sha256").update(value).digest("hex"); // codeql[js/insufficient-password-hash]
+}
+
 function familyKeys(primary: string, keys: readonly string[]): string[] {
   if (
     !CREDENTIAL_KEY.test(primary) ||
@@ -39,12 +44,7 @@ export function credentialFamilyProfileType(
     throw new Error("Additional credentials require an explicit owned provider profile.");
   }
   if (sorted.length === 1) return baseType;
-  const digest = createHash("sha256")
-    // This is a stable profile identifier over validated environment-variable names,
-    // not a password verifier or credential storage primitive.
-    .update(JSON.stringify([baseType, primary, sorted])) // codeql[js/insufficient-password-hash]
-    .digest("hex")
-    .slice(0, 32);
+  const digest = profileIdentityDigest(JSON.stringify([baseType, primary, sorted])).slice(0, 32);
   return `${baseType}-${digest}`;
 }
 
