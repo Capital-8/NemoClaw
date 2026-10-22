@@ -700,6 +700,15 @@ try:
         reject()
     incompatible_reason = "client-token"
     auth_tokens = auth.get('tokens')
+    # OpenClaw commits approval before the client stores the hello response token.
+    # Ordinary onboarding can observe that gap; qualification still requires the token.
+    if (
+        ORDINARY_SETTLEMENT and first.get('layout') == 'sqlite'
+        and type(auth.get('version')) is int and auth.get('version') == 1
+        and auth.get('deviceId') == device_id
+        and isinstance(auth_tokens, dict) and not auth_tokens
+    ):
+        retry_observation()
     auth_operator = auth_tokens.get('operator') if isinstance(auth_tokens, dict) and set(auth_tokens) == {'operator'} else None
     if (
         type(auth.get('version')) is not int
