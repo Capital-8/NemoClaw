@@ -484,3 +484,118 @@ describe("incomplete-turn failure categories", () => {
     });
   });
 });
+
+describe("replay-risk completion evidence", () => {
+  it("distinguishes a completed failed-tool reply from a missing completion marker", () => {
+    const reply = '{"searchStatus":"unavailable","installationDocumentation":null}';
+    const artifact = projectOpenClawAgentFailureArtifact(
+      1,
+      { passed: false },
+      {
+        exitCode: 0,
+        signal: null,
+        stderr: SECRET_SENTINEL,
+        timedOut: false,
+        stdout: JSON.stringify({
+          status: "ok",
+          summary: "completed",
+          result: {
+            payloads: [{ text: reply }],
+            meta: {
+              replayInvalid: true,
+              aborted: false,
+              stopReason: "stop",
+              finalAssistantVisibleText: reply,
+              toolSummary: { calls: 2, failures: 1 },
+            },
+          },
+        }),
+      },
+    );
+    expect(artifact.completion).toMatchObject({
+      runCompleted: true,
+      aborted: false,
+      errorPresent: false,
+      stopReasonIsStop: true,
+      toolCalls: 2,
+      toolFailures: 1,
+      finalTextPresent: true,
+      finalTextMatchesPayload: true,
+      finalReply: { unavailableSearchReply: true },
+    });
+    expect(artifact.response.assistantReplyPresent).toBe(false);
+  });
+
+  it("does not retain arbitrary completion metadata or reply contents", () => {
+    const artifact = projectOpenClawAgentFailureArtifact(
+      1,
+      { passed: false },
+      {
+        exitCode: 0,
+        signal: null,
+        stderr: SECRET_SENTINEL,
+        timedOut: false,
+        stdout: JSON.stringify({
+          status: "private-status",
+          summary: "private-summary",
+          result: {
+            payloads: [{ text: "private-other-text" }],
+            meta: {
+              replayInvalid: true,
+              aborted: true,
+              stopReason: "private-stop",
+              error: { kind: "private-error" },
+              finalAssistantVisibleText: "private-query",
+              toolSummary: { calls: 2000, failures: "private-failures" },
+            },
+          },
+        }),
+      },
+    );
+    expect(artifact.completion).toMatchObject({
+      runCompleted: false,
+      aborted: true,
+      errorPresent: true,
+      stopReasonIsStop: false,
+      toolCalls: 1000,
+      toolFailures: null,
+      finalTextPresent: true,
+      finalTextMatchesPayload: false,
+      finalReply: { unavailableSearchReply: false },
+    });
+    expect(JSON.stringify(artifact)).not.toMatch(/private|nvidia-api-key/u);
+  });
+
+  it("uses the final response and ignores metadata within tool output", () => {
+    const artifact = projectOpenClawAgentFailureArtifact(
+      1,
+      { passed: false },
+      {
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        timedOut: false,
+        stdout: [
+          JSON.stringify({
+            payloads: [],
+            meta: {
+              finalAssistantVisibleText: "private-old",
+              toolSummary: { calls: 9, failures: 9 },
+            },
+          }),
+          JSON.stringify({
+            payloads: [{ role: "tool", content: { finalAssistantVisibleText: "private-tool" } }],
+            meta: {},
+          }),
+        ].join("\n"),
+      },
+    );
+    expect(artifact.completion).toMatchObject({
+      runCompleted: false,
+      toolCalls: null,
+      toolFailures: null,
+      finalTextPresent: false,
+      finalTextMatchesPayload: false,
+    });
+  });
+});

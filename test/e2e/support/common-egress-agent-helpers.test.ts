@@ -850,6 +850,27 @@ describe("common-egress agent parsing and classification helpers", () => {
     );
 
     expect(artifact).toEqual({
+      completion: {
+        runCompleted: false,
+        aborted: false,
+        errorPresent: false,
+        stopReasonIsStop: false,
+        stopReasonAccepted: true,
+        toolCalls: null,
+        toolFailures: null,
+        finalTextPresent: false,
+        finalTextMatchesPayload: false,
+        finalReply: {
+          schemaVersion: 1,
+          unavailableSearchReply: false,
+          jsonParseStatus: "invalid",
+          fields: [],
+          unexpectedFieldCount: 0,
+          searchStatus: "missing",
+          installationDocumentationType: "missing",
+          surroundingProse: "unknown",
+        },
+      },
       schemaVersion: 1,
       attempt: 2,
       diagnosticSummary: "command-exited-nonzero",
