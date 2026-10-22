@@ -267,7 +267,7 @@ check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integri
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
 check_not_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
 check_contains "$optional_plugin_block" 'plugin_archive="$NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR/$archive_name"' "optional plugin reviewed archive"
-check_contains "$optional_plugin_block" 'openclaw plugins install --force --accept-capabilities "$plugin_spec"' "optional plugin reviewed exact registry install"
+check_contains "$optional_plugin_block" 'openclaw plugins install --force --accept-capabilities "$@" "$plugin_spec"' "optional plugin reviewed exact registry install"
 check_contains "$optional_plugin_block" 'rm -rf "$(dirname "$packed_plugin_archive")"' "optional plugin source cleanup"
 check_contains "$optional_plugin_block" 'packed_plugin_archive=' "optional plugin cleanup reset"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"

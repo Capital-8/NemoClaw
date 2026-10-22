@@ -1696,8 +1696,7 @@ USER sandbox
 # for child npm processes. During image build the OpenShell gateway is not
 # available at the runtime sandbox proxy address yet, so defer the final proxy
 # block until after build-time OpenClaw doctor/plugin commands complete.
-RUN NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0 \
-    NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
     node /scripts/generate-openclaw-config.mts
 
 # Validate the patched OpenClaw tool-search contract against real generated

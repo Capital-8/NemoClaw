@@ -52,10 +52,13 @@ install_reviewed_openclaw_plugin() {
       --package-spec "$plugin_spec" --integrity "$expected_integrity" \
       --tarball-url "$expected_tarball" --label "OpenClaw plugin ${plugin_spec}"
   )"
-  NPM_CONFIG_OFFLINE=true NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
-    openclaw plugins install --force --accept-capabilities "$plugin_spec"
   plugin_id="${1#@openclaw/}"
   plugin_id="${plugin_id%-plugin}"
+  # A managed image installs capabilities without activating unused providers.
+  set --
+  if [ "$managed_image_union" = "1" ]; then set -- --no-enable; fi
+  NPM_CONFIG_OFFLINE=true NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
+    openclaw plugins install --force --accept-capabilities "$@" "$plugin_spec"
   node /scripts/lib/verify-openclaw-official-plugin.mts "$plugin_id" "$plugin_spec" "$expected_integrity"
   rm -rf "$(dirname "$packed_plugin_archive")"
   packed_plugin_archive=

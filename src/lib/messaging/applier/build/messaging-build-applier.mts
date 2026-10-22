@@ -779,7 +779,11 @@ export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null,
   installOpenClawPluginPackages(collectOpenClawMessagingPluginInstalls(plan, env), env);
 }
 
-function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[], env: Env): void {
+function installOpenClawPluginPackages(
+  installs: readonly OpenClawPluginInstall[],
+  env: Env,
+  preserveEnablement = false,
+): void {
   for (const install of installs) {
     const installCache = install.runtimeLock
       ? requireWritableRuntimeInstallCache(install.runtimeLock, env)
@@ -810,7 +814,15 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
         ? { ...installEnv, NPM_CONFIG_OFFLINE: "true", npm_config_offline: "true" }
         : installEnv;
       runCommand(
-        ["openclaw", "plugins", "install", "--force", "--accept-capabilities", installTarget],
+        [
+          "openclaw",
+          "plugins",
+          "install",
+          "--force",
+          "--accept-capabilities",
+          ...(preserveEnablement ? ["--no-enable"] : []),
+          installTarget,
+        ],
         commandEnv,
       );
       if (officialPluginId) {
@@ -2026,7 +2038,9 @@ export function installManagedImageCapabilityUnion(
     );
   }
   if (agent === "openclaw") {
-    installOpenClawPluginPackages(collectManagedImageOpenClawPluginInstalls(env), env);
+    // Preinstallation must retain the neutral image's disabled plugin policy.
+    // Enabling every channel makes native inspection import unrelated setup trees.
+    installOpenClawPluginPackages(collectManagedImageOpenClawPluginInstalls(env), env, true);
     return;
   }
   installHermesUvPackages(collectManagedImageHermesUvPackages(), env);

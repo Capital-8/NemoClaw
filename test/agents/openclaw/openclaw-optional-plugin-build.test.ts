@@ -261,7 +261,7 @@ it.each([
       const expectedInstalls = installed
         .map(
           (plugin) =>
-            `plugins install --force --accept-capabilities @openclaw/${plugin}@2026.10.5|true|true|true\n`,
+            `plugins install --force --accept-capabilities ${union === "1" ? "--no-enable " : ""}@openclaw/${plugin}@2026.10.5|true|true|true\n`,
         )
         .join("");
       expect(fs.readFileSync(log, "utf8")).toBe(expectedInstalls + doctor);
