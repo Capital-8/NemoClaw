@@ -27,6 +27,8 @@ import {
 } from "../live/common-egress-agent-helpers.ts";
 import { runOpenClawAgentAssertion } from "../live/openclaw-agent-assertion.ts";
 
+import { projectOpenClawAgentCompletion } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+
 const SECRET_SENTINEL = "nvidia-api-key-must-not-remain";
 
 describe("OpenClaw agent assertion", () => {
@@ -597,5 +599,45 @@ describe("replay-risk completion evidence", () => {
       finalTextPresent: false,
       finalTextMatchesPayload: false,
     });
+  });
+});
+
+describe("shared completion projection", () => {
+  it("keeps failure artifacts aligned with the canonical final-response projection", () => {
+    const documents = [
+      { meta: { aborted: true }, payloads: [] },
+      {
+        status: "ok",
+        summary: "completed",
+        result: {
+          payloads: [{ text: "unavailable" }],
+          meta: {
+            replayInvalid: true,
+            aborted: false,
+            stopReason: "stop",
+            finalAssistantVisibleText: "unavailable",
+            toolSummary: { calls: 1, failures: 1 },
+          },
+        },
+      },
+      { event: "log", meta: { aborted: true } },
+    ];
+    const artifact = projectOpenClawAgentFailureArtifact(
+      1,
+      { passed: false },
+      {
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        stdout: JSON.stringify(documents),
+        timedOut: false,
+      },
+    );
+    const { finalReply, ...completion } = artifact.completion;
+    expect(completion).toEqual(projectOpenClawAgentCompletion(documents));
+    expect(completion.runCompleted).toBe(true);
+    expect(completion.toolFailures).toBe(1);
+    expect(finalReply.unavailableSearchReply).toBe(false);
+    expect(artifact.response.replayRisk).toBe(true);
   });
 });

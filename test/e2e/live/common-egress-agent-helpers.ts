@@ -9,6 +9,8 @@
 
 import {
   openClawAgentIncompleteTurnSignal,
+  openClawFinalAgentResponse,
+  projectOpenClawAgentCompletion,
   openClawAgentResponseRecord,
   parseOpenClawJsonDocuments,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
@@ -211,55 +213,13 @@ export interface OpenClawAgentAttemptEvidenceResult {
   failure?: string;
 }
 
-/** Preserve completion predicates and a reduced reply classification, never response text. */
+/** Add the scenario reply classification to the canonical redacted completion evidence. */
 function projectOpenClawCompletionArtifact(documents: unknown[]) {
-  const final = documents
-    .flatMap((document) => {
-      const response = openClawAgentResponseRecord(document);
-      return response ? [{ document: document as Record<string, unknown>, response }] : [];
-    })
-    .at(-1);
-  const meta = (final?.response.meta ?? {}) as Record<string, unknown>;
-  const summary = meta.toolSummary;
-  const tools =
-    summary !== null && typeof summary === "object" && !Array.isArray(summary)
-      ? (summary as Record<string, unknown>)
-      : {};
-  const count = (value: unknown): number | null =>
-    typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-      ? Math.min(1000, value)
-      : null;
-  const visible =
-    typeof meta.finalAssistantVisibleText === "string" ? meta.finalAssistantVisibleText.trim() : "";
-  const stopReasonIsStop =
-    typeof meta.stopReason === "string" && meta.stopReason.trim().toLowerCase() === "stop";
-  const payloads = final?.response.payloads;
+  const final = openClawFinalAgentResponse(documents);
+  const visible = final?.meta.finalAssistantVisibleText;
   return {
-    runCompleted:
-      final !== undefined &&
-      (final.document === final.response
-        ? meta.aborted === false && stopReasonIsStop
-        : final.document.status === "ok" && final.document.summary === "completed"),
-    aborted: meta.aborted === true,
-    errorPresent: meta.error !== undefined,
-    stopReasonIsStop,
-    stopReasonAccepted: meta.stopReason === undefined || stopReasonIsStop,
-    toolCalls: count(tools.calls),
-    toolFailures: count(tools.failures),
-    finalTextPresent: visible.length > 0,
-    finalTextMatchesPayload:
-      visible.length > 0 &&
-      Array.isArray(payloads) &&
-      payloads.some((payload: unknown) => {
-        if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
-        const record = payload as Record<string, unknown>;
-        return (
-          record.isError !== true &&
-          typeof record.text === "string" &&
-          record.text.trim() === visible
-        );
-      }),
-    finalReply: projectUnavailableSearchReplyArtifact(visible),
+    ...projectOpenClawAgentCompletion(documents),
+    finalReply: projectUnavailableSearchReplyArtifact(typeof visible === "string" ? visible : ""),
   };
 }
 
