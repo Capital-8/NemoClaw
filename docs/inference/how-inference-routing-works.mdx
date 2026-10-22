@@ -42,6 +42,8 @@ New Deep Agents Code, Hermes, OpenClaw, and Pi selections for Ollama, standalone
 Deep Agents Code, Hermes, OpenClaw, and Pi also use attached providers for qualifying host-local compatible endpoints.
 OpenClaw and Hermes compatible attachments preserve the selected Chat Completions or Responses API.
 Qualifying custom hosted endpoints use sandbox-attached providers.
+For a direct endpoint, the agent uses the recorded endpoint and a scoped credential reference.
+Bedrock uses the host-local adapter endpoint and an OpenShell adapter token.
 New Model Router selections use sandbox-attached providers for the configured router endpoint, normally `http://host.openshell.internal:4000/v1`.
 OpenShell authorizes model-list and Chat Completions requests and supplies the provider credential; the sandbox receives only an endpoint-bound credential reference.
 NemoClaw verifies the recorded router process, port, and credential identity before publishing the selection.
@@ -69,8 +71,11 @@ Retry only after the profile conflict is resolved.
 
 ## Credential Boundary
 
-Provider credentials stay on the host and flow through the OpenShell provider system.
+Provider credentials stay on the host in OpenShell provider state or, for AWS Bedrock Runtime, in its host-local adapter.
 The sandbox does not receive the raw upstream API key.
+For attached direct custom endpoints, OpenShell binds the credential environment name, selected API, endpoint, and admitted destination addresses to the provider.
+The Bedrock adapter uses a host-local endpoint and supplies OpenShell an adapter token instead of direct endpoint IP pins.
+Removing a private host from the ambient allowlist does not revoke an already verified direct endpoint binding.
 
 Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
@@ -97,7 +102,9 @@ When a rebuild reuses an automatically bridged compatible-endpoint route without
 
 ## Deep Agents Configuration
 
-For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Supported native hosted selections use the endpoints above. New Ollama, vLLM, Local NVIDIA NIM, llama.cpp, Model Router, and qualifying local compatible selections use their qualified host-local endpoint through an attached provider. Other shared-route selections retain `https://inference.local/v1`.
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with a managed OpenAI-compatible provider, a scoped placeholder API key, and `use_responses_api = false`. Supported native hosted selections use the endpoints above.
+Direct hosted compatible selections use their recorded endpoint; Bedrock selections use the host-local adapter endpoint.
+New Ollama, vLLM, Local NVIDIA NIM, llama.cpp, Model Router, and qualifying local compatible selections use their qualified host-local endpoint through an attached provider. Other shared-route selections retain `https://inference.local/v1`.
 The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
 
 </AgentOnly>

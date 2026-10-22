@@ -114,7 +114,7 @@ NemoClaw allows a credential source only in the process that is intended to hold
 
 | Execution path | Rule |
 |---|---|
-| Host-brokered provider | Discover and use host credentials only through OpenShell-managed providers. NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, and qualifying local selections use sandbox-attached native providers. Remaining shared selections retain `inference.local` on OpenShell `0.0.x`. The sandbox receives no raw host credential. |
+| Host-brokered provider | Keep provider credentials outside the sandbox. Bedrock AWS credentials stay in its host-local adapter. NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, and qualifying local selections use sandbox-attached native providers. Remaining shared selections retain `inference.local` on OpenShell `0.0.x`. The sandbox receives no raw host credential. |
 | Sandbox-direct provider | Keep only credential sources that are deliberately provisioned and reachable inside the sandbox. |
 | Ambient metadata provider | Disable SDK discovery when the metadata endpoint cannot exist across the sandbox boundary. Do not make an internal or link-local endpoint reachable merely to satisfy an automatic probe. |
 | New agent or provider | Declare the enabled credential sources and add agent-specific tests proving that unavailable sources are not probed. |
@@ -337,7 +337,7 @@ The agent never receives the provider API key.
 
 | Aspect | Detail |
 |---|---|
-| Default | NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, and qualifying local selections use sandbox-attached native providers. Remaining shared selections retain `inference.local` on OpenShell `0.0.x`. OpenShell owns the credential and upstream endpoint in both cases. |
+| Default | NVIDIA Endpoints, supported fixed hosted providers, qualifying custom hosted endpoints, and qualifying local selections use sandbox-attached native providers. Remaining shared selections retain `inference.local` on OpenShell `0.0.x`. OpenShell owns the direct provider credential and upstream endpoint. Bedrock AWS credentials stay in its host-local adapter. |
 | What you can change | You select a supported provider. NemoClaw selects and enforces that provider's managed path. |
 | Risk if bypassed | Adding an unowned provider endpoint to network policy bypasses NemoClaw's managed provider boundary and could let an agent use a stolen or hardcoded key. The NVIDIA Endpoints path is not a bypass: its checked-in OpenShell provider profile restricts the endpoint, methods, paths, and binaries, then rewrites a placeholder credential at the egress boundary. |
 | Recommendation | Do not add inference provider hosts to network policy for NemoClaw model traffic. Use the provider path created by onboarding. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |

@@ -67,9 +67,13 @@ If the settings update fails, NemoClaw restores the previous catalog or removes 
 When NemoClaw applies a Pi configuration, existing `models.json` and `settings.json` paths must be regular files.
 A symbolic link at either path stops that update before the Pi generator runs.
 
-The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Pi selections for Ollama, standalone vLLM, llama.cpp, and qualified host-local compatible endpoints use sandbox-attached providers.
+For direct provider routes, the upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers. New Pi selections for Ollama, standalone vLLM, llama.cpp, and qualified host-local compatible endpoints use sandbox-attached providers.
 Qualifying custom hosted endpoints also use sandbox-attached providers.
-OpenShell supplies the issued credential at egress; Pi receives only an opaque reference.
+For an attached hosted custom selection, `models.json` reads `${COMPATIBLE_API_KEY}` or `${COMPATIBLE_ANTHROPIC_API_KEY}` from the sandbox environment.
+That environment value is a scoped `openshell:resolve:env:...` reference.
+OpenShell supplies the direct provider credential or Bedrock adapter token at egress.
+Pi configuration contains a non-secret placeholder or environment reference.
+Bedrock AWS credentials stay in its host-local adapter.
 Remaining custom shared selections and unchanged published Pi shared-route selections retain `inference.local`.
 Those shared routes require OpenShell `0.0.x`; OpenShell `0.1.3` removes `inference.local`.
 On OpenShell `0.1.3`, NemoClaw refuses to resume or rebuild a retained Pi local selection without a native attachment.
@@ -83,6 +87,7 @@ For OpenRouter, Pi uses `https://openrouter.ai/api/v1` through its recorded nati
 Native-local qualification requires a fresh Pi request to the selected endpoint and model before and after rebuild, with the issued credential and confirmed cleanup.
 
 The initial qualification requires streaming, a structured `read` tool call, a successful tool result, and an independently checked final response with `nvidia/nemotron-3.5-super-vl-120b-a12b`.
+Fresh hosted custom OpenAI onboarding and a Pi real request after a credential rewrite still need live qualification.
 
 ## Model Metadata and Route Changes
 

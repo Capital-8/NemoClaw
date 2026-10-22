@@ -224,14 +224,14 @@ OpenShell mediates inference traffic and keeps provider credentials outside the 
 
 <AgentOnly variant="openclaw">
 
-New OpenClaw Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers.
+Qualifying OpenClaw hosted compatible selections and new Ollama, standalone vLLM, and llama.cpp selections use sandbox-attached providers.
 Remaining shared custom and local selections retain `inference.local` on OpenShell `0.0.x`.
 Refer to [How Inference Routing Works](../inference/about-inference-routing) for qualification and existing-sandbox boundaries.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-New Hermes Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
+Qualifying Hermes hosted compatible selections, Ollama, standalone vLLM, llama.cpp, and qualifying host-local compatible selections use sandbox-attached providers.
 The profile restricts the recorded host, port, methods, paths, and Hermes runtime binaries.
 OpenShell replaces the scoped credential reference at the allowed endpoint; the upstream credential remains outside the sandbox.
 Remaining custom shared selections and retained legacy local routes use `inference.local` on OpenShell `0.0.x`.
@@ -241,8 +241,9 @@ Refer to [How Inference Routing Works](../inference/about-inference-routing) for
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
+Qualifying Deep Agents Code hosted compatible selections use sandbox-attached providers.
 New Deep Agents Code sandboxes use native providers for qualified Ollama, standalone vLLM, llama.cpp, and host-local compatible endpoints.
-The attached profile permits only `GET /v1/models` and `POST /v1/chat/completions` on the recorded host and port, using the listed Python and curl binaries.
+The local attached profile permits only `GET /v1/models` and `POST /v1/chat/completions` on the recorded host and port, using the listed Python and curl binaries.
 These local HTTP endpoints do not use TLS termination on port `443`.
 OpenShell replaces the sandbox's credential placeholder at the allowed endpoint.
 For a credentialless upstream, the protected local proxy removes the sentinel authorization header before forwarding the request.

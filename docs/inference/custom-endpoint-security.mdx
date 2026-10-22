@@ -26,7 +26,7 @@ Refer to [How Inference Routing Works](../about-inference-routing) for the quali
 <AgentOnly variant="hermes">
 Live qualification of the Hermes native local lifecycle is pending.
 </AgentOnly>
-OpenShell mediates inference traffic and injects the provider credential at egress.
+OpenShell mediates inference traffic and injects the direct provider credential or Bedrock adapter token at egress.
 The sandbox does not receive the raw API key.
 
 Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.
