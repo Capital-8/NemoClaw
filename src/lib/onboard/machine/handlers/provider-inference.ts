@@ -1380,10 +1380,14 @@ function assertNoLegacySharedResume(
   if (!recorded || recorded.pendingRouteReservation === true) return;
   const local = hasLegacySharedLocalInferenceRoute(recorded);
   const custom = hasLegacySharedCustomInferenceRoute(recorded);
-  if (!local && !custom) return;
+  const legacyNvidia = recorded.provider === "nvidia-nim";
+  if (!local && !custom && !legacyNvidia) return;
   const oldRuntime = /^0\.0\.\d+$/.test(deps.getInstalledOpenshellVersion?.() ?? "");
-  if ((local && (recorded.agent !== "pi" || !oldRuntime)) || (custom && !oldRuntime)) {
-    const route = local ? "local" : "custom";
+  if (
+    (local && (recorded.agent !== "pi" || !oldRuntime)) ||
+    ((custom || legacyNvidia) && !oldRuntime)
+  ) {
+    const route = local ? "local" : legacyNvidia ? "NVIDIA" : "custom";
     throw new Error(
       `Sandbox ${sandboxName} uses a legacy shared ${route} inference route. Resume is unavailable for this route. Back up the sandbox, then re-onboard it with --fresh --name ${sandboxName} --recreate-sandbox to attach a native provider.`,
     );

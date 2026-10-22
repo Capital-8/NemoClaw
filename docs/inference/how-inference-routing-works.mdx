@@ -77,6 +77,10 @@ For attached direct custom endpoints, OpenShell binds the credential environment
 The Bedrock adapter uses a host-local endpoint and supplies OpenShell an adapter token instead of direct endpoint IP pins.
 Removing a private host from the ambient allowlist does not revoke an already verified direct endpoint binding.
 
+Legacy NVIDIA Endpoints sandboxes recorded as `nvidia-nim` use a shared route.
+Resume requires a confirmed OpenShell `0.0.x` runtime; otherwise, NemoClaw stops before changing the provider or route.
+Back up the sandbox before re-onboarding with `--fresh --name <sandbox-name> --recreate-sandbox` to attach a native provider.
+
 Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes.
 For retained shared local routes, rebuilds migrate away from stale OpenAI credential requirements.
