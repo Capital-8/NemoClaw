@@ -149,7 +149,7 @@ describe("OpenClaw agent assertion", () => {
   });
 });
 
-function replyFixture(reply: string) {
+function replyFixture(reply: string, meta: Record<string, unknown> = {}) {
   const root = mkdtempSync(join(tmpdir(), "nemoclaw-search-reply-"));
   const result = {
     artifacts: { result: "", stderr: "", stdout: "" },
@@ -172,7 +172,7 @@ function replyFixture(reply: string) {
   const host = {
     command: vi.fn().mockResolvedValue({
       ...result,
-      stdout: JSON.stringify({ payloads: [{ text: reply }], meta: {} }),
+      stdout: JSON.stringify({ payloads: [{ text: reply }], meta }),
     }),
   };
   const options = {
@@ -235,7 +235,11 @@ describe("unavailable-search assertion wiring", () => {
           },
         ),
       ).rejects.toThrow(/agent output omitted/u);
-      expect(recordReplyEvidence).toHaveBeenCalledWith("unparseable reply with a private query", 1);
+      expect(recordReplyEvidence).toHaveBeenCalledWith(
+        "unparseable reply with a private query",
+        1,
+        "",
+      );
       const artifact = readFileSync(join(f.root, "artifacts", "reply-1.json"), "utf8");
       expect(JSON.parse(artifact)).toMatchObject({
         jsonParseStatus: "invalid",
@@ -523,7 +527,6 @@ describe("replay-risk completion evidence", () => {
       toolFailures: 1,
       finalTextPresent: true,
       finalTextMatchesPayload: true,
-      finalReply: { unavailableSearchReply: true },
     });
     expect(artifact.response.assistantReplyPresent).toBe(false);
   });
@@ -563,7 +566,6 @@ describe("replay-risk completion evidence", () => {
       toolFailures: null,
       finalTextPresent: true,
       finalTextMatchesPayload: false,
-      finalReply: { unavailableSearchReply: false },
     });
     expect(JSON.stringify(artifact)).not.toMatch(/private|nvidia-api-key/u);
   });
@@ -633,11 +635,52 @@ describe("shared completion projection", () => {
         timedOut: false,
       },
     );
-    const { finalReply, ...completion } = artifact.completion;
-    expect(completion).toEqual(projectOpenClawAgentCompletion(documents));
-    expect(completion.runCompleted).toBe(true);
-    expect(completion.toolFailures).toBe(1);
-    expect(finalReply.unavailableSearchReply).toBe(false);
+    expect(artifact.completion).toEqual(projectOpenClawAgentCompletion(documents));
+    expect(artifact.completion.runCompleted).toBe(true);
+    expect(artifact.completion.toolFailures).toBe(1);
     expect(artifact.response.replayRisk).toBe(true);
+  });
+});
+
+describe("reply evidence after replay-risk rejection", () => {
+  it("preserves suppressed final text for scenario classification without accepting the turn", async () => {
+    const reply = '{"searchStatus":"unavailable","installationDocumentation":null}';
+    const f = replyFixture(reply, {
+      replayInvalid: true,
+      aborted: false,
+      stopReason: "stop",
+      finalAssistantVisibleText: reply,
+      toolSummary: { calls: 1, failures: 1 },
+    });
+    const recordReplyEvidence = vi.fn(async (parsed: string, attempt: number, final: string) => {
+      await f.artifacts.writeJson(`reply-${attempt}.json`, {
+        ...projectUnavailableSearchReplyArtifact(parsed),
+        finalReply: projectUnavailableSearchReplyArtifact(final),
+      });
+    });
+    try {
+      await expect(
+        runOpenClawAgentAssertion(
+          f.host as unknown as HostCliClient,
+          f.sandbox as unknown as SandboxClient,
+          f.artifacts,
+          { ...f.options, recordReplyEvidence },
+        ),
+      ).rejects.toThrow(/agent output omitted/u);
+      expect(recordReplyEvidence).toHaveBeenCalledWith("", 1, reply);
+      const scenario = JSON.parse(readFileSync(join(f.root, "artifacts", "reply-1.json"), "utf8"));
+      expect(scenario.unavailableSearchReply).toBe(false);
+      expect(scenario.finalReply.unavailableSearchReply).toBe(true);
+      const generic = JSON.parse(
+        readFileSync(
+          join(f.root, "artifacts", "actions", "unavailable-search-attempt-1-agent-failure.json"),
+          "utf8",
+        ),
+      );
+      expect(generic.completion).not.toHaveProperty("finalReply");
+      expect(generic.response.replayRisk).toBe(true);
+    } finally {
+      rmSync(f.root, { force: true, recursive: true });
+    }
   });
 });

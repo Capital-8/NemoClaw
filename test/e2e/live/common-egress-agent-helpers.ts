@@ -9,7 +9,6 @@
 
 import {
   openClawAgentIncompleteTurnSignal,
-  openClawFinalAgentResponse,
   projectOpenClawAgentCompletion,
   openClawAgentResponseRecord,
   parseOpenClawJsonDocuments,
@@ -133,7 +132,7 @@ export interface OpenClawToolEvidenceReductionFailureArtifact {
 }
 
 export interface OpenClawAgentFailureArtifact {
-  completion: ReturnType<typeof projectOpenClawCompletionArtifact>;
+  completion: ReturnType<typeof projectOpenClawAgentCompletion>;
   response: {
     stdoutPresent: boolean;
     stderrPresent: boolean;
@@ -213,16 +212,6 @@ export interface OpenClawAgentAttemptEvidenceResult {
   failure?: string;
 }
 
-/** Add the scenario reply classification to the canonical redacted completion evidence. */
-function projectOpenClawCompletionArtifact(documents: unknown[]) {
-  const final = openClawFinalAgentResponse(documents);
-  const visible = final?.meta.finalAssistantVisibleText;
-  return {
-    ...projectOpenClawAgentCompletion(documents),
-    finalReply: projectUnavailableSearchReplyArtifact(typeof visible === "string" ? visible : ""),
-  };
-}
-
 export function projectOpenClawAgentFailureArtifact(
   attempt: number,
   classification: AgentAssertionAttempt,
@@ -245,7 +234,7 @@ export function projectOpenClawAgentFailureArtifact(
   // Keep response framing evidence after sandbox cleanup without retaining model or tool text.
   const boundedCount = (count: number) => Math.min(1_000, count);
   return {
-    completion: projectOpenClawCompletionArtifact(documents),
+    completion: projectOpenClawAgentCompletion(documents),
     response: {
       stdoutPresent: result.stdout.trim().length > 0,
       stderrPresent: result.stderr.trim().length > 0,

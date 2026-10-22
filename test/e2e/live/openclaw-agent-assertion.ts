@@ -3,6 +3,10 @@
 
 import { existsSync } from "node:fs";
 
+import {
+  openClawFinalAgentResponse,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { createTempSshConfig } from "../../../src/lib/sandbox/temp-ssh-config.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -41,7 +45,12 @@ export interface OpenClawAgentAssertionOptions {
   persistCommandArtifacts?: boolean;
   publicFetchExpectation?: OpenClawPublicFetchExpectation;
   redactOutputInFailure?: boolean;
-  recordReplyEvidence?: (reply: string, attempt: number) => Promise<void>;
+  /** Final metadata text is diagnostic only and does not establish reply acceptance. */
+  recordReplyEvidence?: (
+    reply: string,
+    attempt: number,
+    finalVisibleReply: string,
+  ) => Promise<void>;
   sandboxName: string;
   toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
 }
@@ -114,7 +123,11 @@ export async function runOpenClawAgentAssertion(
       );
       const combined = text(agent);
       const reply = parseOpenClawAgentText(agent.stdout);
-      await args.recordReplyEvidence?.(reply, attempt);
+      if (args.recordReplyEvidence) {
+        const final = openClawFinalAgentResponse(parseOpenClawJsonDocuments(agent.stdout));
+        const visible = final?.meta.finalAssistantVisibleText;
+        await args.recordReplyEvidence(reply, attempt, typeof visible === "string" ? visible : "");
+      }
       lastFailure = args.redactOutputInFailure
         ? `agent output omitted; exit=${agent.exitCode}`
         : `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
