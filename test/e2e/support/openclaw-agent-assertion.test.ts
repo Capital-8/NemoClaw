@@ -23,6 +23,7 @@ import {
   OPENCLAW_TOOL_EVIDENCE_MARKER,
   reduceOpenClawToolEvidence,
   projectUnavailableSearchReplyArtifact,
+  projectOpenClawAgentFailureArtifact,
 } from "../live/common-egress-agent-helpers.ts";
 import { runOpenClawAgentAssertion } from "../live/openclaw-agent-assertion.ts";
 
@@ -239,8 +240,127 @@ describe("unavailable-search assertion wiring", () => {
         unavailableSearchReply: false,
       });
       expect(artifact).not.toContain("private query");
+      const failureArtifact = readFileSync(
+        join(f.root, "artifacts", "actions", "unavailable-search-attempt-1-agent-failure.json"),
+        "utf8",
+      );
+      expect(JSON.parse(failureArtifact).response).toEqual({
+        stdoutPresent: true,
+        stderrPresent: false,
+        jsonDocumentCount: 1,
+        responseRecordCount: 1,
+        payloadCount: 1,
+        incompleteTurn: false,
+        assistantReplyPresent: true,
+      });
+      expect(failureArtifact).not.toContain("private query");
     } finally {
       rmSync(f.root, { force: true, recursive: true });
     }
+  });
+});
+
+describe("OpenClaw agent failure diagnostics", () => {
+  it.each([
+    {
+      name: "empty stdout",
+      stdout: "",
+      documents: 0,
+      responses: 0,
+      payloads: 0,
+      incomplete: false,
+      reply: false,
+    },
+    {
+      name: "non-JSON stdout",
+      stdout: "provider notice",
+      documents: 0,
+      responses: 0,
+      payloads: 0,
+      incomplete: false,
+      reply: false,
+    },
+    {
+      name: "unrecognized JSON",
+      stdout: JSON.stringify({ answer: "private" }),
+      documents: 1,
+      responses: 0,
+      payloads: 0,
+      incomplete: false,
+      reply: false,
+    },
+    {
+      name: "empty response",
+      stdout: JSON.stringify({ payloads: [], meta: {} }),
+      documents: 1,
+      responses: 1,
+      payloads: 0,
+      incomplete: false,
+      reply: false,
+    },
+    {
+      name: "incomplete response",
+      stdout: JSON.stringify({
+        payloads: [{ text: "private" }],
+        meta: { timeoutPhase: "private-phase", error: { kind: "incomplete_turn" } },
+      }),
+      documents: 1,
+      responses: 1,
+      payloads: 1,
+      incomplete: true,
+      reply: false,
+    },
+    {
+      name: "tool output",
+      stdout: JSON.stringify({ payloads: [{ text: "tool_calls: private" }], meta: {} }),
+      documents: 1,
+      responses: 1,
+      payloads: 1,
+      incomplete: false,
+      reply: false,
+    },
+    {
+      name: "bounded payload count",
+      stdout: JSON.stringify({
+        payloads: Array.from({ length: 1_001 }, () => ({ text: "private" })),
+        meta: {},
+      }),
+      documents: 1,
+      responses: 1,
+      payloads: 1_000,
+      incomplete: false,
+      reply: true,
+    },
+    {
+      name: "accepted assistant text",
+      stdout: JSON.stringify({ payloads: [{ text: "private reply" }], meta: {} }),
+      documents: 1,
+      responses: 1,
+      payloads: 1,
+      incomplete: false,
+      reply: true,
+    },
+  ])("distinguishes $name without retaining response content", (fixture) => {
+    const artifact = projectOpenClawAgentFailureArtifact(
+      1,
+      { passed: false },
+      {
+        exitCode: 0,
+        signal: null,
+        stderr: SECRET_SENTINEL,
+        stdout: fixture.stdout,
+        timedOut: false,
+      },
+    );
+    expect(artifact.response).toEqual({
+      stdoutPresent: fixture.stdout.length > 0,
+      stderrPresent: true,
+      jsonDocumentCount: fixture.documents,
+      responseRecordCount: fixture.responses,
+      payloadCount: fixture.payloads,
+      incompleteTurn: fixture.incomplete,
+      assistantReplyPresent: fixture.reply,
+    });
+    expect(JSON.stringify(artifact)).not.toMatch(/private|provider notice|nvidia-api-key/u);
   });
 });

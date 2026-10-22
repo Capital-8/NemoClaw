@@ -7,6 +7,13 @@
 // expected-token matching, and pre-contract provider-validation skip
 // classification without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
+import {
+  openClawAgentIncompleteTurnSignal,
+  openClawAgentResponseRecord,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+
 import { parseJsonFromText } from "./json-envelope.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -124,6 +131,15 @@ export interface OpenClawToolEvidenceReductionFailureArtifact {
 }
 
 export interface OpenClawAgentFailureArtifact {
+  response: {
+    stdoutPresent: boolean;
+    stderrPresent: boolean;
+    jsonDocumentCount: number;
+    responseRecordCount: number;
+    payloadCount: number;
+    incompleteTurn: boolean;
+    assistantReplyPresent: boolean;
+  };
   schemaVersion: 1;
   attempt: number;
   diagnosticSummary:
@@ -202,7 +218,29 @@ export function projectOpenClawAgentFailureArtifact(
       : result.exitCode !== 0
         ? "command-exited-nonzero"
         : "expected-reply-missing";
+  const documents = parseOpenClawJsonDocuments(result.stdout);
+  const responses = documents.flatMap((document) => {
+    const response = openClawAgentResponseRecord(document);
+    return response ? [response] : [];
+  });
+  // Keep response framing evidence after sandbox cleanup without retaining model or tool text.
+  const boundedCount = (count: number) => Math.min(1_000, count);
   return {
+    response: {
+      stdoutPresent: result.stdout.trim().length > 0,
+      stderrPresent: result.stderr.trim().length > 0,
+      jsonDocumentCount: boundedCount(documents.length),
+      responseRecordCount: boundedCount(responses.length),
+      payloadCount: boundedCount(
+        responses.reduce(
+          (count, response) =>
+            count + (Array.isArray(response.payloads) ? response.payloads.length : 0),
+          0,
+        ),
+      ),
+      incompleteTurn: openClawAgentIncompleteTurnSignal(result.stdout) !== null,
+      assistantReplyPresent: parseOpenClawAgentText(result.stdout).length > 0,
+    },
     schemaVersion: 1,
     attempt,
     diagnosticSummary,
