@@ -343,24 +343,30 @@ describe("OpenClaw compact tool catalog patch", () => {
     }
   });
 
-  it.each(["2026.9.1", "2026.9.5"])(
+  it.each(["2026.9.1", "2026.9.5", "2026.10.5"])(
     "preserves native catalog and llama.cpp arguments on %s",
     async (version) => {
       const currentNative = makeFixture({ version });
-      const extension = version === "2026.9.5" ? "mjs" : "js";
+      const extension = version === "2026.9.1" ? "js" : "mjs";
+      const prefix = version === "2026.10.5" ? "tool-search" : "local-model-lean";
       try {
         fs.rmSync(path.join(currentNative.dist, "selection-empty.js"));
         fs.rmSync(currentNative.selectionPath);
         const builtinPath = path.join(currentNative.dist, `builtin-openclaw-fixture.${extension}`);
-        const localModelPath = path.join(
-          currentNative.dist,
-          `local-model-lean-fixture.${extension}`,
+        const localModelPath = path.join(currentNative.dist, `${prefix}-fixture.${extension}`);
+        fs.writeFileSync(
+          builtinPath,
+          version === "2026.10.5"
+            ? currentNativeToolSearchFixtureSource().replace(
+                "const toolSearch = applyAgentToolSurfaceCatalog({ tools: uncompactedEffectiveTools });",
+                "const compacted = preparedToolBase.toolSurfaceRuntime.compactTools(effectiveTools, {});\nconst toolSearch = compacted.catalog;",
+              )
+            : currentNativeToolSearchFixtureSource(),
         );
-        fs.writeFileSync(builtinPath, currentNativeToolSearchFixtureSource());
         const source = currentNativeDirectToolFixtureSource();
         fs.writeFileSync(
           localModelPath,
-          version === "2026.9.5"
+          version !== "2026.9.1"
             ? source.replace(
                 "\tif (nestedInput != null)",
                 "\tconst nestedInputIsEmpty = isRecord(nestedInput) && Object.keys(nestedInput).length === 0;\n\tif (nestedInput != null && !nestedInputIsEmpty)",
@@ -370,7 +376,7 @@ describe("OpenClaw compact tool catalog patch", () => {
         const result = runPatch(currentNative.dist);
         expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
         expect(result.stdout).toContain("patched-native-llamacpp");
-        expect(result.stdout).toContain(`local-model-lean-fixture.${extension}`);
+        expect(result.stdout).toContain(`${prefix}-fixture.${extension}`);
         expect(fs.readFileSync(builtinPath, "utf-8")).not.toContain(MARKER);
         const patchedLocalModel = fs.readFileSync(localModelPath, "utf-8");
         expect(patchedLocalModel).toContain(NATIVE_LLAMACPP_MARKER);

@@ -186,6 +186,8 @@ export const slackManifest = {
       spec: "npm:@openclaw/slack@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
+        "2026.10.5":
+          "sha512-AzWaSLfUQZWPwDdrLXzXeQ/AraXPEnkTTWKTKq4MFO39futFAxy+FulsYSStDYEd1B0YjtWGvXswBjdrmwRlBw==",
         "2026.9.2":
           "sha512-6M1M6gL3iXahpalNsYAUuA+wvnV8lbMlNNH2ToegFvaSJcIll4S9kFa5mv3GFoquhMRHQjEjnkXPHP/pXwaWcA==",
         "2026.9.5":
@@ -194,6 +196,7 @@ export const slackManifest = {
           "sha512-tU372jE40nnPcKQ6oxmDHf2/UhGtdz8ysi4JKsRZIO1QBAEkZd2YfsOw8aucmb2r0B0vjcFD3OmIV/Qzb57COg==",
       },
       tarballUrlByVersion: {
+        "2026.10.5": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.10.5.tgz",
         "2026.9.2": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.2.tgz",
         "2026.9.5": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.5.tgz",
         "2026.9.1": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.1.tgz",

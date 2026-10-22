@@ -35,16 +35,16 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 
 - Advisory: [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h) affects `proxy-addr@2.0.7`; `2.0.8` contains the reviewed fix.
 - Ordinary graph: `agents/openclaw/managed-image-messaging-runtime/package.json` overrides non-bundled `proxy-addr` resolutions to exact `2.0.8`. Its lock records npm integrity `sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==`, the unchanged `forwarded@0.2.0` and `ipaddr.js@1.9.1` dependencies, the MIT license, and the existing Node.js engine floor.
-- Production Slack graph: the selected `@openclaw/slack@2026.9.5` archive bundles `@slack/bolt@5.1.0` and `proxy-addr@2.0.8`. The managed-messaging lock records both bundled versions. This archive needs no Slack-specific proxy-address rewrite; the production archive audit uses its reviewed registry identity.
+- Production Slack graph: the selected `@openclaw/slack@2026.10.5` archive bundles `@slack/bolt@5.1.0` and `proxy-addr@2.0.8`. The managed-messaging lock records both bundled versions. This archive needs no Slack-specific proxy-address rewrite; the production archive audit uses its reviewed registry identity.
 - Legacy Slack graph: `src/lib/messaging/channels/slack/manifest.ts` retains the `2026.9.2` archive identity for existing sandboxes running that version. That archive bundles `@slack/bolt@5.0.0`, `express@5.2.1`, and `proxy-addr@2.0.7`. NemoClaw verifies OpenClaw's trusted official-install provenance before replacing only the nested vulnerable package with the reviewed `proxy-addr@2.0.8` archive. The replacement rejects changes to the reviewed Slack, Bolt, Express, source package, or replacement package contracts.
-- Legacy archive boundary: `scripts/lib/openclaw-npm-remediation.mts` selects the proxy-address rewrite only for `@openclaw/slack@2026.9.2`. Its archive-remediation path verifies the complete remediated tree digest. The selected `2026.9.5` archive has no entry in that remediation map and remains unchanged. The production audit inventory excludes the legacy `2026.9.2` archive.
+- Legacy archive boundary: `scripts/lib/openclaw-npm-remediation.mts` selects the proxy-address rewrite only for `@openclaw/slack@2026.9.2`. Its archive-remediation path verifies the complete remediated tree digest. The selected `2026.10.5` archive has no entry in that remediation map and remains unchanged. The production audit inventory excludes the legacy `2026.9.2` archive.
 - Lifecycle suppression: both the managed graph install and the replacement package retrieval keep lifecycle scripts disabled. The replacement package declares no lifecycle script.
-- Removal condition: retain the `2026.9.2` rewrite while supported installed-sandbox paths can select that archive. Remove it when those paths and their manifest identities are retired. The patched production `2026.9.5` archive alone does not establish that legacy removal condition. Keep the ordinary exact override until every supported managed-messaging path resolves outside the affected range and a regenerated lock plus reviewed audit proves the override unnecessary.
+- Removal condition: retain the `2026.9.2` rewrite while supported installed-sandbox paths can select that archive. Remove it when those paths and their manifest identities are retired. The patched production `2026.10.5` archive alone does not establish that legacy removal condition. Keep the ordinary exact override until every supported managed-messaging path resolves outside the affected range and a regenerated lock plus reviewed audit proves the override unnecessary.
 - Regression evidence: `test/agents/openclaw/openclaw-npm-remediation.test.ts` guards the legacy source and replacement contracts. `test/runtime/messaging/messaging-build-applier-integrity.test.ts` exercises `2026.9.2` installation and rejects remediation without trusted provenance. `test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts` guards the ordinary graph. `test/agents/openclaw/openclaw-dependency-review.test.ts` checks that the production audit inventory matches the selected runtime lock and retains legacy remediation wiring.
 
 ## WeChat plugin runtime graph
 
-- Package: `@tencent-weixin/openclaw-weixin@2.4.9`. This version uses the supported channel SDK and binds inbound replies to the OpenClaw 2026.9.x model runtime. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.4.3`.
+- Package: `@tencent-weixin/openclaw-weixin@2.4.10`. This version uses the OpenClaw 2026.10.5 channel-ingress, config-mutation, temp-path, and channel-outbound SDK exports. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.4.3`.
 - Locked graph: `agents/openclaw/wechat-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
@@ -91,22 +91,33 @@ The lock records the exact version, registry URL, and integrity for every transi
   `test/automation/releases/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
 
-## OpenClaw 2026.9.5 runtime cutover
+## OpenClaw 2026.10.5 runtime and restoration
 
-The production runtime and official channel packages select OpenClaw 2026.9.5.
-The reviewed runtime lock is the primary audit identity; no replacement identity remains.
-The archive inventory includes only the selected runtime and official plugin versions.
-The production audit inventory excludes superseded 2026.9.2 archives.
-Channel manifests retain their reviewed 2026.9.2 integrity and tarball records while installed sandboxes can still select that runtime.
+The production runtime and eight official plugins select OpenClaw 2026.10.5.
+The runtime lock is the primary audit identity. The archive inventory contains the selected runtime and official plugins.
+Separate locked graphs audit the 2026.9.5 and 2026.9.7 runtimes used only for legacy-state migration.
+Channel manifests retain their earlier integrity and tarball records while installed sandboxes can select those releases.
 The dependency-review test compares the archive inventory with the production runtime lock.
 
-WeChat retains its separately reviewed 2.4.9 plugin and Zod 4.4.3 graph.
+WeChat uses its separately locked 2.4.10 plugin and Zod 4.4.3 graph.
 Its offline install uses a disposable copy of the dedicated WeChat cache.
-Official channel installs use a separate copy of the messaging cache, which also contains Zod 4.5.4.
+Official plugins use a separate copy of the messaging cache, which contains Zod 4.6.5.
 Both copies are removed after success or failure; neither install can write to a trusted cache.
+The messaging verifier checks nested overrides against their locked locations, including bundled descendants and hoisted aliases.
 
-The pinned 2026.9.5 CLI proxy signal handler can exit before the gateway releases its native owner lease.
+The startup maintenance gate runs `openclaw-legacy-migrations.mts` before the target Doctor or gateway can write restored state.
+It checks native shared and agent schemas and configuration compatibility before running the pinned migration runtimes in release order.
+Before an intermediate runtime writes, it inspects a private native snapshot of any legacy plugin index.
+Malformed install records or derived metadata stop restoration because those older runtimes would discard them; the source database remains unchanged for recovery.
+Nonempty legacy session JSON beside a populated agent SQLite store also stops restoration before Doctor runs.
+The bridge checks native candidate paths and the historical shared index against private snapshots, preserving both originals for reconciliation or restoration from a consistent backup.
+This check includes differently named session keys because native alias repair can join them.
+The intermediate runtimes remain outside PATH. They do not run on newer state.
+Retired Telegram sources that cannot be migrated stop restoration; exact empty thread-binding files move to a private archive with their original bytes.
+A failed migration keeps the maintenance marker and gateway stop in place.
+
+The 2026.9.5 and 2026.10.5 CLI proxy signal handlers can exit before the gateway releases its native owner lease.
 `scripts/lib/patch-openclaw-container-restart.mts` keeps gateway shutdown with the native gateway lifecycle while retaining the proxy cleanup barrier and process-exit cleanup.
 Ordinary CLI invocations retain their signal handlers and exit statuses.
-The patch rejects unexpected source shapes and applies only to 2026.9.5; remove it when a reviewed upstream version gives gateway shutdown sole ownership of process exit.
+The patch rejects unexpected source shapes; remove it when a reviewed upstream version gives gateway shutdown sole ownership of process exit.
 `test/agents/openclaw/openclaw-container-restart-patch.test.ts` covers both signal paths, cleanup, patch drift, and installed-package auditing.

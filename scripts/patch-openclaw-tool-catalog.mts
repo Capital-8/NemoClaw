@@ -51,6 +51,14 @@ const NATIVE_TOOL_SEARCH_PATTERN_SETS = [
     "const toolSearchRunPlan = buildToolSearchRunPlan({",
     "replayAllowedToolNames: toolSearchRunPlan.replayAllowedToolNames",
   ],
+  [
+    "function buildToolSearchRunPlan(params) {",
+    "const { clientTools, uncompactedEffectiveTools } = input.bundleTools;",
+    "const compacted = preparedToolBase.toolSurfaceRuntime.compactTools(effectiveTools, {",
+    "const toolSearch = compacted.catalog;",
+    "const toolSearchRunPlan = buildToolSearchRunPlan({",
+    "replayAllowedToolNames: toolSearchRunPlan.replayAllowedToolNames",
+  ],
 ] as const;
 const CURRENT_NATIVE_TOOL_SEARCH_PATTERNS = NATIVE_TOOL_SEARCH_PATTERN_SETS[1];
 const NATIVE_DIRECT_TOOL_PATTERN = [
@@ -322,16 +330,23 @@ function hasNativeToolSearch(source: string): boolean {
 }
 
 function hasCurrentNativeToolSearch(source: string): boolean {
-  return CURRENT_NATIVE_TOOL_SEARCH_PATTERNS.every((pattern) => source.includes(pattern));
+  return [CURRENT_NATIVE_TOOL_SEARCH_PATTERNS, NATIVE_TOOL_SEARCH_PATTERN_SETS[2]].some(
+    (patterns) => patterns.every((pattern) => source.includes(pattern)),
+  );
 }
 
-function patchNativeLlamacppCatalogCompat(distDir: string): {
+function patchNativeLlamacppCatalogCompat(
+  distDir: string,
+  version: string,
+): {
   patched: boolean;
   file: string;
 } {
+  const modulePattern =
+    version === "2026.10.5" ? /^tool-search-.*\.mjs$/ : /^local-model-lean-.*\.m?js$/;
   const candidates = fs
     .readdirSync(distDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^local-model-lean-.*\.m?js$/.test(entry.name))
+    .filter((entry) => entry.isFile() && modulePattern.test(entry.name))
     .map((entry) => path.join(distDir, entry.name))
     .filter((file) => {
       const source = fs.readFileSync(file, "utf-8");
@@ -497,7 +512,7 @@ export function patchOpenClawToolCatalog(distDir: string): {
     return { status: "skipped-built-in", file: target, version };
   }
   if (result.status === "native-tool-search" && hasCurrentNativeToolSearch(source)) {
-    const compat = patchNativeLlamacppCatalogCompat(resolvedDist);
+    const compat = patchNativeLlamacppCatalogCompat(resolvedDist, version);
     return {
       status: compat.patched ? "patched-native-llamacpp" : "native-llamacpp-compat",
       file: compat.file,

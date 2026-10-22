@@ -4934,19 +4934,43 @@ const { pathToFileURL } = require("node:url");
     .filter((name) => /^openclaw-state-db-.*\.m?js$/.test(name))
     .sort();
   let stateApi;
+  let prepareSchema;
   for (const candidate of stateModules) {
     const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
     if (
-      typeof loaded.repairOpenClawStateDatabaseSchemaIfNeeded === "function" &&
+      (typeof loaded.repairOpenClawStateDatabaseSchemaIfNeeded === "function" ||
+        typeof loaded.prepareOpenClawStateDatabaseSchema === "function") &&
       typeof loaded.repairOpenClawStateDatabaseSchema === "function" &&
       typeof loaded.detectOpenClawStateDatabaseSchemaMigrations === "function" &&
       typeof loaded.withOpenClawStateStartupMigrationCheckpointDatabase === "function"
     ) {
       stateApi = loaded;
+      // 10.5 owns repair admission and resource retirement in this async API.
+      prepareSchema = loaded.prepareOpenClawStateDatabaseSchema
+        ?? loaded.repairOpenClawStateDatabaseSchemaIfNeeded;
       break;
     }
   }
   if (!stateApi) throw new Error("OpenClaw shared state schema repair not found");
+
+  if (typeof stateApi.prepareOpenClawStateDatabaseSchema === "function") {
+    // 10.5 Doctor refuses retired sources before changing shared state. This
+    // earlier schema repair must preserve that admission boundary too.
+    const admissionModules = fs.readdirSync(dist).filter(
+      (name) => /^doctor-retired-state-admission-.*\.m?js$/.test(name),
+    );
+    const admissions = [];
+    for (const candidate of admissionModules) {
+      const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
+      if (typeof loaded.assertDoctorRetiredStateAdmission === "function") {
+        admissions.push(loaded.assertDoctorRetiredStateAdmission);
+      }
+    }
+    if (admissions.length !== 1) {
+      throw new Error("OpenClaw retired state admission missing or ambiguous");
+    }
+    await admissions[0]();
+  }
 
   const repairOptions = { env: process.env, path: databasePath };
   const validateResult = (result) => {
@@ -4958,11 +4982,7 @@ const { pathToFileURL } = require("node:url");
     }
     return result;
   };
-  const changes = [
-    ...validateResult(
-      await Promise.resolve(stateApi.repairOpenClawStateDatabaseSchemaIfNeeded(repairOptions)),
-    ).changes,
-  ];
+  const changes = [...validateResult(await prepareSchema(repairOptions)).changes];
   let pending = stateApi.detectOpenClawStateDatabaseSchemaMigrations(repairOptions);
   if (!Array.isArray(pending)) {
     throw new Error("OpenClaw shared state migration detector returned an invalid result");
@@ -5129,9 +5149,25 @@ const { pathToFileURL } = require("node:url");
     .filter((name) => /^startup-migration-checkpoint-.*\.m?js$/.test(name))
     .sort();
   for (const candidate of leaseModules) {
-    const loaded = await import(pathToFileURL(path.join(dist, candidate)).href);
-    if (typeof loaded.hasActiveStartupMigrationLease !== "function") continue;
-    process.exit(loaded.hasActiveStartupMigrationLease({ env: process.env }) ? 10 : 0);
+    const modulePath = path.join(dist, candidate);
+    const loaded = await import(pathToFileURL(modulePath).href);
+    let checkLease = loaded.hasActiveStartupMigrationLease;
+    if (typeof checkLease !== "function") {
+      // 10.5 exports the same native read-only lease check under a bundle alias.
+      const source = fs.readFileSync(modulePath, "utf8");
+      const aliases = [...source.matchAll(/export \{([^}]+)\};/g)]
+        .flatMap((match) => match[1].split(",").map((entry) => entry.trim()))
+        .map((entry) => /^hasActiveStartupMigrationLease as ([A-Za-z_$][\w$]*)$/.exec(entry))
+        .filter(Boolean);
+      if (aliases.length !== 1) continue;
+      checkLease = loaded[aliases[0][1]];
+    }
+    if (typeof checkLease !== "function") continue;
+    const active = await checkLease({ env: process.env });
+    if (typeof active !== "boolean") {
+      throw new Error("OpenClaw startup-migration lease check returned an invalid result");
+    }
+    process.exit(active ? 10 : 0);
   }
   throw new Error("OpenClaw startup-migration lease check not found");
 })().catch((error) => {
@@ -5156,6 +5192,24 @@ NODELEASE
   done
   echo "[SECURITY] Timed out waiting for the OpenClaw startup-migration lease" >&2
   return 1
+}
+
+run_openclaw_legacy_migrations() {
+  local node_bin
+  local -a migration_command
+  node_bin="$(command -v node 2>/dev/null)" || return 1
+  migration_command=(
+    "$node_bin" /scripts/lib/openclaw-legacy-migrations.mts
+    --run-executable "$OPENCLAW" /usr/local/lib/nemoclaw/openclaw-migrations
+  )
+  if [ "$(id -u)" -eq 0 ]; then
+    migration_command=(
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env
+      HOME=/sandbox PATH="$PATH:/sandbox/.local/bin"
+      "${migration_command[@]}"
+    )
+  fi
+  "${migration_command[@]}"
 }
 
 run_requested_openclaw_post_upgrade_doctor() {
@@ -5212,6 +5266,11 @@ EOF
   # well as during ordinary startup so a post-quiesce restore cannot put the
   # retired sandbox identity back after the earlier migration pass.
   remove_restored_legacy_device_identity || return 1
+
+  # Complete the pinned intermediate migrations before the target can advance
+  # the shared schema and retire the older importers. The source backup stays
+  # with the host, and a refusal leaves this maintenance gate closed.
+  run_openclaw_legacy_migrations || return 1
 
   echo "[setup] running requested OpenClaw post-upgrade doctor before gateway launch" >&2
   if [ "$(id -u)" -eq 0 ]; then

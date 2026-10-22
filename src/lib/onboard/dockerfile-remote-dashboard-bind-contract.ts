@@ -102,6 +102,11 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "b8f2bac1bdf5f0d2f9cfdc1d4b0d4c74f7e7d7923cdd810c78cec39a6c0f9261",
   // The same Tavily-aware installation with reviewed 2026.9.5 pins.
   "b1d8e91af9b2f10986a27a6bd4c3fc4dda19e22a4a8c44460a0685331a59a1fe",
+  // Exact 2026.10.5 offline registry install with disposable cache cleanup
+  // and native official-plugin provenance checks; dashboard config is retained.
+  "c359205331650476a9bf06a8f09e588ab5923b545938f13453d15ca6ec443e23",
+  // Read-only payload metadata checks, including the migration and plugin helpers.
+  "f53c4efbf400bfb560ce6ba72cb963a7fae234c25cff6f4034c68cbf0f83c29f",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",

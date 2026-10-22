@@ -13,9 +13,9 @@ import urllib.parse
 
 
 ADAPTER_VERSION = 1
-# OpenClaw 2026.9.2 and 2026.9.5 retain the same canonical device tables.
+# OpenClaw 2026.9.2, 2026.9.5, and 2026.10.5 retain the same canonical device tables.
 # Keep an explicit reviewed set; unknown schemas must still fail closed.
-OPENCLAW_STATE_SCHEMA_VERSIONS = (15, 17)
+OPENCLAW_STATE_SCHEMA_VERSIONS = (15, 17, 20)
 MAX_SQLITE_BYTES = 1024 * 1024 * 1024
 
 
@@ -359,9 +359,39 @@ def _paired_record(row):
     return record
 
 
-def _read_records(connection, schema_version, *, local_device_only=False):
+def _reviewed_device_schema_version(connection, schema_version):
     if schema_version not in OPENCLAW_STATE_SCHEMA_VERSIONS:
         raise ValueError("unsupported canonical device state schema")
+    # Native upgrades can defer user_version while committing newer content.
+    if connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='config_machine_state'"
+    ).fetchone():
+        rows = connection.execute(
+            "SELECT value_json FROM config_machine_state "
+            "WHERE state_key = 'state.schema.contentVersion'"
+        ).fetchall()
+        if len(rows) > 1:
+            raise ValueError("ambiguous canonical device state content version")
+        if rows:
+            raw_version = rows[0][0]
+            if not isinstance(raw_version, str):
+                raise ValueError("invalid canonical device state content version")
+            content_version = json.loads(raw_version)
+            if (
+                isinstance(content_version, bool)
+                or not isinstance(content_version, (int, float))
+                or not 0 <= content_version <= 9007199254740991
+                or int(content_version) != content_version
+            ):
+                raise ValueError("invalid canonical device state content version")
+            schema_version = max(schema_version, int(content_version))
+            if schema_version not in OPENCLAW_STATE_SCHEMA_VERSIONS:
+                raise ValueError("unsupported canonical device state content version")
+    return schema_version
+
+
+def _read_records(connection, schema_version, *, local_device_only=False):
+    schema_version = _reviewed_device_schema_version(connection, schema_version)
     identities = connection.execute(
         "SELECT identity_key, device_id, public_key_pem, private_key_pem, "
         "created_at_ms, updated_at_ms "

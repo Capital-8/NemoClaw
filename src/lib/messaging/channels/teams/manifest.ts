@@ -222,6 +222,8 @@ export const teamsManifest = {
       spec: "npm:@openclaw/msteams@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
+        "2026.10.5":
+          "sha512-Up5NG2C0vVJBNIX92Lv7SB8qoCQ9SX86LMLh2MTow71AglyVy20OjNc/rGpOco2YTwWl7HcjhSz9MJbqWcvvDQ==",
         "2026.9.2":
           "sha512-py5KvGOTcd0qGGRf3EuqbH2jO+kZtvMquDMjwGkT6x9F4XZtaCBL/lmLitb4hDb5xaIpPP8ZLIbT8GIMXQr3Og==",
         "2026.9.5":
@@ -230,6 +232,7 @@ export const teamsManifest = {
           "sha512-seRGr9/X6Vk9xU5elLVpDwq8R+TO0QFvUmxPEitqkngqDnMoXW0LEEXkriG6jgue74w2YLcNnAv/Rjf0a9jong==",
       },
       tarballUrlByVersion: {
+        "2026.10.5": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.10.5.tgz",
         "2026.9.2": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.2.tgz",
         "2026.9.5": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.5.tgz",
         "2026.9.1": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz",

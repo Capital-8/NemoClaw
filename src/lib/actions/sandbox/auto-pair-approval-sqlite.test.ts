@@ -278,9 +278,14 @@ describe("auto-pair approval SQLite compatibility", () => {
     }
   });
 
-  pyIt.each([15, 17])(
-    "uses canonical schema %i snapshots without recreating legacy device state",
-    (schemaVersion) => {
+  pyIt.each([
+    [15, null],
+    [17, null],
+    [20, null],
+    [17, 20],
+  ])(
+    "uses canonical schema %i with content version %s without recreating legacy device state",
+    (schemaVersion, contentVersion) => {
       const policy = readAutoPairApprovalPolicyModule();
       expect(policy).toBeTruthy();
       const script = buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
@@ -332,6 +337,7 @@ describe("auto-pair approval SQLite compatibility", () => {
           unrelatedDeviceId,
           unrelatedToken,
           schemaVersion,
+          contentVersion,
         };
         const setup = spawnSync(
           "python3",
@@ -351,6 +357,9 @@ CREATE TABLE device_pairing_paired (device_id TEXT PRIMARY KEY, public_key TEXT,
 CREATE TABLE device_auth_tokens (device_id TEXT, role TEXT, token TEXT, scopes_json TEXT, updated_at_ms INTEGER, PRIMARY KEY (device_id, role));
 ''')
 c.execute(f"PRAGMA user_version = {f['schemaVersion']}")
+if f['contentVersion'] is not None:
+    c.execute('CREATE TABLE config_machine_state (state_key TEXT PRIMARY KEY, value_json TEXT, updated_at_ms INTEGER)')
+    c.execute('INSERT INTO config_machine_state VALUES (?,?,?)', ('state.schema.contentVersion', json.dumps(f['contentVersion']), 1))
 c.execute('INSERT INTO device_identities VALUES (?,?,?,?,?,?)', ('primary', f['deviceId'], f['publicKeyPem'], f['privateKeyPem'], 1, 1))
 c.execute('INSERT INTO device_pairing_pending VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (f['requestId'], f['deviceId'], f['publicKeyText'], None, None, None, 'cli', 'cli', None, 'operator', json.dumps(['operator']), json.dumps(['operator.write']), None, 0, 1, 1, None))
 tokens = {'operator': {'token': f['beforeToken'], 'role': 'operator', 'scopes': ['operator.pairing']}}
@@ -543,7 +552,58 @@ print(json.dumps({
     }
   });
 
-  pyIt.each([14, 16, 18])("rejects unsupported canonical schema %i", (schemaVersion) => {
+  pyIt("rejects unknown or invalid content versions behind an older published schema", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import importlib.util, json, sqlite3, sys
+spec = importlib.util.spec_from_file_location('pairing_state', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+c = sqlite3.connect(':memory:')
+c.row_factory = sqlite3.Row
+c.executescript('''
+CREATE TABLE config_machine_state (state_key TEXT PRIMARY KEY, value_json TEXT, updated_at_ms INTEGER);
+CREATE TABLE device_identities (identity_key TEXT PRIMARY KEY, device_id TEXT, public_key_pem TEXT, private_key_pem TEXT, created_at_ms INTEGER, updated_at_ms INTEGER);
+INSERT INTO device_identities VALUES ('primary','fixture','public','private',1,1);
+CREATE TABLE device_pairing_pending (request_id TEXT);
+CREATE TABLE device_pairing_paired (device_id TEXT);
+CREATE TABLE device_auth_tokens (device_id TEXT, role TEXT, token TEXT, scopes_json TEXT, updated_at_ms INTEGER);
+''')
+results = []
+for content in ['20', '21', '"20"', 'null', 'true', '-1', '1.5', 'invalid', '9007199254740992', '0', '20.0', '2e1', None]:
+    c.execute('INSERT OR REPLACE INTO config_machine_state VALUES (?,?,?)', ('state.schema.contentVersion', content, 1))
+    try:
+        results.append(module._read_records(c, 17)['schemaVersion'])
+    except ValueError:
+        results.append('rejected')
+print(json.dumps(results))
+`,
+        path.resolve(import.meta.dirname, "../../../../scripts/lib/openclaw_pairing_state.py"),
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([
+      20,
+      "rejected",
+      "rejected",
+      "rejected",
+      "rejected",
+      "rejected",
+      "rejected",
+      "rejected",
+      "rejected",
+      17,
+      20,
+      20,
+      "rejected",
+    ]);
+  });
+
+  pyIt.each([14, 16, 18, 19, 21])("rejects unsupported canonical schema %i", (schemaVersion) => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
     const script = buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {

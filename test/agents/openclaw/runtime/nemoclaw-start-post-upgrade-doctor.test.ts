@@ -10,6 +10,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
+import {
+  seedNativeRetiredAdmission,
+  seedRetiredAdmissionFailure,
+  seedRepairOrLeaseFailure,
+} from "../../../support/openclaw-startup-doctor-failures";
+
 const START_SCRIPT = path.resolve(import.meta.dirname, "../../../../scripts/nemoclaw-start.sh");
 
 describe.each(["exec-approvals.json", "update-check.json"])(
@@ -301,6 +307,12 @@ function doctorFunction(
       .replaceAll("/sandbox/.openclaw", configDir)
       .replace('[ "$(id -u)" -eq 0 ]', rootMode ? '[ "0" -eq 0 ]' : '[ "1000" -eq 0 ]'),
     extractShellFunctionFromSource(source, "wait_for_openclaw_startup_migration_lease"),
+    extractShellFunctionFromSource(source, "run_openclaw_legacy_migrations")
+      .replace(
+        "/scripts/lib/openclaw-legacy-migrations.mts",
+        path.resolve(import.meta.dirname, "../../../../scripts/lib/openclaw-legacy-migrations.mts"),
+      )
+      .replace('[ "$(id -u)" -eq 0 ]', rootMode ? '[ "0" -eq 0 ]' : '[ "1000" -eq 0 ]'),
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
       .replaceAll("/sandbox/.openclaw", configDir)
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", readyPath)
@@ -323,7 +335,7 @@ function backupQuiesceFunction(source: string, configDir: string, readyPath: str
   ].join("\n");
 }
 
-function fixture(moduleExtension = "js") {
+function fixture(moduleExtension = "js", native105 = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-doctor-"));
   const configDir = path.join(root, "openclaw");
   const marker = path.join(configDir, ".nemoclaw-post-upgrade-doctor");
@@ -344,23 +356,24 @@ function fixture(moduleExtension = "js") {
   fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
   fs.writeFileSync(
     path.join(packageRoot, "package.json"),
-    JSON.stringify({ name: "openclaw", type: "module" }),
+    JSON.stringify({ name: "openclaw", type: "module", version: "2026.9.5" }),
   );
   fs.writeFileSync(
     path.join(packageRoot, "dist", `startup-migration-checkpoint-test.${moduleExtension}`),
-    `import fs from "node:fs";\nexport function hasActiveStartupMigrationLease() { return fs.existsSync(${JSON.stringify(leaseActive)}); }\n`,
+    `import fs from "node:fs";\nfunction hasActiveStartupMigrationLease() { return fs.existsSync(${JSON.stringify(leaseActive)}); }\nexport { hasActiveStartupMigrationLease${native105 ? " as i" : ""} };\n`,
   );
   fs.writeFileSync(
     path.join(packageRoot, "dist", `openclaw-state-db-test.${moduleExtension}`),
     [
       `import fs from "node:fs";`,
-      `export function repairOpenClawStateDatabaseSchemaIfNeeded() { fs.appendFileSync(new URL("../schema-repair-calls", import.meta.url), "repair\\n"); return { changes: ["migrated"], warnings: [] }; }`,
+      `export ${native105 ? "async function prepareOpenClawStateDatabaseSchema" : "function repairOpenClawStateDatabaseSchemaIfNeeded"}() { ${native105 ? "await new Promise((resolve) => setTimeout(resolve, 10));" : ""} fs.appendFileSync(new URL("../schema-repair-calls", import.meta.url), "repair\\n"); return { changes: ["migrated"], warnings: [] }; }`,
       `export function repairOpenClawStateDatabaseSchema() { throw new Error("unexpected explicit repair"); }`,
       `export function detectOpenClawStateDatabaseSchemaMigrations() { return []; }`,
       `export function withOpenClawStateStartupMigrationCheckpointDatabase() { throw new Error("unexpected checkpoint"); }`,
       "",
     ].join("\n"),
   );
+  seedNativeRetiredAdmission(packageRoot, moduleExtension, native105);
   fs.writeFileSync(
     openclaw,
     `#!/bin/sh\nprintf '%s\\n' "$*" >>${JSON.stringify(calls)}\nif [ -n "\${DOCTOR_IDENTITY_CLAIM:-}" ]; then mkdir -p "$(dirname "$DOCTOR_IDENTITY_CLAIM")"; printf '{' >"$DOCTOR_IDENTITY_CLAIM"; fi\nexit "\${DOCTOR_EXIT_CODE:-0}"\n`,
@@ -442,6 +455,37 @@ function promoteAfterReady(f: ReturnType<typeof fixture>): string {
 }
 
 describe("nemoclaw-start post-upgrade doctor", () => {
+  it("keeps the gate closed before schema repair when intermediate inspection fails", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture("mjs", true);
+    try {
+      fs.writeFileSync(
+        path.join(f.packageRoot, "package.json"),
+        JSON.stringify({ name: "openclaw", type: "module", version: "2026.10.5" }),
+      );
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.mkdirSync(path.join(f.configDir, "state"));
+      const database = path.join(f.configDir, "state/openclaw.sqlite");
+      fs.writeFileSync(database, "preserve-original-database");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f) },
+      );
+      expect(result.status).not.toBe(0);
+      expect(fs.readFileSync(database, "utf8")).toBe("preserve-original-database");
+      expect(fs.existsSync(f.schemaRepairCalls)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.marker)).toBe(true);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
   it("holds backup state before startup mutation without invoking doctor", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();
@@ -838,11 +882,15 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     }
   });
 
-  it.each(["js", "mjs"])(
-    "repairs a legacy shared state schema through %s modules before doctor",
-    (moduleExtension) => {
+  it.each([
+    { moduleExtension: "js", native105: false },
+    { moduleExtension: "mjs", native105: false },
+    { moduleExtension: "mjs", native105: true },
+  ])(
+    "repairs a legacy shared state schema through $moduleExtension modules before doctor (10.5 API: $native105)",
+    ({ moduleExtension, native105 }) => {
       const source = fs.readFileSync(START_SCRIPT, "utf8");
-      const f = fixture(moduleExtension);
+      const f = fixture(moduleExtension, native105);
       try {
         fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
           mode: 0o600,
@@ -859,7 +907,9 @@ describe("nemoclaw-start post-upgrade doctor", () => {
         );
 
         expect(result.status, result.stderr).toBe(0);
-        expect(fs.readFileSync(f.schemaRepairCalls, "utf8")).toBe("repair\nrepair\n");
+        expect(fs.readFileSync(f.schemaRepairCalls, "utf8")).toBe(
+          native105 ? "admission\nrepair\nadmission\nrepair\n" : "repair\nrepair\n",
+        );
         expect(fs.readFileSync(f.calls, "utf8")).toBe(
           "doctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n",
         );
@@ -869,6 +919,75 @@ describe("nemoclaw-start post-upgrade doctor", () => {
       }
     },
   );
+
+  it.each([
+    "retired source rejection",
+    "missing admission module",
+    "ambiguous admission module",
+    "missing admission export",
+    "invalid admission export",
+  ])("refuses a 10.5 %s before changing the restored schema", (failure) => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture("mjs", true);
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.mkdirSync(path.join(f.configDir, "state"));
+      const database = path.join(f.configDir, "state", "openclaw.sqlite");
+      fs.writeFileSync(database, "legacy");
+      seedRetiredAdmissionFailure(f.packageRoot, failure);
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f), timeout: 10_000 },
+      );
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain("Could not repair the OpenClaw shared state schema");
+      expect(fs.readFileSync(database, "utf8")).toBe("legacy");
+      expect(fs.existsSync(f.schemaRepairCalls)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+      expect(fs.existsSync(f.ready)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "async repair rejection",
+    "repair warning",
+    "invalid repair result",
+    "missing lease export",
+    "invalid lease result",
+  ])("keeps startup closed for a 10.5 %s", (failure) => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture("mjs", true);
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", { mode: 0o600 });
+      fs.mkdirSync(path.join(f.configDir, "state"));
+      fs.writeFileSync(path.join(f.configDir, "state", "openclaw.sqlite"), "legacy");
+      seedRepairOrLeaseFailure(f.packageRoot, failure);
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `${doctorFunction(source, f.configDir, f.ready)}\nrun_requested_openclaw_post_upgrade_doctor`,
+        ],
+        { encoding: "utf8", env: fixtureEnv(f), timeout: 10_000 },
+      );
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain(
+        failure.includes("repair")
+          ? "Could not repair the OpenClaw shared state schema"
+          : "Could not inspect the OpenClaw startup-migration lease",
+      );
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(!failure.includes("repair"));
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
 
   it.each([
     { moduleExtension: "js", schemaOwner: "cache" },
@@ -990,11 +1109,15 @@ describe("nemoclaw-start post-upgrade doctor", () => {
     }
   });
 
-  it.each(["js", "mjs"])(
-    "publishes doctor readiness only after the %s startup lease releases",
-    (moduleExtension) => {
+  it.each([
+    { moduleExtension: "js", native105: false },
+    { moduleExtension: "mjs", native105: false },
+    { moduleExtension: "mjs", native105: true },
+  ])(
+    "publishes doctor readiness only after the $moduleExtension startup lease releases (10.5 API: $native105)",
+    ({ moduleExtension, native105 }) => {
       const source = fs.readFileSync(START_SCRIPT, "utf8");
-      const f = fixture(moduleExtension);
+      const f = fixture(moduleExtension, native105);
       try {
         fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
           mode: 0o600,

@@ -8,35 +8,69 @@ import path from "node:path";
 
 interface ProofOptions {
   dist: string;
+  archivedWorkerDirectory?: string;
   nodeExecutable: string;
   timeoutMs: number;
   tmp: string;
 }
 
 export function runRealOpenClawWorkerProxyProof(options: ProofOptions): void {
-  const worker = path.join(options.dist, "worker", "worker.mjs");
+  runWorkerProxyProof(options, false);
+  if (options.archivedWorkerDirectory) runWorkerProxyProof(options, true);
+}
+
+function runWorkerProxyProof(options: ProofOptions, splitGraph: boolean): void {
+  const directory = options.archivedWorkerDirectory ?? path.join(options.dist, "worker");
+  const worker = path.join(
+    directory,
+    options.archivedWorkerDirectory
+      ? splitGraph
+        ? "worker-chunk-D7mbn7lZ.mjs"
+        : "sqlite-store.worker.mjs"
+      : "worker.mjs",
+  );
   const source = fs.readFileSync(worker, "utf8");
-  const guardEntry = "async function fetchWithSsrFGuard(Ot){";
-  if (source.split(guardEntry).length !== 2) {
+  const guardFile = splitGraph ? path.join(directory, "worker-chunk-CMCl78Z0.mjs") : worker;
+  const guardSource = splitGraph ? fs.readFileSync(guardFile, "utf8") : source;
+  const guardParameter = splitGraph ? "e" : "Ot";
+  const guardEntry = `async function fetchWithSsrFGuard(${guardParameter}){`;
+  if (guardSource.split(guardEntry).length !== 2) {
     throw new Error("Expected one real worker guarded-fetch entry");
   }
   const proofModule = path.join(path.dirname(worker), `.nemoclaw-proxy-proof-${randomUUID()}.mjs`);
   const proofScript = path.join(options.tmp, "worker-proxy-proof.mjs");
   const stateDir = path.join(options.tmp, "worker-proxy-state");
   fs.mkdirSync(stateDir);
-  // Observe guard inputs without replacing the guard or its callers. Export
-  // the real tool from a temporary worker copy; prewarm skips the CLI loop.
-  const observedSource = source.replace(
-    guardEntry,
-    `${guardEntry}globalThis.__nemoclawWorkerGuardObservations.push({url:Ot.url,mode:Ot.mode,policy:structuredClone(Ot.policy)});`,
-  );
-  fs.writeFileSync(
-    proofModule,
-    `${observedSource}\ninit_web_fetch(); export {createWebFetchTool, assertExplicitProxyAllowed};\n`,
-  );
-  fs.writeFileSync(
-    proofScript,
-    `import assert from "node:assert/strict";
+  try {
+    // Observe guard inputs without replacing the guard or its callers. Export
+    // the real tool from a temporary worker copy; prewarm skips the CLI loop.
+    const observedSource = guardSource.replace(
+      guardEntry,
+      `${guardEntry}globalThis.__nemoclawWorkerGuardObservations.push({url:${guardParameter}.url,mode:${guardParameter}.mode,policy:structuredClone(${guardParameter}.policy)});`,
+    );
+    if (splitGraph) {
+      if (
+        !source.includes("function createWebFetchTool(e){") ||
+        !source.includes("Ok=e((()=>{te()")
+      ) {
+        throw new Error("Unreviewed archived web-fetch module initialization");
+      }
+      // The tool and its lazy web guard import this exact staged guard module.
+      // Append exports and observations only; do not replace native guard logic.
+      fs.writeFileSync(guardFile, `${observedSource}\nexport { assertExplicitProxyAllowed };\n`);
+      fs.writeFileSync(
+        proofModule,
+        `${source}\nOk(); export { createWebFetchTool };\nexport { assertExplicitProxyAllowed } from "./${path.basename(guardFile)}";\n`,
+      );
+    } else {
+      fs.writeFileSync(
+        proofModule,
+        `${observedSource}\ninit_web_fetch(); export {createWebFetchTool, assertExplicitProxyAllowed};\n`,
+      );
+    }
+    fs.writeFileSync(
+      proofScript,
+      `import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 process.argv = [process.argv[0], process.argv[1], "--internal-worker-prewarm"];
 globalThis.__nemoclawWorkerGuardObservations = [];
@@ -51,6 +85,7 @@ const networkFetch = async (url, init) => {
 // mode selection, dispatcher construction, and response handling still run.
 networkFetch.mock = {};
 globalThis.fetch = networkFetch;
+${splitGraph ? `await import(pathToFileURL(${JSON.stringify(path.join(directory, "worker.mjs"))}));` : ""}
 const { createWebFetchTool, assertExplicitProxyAllowed } = await import(pathToFileURL(${JSON.stringify(proofModule)}));
 const cases = [
   { id: "sandbox-host", sandbox: true, proxy: true, host: "host.openshell.internal", allowed: true },
@@ -80,11 +115,16 @@ for (const scenario of cases) {
     assert.equal(result.details.finalUrl, url, scenario.id);
     assert.ok(result.details.text.includes("real worker proxy proof"), scenario.id);
   } else {
-    await assert.rejects(invocation, { name: "SsrFBlockedError" }, scenario.id);
+    await assert.rejects(invocation, (error) => {
+      assert.equal(error.name, "SsrFBlockedError", scenario.id + ": " + error.stack);
+      return true;
+    }, scenario.id);
   }
   assert.deepEqual(requests, scenario.allowed ? [{ url, dispatcher: true }] : [], scenario.id);
   assert.deepEqual(globalThis.__nemoclawWorkerGuardObservations, [{
-    url, mode: scenario.proxy ? "trusted_env_proxy" : "strict",
+    // The split module imports the patched strict-mode export, which selects
+    // trusted proxy transport while retaining the caller's hostname policy.
+    url, mode: ${splitGraph ? '"trusted_env_proxy"' : 'scenario.proxy ? "trusted_env_proxy" : "strict"'},
     policy: { ...policy, allowedHostnames: scenario.id === "sandbox-host"
       ? ["keep.example", "host.openshell.internal"] : ["keep.example"] },
   }], scenario.id);
@@ -135,10 +175,22 @@ try {
   process.getBuiltinModule = getBuiltinModule;
 }
 console.log("real worker web_fetch proxy proof: 6 scenarios passed; 9 explicit-proxy checks passed");
+${options.archivedWorkerDirectory ? "process.exit(0);" : ""}
 `,
-  );
-  try {
-    const result = spawnSync(options.nodeExecutable, [proofScript], {
+    );
+    const arguments_ = options.archivedWorkerDirectory
+      ? [
+          "--input-type=module",
+          "-e",
+          `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(${JSON.stringify(proofScript)}, { execArgv: [] });
+      worker.on("error", (error) => { console.error(error.stack); process.exitCode = 1; });
+      worker.on("exit", (code) => { if (code !== 0) process.exitCode = code; });
+    `,
+        ]
+      : [proofScript];
+    const result = spawnSync(options.nodeExecutable, arguments_, {
       encoding: "utf8",
       timeout: options.timeoutMs,
       // This package proof needs no contributor credentials or ambient config.
@@ -161,6 +213,7 @@ console.log("real worker web_fetch proxy proof: 6 scenarios passed; 9 explicit-p
       throw new Error("Real worker proxy proof did not report completion");
     }
   } finally {
+    if (splitGraph) fs.writeFileSync(guardFile, guardSource);
     fs.rmSync(proofModule, { force: true });
     fs.rmSync(proofScript, { force: true });
     fs.rmSync(stateDir, { recursive: true, force: true });

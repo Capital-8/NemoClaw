@@ -215,6 +215,8 @@ export const discordManifest = {
       spec: "npm:@openclaw/discord@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
+        "2026.10.5":
+          "sha512-Gy2FmMF7cnCyhodvYQHVtOPoPm7daZ1djSS7ymLHsJ5nWIO9GFsW8Y/mlnZAMSGWlgmWedERkVbVDMlli9vgOw==",
         "2026.9.2":
           "sha512-j+fSHxbXA+DSxwbL8SvtsDNL6tvBX4+RmH+EerVW6dCbeIwSconXj6J/+AaN/mhzZI4g0jPPj30TUhdCRRbc2w==",
         "2026.9.5":
@@ -223,6 +225,7 @@ export const discordManifest = {
           "sha512-qNmN2a8A9dET4igPp0RML171sEn8PDMyNCYNp/DqcJ4tn3XTHpacSOTkqBmv5yXTycJRC9rfFP8FT/SdW0Rldg==",
       },
       tarballUrlByVersion: {
+        "2026.10.5": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.10.5.tgz",
         "2026.9.2": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.2.tgz",
         "2026.9.5": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.5.tgz",
         "2026.9.1": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz",

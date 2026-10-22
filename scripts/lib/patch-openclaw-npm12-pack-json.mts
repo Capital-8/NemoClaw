@@ -12,6 +12,8 @@ const NPM12_ENTRIES =
 const NATIVE_ENTRIES = "const entries = resolveNpmJsonEntries(parsed);";
 const NATIVE_RESOLVER_IMPORT =
   /import \{ (?:[A-Za-z0-9_$]+ as [A-Za-z0-9_$]+, )*[A-Za-z0-9_$]+ as resolveNpmJsonEntries \} from "\.\/(npm-registry-spec-[A-Za-z0-9_-]+\.m?js)";/gu;
+const SPLIT_NATIVE_RESOLVER_IMPORT =
+  /import \{ [A-Za-z0-9_$]+ as resolveNpmJsonEntries \} from "\.\/(npm-json-output-[A-Za-z0-9_-]+\.mjs)";/gu;
 const NATIVE_RESOLVER_MARKERS = [
   "function resolveNpmJsonEntries(value) {",
   "if (Array.isArray(value)) return value;",
@@ -20,6 +22,11 @@ const NATIVE_RESOLVER_MARKERS = [
   "if (entries.length > 0) return entries;",
   "return [value];",
 ] as const;
+const SPLIT_NATIVE_RESOLVER_MARKERS = NATIVE_RESOLVER_MARKERS.map((marker) =>
+  marker.startsWith("if (!(typeof record.id")
+    ? 'if (!("id" in value && typeof value.id === "string" || "name" in value && typeof value.name === "string" || "version" in value && typeof value.version === "string" || "filename" in value && typeof value.filename === "string")) {'
+    : marker.replace("Object.values(record)", "Object.values(value)"),
+);
 const REVIEWED_LAYOUTS = {
   "2026.3.11": {
     expectedFiles: 2,
@@ -47,6 +54,11 @@ const REVIEWED_LAYOUTS = {
     mode: "native",
   },
   "2026.9.5": {
+    expectedFiles: 2,
+    filename: /^install-source-utils-[A-Za-z0-9_-]+\.mjs$/,
+    mode: "native",
+  },
+  "2026.10.5": {
     expectedFiles: 2,
     filename: /^install-source-utils-[A-Za-z0-9_-]+\.mjs$/,
     mode: "native",
@@ -91,7 +103,10 @@ export function patchOpenClawNpm12PackJson(
         throw new Error("Unrecognized npm install-source facade");
     }
     const contents = fs.readFileSync(target, "utf8");
-    const imports = [...contents.matchAll(NATIVE_RESOLVER_IMPORT)];
+    const splitResolver = openClawVersion === "2026.10.5";
+    const imports = [
+      ...contents.matchAll(splitResolver ? SPLIT_NATIVE_RESOLVER_IMPORT : NATIVE_RESOLVER_IMPORT),
+    ];
     const nativeEntries = occurrences(contents, NATIVE_ENTRIES);
     if (
       nativeEntries !== 1 ||
@@ -105,9 +120,8 @@ export function patchOpenClawNpm12PackJson(
     }
     const resolver = path.join(distDirectory, imports[0]![1]!);
     const resolverContents = fs.readFileSync(resolver, "utf8");
-    const driftedMarkers = NATIVE_RESOLVER_MARKERS.filter(
-      (marker) => occurrences(resolverContents, marker) !== 1,
-    );
+    const markers = splitResolver ? SPLIT_NATIVE_RESOLVER_MARKERS : NATIVE_RESOLVER_MARKERS;
+    const driftedMarkers = markers.filter((marker) => occurrences(resolverContents, marker) !== 1);
     if (driftedMarkers.length > 0) {
       throw new Error(
         `OpenClaw ${openClawVersion} native npm pack JSON resolver shape is unsupported: drifted=${driftedMarkers.length}`,

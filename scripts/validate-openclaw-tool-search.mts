@@ -63,6 +63,15 @@ const RUNTIME_MODULE_FILE_PATTERNS = new Map<string, Readonly<Record<RuntimeFunc
         applyToolSearchCatalog: /^local-model-lean-.*\.mjs$/,
       },
     ],
+
+    [
+      "2026.10.5",
+      {
+        resolveToolSearchConfig: /^tool-search-.*\.mjs$/,
+        createOpenClawCodingTools: /^agent-tools-.*\.mjs$/,
+        applyToolSearchCatalog: /^tool-search-.*\.mjs$/,
+      },
+    ],
   ],
 );
 type ExpectedMode = "progressive" | "direct";

@@ -137,7 +137,7 @@ it("marks observations that never start before cancellation (#12859)", async () 
   expect(snapshot.collectionStatus).toBe("partial");
 });
 
-it("joins a managed OpenClaw 2026.9.5 configuration to its operation target (#12859)", async () => {
+it("joins a managed OpenClaw 2026.10.5 configuration to its operation target (#12859)", async () => {
   const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
   const imageTag = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`;
   mocks.readRegistry.mockReturnValue({
@@ -153,7 +153,7 @@ it("joins a managed OpenClaw 2026.9.5 configuration to its operation target (#12
       selected: {
         name: "selected",
         agent: "openclaw",
-        agentVersion: "2026.9.5",
+        agentVersion: "2026.10.5",
         imageTag,
         workload: {
           schemaVersion: 1,
@@ -268,7 +268,7 @@ it("joins a managed OpenClaw 2026.9.5 configuration to its operation target (#12
         agentHarnessId: "openclaw",
         agentsStatus: "reported",
         currentInferenceRouteStatus: "reported",
-        managedAgentVersion: "2026.9.5",
+        managedAgentVersion: "2026.10.5",
         managedAgentVersionStatus: "reported",
       },
     ],

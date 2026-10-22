@@ -23,9 +23,14 @@ After updating the host CLI, run `$$nemoclaw <name> rebuild` to recreate the san
 
 <AgentOnly variant="openclaw">
 
-This source version builds managed OpenClaw images with OpenClaw `2026.9.5`.
+This source version builds managed OpenClaw images with OpenClaw `2026.10.5`.
 To move an existing managed sandbox to that version, install the NemoClaw release containing this update and rebuild the sandbox.
 Confirm the running version with `$$nemoclaw <name> status` after the rebuild.
+
+Older backups migrate automatically through pinned intermediate OpenClaw runtimes before the new gateway starts.
+If legacy JSON sessions conflict with populated SQLite sessions, restoration stops and keeps the gateway stopped.
+Restore a consistent backup or reconcile the session histories before retrying.
+Keep the original host backup until you verify the restored sandbox.
 
 The OpenClaw runtime build target is declared by `OPENCLAW_VERSION` in the NemoClaw Dockerfiles.
 The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` is the compatibility floor for direct blueprint consumers, so it can be lower than the Dockerfile target.
