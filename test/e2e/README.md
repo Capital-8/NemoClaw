@@ -932,6 +932,7 @@ The execution profile owns the credentials available to its target step:
 `common-egress-agent` runs 4 isolated scenario shards.
 The balanced OpenClaw shard also checks the installed no-search configuration and sends a fresh documentation-search request.
 Its structured reply must report unavailable search and contain no installation-documentation result; reduced tool evidence must show no successful fetch or search-provider call, execution, or result.
+This fresh turn must disclose the known disabled-search state without discovery through `tool_search`, `tool_describe`, or `tool_call`; C1 rejects those names in calls, executions, and results. This restriction belongs to the unavailable-search evidence check. The Personal fetch scenario retains its progressive tool disclosure support.
 The source hook tests own prompt construction, while this agent turn owns model compliance after unavailable search.
 The reply must contain only the two requested JSON fields, with an optional Markdown code fence; surrounding claims or extra fields fail validation.
 Changes to `nemoclaw/src/runtime-context.ts` select this balanced OpenClaw shard.

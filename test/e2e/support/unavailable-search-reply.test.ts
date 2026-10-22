@@ -171,6 +171,49 @@ describe("unavailable-search reply diagnostics", () => {
 });
 
 describe("unavailable-search tool evidence", () => {
+  it.each(["tool_search", "tool_describe", "tool_call"])("rejects a %s discovery call", (name) => {
+    const evidence = reduceOpenClawToolEvidence(
+      JSON.stringify({
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "discovery", name, arguments: {} }],
+        },
+      }),
+      JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
+    );
+    expect(evidence.toolCalls).toContainEqual({ name });
+    expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+  });
+
+  it.each(["tool_search", "tool_describe", "tool_call"])(
+    "rejects a %s discovery execution",
+    (name) => {
+      const evidence = reduceOpenClawToolEvidence(
+        "",
+        JSON.stringify({
+          type: "trace.artifacts",
+          data: { finalStatus: "success", toolMetas: [{ name }] },
+        }),
+      );
+      expect(evidence.toolExecutions).toContainEqual({ name });
+      expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+    },
+  );
+
+  it.each(["tool_search", "tool_describe", "tool_call"])(
+    "rejects an orphaned %s discovery result",
+    (name) => {
+      const evidence = reduceOpenClawToolEvidence(
+        JSON.stringify({
+          message: { role: "toolResult", toolName: name, toolCallId: "orphan", content: [] },
+        }),
+        JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
+      );
+      expect(evidence.toolResults).toContainEqual({ name });
+      expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+    },
+  );
+
   it.each(["brave", "tavily"])("rejects a generic call with %s provider metadata", (provider) => {
     const evidence = reduceOpenClawToolEvidence(
       JSON.stringify({

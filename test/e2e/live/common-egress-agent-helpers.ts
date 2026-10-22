@@ -1074,7 +1074,7 @@ export function projectUnavailableSearchReplyArtifact(reply: string) {
   };
 }
 
-/** Require a completed turn with no successful fetch or search-provider evidence. */
+/** Require a completed turn without discovery, successful fetch, or search-provider evidence. */
 export function hasUnavailableSearchToolEvidence(evidence: OpenClawToolEvidence): boolean {
   return (
     evidence.errors.length === 0 &&
@@ -1083,7 +1083,7 @@ export function hasUnavailableSearchToolEvidence(evidence: OpenClawToolEvidence)
     !evidence.webFetchResults.some((result) => result.resultSuccess || result.httpSuccess) &&
     !evidence.providerMentions.some((provider) => /brave|tavily/iu.test(provider)) &&
     ![...evidence.toolCalls, ...evidence.toolExecutions, ...evidence.toolResults].some((call) =>
-      /web_search|brave|tavily/iu.test(call.name),
+      /web_search|brave|tavily|^tool_(?:search|describe|call)$/iu.test(call.name),
     )
   );
 }
