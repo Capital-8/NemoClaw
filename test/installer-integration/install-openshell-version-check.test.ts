@@ -57,11 +57,16 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
         {
           ...options,
           driverBins: false,
-          retainedRegistry: '{"sandboxes":{"retained-box":{"name":"retained-box"}}}',
+          retainedRegistry:
+            '{"sandboxes":{"retained-box":{"name":"retained-box","apiKey":"fixture-secret-do-not-print"}}}',
         },
       );
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("retained NemoClaw sandbox records");
+      const scope =
+        "registryGatewayPort" in options ? `/gateways/${options.registryGatewayPort}` : "";
+      expect(result.stderr).toContain(`/.nemoclaw${scope}/sandboxes.json": "retained-box"`);
+      expect(result.stderr).not.toContain("fixture-secret-do-not-print");
       expect(result.downloads).toBe("");
       expect(result.retainedFilesUnchanged).toBe(true);
     },
@@ -83,23 +88,26 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     expect(result.retainedFilesUnchanged).toBe(true);
   });
 
-  it.each(["invalid JSON", '{"sandboxes":[]}'])(
-    "preserves unreadable or malformed retained registry %#",
-    (retainedRegistry) => {
-      const result = runCommandWithInstalledVersion(
-        "",
-        {},
-        {
-          missingCli: true,
-          driverBins: false,
-          retainedRegistry,
-        },
-      );
-      expect(result.status).toBe(1);
-      expect(result.downloads).toBe("");
-      expect(result.retainedFilesUnchanged).toBe(true);
-    },
-  );
+  it.each([
+    "invalid JSON",
+    '{"sandboxes":[]}',
+    '{"sandboxes":{"retained-box":null}}',
+    '{"sandboxes":{"retained-box":{"name":"different-box"}}}',
+    '{"sandboxes":{" ":{"name":" "}}}',
+  ])("preserves unreadable or malformed retained registry %#", (retainedRegistry) => {
+    const result = runCommandWithInstalledVersion(
+      "",
+      {},
+      {
+        missingCli: true,
+        driverBins: false,
+        retainedRegistry,
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.downloads).toBe("");
+    expect(result.retainedFilesUnchanged).toBe(true);
+  });
 
   it("allows a fresh install with a verified empty NemoClaw registry", () => {
     const result = runCommandWithInstalledVersion(

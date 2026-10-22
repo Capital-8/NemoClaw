@@ -50,9 +50,13 @@ describe("OpenShell migration executable contracts", () => {
     expect(mcpProof).toContain("driverConfig.assertAfterRebuild()");
     expect(mcpProof).toContain("from deepagents_code import _nemoclaw_managed as managed");
     expect(mcpProof).not.toContain("/opt/nemoclaw-deepagents-code/managed-dcode-runtime.py");
-    expect(mcpProof).toContain("def reject_primary_tmpfile(path, flags, *args, **kwargs):");
-    expect(mcpProof).toContain("if directory == managed._MCP_ANONYMOUS_DIRECTORY:");
-    expect(mcpProof).toContain("managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY,");
+    expect(mcpProof).toContain("managed._validate_private_managed_mcp_tmpfs()");
+    expect(mcpProof).toContain(
+      "managed._anonymous_managed_mcp_snapshot_at(\n    payload, managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY",
+    );
+    expect(mcpProof).toContain(
+      "managed._read_bound_managed_mcp_descriptor(descriptor, binding) == payload",
+    );
   });
   it("keeps current stable selectors aligned", () => {
     const blueprint = fs.readFileSync(

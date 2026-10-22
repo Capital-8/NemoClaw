@@ -353,8 +353,14 @@ function verifyRetainedNemoClawRegistry() {
           !registry.sandboxes || typeof registry.sandboxes !== "object" || Array.isArray(registry.sandboxes)) {
         deny("the NemoClaw sandbox registry is invalid");
       }
-      if (Object.keys(registry.sandboxes).length) {
-        deny("retained NemoClaw sandbox records do not prove that legacy state was retired");
+      const names = Object.keys(registry.sandboxes);
+      if (names.some((name) => !name.trim() || name.length > 512 ||
+          !registry.sandboxes[name] || typeof registry.sandboxes[name] !== "object" ||
+          Array.isArray(registry.sandboxes[name]) || registry.sandboxes[name].name !== name)) {
+        deny("the NemoClaw sandbox registry has invalid sandbox identities");
+      }
+      if (names.length) {
+        deny(`retained NemoClaw sandbox records at ${JSON.stringify(join(directory, "sandboxes.json"))}: ${names.map((name) => JSON.stringify(name)).join(", ")} do not prove that legacy state was retired`);
       }
     } finally {
       closeSync(descriptor);
