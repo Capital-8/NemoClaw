@@ -516,66 +516,60 @@ def _runtime_drm_groups(expected_uid: int) -> set[str]:
     # NVIDIA CDI adds nonzero groups for device nodes that are not world read/write.
     # Landlock denies /dev directory reads. Discover kernel device names through
     # sysfs, then inspect metadata under pinned /dev directories without opening devices.
-    dev_fd = -1
-    device_directory = -1
-    sysfs_directory = -1
     try:
         flags = os.O_PATH | _directory_flag() | _no_follow_flag() | _cloexec_flag()
-        # CodeQL does not associate these descriptor variables with the guarded
-        # close loop in finally. Each successful open assigns its descriptor
-        # before any operation that can return from this function.
-        dev_fd = os.open("/dev", flags)  # codeql[py/file-not-closed]
-        for descriptor in (dev_fd,):
-            directory = os.fstat(descriptor)
+        dev_fd = os.open("/dev", flags)
+        try:
+            directory = os.fstat(dev_fd)
             if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
                 return set()
-        device_directory = os.open(  # codeql[py/file-not-closed]
-            "dri", flags, dir_fd=dev_fd
-        )
-        directory = os.fstat(device_directory)
-        if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
-            return set()
-        sysfs_directory = _open_directory(  # codeql[py/file-not-closed]
-            "/sys/class/drm"
-        )
-        directory = os.fstat(sysfs_directory)
-        if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
-            return set()
-        groups: set[str] = set()
-        device_count = 0
-        with os.scandir(sysfs_directory) as entries:
-            for index, entry in enumerate(entries):
-                # Sysfs includes connector entries and devices not assigned to this container.
-                if index >= 32768:
+            device_directory = os.open("dri", flags, dir_fd=dev_fd)
+            try:
+                directory = os.fstat(device_directory)
+                if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
                     return set()
-                match = re.fullmatch(r"(?:card|renderD)([0-9]+)", entry.name)
-                if not match:
-                    continue
+                sysfs_directory = _open_directory("/sys/class/drm")
                 try:
-                    device = os.stat(
-                        entry.name, dir_fd=device_directory, follow_symlinks=False
-                    )
-                except FileNotFoundError:
-                    continue
-                device_count += 1
-                if device_count > 256:
-                    return set()
-                if (
-                    stat.S_ISCHR(device.st_mode)
-                    and os.major(device.st_rdev) == 226
-                    and os.minor(device.st_rdev) == int(match[1])
-                    and device.st_uid in (0, expected_uid)
-                    and device.st_gid > 0
-                    and device.st_mode & 0o006 != 0o006
-                ):
-                    groups.add(str(device.st_gid))
-        return groups
+                    directory = os.fstat(sysfs_directory)
+                    if directory.st_uid != 0 or directory.st_gid != 0 or directory.st_mode & 0o022:
+                        return set()
+                    groups: set[str] = set()
+                    device_count = 0
+                    with os.scandir(sysfs_directory) as entries:
+                        for index, entry in enumerate(entries):
+                            # Sysfs includes connectors and devices not assigned to this container.
+                            if index >= 32768:
+                                return set()
+                            match = re.fullmatch(r"(?:card|renderD)([0-9]+)", entry.name)
+                            if not match:
+                                continue
+                            try:
+                                device = os.stat(
+                                    entry.name, dir_fd=device_directory, follow_symlinks=False
+                                )
+                            except FileNotFoundError:
+                                continue
+                            device_count += 1
+                            if device_count > 256:
+                                return set()
+                            if (
+                                stat.S_ISCHR(device.st_mode)
+                                and os.major(device.st_rdev) == 226
+                                and os.minor(device.st_rdev) == int(match[1])
+                                and device.st_uid in (0, expected_uid)
+                                and device.st_gid > 0
+                                and device.st_mode & 0o006 != 0o006
+                            ):
+                                groups.add(str(device.st_gid))
+                    return groups
+                finally:
+                    os.close(sysfs_directory)
+            finally:
+                os.close(device_directory)
+        finally:
+            os.close(dev_fd)
     except (OSError, UnsafePathError):
         return set()
-    finally:
-        for descriptor in (sysfs_directory, device_directory, dev_fd):
-            if descriptor >= 0:
-                os.close(descriptor)
 
 
 def _capability_free_supervisor_matches(
