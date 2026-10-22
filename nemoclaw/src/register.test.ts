@@ -422,3 +422,122 @@ describe("getPluginConfig", () => {
     expect(config.inferenceProvider).toBe("openai");
   });
 });
+
+describe("disabled web search before_tool_call hook (#13594)", () => {
+  function searchHook(enabled: boolean | undefined) {
+    const api = createMockApi();
+    api.config.tools = { web: { search: { enabled } } };
+    register(api);
+    const handler = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")?.[1];
+    expect(handler).toBeDefined();
+    return { api, handler: handler! };
+  }
+
+  it.each([
+    { toolName: "web_search", params: { query: "NemoClaw installation" } },
+    { toolName: "openclaw:core:web_search", params: {} },
+    { toolName: "TAVILY_SEARCH", params: { query: "installation" } },
+    { toolName: "brave_search", params: {} },
+    { toolName: "search", params: { query: "official installation documentation" } },
+    { toolName: "tool_search", params: { query: "search" } },
+    {
+      toolName: "tool_call",
+      params: { id: "openclaw:core:tool_search", args: { query: "Tavily" } },
+    },
+    { toolName: "tool_search", params: { query: "Tavily" } },
+    { toolName: "tool_describe", params: { id: "openclaw:core:web_search" } },
+    {
+      toolName: "tool_call",
+      params: { id: "openclaw:core:web_search", args: { query: "install" } },
+    },
+    {
+      toolName: "tool_call",
+      params: {
+        id: "openclaw:core:web_fetch",
+        args: { url: "https://docs.nvidia.com/nemoclaw/install" },
+      },
+    },
+    {
+      toolName: "web_fetch",
+      params: { url: "https://nvidianews.nvidia.com/news/nvidia-announces-nemoclaw" },
+    },
+    { toolName: "memory_search", params: { query: "NemoClaw installation documentation" } },
+    {
+      toolName: "exec",
+      params: { command: "find /sandbox/.openclaw/extensions/nemoclaw -type f" },
+    },
+    {
+      toolName: "read",
+      params: { file_path: "/usr/local/lib/nemoclaw/openclaw-runtime/docs/start/why-openclaw.md" },
+    },
+    { toolName: "exec", params: { command: "curl https://api.tavily.com/search" } },
+  ])("blocks disabled search and substitute probing: $toolName $params", (event) => {
+    const { handler } = searchHook(false);
+    expect(handler(event)).toMatchObject({
+      block: true,
+      blockReason: expect.stringContaining("Web search is unavailable in this sandbox"),
+    });
+  });
+
+  it("blocks direct documentation fetches that substitute for disabled search", () => {
+    const { handler } = searchHook(false);
+    expect(
+      handler({
+        toolName: "web_fetch",
+        params: { url: "https://docs.nvidia.com/nemoclaw/latest/get-started" },
+      }),
+    ).toMatchObject({ block: true });
+  });
+
+  it.each([true, undefined])("allows search when enabled is %s", (enabled) => {
+    const { handler } = searchHook(enabled);
+    expect(handler({ toolName: "web_search", params: { query: "NemoClaw" } })).toBeUndefined();
+  });
+
+  it.each([
+    { toolName: "web_fetch", params: { url: "https://www.wikidata.org/wiki/Q1" } },
+    {
+      toolName: "tool_call",
+      params: { id: "openclaw:core:web_fetch", args: { url: "https://example.com" } },
+    },
+    { toolName: "exec", params: { command: "curl https://wttr.in/:help" } },
+    { toolName: "read", params: { file_path: "/sandbox/project/README.md" } },
+    { toolName: "exec", params: { command: "rg search /sandbox/project" } },
+    { toolName: "web_fetch", params: { url: "https://nvidianews.nvidia.com/news/earnings" } },
+    { toolName: "tool_search", params: { query: "execute shell command" } },
+    { toolName: "memory_search", params: { query: "my shopping list" } },
+  ])("preserves unrelated tools when search is disabled: $toolName $params", (event) => {
+    const { handler } = searchHook(false);
+    expect(handler(event)).toBeUndefined();
+  });
+
+  it.each([
+    {},
+    { tools: null },
+    { tools: { web: [] } },
+    { tools: { web: { search: { enabled: "false" } } } },
+  ])("does not infer disabled search from malformed configuration: %j", (config) => {
+    const { api, handler } = searchHook(false);
+    api.config = config;
+    expect(handler({ toolName: "web_search", params: {} })).toBeUndefined();
+  });
+
+  it("reads configuration changes without registering another hook", () => {
+    const { api, handler } = searchHook(true);
+    api.config.tools = { web: { search: { enabled: false } } };
+    expect(handler({ toolName: "web_search", params: {} })).toMatchObject({ block: true });
+  });
+
+  it("still blocks secrets in memory when search is disabled", () => {
+    const { handler } = searchHook(false);
+    expect(
+      handler({
+        toolName: "write",
+        params: {
+          file_path: "/sandbox/.openclaw/memory/notes.md",
+          content: "nvapi-abcdefghijklmnopqrstuvwxyz",
+        },
+      }),
+    ).toMatchObject({ block: true, blockReason: expect.stringContaining("Memory write blocked") });
+  });
+});

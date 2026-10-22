@@ -226,6 +226,34 @@ export { getPluginConfig };
 /** Tool names that can write/modify files and should be scanned for secrets. */
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
 
+function blocksDisabledSearch(config: OpenClawConfig, event: BeforeToolCallEvent): boolean {
+  const tools = config.tools;
+  const web = isToolParams(tools) ? tools["web"] : undefined;
+  const search = isToolParams(web) ? web["search"] : undefined;
+  if (!isToolParams(search) || search["enabled"] !== false) return false;
+
+  // Inspect the wrapped target as well as direct tool names. Never echo parameters,
+  // which can include provider credentials, into the agent's denial result.
+  const target = event.toolName.toLowerCase().split(":").at(-1) ?? "";
+  const wrappedTarget = readStringProperty(event.params, "id") ?? "";
+  const names = `${target} ${wrappedTarget}`;
+  if (target === "search" || /web[_-]?search|(?:brave|tavily)(?:[_:-]|$)/iu.test(names))
+    return true;
+
+  const probe = JSON.stringify(event.params);
+  const searchProbe = /\b(?:brave|tavily|web[_ -]?search|search[_ -]?(?:provider|tool))\b/iu;
+  const documentationProbe =
+    /nemoclaw.{0,120}(?:install|documentation)|(?:install|documentation).{0,120}nemoclaw|docs\.nvidia\.com\/nemoclaw|nvidianews\.nvidia\.com[^\s"]*nemoclaw|(?:extensions\/nemoclaw|nemoclaw\/openclaw-runtime)/iu;
+  const probeTool =
+    /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
+  const searchDiscovery =
+    /^(?:tool_search|tool_describe|tool_call)$/u.test(target) && /\bsearch\b/iu.test(probe);
+  return (
+    probeTool.test(target) &&
+    (searchDiscovery || searchProbe.test(probe) || documentationProbe.test(probe))
+  );
+}
+
 export default function register(api: OpenClawPluginApi): void {
   // 1. Register /nemoclaw slash command (chat interface)
   api.registerCommand({
@@ -254,7 +282,7 @@ export default function register(api: OpenClawPluginApi): void {
 
   if (route.managedModel) api.registerProvider(registeredProviderForConfig(route));
 
-  // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
+  // 3. Enforce disabled search and block secrets in memory writes.
   // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
   // (PluginHookBeforeToolCallEvent/Result in openclaw/src/plugins/types.ts).
   // If the hook name or return shape changes in a future OpenClaw release,
@@ -267,6 +295,15 @@ export default function register(api: OpenClawPluginApi): void {
       (...args: readonly PluginValue[]): BeforeToolCallResult | undefined => {
         const event = readBeforeToolCallEvent(args[0]);
         if (!event?.toolName || !event.params) return undefined;
+
+        if (blocksDisabledSearch(api.config, { toolName: event.toolName, params: event.params })) {
+          return {
+            block: true,
+            blockReason:
+              "Web search is unavailable in this sandbox. Do not discover search providers, retry search, or probe web pages, local files, memory, or shell output as substitutes. " +
+              "Tell the user search is unavailable. Do not claim to have searched or present unverified installation documentation; return installationDocumentation as null when requested.",
+          };
+        }
 
         const toolName = event.toolName.toLowerCase();
         if (!WRITE_TOOL_NAMES.has(toolName)) return undefined;

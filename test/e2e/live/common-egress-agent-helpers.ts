@@ -1107,7 +1107,27 @@ export function projectUnavailableSearchToolEvidenceArtifact(evidence: OpenClawT
 
 /** Validate the complete research reply independently of the reply-key smoke check. */
 export function isUnavailableSearchReply(reply: string): boolean {
-  return projectUnavailableSearchReplyArtifact(reply).unavailableSearchReply;
+  if (projectUnavailableSearchReplyArtifact(reply).unavailableSearchReply) return true;
+  if (reply.length > 16_384) return false;
+  try {
+    const answer = parseJsonFromText(reply);
+    // Preserve the field contract while allowing explanatory prose around the JSON.
+    if (answer === null || typeof answer !== "object" || Array.isArray(answer)) return false;
+    const record = answer as Record<string, unknown>;
+    if (
+      Object.keys(record).length !== 2 ||
+      record.searchStatus !== "unavailable" ||
+      record.installationDocumentation !== null
+    )
+      return false;
+    const prose = reply.replace(JSON.stringify(answer), "");
+    // Prose may disclose limitations, but cannot add a research or documentation claim.
+    return !/official\s+installation\s+documentation\s*:|(?:based on|after)\s+(?:my\s+)?(?:research|investigation)|(?:I|we)\s+(?:have\s+)?(?:searched|found|verified)|"installationDocumentation"\s*:\s*\{/iu.test(
+      prose,
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function parseChatContent(raw: string): string {

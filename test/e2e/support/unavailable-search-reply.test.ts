@@ -29,6 +29,7 @@ describe("unavailable web-search reply evidence", () => {
       }),
     ).toEqual({ passed: true });
     expect(isUnavailableSearchReply(reply)).toBe(false);
+    expect(isUnavailableSearchReply(`Web search is unavailable.\n${reply}`)).toBe(false);
   });
 
   it.each([
@@ -45,6 +46,8 @@ describe("unavailable web-search reply evidence", () => {
     'Official installation documentation: NVIDIA Announces NemoClaw.\n{"searchStatus":"unavailable","installationDocumentation":null}',
     '{"searchStatus":"unavailable","installationDocumentation":null}\n{"installationDocumentation":{"url":"https://nvidianews.nvidia.com/"}}',
     '{"searchStatus":"unavailable","installationDocumentation":null,"claim":"NVIDIA Announces NemoClaw is the official installation documentation"}',
+    'I searched the web.\n{"searchStatus":"unavailable","installationDocumentation":null}',
+    'I have searched Tavily.\n{"searchStatus":"unavailable","installationDocumentation":null}',
   ])("rejects claims outside the unavailable-search fields: %s", (reply) => {
     expect(isUnavailableSearchReply(reply)).toBe(false);
   });
@@ -53,6 +56,14 @@ describe("unavailable web-search reply evidence", () => {
     '{"searchStatus":"unavailable","installationDocumentation":null}',
     '  \n{"searchStatus":"unavailable","installationDocumentation":null}\n  ',
   ])("accepts a complete unavailable-search JSON reply: %s", (reply) => {
+    expect(isUnavailableSearchReply(reply)).toBe(true);
+  });
+
+  it.each([
+    'Web search is unavailable in this sandbox.\n{"searchStatus":"unavailable","installationDocumentation":null}',
+    '{"searchStatus":"unavailable","installationDocumentation":null}\nPlease configure a search provider.',
+    'Web search is unavailable.\n```json\n{"searchStatus":"unavailable","installationDocumentation":null}\n```',
+  ])("accepts surrounding prose with a parsed null documentation result: %s", (reply) => {
     expect(isUnavailableSearchReply(reply)).toBe(true);
   });
 
