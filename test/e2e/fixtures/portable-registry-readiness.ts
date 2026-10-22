@@ -23,6 +23,8 @@ export type PortableRegistryReadinessObservation =
 export const PORTABLE_REGISTRY_READINESS_MAX_ATTEMPTS = 10;
 export const PORTABLE_REGISTRY_READINESS_DELAY_MS = 1_000;
 
+const PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM_ENV = "PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM";
+
 const PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS = [
   "CONTAINERS_CONF",
   "CONTAINERS_STORAGE_CONF",
@@ -30,7 +32,165 @@ const PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS = [
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
   "XDG_RUNTIME_DIR",
+  PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM_ENV,
 ] as const;
+
+const PROCESS_HEADROOM_DIAGNOSTIC = `
+service=nemoclaw-native-podman-e2e.service
+uid=$(id -u)
+/usr/bin/systemctl --user show "$service" --property=MainPID,TasksCurrent,TasksMax,LimitNPROC,ControlGroup --no-pager 2>/dev/null || true
+/usr/bin/systemctl show "user@\${uid}.service" "user-\${uid}.slice" --property=Id,TasksCurrent,TasksMax,LimitNPROC,ControlGroup --no-pager 2>/dev/null || true
+
+capture_process() {
+  local label=$1 pid=$2 group current max events depth=0
+  if [[ ! $pid =~ ^[1-9][0-9]*$ || ! -r /proc/$pid/limits || ! -r /proc/$pid/cgroup ]]; then
+    printf '%s_pid=unavailable\n' "$label"
+    return
+  fi
+  printf '%s_pid=%s\n' "$label" "$pid"
+  awk -v label="$label" '$1 == "Max" && $2 == "processes" { printf "%s_rlimit_nproc_soft=%s hard=%s\\n", label, $3, $4 }' "/proc/$pid/limits" || printf '%s_rlimit_nproc=unavailable\n' "$label"
+  group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$pid/cgroup" 2>/dev/null) || group=
+  [[ $group == /* ]] || { printf '%s_cgroup=unavailable\n' "$label"; return; }
+  while (( depth < 24 )); do
+    current=$(cat "/sys/fs/cgroup$group/pids.current" 2>/dev/null) || current=unavailable
+    max=$(cat "/sys/fs/cgroup$group/pids.max" 2>/dev/null) || max=unavailable
+    events=$(awk '$1 == "max" { print $2; exit }' "/sys/fs/cgroup$group/pids.events" 2>/dev/null) || events=unavailable
+    printf '%s_cgroup=%s pids_current=%s pids_max=%s pids_events_max=%s\n' "$label" "$group" "\${current:-unavailable}" "\${max:-unavailable}" "\${events:-unavailable}"
+    [[ $group == / ]] && break
+    group=\${group%/*}
+    [[ -n $group ]] || group=/
+    ((depth += 1))
+  done
+}
+
+service_pid=$(/usr/bin/systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)
+registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry 2>/dev/null || true)
+registry_pids_limit=$(docker inspect --format '{{.HostConfig.PidsLimit}}' nemoclaw-portable-registry 2>/dev/null || true)
+printf 'registry_pids_limit=%s\n' "\${registry_pids_limit:-unavailable}"
+capture_process service "$service_pid"
+capture_process registry "$registry_pid"
+user_tasks=$(ps -u "$uid" -L --no-headers 2>/dev/null | wc -l | tr -d ' ') || user_tasks=unavailable
+printf 'user_tasks=%s\n' "\${user_tasks:-unavailable}"
+host_threads_max=$(cat /proc/sys/kernel/threads-max 2>/dev/null) || host_threads_max=unavailable
+host_pid_max=$(cat /proc/sys/kernel/pid_max 2>/dev/null) || host_pid_max=unavailable
+host_tasks=$(awk '{ split($4, tasks, "/"); print tasks[2] }' /proc/loadavg 2>/dev/null) || host_tasks=unavailable
+printf 'host_threads_max=%s\n' "\${host_threads_max:-unavailable}"
+printf 'host_pid_max=%s\n' "\${host_pid_max:-unavailable}"
+printf 'host_tasks=%s\n' "\${host_tasks:-unavailable}"
+`;
+
+const PROCESS_BOUNDARY_PROBE = `
+minimum=\${PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM:?}
+service=nemoclaw-native-podman-e2e.service
+service_pid=unavailable
+registry_pid=unavailable
+service_group=unavailable
+registry_group=unavailable
+tasks_max=unavailable
+tasks_current=unavailable
+cgroup_max=unavailable
+cgroup_current=unavailable
+
+fail_boundary() {
+  jq -cn --arg failureReason "$1" --argjson minimum "$minimum" \
+    --arg servicePid "$service_pid" --arg registryPid "$registry_pid" \
+    --arg serviceGroup "$service_group" --arg registryGroup "$registry_group" \
+    --arg tasksMax "$tasks_max" --arg tasksCurrent "$tasks_current" \
+    --arg cgroupMax "$cgroup_max" --arg cgroupCurrent "$cgroup_current" \
+    '{schemaVersion: 1, failureReason: $failureReason, minimumHeadroom: $minimum,
+      service: {pid: $servicePid, cgroup: $serviceGroup, tasksMax: $tasksMax,
+        tasksCurrent: $tasksCurrent},
+      registry: {pid: $registryPid, cgroup: $registryGroup},
+      cgroup: {pidsMax: $cgroupMax, pidsCurrent: $cgroupCurrent}}'
+  exit 1
+}
+
+service_pid=$(/usr/bin/systemctl --user show "$service" --property=MainPID --value 2>/dev/null || true)
+registry_pid=$(podman container inspect --format '{{.State.Pid}}' nemoclaw-portable-registry 2>/dev/null || true)
+[[ $service_pid =~ ^[1-9][0-9]*$ && $registry_pid =~ ^[1-9][0-9]*$ ]] || \
+  fail_boundary process-identities-unavailable
+service_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$service_pid/cgroup" 2>/dev/null || true)
+registry_group=$(awk -F: '$1 == "0" { print $3; exit }' "/proc/$registry_pid/cgroup" 2>/dev/null || true)
+[[ $service_group == /* && $service_group != / && $service_group != *'..'* ]] || \
+  fail_boundary service-cgroup-invalid
+[[ $registry_group == "$service_group" ]] || fail_boundary registry-cgroup-mismatch
+tasks_max=$(/usr/bin/systemctl --user show "$service" --property=TasksMax --value 2>/dev/null || true)
+tasks_current=$(/usr/bin/systemctl --user show "$service" --property=TasksCurrent --value 2>/dev/null || true)
+cgroup_max=$(cat "/sys/fs/cgroup$service_group/pids.max" 2>/dev/null || true)
+cgroup_current=$(cat "/sys/fs/cgroup$service_group/pids.current" 2>/dev/null || true)
+[[ $tasks_max =~ ^[0-9]+$ && $tasks_current =~ ^[0-9]+$ ]] || \
+  fail_boundary service-task-limit-unavailable
+[[ $cgroup_max =~ ^[0-9]+$ && $cgroup_current =~ ^[0-9]+$ ]] || \
+  fail_boundary cgroup-task-limit-unavailable
+[[ $cgroup_max == "$tasks_max" ]] || fail_boundary service-cgroup-limit-mismatch
+(( tasks_max - tasks_current >= minimum )) || fail_boundary service-headroom-insufficient
+(( cgroup_max - cgroup_current >= minimum )) || fail_boundary cgroup-headroom-insufficient
+jq -cn --argjson minimum "$minimum" \
+  --arg serviceGroup "$service_group" --arg registryGroup "$registry_group" \
+  --argjson tasksMax "$tasks_max" --argjson tasksCurrent "$tasks_current" \
+  --argjson cgroupMax "$cgroup_max" --argjson cgroupCurrent "$cgroup_current" \
+  '{schemaVersion: 1, minimumHeadroom: $minimum,
+    inheritedServiceBoundary: ($serviceGroup == $registryGroup),
+    service: {cgroup: $serviceGroup, tasksMax: $tasksMax, tasksCurrent: $tasksCurrent},
+    registry: {cgroup: $registryGroup},
+    cgroup: {pidsMax: $cgroupMax, pidsCurrent: $cgroupCurrent}}'
+`;
+
+export interface PortableRegistryProcessBoundaryEvidence {
+  readonly schemaVersion: 1;
+  readonly minimumHeadroom: number;
+  readonly inheritedServiceBoundary: boolean;
+  readonly service: {
+    readonly cgroup: string;
+    readonly tasksMax: number;
+    readonly tasksCurrent: number;
+  };
+  readonly registry: { readonly cgroup: string };
+  readonly cgroup: { readonly pidsMax: number; readonly pidsCurrent: number };
+}
+
+export async function capturePortableRegistryProcessBoundary(options: {
+  readonly artifacts: ArtifactSink;
+  readonly shellProbe: ShellProbe;
+}): Promise<PortableRegistryProcessBoundaryEvidence> {
+  const minimumHeadroomText = process.env[PORTABLE_REGISTRY_MINIMUM_PROCESS_HEADROOM_ENV];
+  if (!minimumHeadroomText || !/^[1-9][0-9]*$/u.test(minimumHeadroomText)) {
+    throw new Error("Portable registry minimum process headroom must be a positive integer.");
+  }
+  const minimumHeadroom = Number(minimumHeadroomText);
+  if (!Number.isSafeInteger(minimumHeadroom)) {
+    throw new Error("Portable registry minimum process headroom must be a safe integer.");
+  }
+  const env = buildChildEnv(process.env, {
+    additionalAllowedEnv: PORTABLE_REGISTRY_DIAGNOSTIC_ENV_KEYS,
+    fixtureOverlay: {},
+  });
+  const result = await options.shellProbe.run(
+    trustedShellCommand({
+      command: "bash",
+      args: ["-e", "-u", "-o", "pipefail", "-c", PROCESS_BOUNDARY_PROBE],
+      reason: "verify the registry inherited the finite Podman API-service process boundary",
+    }),
+    {
+      artifactName: "portable-registry-process-boundary-probe",
+      captureLimitBytes: 32 * 1024,
+      env,
+      timeoutMs: 10_000,
+    },
+  );
+  if (result.exitCode !== 0 || result.signal !== null || result.timedOut) {
+    const failureReason = /"failureReason":"([a-z-]+)"/u.exec(result.stdout)?.[1] ?? "probe-failed";
+    throw new Error(`Portable registry process-boundary verification failed: ${failureReason}.`);
+  }
+  let evidence: PortableRegistryProcessBoundaryEvidence;
+  try {
+    evidence = JSON.parse(result.stdout) as PortableRegistryProcessBoundaryEvidence;
+  } catch {
+    throw new Error("Portable registry process-boundary evidence was not valid JSON.");
+  }
+  await options.artifacts.writeJson("portable-registry-process-boundary.json", evidence);
+  return evidence;
+}
 
 function retryableTransport(observation: PortableRegistryReadinessObservation): boolean {
   return observation.kind === "transport" && observation.code !== "unexpected";
@@ -153,6 +313,22 @@ async function captureRegistryFailureDiagnostics(shellProbe: ShellProbe): Promis
       reason: "capture a bounded managed registry log tail after readiness failure",
     },
   ] as const;
+  // Capture headroom before the other probes add processes to a constrained runner.
+  await shellProbe
+    .run(
+      trustedShellCommand({
+        command: "bash",
+        args: ["-e", "-u", "-o", "pipefail", "-c", PROCESS_HEADROOM_DIAGNOSTIC],
+        reason: "capture bounded process and cgroup headroom after registry readiness failure",
+      }),
+      {
+        artifactName: "portable-registry-process-headroom",
+        captureLimitBytes: 32 * 1024,
+        env,
+        timeoutMs: 10_000,
+      },
+    )
+    .catch(() => undefined);
   await Promise.allSettled(
     commands.map((command) =>
       shellProbe.run(
