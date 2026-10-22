@@ -351,7 +351,11 @@ test(
     );
     cleanup.trackDisposable(`destroy sandbox ${SANDBOX_NAME}`, () =>
       cleanupRegisteredSandbox(SANDBOX_NAME, () =>
-        host.cleanupSandbox(SANDBOX_NAME, { env, timeoutMs: 5 * 60_000 }),
+        host.cleanupSandbox(SANDBOX_NAME, {
+          env,
+          cleanupGateway: true,
+          timeoutMs: 5 * 60_000,
+        }),
       ),
     );
 
