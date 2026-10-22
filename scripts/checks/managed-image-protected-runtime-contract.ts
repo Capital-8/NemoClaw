@@ -285,7 +285,7 @@ export async function configureLocalInferenceRoute(
   });
 }
 
-export function localInferenceProbe(input: ManagedImageOpenShellE2eInputs): string {
+export function localInferenceProbe(input: ManagedImageOpenShellE2eInputs): [string, ...string[]] {
   if (!input.model) throw new Error("local inference model is required");
   const payload = JSON.stringify({
     model: input.model,
@@ -293,12 +293,12 @@ export function localInferenceProbe(input: ManagedImageOpenShellE2eInputs): stri
     reasoning_effort: "none",
     max_tokens: 32,
   });
-  return [
+  const script = [
     "set -eu",
     NATIVE_LOCAL_AUTH_HEADER_SCRIPT,
     'response="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-managed-image-inference.XXXXXX")"',
     "trap 'rm -f \"$response\"' EXIT",
-    `curl -fsS --max-time 180 ${JSON.stringify(`${localInferenceBaseUrl(input)}/chat/completions`)} -H "$AUTH_HEADER" -H 'Content-Type: application/json' --data ${JSON.stringify(payload)} > "$response"`,
+    'curl -fsS --max-time 180 "$1" -H "$AUTH_HEADER" -H \'Content-Type: application/json\' --data "$2" > "$response"',
     "node - \"$response\" <<'NODE'",
     'const fs = require("node:fs");',
     'const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));',
@@ -309,6 +309,15 @@ export function localInferenceProbe(input: ManagedImageOpenShellE2eInputs): stri
     'if (!/pong/i.test(text)) throw new Error("local inference did not return PONG");',
     "NODE",
   ].join("\n");
+  return [
+    "/bin/sh",
+    "-eu",
+    "-c",
+    script,
+    "native-local-inference",
+    `${localInferenceBaseUrl(input)}/chat/completions`,
+    payload,
+  ];
 }
 
 export function localInferenceAgentCommand(input: ManagedImageOpenShellE2eInputs): string[] {

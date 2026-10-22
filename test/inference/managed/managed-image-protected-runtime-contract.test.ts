@@ -197,7 +197,7 @@ it.each(["", "raw\ncredential"])(
   },
 );
 
-function runNativeQualificationProbe(handle: string) {
+function runNativeQualificationProbe(handle: string, model = "fixture-model") {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-qualification-"));
   try {
     fs.writeFileSync(
@@ -206,28 +206,22 @@ function runNativeQualificationProbe(handle: string) {
       { mode: 0o700 },
     );
     const argsPath = path.join(directory, "args");
-    const result = spawnSync(
-      "/bin/sh",
-      [
-        "-c",
-        localInferenceProbe({
-          agent: "openclaw",
-          image: IMAGE,
-          sandbox: VALID_SANDBOX,
-          localProvider: "ollama",
-          model: "fixture-model",
-        }),
-      ],
-      {
-        encoding: "utf8",
-        env: {
-          PATH: `${directory}:${process.env.PATH}`,
-          TMPDIR: directory,
-          PROBE_ARGS: argsPath,
-          NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle,
-        },
+    const [command, ...commandArgs] = localInferenceProbe({
+      agent: "openclaw",
+      image: IMAGE,
+      sandbox: VALID_SANDBOX,
+      localProvider: "ollama",
+      model,
+    });
+    const result = spawnSync(command, commandArgs, {
+      encoding: "utf8",
+      env: {
+        PATH: `${directory}:${process.env.PATH}`,
+        TMPDIR: directory,
+        PROBE_ARGS: argsPath,
+        NEMOCLAW_LOCAL_INFERENCE_TOKEN: handle,
       },
-    );
+    });
     return {
       result,
       args: fs.existsSync(argsPath) ? fs.readFileSync(argsPath, "utf8") : null,
@@ -324,6 +318,18 @@ it.each([
   expect(result.status, result.stderr).toBe(0);
   expect(args).toContain("http://host.openshell.internal:11435/v1/chat/completions\n");
   expect(args).toContain(`Authorization: Bearer ${handle}\n`);
+  expect(remaining).toEqual([]);
+});
+
+it("passes shell syntax in the local model unchanged to curl", () => {
+  const model = "model'$(printf substituted)`printf expanded`$HOME";
+  const { result, args, remaining } = runNativeQualificationProbe(
+    "openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+    model,
+  );
+  expect(result.status, result.stderr).toBe(0);
+  const argv = args!.split("\n");
+  expect(JSON.parse(argv[argv.indexOf("--data") + 1]).model).toBe(model);
   expect(remaining).toEqual([]);
 });
 
