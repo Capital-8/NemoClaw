@@ -662,7 +662,14 @@ fn a_live_run_records_its_step_outcome_after_the_time_budget() {
     use sha2::{Digest, Sha256};
     let head = "0123456789abcdef0123456789abcdef01234567";
     let slow = json!({"binary": "nemoclaw-e2e::integration", "name": "docker_live::slow", "outcome": "passed", "seconds": 2.5});
-    for (test_seconds, outcome) in [(60, "passed"), (1, "failed")] {
+    // Budgets fail the step only on Linux CI runners and are reported only
+    // elsewhere, so an over-budget run passes on macOS.
+    let over_budget = if cfg!(target_os = "linux") {
+        "failed"
+    } else {
+        "passed"
+    };
+    for (test_seconds, outcome) in [(60, "passed"), (1, over_budget)] {
         let fixture = Fixture::new();
         fixture.fake_container_tools();
         fixture.seed_live_inputs();
