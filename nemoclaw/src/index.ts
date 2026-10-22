@@ -45,6 +45,7 @@ function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> |
   return {
     toolName: readStringProperty(value, "toolName"),
     params: isToolParams(params) ? params : undefined,
+    runId: readStringProperty(value, "runId"),
   };
 }
 
@@ -226,35 +227,46 @@ export { getPluginConfig };
 /** Tool names that can write/modify files and should be scanned for secrets. */
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
 
-function blocksDisabledSearch(config: OpenClawConfig, event: BeforeToolCallEvent): boolean {
+function blocksDisabledSearch(
+  config: OpenClawConfig,
+  event: BeforeToolCallEvent,
+  deniedSearchRuns: Set<string>,
+): boolean {
   const tools = config.tools;
   const web = isToolParams(tools) ? tools["web"] : undefined;
   const search = isToolParams(web) ? web["search"] : undefined;
-  if (!isToolParams(search) || search["enabled"] !== false) return false;
+  if (!isToolParams(search) || search["enabled"] !== false) {
+    if (event.runId) deniedSearchRuns.delete(event.runId);
+    return false;
+  }
 
-  // Inspect the wrapped target as well as direct tool names. Never echo parameters,
-  // which can include provider credentials, into the agent's denial result.
   const target = event.toolName.toLowerCase().split(":").at(-1) ?? "";
-  const wrappedTarget = readStringProperty(event.params, "id") ?? "";
-  const names = `${target} ${wrappedTarget}`;
-  if (target === "search" || /web[_-]?search|(?:brave|tavily)(?:[_:-]|$)/iu.test(names))
-    return true;
-
+  const wrappedTarget = readStringProperty(event.params, "id")?.toLowerCase().split(":").at(-1);
+  const effectiveTarget = target === "tool_call" ? (wrappedTarget ?? "") : target;
+  const searchTool =
+    effectiveTarget === "search" ||
+    /web[_-]?search|(?:brave|tavily)(?:[_:-]|$)/u.test(effectiveTarget);
   const probe = JSON.stringify(event.params);
-  const searchProbe = /\b(?:brave|tavily|web[_ -]?search|search[_ -]?(?:provider|tool))\b/iu;
-  const documentationProbe =
-    /nemoclaw.{0,120}(?:install|documentation)|(?:install|documentation).{0,120}nemoclaw|docs\.nvidia\.com\/nemoclaw|nvidianews\.nvidia\.com[^\s"]*nemoclaw|(?:extensions\/nemoclaw|nemoclaw\/openclaw-runtime)/iu;
-  const probeTool =
-    /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
   const searchDiscovery =
-    /^(?:tool_search|tool_describe|tool_call)$/u.test(target) && /\bsearch\b/iu.test(probe);
-  return (
-    probeTool.test(target) &&
-    (searchDiscovery || searchProbe.test(probe) || documentationProbe.test(probe))
-  );
+    /^(?:tool_search|tool_describe)$/u.test(effectiveTarget) &&
+    /\b(?:brave|tavily|search|web[_ -]?search)\b/iu.test(probe);
+  const providerProbe =
+    /^(?:exec|execute|shell|web_fetch|browser)$/u.test(effectiveTarget) &&
+    /https?:\/\/(?:api\.tavily\.com|(?:api\.)?search\.brave\.com)(?:[/:?"\s]|$)/iu.test(probe);
+  if (searchTool || searchDiscovery || providerProbe) {
+    if (event.runId) deniedSearchRuns.add(event.runId);
+    return true;
+  }
+
+  // A denied search identifies the turn, not the subject of a local document.
+  // Without a run identity, never carry a denial into unrelated work.
+  const substituteTool =
+    /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
+  return Boolean(event.runId && deniedSearchRuns.has(event.runId) && substituteTool.test(target));
 }
 
 export default function register(api: OpenClawPluginApi): void {
+  const deniedSearchRuns = new Set<string>();
   // 1. Register /nemoclaw slash command (chat interface)
   api.registerCommand({
     name: "nemoclaw",
@@ -296,7 +308,14 @@ export default function register(api: OpenClawPluginApi): void {
         const event = readBeforeToolCallEvent(args[0]);
         if (!event?.toolName || !event.params) return undefined;
 
-        if (blocksDisabledSearch(api.config, { toolName: event.toolName, params: event.params })) {
+        const runId = readStringProperty(args[1], "runId") ?? event.runId;
+        if (
+          blocksDisabledSearch(
+            api.config,
+            { toolName: event.toolName, params: event.params, runId },
+            deniedSearchRuns,
+          )
+        ) {
           return {
             block: true,
             blockReason:
@@ -339,9 +358,14 @@ export default function register(api: OpenClawPluginApi): void {
         };
       },
     );
+    api.on("agent_end", (...args: readonly PluginValue[]): undefined => {
+      const runId = readStringProperty(args[1], "runId") ?? readStringProperty(args[0], "runId");
+      if (runId) deniedSearchRuns.delete(runId);
+      return undefined;
+    });
   } catch (err) {
     api.logger.warn(
-      `[SECURITY] Could not register secret scanner hook: ${err instanceof Error ? err.message : String(err)}`,
+      `[SECURITY] Could not register tool safety hooks: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 

@@ -450,6 +450,17 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       toolName: "tool_call",
       params: { id: "openclaw:core:web_search", args: { query: "install" } },
     },
+    { toolName: "exec", params: { command: "curl https://api.tavily.com/search" } },
+    { toolName: "web_fetch", params: { url: "https://api.search.brave.com/res/v1/web/search" } },
+  ])("blocks disabled search and provider probing: $toolName $params", (event) => {
+    const { handler } = searchHook(false);
+    expect(handler(event)).toMatchObject({
+      block: true,
+      blockReason: expect.stringContaining("Web search is unavailable in this sandbox"),
+    });
+  });
+
+  it.each([
     {
       toolName: "tool_call",
       params: {
@@ -470,24 +481,36 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       toolName: "read",
       params: { file_path: "/usr/local/lib/nemoclaw/openclaw-runtime/docs/start/why-openclaw.md" },
     },
-    { toolName: "exec", params: { command: "curl https://api.tavily.com/search" } },
-  ])("blocks disabled search and substitute probing: $toolName $params", (event) => {
-    const { handler } = searchHook(false);
-    expect(handler(event)).toMatchObject({
-      block: true,
-      blockReason: expect.stringContaining("Web search is unavailable in this sandbox"),
-    });
-  });
+    { toolName: "read", params: { file_path: "/sandbox/project/README.md" } },
+  ])(
+    "blocks substitute probing only in the run whose search was denied: $toolName $params",
+    (event) => {
+      const { handler } = searchHook(false);
+      expect(handler({ toolName: "web_search", params: {}, runId: "search-run" })).toMatchObject({
+        block: true,
+      });
+      expect(handler({ ...event, runId: "search-run" })).toMatchObject({ block: true });
+      expect(handler({ ...event, runId: "other-run" })).toBeUndefined();
+    },
+  );
 
-  it("blocks direct documentation fetches that substitute for disabled search", () => {
-    const { handler } = searchHook(false);
-    expect(
-      handler({
-        toolName: "web_fetch",
-        params: { url: "https://docs.nvidia.com/nemoclaw/latest/get-started" },
-      }),
-    ).toMatchObject({ block: true });
-  });
+  it.each([
+    { toolName: "read", params: { file_path: "/sandbox/project/nemoclaw-installation.md" } },
+    { toolName: "web_fetch", params: { url: "https://docs.tavily.com/documentation" } },
+    { toolName: "read", params: { file_path: "/sandbox/project/search-provider-config.md" } },
+    { toolName: "exec", params: { command: "cat /sandbox/project/nemoclaw-installation.md" } },
+    { toolName: "memory_search", params: { query: "my NemoClaw installation notes" } },
+    {
+      toolName: "web_fetch",
+      params: { url: "https://docs.nvidia.com/nemoclaw/latest/get-started" },
+    },
+  ])(
+    "allows ordinary local and direct-fetch work before search is attempted: $toolName $params",
+    (event) => {
+      const { handler } = searchHook(false);
+      expect(handler({ ...event, runId: "ordinary-run" })).toBeUndefined();
+    },
+  );
 
   it.each([true, undefined])("allows search when enabled is %s", (enabled) => {
     const { handler } = searchHook(enabled);
@@ -526,6 +549,55 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     const { api, handler } = searchHook(true);
     api.config.tools = { web: { search: { enabled: false } } };
     expect(handler({ toolName: "web_search", params: {} })).toMatchObject({ block: true });
+  });
+
+  it.each([true, false])(
+    "clears denied-search state after a run ends with success=%s",
+    async (success) => {
+      const { api, handler } = searchHook(false);
+      await handler({ toolName: "web_search", params: {} }, { runId: "finished-run" });
+      const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")?.[1];
+      expect(end).toBeDefined();
+      await end!({ success }, { runId: "finished-run" });
+      expect(
+        handler(
+          { toolName: "read", params: { file_path: "/sandbox/project/nemoclaw-installation.md" } },
+          { runId: "finished-run" },
+        ),
+      ).toBeUndefined();
+    },
+  );
+
+  it("does not carry a denial without a run identity into later tool calls", () => {
+    const { handler } = searchHook(false);
+    expect(handler({ toolName: "web_search", params: {} })).toMatchObject({ block: true });
+    expect(
+      handler({
+        toolName: "read",
+        params: { file_path: "/sandbox/project/nemoclaw-installation.md" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("clears a run's denial when search is reenabled", async () => {
+    const { api, handler } = searchHook(false);
+    await handler({ toolName: "web_search", params: {}, runId: "reconfigured-run" });
+    api.config.tools = { web: { search: { enabled: true } } };
+    expect(
+      handler({
+        toolName: "read",
+        params: { file_path: "/sandbox/project/nemoclaw-installation.md" },
+        runId: "reconfigured-run",
+      }),
+    ).toBeUndefined();
+    api.config.tools = { web: { search: { enabled: false } } };
+    expect(
+      handler({
+        toolName: "read",
+        params: { file_path: "/sandbox/project/nemoclaw-installation.md" },
+        runId: "reconfigured-run",
+      }),
+    ).toBeUndefined();
   });
 
   it("still blocks secrets in memory when search is disabled", () => {

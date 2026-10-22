@@ -936,9 +936,9 @@ The execution profile owns the credentials available to its target step:
 The balanced OpenClaw shard also checks the installed no-search configuration and sends a fresh documentation-search request.
 Its structured reply must report unavailable search and contain no installation-documentation result; reduced tool evidence must show no successful fetch or search-provider call, execution, or result.
 This fresh turn must disclose the known disabled-search state without tool activity. C1 rejects every tool call, execution, and result, including generic search, file reads, shell commands, memory access, and unknown tools. This restriction belongs to the unavailable-search evidence check. The Personal fetch scenario retains its progressive tool disclosure support.
-The source hook tests own prompt construction, while this agent turn owns model compliance after unavailable search.
+The source hook tests own prompt construction and tool denial. Search-provider calls and discovery are blocked immediately. Substitute probes are blocked only in a run whose search was denied, and that state clears when the run ends. Ordinary local work and direct fetches remain available in other runs. This agent turn owns model compliance after unavailable search.
 The parsed JSON must contain only the two requested fields. Explanatory prose and a Markdown code fence are allowed; unsupported search or documentation claims and extra fields fail validation.
-Changes to `nemoclaw/src/runtime-context.ts` or `src/lib/openclaw/agent-json-provenance.ts` select this balanced OpenClaw shard.
+Changes to `nemoclaw/src/index.ts`, `nemoclaw/src/runtime-context.ts`, or `src/lib/openclaw/agent-json-provenance.ts` select this balanced OpenClaw shard.
 Each attempt records bounded reply diagnostics before validation, including parse and surrounding-prose status, expected field names, extra-field count, search-status category, and documentation value type.
 Artifacts retain no raw reply, arbitrary field names, queries, URLs, or retrieved content.
 The negative-path reducer uses no expected fetch URL; its validator checks the unavailable-search behavior directly.
