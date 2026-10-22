@@ -938,7 +938,7 @@ Its structured reply must report unavailable search and contain no installation-
 This fresh turn must disclose the known disabled-search state without tool activity. C1 rejects every tool call, execution, and result, including generic search, file reads, shell commands, memory access, and unknown tools. This restriction belongs to the unavailable-search evidence check. The Personal fetch scenario retains its progressive tool disclosure support.
 The source hook tests own prompt construction, while this agent turn owns model compliance after unavailable search.
 The reply must contain only the two requested JSON fields, with an optional Markdown code fence; surrounding claims or extra fields fail validation.
-Changes to `nemoclaw/src/runtime-context.ts` select this balanced OpenClaw shard.
+Changes to `nemoclaw/src/runtime-context.ts` or `src/lib/openclaw/agent-json-provenance.ts` select this balanced OpenClaw shard.
 Each attempt records bounded reply diagnostics before validation, including parse and surrounding-prose status, expected field names, extra-field count, search-status category, and documentation value type.
 Artifacts retain no raw reply, arbitrary field names, queries, URLs, or retrieved content.
 The negative-path reducer uses no expected fetch URL; its validator checks the unavailable-search behavior directly.
