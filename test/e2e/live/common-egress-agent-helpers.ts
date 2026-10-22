@@ -1081,6 +1081,7 @@ export function hasUnavailableSearchToolEvidence(evidence: OpenClawToolEvidence)
     evidence.finalStatuses.length === 1 &&
     evidence.finalStatuses[0] === "success" &&
     !evidence.webFetchResults.some((result) => result.resultSuccess || result.httpSuccess) &&
+    !evidence.providerMentions.some((provider) => /brave|tavily/iu.test(provider)) &&
     ![...evidence.toolCalls, ...evidence.toolExecutions, ...evidence.toolResults].some((call) =>
       /web_search|brave|tavily/iu.test(call.name),
     )

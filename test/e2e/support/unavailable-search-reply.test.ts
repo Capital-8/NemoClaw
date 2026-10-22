@@ -171,6 +171,54 @@ describe("unavailable-search reply diagnostics", () => {
 });
 
 describe("unavailable-search tool evidence", () => {
+  it.each(["brave", "tavily"])("rejects a generic call with %s provider metadata", (provider) => {
+    const evidence = reduceOpenClawToolEvidence(
+      JSON.stringify({
+        message: {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "generic-call", name: "search", arguments: { provider } },
+          ],
+        },
+      }),
+      JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
+    );
+    expect(evidence.providerMentions).toContain(provider);
+    expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+  });
+
+  it.each(["brave", "tavily"])(
+    "rejects a generic execution with %s provider metadata",
+    (provider) => {
+      const evidence = reduceOpenClawToolEvidence(
+        "",
+        JSON.stringify({
+          type: "trace.artifacts",
+          data: { finalStatus: "success", toolMetas: [{ name: "search", meta: { provider } }] },
+        }),
+      );
+      expect(evidence.providerMentions).toContain(provider);
+      expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+    },
+  );
+
+  it.each(["brave", "tavily"])("rejects a generic result with %s provider metadata", (provider) => {
+    const evidence = reduceOpenClawToolEvidence(
+      JSON.stringify({
+        message: {
+          role: "toolResult",
+          toolName: "search",
+          toolCallId: "orphan",
+          details: { provider },
+          content: [],
+        },
+      }),
+      JSON.stringify({ type: "trace.artifacts", data: { finalStatus: "success" } }),
+    );
+    expect(evidence.providerMentions).toContain(provider);
+    expect(hasUnavailableSearchToolEvidence(evidence)).toBe(false);
+  });
+
   it.each(["web_search", "brave_search", "tavily_search"])(
     "rejects an orphaned %s tool result",
     (name) => {
