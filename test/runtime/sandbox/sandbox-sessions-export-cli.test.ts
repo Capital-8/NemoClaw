@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 import { LAUNCH_READINESS_FIXTURE_POLICY } from "../../helpers/launch-readiness-fixture";
@@ -15,7 +16,9 @@ function buildStubOpenshell(
   sessionListJson: string,
   sessionListStderr = "",
   transcriptProbe?: { output: string; status: number },
+  sandboxRoot?: string,
 ): string {
+  const root = JSON.stringify(sandboxRoot ?? "");
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   fs.writeFileSync(
@@ -33,6 +36,20 @@ function buildStubOpenshell(
       `    printf '%s\\n' ${JSON.stringify(sessionListJson)}`,
       `    if [ -n ${JSON.stringify(sessionListStderr)} ]; then printf '%s\\n' ${JSON.stringify(sessionListStderr)} >&2; fi`,
       "    exit 0 ;;",
+      // With a sandbox root, the locate script, staging cleanup, and download
+      // run for real against that host directory in place of `/sandbox`.
+      ...(sandboxRoot
+        ? [
+            '  *"--name alpha -- node --no-warnings -e"*)',
+            '    while [ "$1" != "--" ]; do shift; done; shift 2',
+            `    args=(); for arg in "$@"; do case "$arg" in /sandbox*) arg=${root}"\${arg#/sandbox}" ;; esac; args+=("$arg"); done`,
+            `    exec ${JSON.stringify(process.execPath)} "\${args[@]}" ;;`,
+            '  *"--name alpha -- rm -rf"*)',
+            `    target="\${@: -1}"; rm -rf -- ${root}"\${target#/sandbox}"; exit 0 ;;`,
+            '  "sandbox download"*)',
+            `    src="\${@: -2:1}"; cp -- ${root}"\${src#/sandbox}" "\${@: -1}"; exit $? ;;`,
+          ]
+        : []),
       // The transcript locate step is the only `node -e` call; tests can make
       // it report abnormal basenames.
       ...(transcriptProbe
@@ -346,6 +363,52 @@ describe("sandbox sessions export CLI", () => {
       expect(calls).toContain("openclaw-agent.sqlite");
       expect(calls).not.toMatch(/umask 077/);
       expect(calls).not.toMatch(/sandbox download/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("exports a session from a real OpenClaw session database (#12673)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-sqlite-"));
+    try {
+      writeSandboxRegistry(home);
+      const sandboxRoot = path.join(home, "sandbox-root");
+      const agentDir = path.join(sandboxRoot, ".openclaw", "agents", "main", "agent");
+      fs.mkdirSync(agentDir, { recursive: true });
+      const database = new DatabaseSync(path.join(agentDir, "openclaw-agent.sqlite"));
+      database.exec(
+        "CREATE TABLE transcript_events (session_id TEXT, seq INTEGER, event_json TEXT)",
+      );
+      const insert = database.prepare("INSERT INTO transcript_events VALUES (?, ?, ?)");
+      insert.run("sid-a", 1, '{"type":"message","id":"m1"}');
+      insert.run("sid-a", 0, '{"type":"session","id":"sid-a"}');
+      database.close();
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }]),
+        "",
+        undefined,
+        sandboxRoot,
+      );
+
+      const outDir = path.join(home, "sessions-alpha");
+      const result = runWithEnv(`alpha sessions export --out ${outDir} 2>&1`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(0);
+      expect(fs.readFileSync(path.join(outDir, "sid-a.jsonl"), "utf8")).toBe(
+        '{"type":"session","id":"sid-a"}\n{"type":"message","id":"m1"}\n',
+      );
+
+      const calls = fs.readFileSync(openshellLog, "utf8").split("\n");
+      const staged = /\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]{12}/;
+      const downloadLine = calls.find((line) => line.startsWith("sandbox download"));
+      expect(downloadLine).toMatch(new RegExp(`${staged.source}/sid-a\\.jsonl `));
+      expect(calls.some((line) => new RegExp(`-- rm -rf ${staged.source}$`).test(line))).toBe(true);
+      expect(fs.readdirSync(path.join(sandboxRoot, ".nemoclaw-staging"))).toEqual([]);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

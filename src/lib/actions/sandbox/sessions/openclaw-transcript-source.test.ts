@@ -25,19 +25,33 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function runScript(...files: string[]) {
+function runScriptWith(nodeOptions: string[], ...files: string[]) {
   const result = spawnSync(
     process.execPath,
-    ["--no-warnings", "-e", OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT, root, "main", staging, ...files],
+    [
+      ...nodeOptions,
+      "--no-warnings",
+      "-e",
+      OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT,
+      root,
+      "main",
+      staging,
+      ...files,
+    ],
     { encoding: "utf8" },
   );
   return { status: result.status, output: result.stdout, stderr: result.stderr };
 }
 
-function writeDatabase(tables = ["transcript_events", "trajectory_runtime_events"]) {
+function runScript(...files: string[]) {
+  return runScriptWith([], ...files);
+}
+
+function writeDatabase(tables = ["transcript_events", "trajectory_runtime_events"]): string {
   const directory = path.join(root, ".openclaw", "agents", "main", "agent");
   fs.mkdirSync(directory, { recursive: true });
-  const database = new DatabaseSync(path.join(directory, "openclaw-agent.sqlite"));
+  const databasePath = path.join(directory, "openclaw-agent.sqlite");
+  const database = new DatabaseSync(databasePath);
   const rows: [string, string, number, string][] = [
     ["transcript_events", "sid-a", 1, '{"type":"message","id":"m1"}'],
     ["transcript_events", "sid-a", 0, '{"type":"session","id":"sid-a"}'],
@@ -55,6 +69,7 @@ function writeDatabase(tables = ["transcript_events", "trajectory_runtime_events
         .run(sessionId, seq, line),
     );
   database.close();
+  return databasePath;
 }
 
 function writeLegacyStore(): string {
@@ -93,6 +108,32 @@ describe("OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT (#12673)", () => {
     const result = runScript("sid-a.jsonl", "sid-b.trajectory.jsonl", "sid-c.jsonl");
 
     expect(result).toMatchObject({ status: 2, output: "sid-b.trajectory.jsonl\nsid-c.jsonl\n" });
+    expect(fs.existsSync(staging)).toBe(false);
+  });
+
+  it("streams a transcript that is larger than the script heap", () => {
+    const database = new DatabaseSync(writeDatabase());
+    const line = JSON.stringify({ type: "message", text: "x".repeat(16_000) });
+    const insert = database.prepare(
+      "INSERT INTO transcript_events (session_id, seq, event_json) VALUES ('sid-big', ?, ?)",
+    );
+    database.exec("BEGIN");
+    Array.from({ length: 3_000 }, (_, seq) => insert.run(seq, line));
+    database.exec("COMMIT");
+    database.close();
+
+    const result = runScriptWith(["--max-old-space-size=24"], "sid-big.jsonl");
+
+    expect(result).toMatchObject({ status: 0, output: "staged\n" });
+    expect(fs.statSync(path.join(staging, "sid-big.jsonl")).size).toBe(3_000 * (line.length + 1));
+  });
+
+  it("refuses a hard-linked database file", () => {
+    fs.linkSync(writeDatabase(), path.join(root, "other.sqlite"));
+
+    const result = runScript("sid-a.jsonl");
+
+    expect(result.status).toBe(3);
     expect(fs.existsSync(staging)).toBe(false);
   });
 

@@ -11,13 +11,16 @@
 // OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT runs inside the sandbox with
 // `node --no-warnings -e <script> <root> <agent> <stagingDir> <file>...`:
 //   - When the database exists, it reads the selected sessions in one
-//     read-only transaction and writes `<file>` into the new owner-only
-//     `<stagingDir>`. It prints `staged` and exits 0. When a selected session
-//     has no rows, it writes nothing, prints each affected file, and exits 2.
+//     read-only transaction and streams the rows of each `<file>` into the new
+//     owner-only `<stagingDir>`, so memory use does not grow with the history.
+//     It prints `staged` and exits 0. When a selected session has no rows, it
+//     removes `<stagingDir>`, prints each affected file, and exits 2.
 //   - When the database does not exist, it checks each file in the legacy
 //     store. It exits 0 with no output when every file is a regular file with
 //     one link. Otherwise it prints each affected file and exits 1.
-//   - It exits 3 for an unsafe path and 5 for an unsupported database schema.
+//   - It exits 3 for an unsafe path (including a database file or companion
+//     with more than one link) and 5 for an unsupported database schema. A
+//     failure after it creates `<stagingDir>` removes the directory first.
 // The path checks follow OPENCLAW_SQLITE_COPY_SCRIPT in src/lib/state/sandbox.ts.
 
 export const OPENCLAW_TRANSCRIPT_SOURCE_TIMEOUT_MS = 120_000;
@@ -43,7 +46,10 @@ function existingPath(relative) {
       throw error;
     }
     const final = index === parts.length - 1;
-    if (stat.isSymbolicLink() || (final ? !stat.isFile() : !stat.isDirectory())) {
+    if (
+      stat.isSymbolicLink() ||
+      (final ? !stat.isFile() || stat.nlink !== 1 : !stat.isDirectory())
+    ) {
       fail(3, "unsafe OpenClaw session database path");
     }
   }
@@ -69,7 +75,7 @@ if (database === null) {
 for (const suffix of ["-journal", "-shm", "-wal"]) {
   try {
     const companion = fs.lstatSync(database + suffix);
-    if (companion.isSymbolicLink() || !companion.isFile()) {
+    if (companion.isSymbolicLink() || !companion.isFile() || companion.nlink !== 1) {
       fail(3, "unsafe OpenClaw session database companion");
     }
   } catch (error) {
@@ -78,40 +84,61 @@ for (const suffix of ["-journal", "-shm", "-wal"]) {
 }
 const { DatabaseSync } = require("node:sqlite");
 const handle = new DatabaseSync(database, { allowExtension: false, readOnly: true, timeout: 2_000 });
-const contents = new Map();
 const missing = [];
+let created = false;
+function removeStaging() {
+  if (created) fs.rmSync(stagingDir, { recursive: true, force: true });
+}
+function reject(code, message) {
+  removeStaging();
+  fail(code, message);
+}
 try {
   handle.exec("PRAGMA query_only = ON; BEGIN");
   const tables = new Set(
     handle.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => row.name),
   );
-  for (const file of files) {
+  const selected = files.map((file) => {
     const trajectory = file.endsWith(".trajectory.jsonl");
     const table = trajectory ? "trajectory_runtime_events" : "transcript_events";
     if (!tables.has(table)) fail(5, "unsupported OpenClaw session database: no " + table + " table");
     const sessionId = file.slice(0, -(trajectory ? ".trajectory.jsonl" : ".jsonl").length);
-    const rows = handle
-      .prepare("SELECT event_json AS line FROM " + table + " WHERE session_id = ? ORDER BY seq")
-      .all(sessionId);
-    if (rows.some((row) => typeof row.line !== "string" || row.line.includes("\n"))) {
-      fail(5, "unsupported OpenClaw session database: invalid event row");
+    return { file, table, sessionId };
+  });
+  fs.mkdirSync(path.dirname(stagingDir), { recursive: true, mode: 0o700 });
+  fs.chmodSync(path.dirname(stagingDir), 0o700);
+  fs.mkdirSync(stagingDir, { mode: 0o700 });
+  created = true;
+  for (const { file, table, sessionId } of selected) {
+    const query = handle.prepare(
+      "SELECT event_json AS line FROM " + table + " WHERE session_id = ? ORDER BY seq",
+    );
+    const descriptor = fs.openSync(path.join(stagingDir, file), "wx", 0o600);
+    let rows = 0;
+    try {
+      for (const row of query.iterate(sessionId)) {
+        if (typeof row.line !== "string" || row.line.includes("\n")) {
+          reject(5, "unsupported OpenClaw session database: invalid event row");
+        }
+        fs.writeSync(descriptor, row.line + "\n");
+        rows += 1;
+      }
+    } finally {
+      fs.closeSync(descriptor);
     }
-    if (rows.length === 0) missing.push(file);
-    else contents.set(file, rows.map((row) => row.line).join("\n") + "\n");
+    if (rows === 0) missing.push(file);
   }
   handle.exec("COMMIT");
+} catch (error) {
+  removeStaging();
+  throw error;
 } finally {
   handle.close();
 }
 if (missing.length > 0) {
+  removeStaging();
   process.stdout.write(missing.join("\n") + "\n");
   process.exit(2);
-}
-fs.mkdirSync(path.dirname(stagingDir), { recursive: true, mode: 0o700 });
-fs.chmodSync(path.dirname(stagingDir), 0o700);
-fs.mkdirSync(stagingDir, { mode: 0o700 });
-for (const [file, text] of contents) {
-  fs.writeFileSync(path.join(stagingDir, file), text, { flag: "wx", mode: 0o600 });
 }
 process.stdout.write("staged\n");
 `;
