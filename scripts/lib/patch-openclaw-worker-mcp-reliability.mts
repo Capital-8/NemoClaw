@@ -13,9 +13,7 @@ export const WORKER_ARCHIVE_MCP_PATCHES: Record<string, readonly Pair[]> = {
   "sqlite-store.worker.mjs": [
     [
       "function createServerMcpRuntime(Ot)",
-      INJECTED_START_RETRY_HELPER.replaceAll("logWarn(", "logWarn(") +
-        ABORTABLE_RETRY_HELPER +
-        "function createServerMcpRuntime(Ot)",
+      INJECTED_START_RETRY_HELPER + ABORTABLE_RETRY_HELPER + "function createServerMcpRuntime(Ot)",
     ],
     [
       "loadCatalog=async()=>{if(failIfDisposed(),Hr)",

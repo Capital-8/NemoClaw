@@ -866,7 +866,7 @@ describe("managed startup agent environment", () => {
           timeoutSeconds: 900,
         },
         entries: {
-          main: { default: true },
+          main: { workspace: "/sandbox/.openclaw/workspace" },
           reviewer: {},
         },
       },
@@ -879,6 +879,11 @@ describe("managed startup agent environment", () => {
         },
       },
     });
+
+    expect(openclawConfig.agents).toMatchObject({
+      defaults: { systemAgent: { agentId: "main" }, sessionStore: { agentId: "main" } },
+    });
+    expect(openclawConfig.agents.entries.main).not.toHaveProperty("default");
 
     const hermes = mapManagedStartupProfileToAgentEnvironment(hermesProfile());
     const hermesSettings = readHermesBuildSettings({

@@ -296,6 +296,9 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
     name: "nemoclaw-reviewed-production-graph",
     overrides: {
       "@modelcontextprotocol/sdk": "1.32.0",
+      // Match the shipped OpenClaw graphs; upstream 10.5 pins npm 12.2.0,
+      // whose bundled dependencies are replaced by our reviewed 12.2.1 pin.
+      npm: "12.2.1",
       "proxy-addr": "2.0.8",
       tar: archiveTarVersion,
     },

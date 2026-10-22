@@ -98,6 +98,9 @@ The runtime lock is the primary audit identity. The archive inventory contains t
 Separate locked graphs audit the 2026.9.5 and 2026.9.7 runtimes used only for legacy-state migration.
 Channel manifests retain their earlier integrity and tarball records while installed sandboxes can select those releases.
 The dependency-review test compares the archive inventory with the production runtime lock.
+The runtime and messaging locks replace upstream's npm 12.2.0 dependency with npm 12.2.1.
+The aggregate archive audit applies the same replacement so it audits the shipped npm dependency tree.
+The audit regression test checks that the aggregate graph selects npm 12.2.1.
 
 WeChat uses its separately locked 2.4.10 plugin and Zod 4.4.3 graph.
 Its offline install uses a disposable copy of the dedicated WeChat cache.

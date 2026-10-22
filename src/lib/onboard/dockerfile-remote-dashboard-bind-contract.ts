@@ -109,6 +109,11 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "c359205331650476a9bf06a8f09e588ab5923b545938f13453d15ca6ec443e23",
   // Read-only payload metadata checks, including the migration and plugin helpers.
   "f53c4efbf400bfb560ce6ba72cb963a7fae234c25cff6f4034c68cbf0f83c29f",
+  // Extracted offline optional-plugin installation, 10.5 neutral channel
+  // validation, and read-only helper metadata checks preserve dashboard config.
+  "39f628e29aedd08d3999e0fd9cc2afec626e9052fa1284997dc75bcc6ab6006d",
+  "54ec28d6b81281ad524d119edcb689683186b500ca19c366e3fff686a834ae83",
+  "85c2394c101b9ca593293e053ff466c14a4b84eb11e6c9e7257660e7377a15d4",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
