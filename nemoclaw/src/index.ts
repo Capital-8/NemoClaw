@@ -49,6 +49,17 @@ function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> |
   };
 }
 
+/** Use the same host identity for tool denial and authoritative agent_end cleanup. */
+function searchTurnKey(args: readonly PluginValue[]): string {
+  for (const key of ["runId", "sessionKey", "sessionId"]) {
+    const value = readStringProperty(args[1], key) ?? readStringProperty(args[0], key);
+    if (value?.trim()) return `${key}:${value}`;
+  }
+  // Older hook envelopes omit identity. Keep those calls denied until their
+  // agent_end boundary, without poisoning separately identified work.
+  return "unidentified-turn";
+}
+
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
 // ---------------------------------------------------------------------------
@@ -259,7 +270,7 @@ function blocksDisabledSearch(
   }
 
   // A denied search identifies the turn, not the subject of a local document.
-  // Without a run identity, never carry a denial into unrelated work.
+  // Compatible envelopes use session identity or the unidentified-turn fallback.
   const substituteTool =
     /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
   return Boolean(event.runId && deniedSearchRuns.has(event.runId) && substituteTool.test(target));
@@ -308,7 +319,7 @@ export default function register(api: OpenClawPluginApi): void {
         const event = readBeforeToolCallEvent(args[0]);
         if (!event?.toolName || !event.params) return undefined;
 
-        const runId = readStringProperty(args[1], "runId") ?? event.runId;
+        const runId = searchTurnKey(args);
         if (
           blocksDisabledSearch(
             api.config,
@@ -359,8 +370,13 @@ export default function register(api: OpenClawPluginApi): void {
       },
     );
     api.on("agent_end", (...args: readonly PluginValue[]): undefined => {
-      const runId = readStringProperty(args[1], "runId") ?? readStringProperty(args[0], "runId");
-      if (runId) deniedSearchRuns.delete(runId);
+      // Lifecycle context may carry more identity than an older tool envelope.
+      // Clear its session fallback too, and end the unidentified compatibility turn.
+      deniedSearchRuns.delete("unidentified-turn");
+      for (const key of ["runId", "sessionKey", "sessionId"]) {
+        const value = readStringProperty(args[1], key) ?? readStringProperty(args[0], key);
+        if (value?.trim()) deniedSearchRuns.delete(`${key}:${value}`);
+      }
       return undefined;
     });
   } catch (err) {

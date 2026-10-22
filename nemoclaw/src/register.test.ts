@@ -568,15 +568,51 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     },
   );
 
-  it("does not carry a denial without a run identity into later tool calls", () => {
-    const { handler } = searchHook(false);
+  it.each([
+    { toolName: "read", params: { file_path: "/sandbox/project/nemoclaw-installation.md" } },
+    { toolName: "exec", params: { command: "cat README.md" } },
+    { toolName: "memory_search", params: { query: "installation" } },
+    { toolName: "web_fetch", params: { url: "https://example.com/install" } },
+    { toolName: "tool_search", params: { query: "read file" } },
+  ])("blocks substitutes without a run ID until agent_end: $toolName", async (event) => {
+    const { api, handler } = searchHook(false);
+    expect(handler(event)).toBeUndefined();
     expect(handler({ toolName: "web_search", params: {} })).toMatchObject({ block: true });
-    expect(
-      handler({
-        toolName: "read",
-        params: { file_path: "/sandbox/project/nemoclaw-installation.md" },
-      }),
-    ).toBeUndefined();
+    expect(handler(event)).toMatchObject({ block: true });
+    expect(handler(event, { runId: "independent-run" })).toBeUndefined();
+    const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")?.[1];
+    await end!({ success: false }, { runId: "ended-run", sessionKey: "ended-session" });
+    expect(handler(event)).toBeUndefined();
+  });
+
+  it.each(["sessionKey", "sessionId"])(
+    "uses compatible %s context when runId is absent",
+    async (identity) => {
+      const { api, handler } = searchHook(false);
+      const event = { toolName: "read", params: { file_path: "/sandbox/project/README.md" } };
+      const context = { [identity]: "affected-session" };
+      expect(handler({ toolName: "web_search", params: {} }, context)).toMatchObject({
+        block: true,
+      });
+      expect(handler(event, context)).toMatchObject({ block: true });
+      expect(handler(event, { [identity]: "independent-session" })).toBeUndefined();
+      expect(handler(event)).toBeUndefined();
+      const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")?.[1];
+      await end!({ success: true }, { [identity]: "independent-session" });
+      expect(handler(event, context)).toMatchObject({ block: true });
+      await end!({ success: true }, { ...context, runId: "ended-run" });
+      expect(handler(event, context)).toBeUndefined();
+    },
+  );
+
+  it("clears an identity-less denial when search is reenabled", () => {
+    const { api, handler } = searchHook(false);
+    const event = { toolName: "read", params: { file_path: "/sandbox/project/README.md" } };
+    expect(handler({ toolName: "web_search", params: {} })).toMatchObject({ block: true });
+    api.config.tools = { web: { search: { enabled: true } } };
+    expect(handler(event)).toBeUndefined();
+    api.config.tools = { web: { search: { enabled: false } } };
+    expect(handler(event)).toBeUndefined();
   });
 
   it("clears a run's denial when search is reenabled", async () => {
