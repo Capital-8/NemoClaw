@@ -1492,7 +1492,14 @@ export function createProviderEffectBoundary(input: {
     }
   };
   const publish = async () =>
-    publishAttachedProvidersBeforeDockerSandboxCreation(input.preparationInput, deps);
+    publishAttachedProvidersBeforeDockerSandboxCreation(
+      {
+        ...input.preparationInput,
+        registeredInferenceProviderName:
+          input.expectedRegisteredInferenceProviderAttachment?.providerName,
+      },
+      deps,
+    );
   const verifiedDirectCreateProfileIds = () => {
     const attachedNames = new Set([
       ...(input.preparationInput.directCreateProviderNames ?? [

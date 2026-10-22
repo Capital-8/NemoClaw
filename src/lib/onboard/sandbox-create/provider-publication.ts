@@ -53,6 +53,7 @@ type ProviderPreparationInput = {
   readonly openshellDriver: SandboxEntry["openshellDriver"];
   readonly inferenceProvider: string | null;
   readonly transactionBoundInferenceProvider?: string | null;
+  readonly registeredInferenceProviderName?: string;
   readonly messagingProviders: readonly string[];
   readonly messagingProviderRequests: SandboxCreateIntent["messagingProviderRequests"];
   readonly extraProviders: readonly string[];
@@ -471,7 +472,11 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
       ...providersRequiringExistenceProbe,
       ...input.messagingProviders,
       ...input.extraProviders,
-    ].filter((provider) => provider !== input.transactionBoundInferenceProvider),
+    ].filter(
+      (provider) =>
+        provider !== input.transactionBoundInferenceProvider &&
+        provider !== input.registeredInferenceProviderName,
+    ),
   );
   const adapter = resolveProviderAdapter(deps);
   const target = namedOpenShellGateway(input.gatewayName);
