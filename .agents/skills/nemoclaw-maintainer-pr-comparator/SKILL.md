@@ -86,6 +86,10 @@ bash <(git show origin/main:.agents/skills/nemoclaw-maintainer-day/scripts/run-t
 ```
 
 All six gates are required.
+For each candidate targeting `main`, apply
+[Check PR E2E Evidence](../nemoclaw-maintainer-check-pr-e2e/SKILL.md) as part of Gate 2.
+The gate scripts do not inspect this evidence. Set `ci_green_sha` to `false` unless both required CI and this E2E check pass.
+PRs targeting `v1` are excluded from this E2E requirement.
 Gate 3 accepts `BEHIND`, but fails closed on transient `UNSTABLE` evidence and on `BLOCKED` because
 the comparator cannot prove a stable merge result or every GitHub branch-protection condition.
 Separately confirm whether an active rule requires an up-to-date branch. If so, integrate the base
