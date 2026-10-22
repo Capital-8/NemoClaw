@@ -14,6 +14,7 @@ dependency, and bot PRs. Determine applicability from the PR's target branch, no
 or version label. PRs targeting `v1` are excluded. Report other target branches as not applicable.
 
 This skill inspects evidence. It does not dispatch tests, approve workflows, publish reviews, or merge PRs.
+This is an agent approval requirement; the manual workflow remains an advisory GitHub check.
 Follow [Documentation Writing and Review](../_shared/documentation-writing-review.md) for the review result.
 
 ## Record the PR Identity
@@ -23,11 +24,17 @@ For `main`, read fresh GitHub metadata for the repository, PR number, state, sou
 source owner, latest PR commit SHA, and base SHA. Preserve those values throughout the check.
 Missing or ambiguous identity blocks approval.
 
-For `main`, establish the required E2E coverage from the complete diff, accepted scope, and trusted
-[target catalogue](../../../tools/e2e/target-catalogue.mts) and
-[workflow planner](../../../tools/e2e/workflow-plan.mts).
-A focused selection must cover every applicable target, runtime, and scenario.
-When no change-specific coverage applies, require the default-enabled manual PR suite.
+Read the candidate's verified review-queue context through
+[Discovery and identity](../../../tools/pr-review-advisor/REVIEW-QUEUE.md#discovery-and-identity).
+Preserve its complete `deterministic.requiredJobs` and `deterministic.requiredTargets` as the required coverage floor.
+Include any additional coverage explicitly required by the accepted scope.
+The trusted [workflow planner](../../../tools/e2e/workflow-plan.mts) owns selector expansion and runtime coverage.
+Verify its result against that floor; do not derive a separate coverage list from the diff.
+
+When both required arrays are empty, require the existing credential-free `vllm-docker-storage` E2E in the `shared-e2e` job.
+Use explicit `targets=vllm-docker-storage`, empty `jobs`, and `gateway_runtimes=docker` inputs.
+Require its live Docker execution to pass, alongside every other selected execution.
+Do not substitute the credential-bearing default suite for this fallback.
 An empty selection or a run containing only planning or support tests cannot satisfy this gate.
 
 ## Verify the Evidence
@@ -60,7 +67,11 @@ Missing, expired, stale, pending, failed, cancelled, or skipped selected E2E evi
 Continue the complete review and report the E2E blocker with the other findings.
 When a maintainer authorizes a run, use [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md).
 This requirement does not authorize credential use, hardware, staging Launchable execution, or fork adoption.
-The manual PR workflow rejects fork sources; report the need for authorized maintainer adoption rather than bypassing its trust checks.
+The manual PR workflow rejects fork sources. Keep the original fork PR blocked by this gate.
+Authorized adoption requires a replacement PR with a source branch in `NVIDIA/NemoClaw`.
+Evaluate the replacement PR's own identity and E2E evidence; its results do not qualify the original PR.
+Follow [source-repository eligibility](../nemoclaw-contributor-create-pr/references/publication.md#select-the-source-repository)
+before publishing a replacement or closing the original. Do not create an exemption or bypass the workflow's trust checks.
 Before diagnosing or repairing failed E2E, use [Audit E2E Assertions](../nemoclaw-maintainer-audit-e2e-assertions/SKILL.md).
 Preserve the shared [bounded retry policy](../_shared/pr-follow-up.md#bounded-retry-policy).
 
