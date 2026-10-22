@@ -3820,8 +3820,7 @@ A rebuild restores the previous native `openclaw.json`, so it does not repair th
 <AgentOnly variant="hermes">
 
 If the in-sandbox config write or integrity hash update fails, the selected inference path and NemoClaw registry remain committed, but the command exits with status `1`.
-For a separately registered provider, retry the same `inference set` command to finish applying the recorded selection.
-For other selections, follow the printed `$$nemoclaw <name> rebuild` hint.
+Follow the printed `$$nemoclaw <name> rebuild` hint.
 
 </AgentOnly>
 
@@ -3831,13 +3830,10 @@ Canonical supported provider IDs are `nvidia-prod`, `nvidia-router`, `openai-api
 The installer alias `llama-cpp` is accepted and normalized to `llama-cpp-local`.
 The legacy hosted alias `nvidia-nim`, including `nvidia_nim`, normalizes to `nvidia-prod` for NVIDIA Endpoints.
 The installer names `nim`, `nim-local`, and `nim_local` select Local NVIDIA NIM through `vllm-local` and require matching recorded NIM state.
-See [Find a Registered Provider](../inference/manage-inference/switch-providers#find-a-registered-provider) for NIM prerequisites and recovery when that state is missing or inconsistent.
+See [Choose a Supported Provider](../inference/manage-inference/switch-providers#choose-a-supported-provider) for NIM prerequisites and recovery when that state is missing or inconsistent.
 Recognized underscore spellings of canonical provider IDs and hyphenated installer aliases are also accepted.
 For example, `ollama_local` normalizes to `ollama-local`, `nvidia_prod` normalizes to `nvidia-prod`, and `open_router` normalizes to `openrouter-api`.
 NemoClaw preserves an unrecognized underscore spelling for normal provider validation.
-For OpenClaw and Hermes, selecting an existing registered provider uses matching native configuration, a valid recorded selection, or complete `--endpoint-url`, `--inference-api`, and `--credential-env` metadata.
-The switch attaches that provider to the selected sandbox and preserves the provider's registration and credentials.
-Refer to [Select an Existing Provider](../inference/manage-inference/switch-providers#select-an-existing-provider) for prerequisites, verification, and recovery.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 Before it persists the route in the NemoClaw registry or agent config, the command sends a validation request from the target sandbox.

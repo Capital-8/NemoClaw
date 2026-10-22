@@ -168,16 +168,3 @@ describe("inference-switch catalogue boundary", () => {
     });
   });
 });
-
-it("selects the existing gateway switch owner for registered provider identity changes", () => {
-  const target = catalogueTarget("openclaw-registered-provider-inference-switch")!;
-  expect(target).toMatchObject({
-    profile: "standard",
-    testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
-    selector: "^openclaw-inference-switch:",
-  });
-  expect(target.environment).toMatchObject({
-    NEMOCLAW_SWITCH_PROVIDER: "e2e-operator-inference",
-    NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
-  });
-});

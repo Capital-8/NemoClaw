@@ -22,7 +22,6 @@ $$nemoclaw inference get
 
 For a selected sandbox with a valid native NVIDIA, fixed hosted, or native local attachment, the command returns the recorded provider, model, and native endpoint.
 <AgentOnly variant="openclaw,hermes">
-For a separately registered provider, the command reads the sandbox's recorded provider, model, and native endpoint.
 It validates the recorded selection without querying the shared route or authenticating a model request.
 </AgentOnly>
 For shared-route providers, the command reads the live shared gateway route.
@@ -43,12 +42,6 @@ It then sends a native Chat Completions request to `https://integrate.api.nvidia
 It does not probe `https://inference.local/v1/models` for this provider.
 
 For fixed hosted and native local providers, the `Inference` row verifies the recorded attachment and sends a model request to the native endpoint. A healthy shared route cannot satisfy this check.
-
-<AgentOnly variant="openclaw,hermes">
-For a separately registered provider, the `Inference` row checks the recorded provider identity, profile, and sandbox attachment.
-It then sends a model request to the recorded native endpoint using the selected API family.
-A healthy shared route cannot satisfy this check.
-</AgentOnly>
 
 For shared-route providers, the `Inference` row first checks the sandbox's `inference.local` path.
 When that route responds, `status` sends an inference request through the same path.

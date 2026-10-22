@@ -10,12 +10,13 @@ content:
   type: "how_to"
 ---
 Move a sandbox to another provider family while keeping the OpenShell route, agent configuration, and host registry aligned.
-Use onboarding first when the target is neither `compatible-endpoint` nor `compatible-anthropic-endpoint` and is not registered.
+Runtime switching accepts only the supported providers listed below.
+Use onboarding to configure a provider that is supported by onboarding but unavailable for runtime switching.
 The compatible endpoint workflow below can register an absent custom provider from complete route metadata.
 
 <AgentOnly variant="openclaw,hermes">
 
-## Find a Registered Provider
+## Choose a Supported Provider
 
 List the configured provider credentials when you need the provider ID.
 
@@ -35,8 +36,7 @@ Missing or inconsistent NIM state stops the switch before mutation; it does not 
 Rerun onboarding for the affected sandbox with `NEMOCLAW_PROVIDER=nim-local` to repair its recorded selection, then retry the switch.
 Endpoint, API-family, and credential overrides do not apply to this local selection.
 
-If the requested provider is unsupported, NemoClaw lists selectable supported provider IDs registered on the selected gateway.
-If it cannot read the gateway list, it lists every supported provider ID instead.
+If the requested provider is unsupported, NemoClaw lists the supported provider IDs.
 
 If OpenShell cannot find a requested provider other than `compatible-endpoint` or `compatible-anthropic-endpoint`, NemoClaw leaves the route and sandbox state unchanged.
 Run `$$nemoclaw onboard` to register the provider, then retry the switch.
@@ -45,55 +45,6 @@ For a compatible custom endpoint, pass the complete route metadata described bel
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
-
-## Select an Existing Provider
-
-You can select an inference provider that you registered separately on the sandbox's OpenShell gateway.
-The provider must declare an inference endpoint and a credential binding in its OpenShell profile.
-NemoClaw uses the provider's existing registration and credentials.
-It does not change or remove that provider.
-
-NemoClaw reads the endpoint, API family, and credential environment name from matching native configuration or a valid recorded selection.
-If neither exists, supply all three values with the switch.
-Explicit options must agree with existing configuration or the recorded selection.
-When native configuration supplies the credential binding, it must name the environment variable.
-Raw API-key text does not establish that binding.
-Use the environment variable name declared by the registered provider, without exporting its secret for this command.
-
-```bash
-$$nemoclaw inference set \
-  --provider <registered-provider-name> \
-  --model <model-name> \
-  --sandbox <sandbox-name> \
-  --endpoint-url <trusted-url> \
-  --inference-api <api-family> \
-  --credential-env <ENV-name>
-```
-
-NemoClaw checks the supplied route against the registered provider and its profile before attaching it to the selected sandbox.
-Missing or conflicting metadata stops the switch before attachment.
-The command obtains the provider's scoped OpenShell credential reference from that sandbox and verifies the selected route.
-Other sandboxes keep their inference selections.
-`--no-verify` does not bypass provider identity, profile, or attachment checks.
-
-After the switch, inspect the selection.
-
-```bash
-$$nemoclaw <sandbox-name> inference get
-```
-
-Confirm that the provider, model, and endpoint match your request.
-If verification fails before the registry update, NemoClaw removes only an attachment that this switch created and can still identify.
-It preserves the provider and any preexisting attachment.
-If the error reports an uncertain attachment result, resolve that result before retrying.
-If configuration sync or gateway restart fails after the registry update, retry the same `inference set` command to reconcile the recorded selection.
-
-Start, resume, and rebuild recheck the recorded provider binding.
-If the provider or its profile no longer matches, stop and inspect the recorded binding and OpenShell registration.
-Resolve the identity mismatch before retrying; NemoClaw does not adopt or delete a replacement provider.
-Rebuild preserves the selected agent configuration and obtains the credential reference from the replacement sandbox.
-Credential reset refuses to remove a registered provider while a sandbox still records that selection.
-Switch the affected sandbox to another provider or destroy it before resetting those credentials.
 
 ## Switch the Provider at Runtime
 
@@ -163,8 +114,7 @@ A rebuild restores the previous native `openclaw.json`, so it does not repair th
 <AgentOnly variant="hermes">
 
 If the in-sandbox configuration sync fails after the gateway route changes, NemoClaw keeps the gateway and host registry aligned.
-For a separately registered provider, retry the same `inference set` command to finish applying the recorded selection.
-For other selections, follow the printed rebuild hint before relying on the running agent.
+Follow the printed rebuild hint before relying on the running agent.
 
 </AgentOnly>
 <AgentOnly variant="openclaw,hermes">
