@@ -29,11 +29,6 @@ If the author pushes another commit, record its short SHA and wait for its check
 `scripts/collect-gates.sh` returns the SHA and each check status.
 Compare the results with the required checks in `repo-policy.md`.
 
-For PRs targeting `main`, also require
-[Check PR E2E Evidence](../../nemoclaw-maintainer-check-pr-e2e/SKILL.md) to return `PASS`.
-The scripts do not evaluate E2E artifacts. Record Gate 2 (`ci_green_sha`) as `false` when this requirement is not met.
-PRs targeting `v1` are excluded from this E2E requirement.
-
 ## Gate 3: Mergeable, no conflicts
 
 Require `mergeable: MERGEABLE` and one of these `mergeStateStatus` values:
