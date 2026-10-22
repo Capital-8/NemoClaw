@@ -1114,6 +1114,49 @@ describe("prepared connect-shell administrative approval", () => {
     },
   );
 
+  it.each([true, false])(
+    "rechecks the local identity after a pairing-state read settles (identity matches: %s)",
+    (identityMatches) => {
+      const identity = identityMatches
+        ? EXPECTED_IDENTITY
+        : {
+            deviceId: OTHER_DEVICE_ID,
+            publicKey: OTHER_PUBLIC_KEY,
+          };
+      const pairingHelper = `${PAIRING_STATE_HELPER_PY}
+class OpenClawPairingStateRetryableError(OSError):
+    pass
+read_stable_state = read_openclaw_pairing_state
+attempts = 0
+def read_openclaw_pairing_state(*args, **kwargs):
+    global attempts
+    attempts += 1
+    if attempts < 3:
+        raise OpenClawPairingStateRetryableError("canonical pairing-state WAL changed while reading")
+    records, metadata = read_stable_state(*args, **kwargs)
+    records["identity"] = ${JSON.stringify(identity)}
+    return records, metadata
+`;
+      const { commands, result, stagedScriptRetained } = runAdminApprovalScript(
+        undefined,
+        0,
+        EXPECTED_REQUEST_ID,
+        {
+          verifyCronConsumer: false,
+          selectExpectedRequest: true,
+          expectedRequestId: EXPECTED_REQUEST_ID,
+          pairingHelper,
+        },
+      );
+      expect(result.status).toBe(identityMatches ? 0 : 26);
+      expect(commands.some((command) => command.startsWith("devices approve "))).toBe(
+        identityMatches,
+      );
+      expect(result.stdout.includes("ISSUE_5324_ADMIN_APPROVAL_OK")).toBe(identityMatches);
+      expect(stagedScriptRetained).toBe(false);
+    },
+  );
+
   it.each([
     ["OpenClawPairingStateRetryableError", "canonical pairing-state database is busy", "busy"],
     [
