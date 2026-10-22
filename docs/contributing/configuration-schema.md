@@ -40,6 +40,7 @@ The command replaces `schemas/nemoclaw-v1alpha1.schema.json` and `docs/reference
 It contacts no deployment services and creates no runtime resources.
 Review both generated diffs with the source change.
 Generation fails when a public field or object has no description.
+The schema's `$id` ends with the SHA-256 of the rest of the schema, so any change to a rule or description gives the schema a new `$id`, while `apiVersion` stays `v1alpha1`.
 
 Run the focused tests and freshness check:
 

@@ -3,6 +3,8 @@
 //! Authored YAML represented as JSON, before Document::defaults runs.
 pub(crate) mod validation;
 
+use sha2::Digest;
+
 // Editors select union variants the same way schema diagnostics do.
 pub use nemoclaw_runtime::schema::select_variant;
 
@@ -22,11 +24,18 @@ fn build_schema(normalized: bool) -> serde_json::Value {
     .unwrap();
     remove_serde_defaults(&mut schema);
     validation::constrain(&mut schema, normalized);
-    schema["$id"] = serde_json::json!("urn:nemoclaw:config:v1alpha1");
     schema["title"] = serde_json::json!("NemoClaw configuration (v1alpha1)");
     schema["$comment"] = serde_json::json!(
         "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0. Generated from the SDK; do not edit."
     );
+    schema.sort_all_objects();
+    // apiVersion names the shape; the digest names this revision of its
+    // rules, so tools that cache by $id never mix two revisions.
+    let digest = sha2::Sha256::digest(serde_json::to_vec(&schema).expect("schema serializes"));
+    schema["$id"] = serde_json::json!(format!(
+        "urn:nemoclaw:config:v1alpha1:sha256:{}",
+        super::hex(&digest)
+    ));
     schema.sort_all_objects();
     schema
 }

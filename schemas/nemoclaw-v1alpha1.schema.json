@@ -3781,7 +3781,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:nemoclaw:config:v1alpha1",
+  "$id": "urn:nemoclaw:config:v1alpha1:sha256:5af430541d0e5241ec8a5ebf362b5aac40be2abc14d434aeb3d677195ece659c",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "allOf": [

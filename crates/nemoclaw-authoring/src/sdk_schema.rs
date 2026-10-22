@@ -5,7 +5,6 @@
 
 use std::sync::OnceLock;
 
-use crate::fingerprint::sha256;
 use nemoclaw_sdk::config::schema::{input_schema, select_variant};
 use nemoclaw_sdk::json_schema::schema_accepts;
 use serde_json::{Value, json};
@@ -72,19 +71,12 @@ fn schema_root() -> &'static Value {
     SCHEMA.get_or_init(input_schema)
 }
 
+/// The SDK schema's `$id`, which ends with the digest of that revision's rules.
 pub(crate) fn sdk_schema_identity() -> String {
-    static IDENTITY: OnceLock<String> = OnceLock::new();
-    IDENTITY
-        .get_or_init(|| {
-            let schema = schema_root();
-            let bytes = serde_json::to_vec(schema).expect("SDK input schema serializes");
-            format!(
-                "{} sha256:{}",
-                schema["$id"].as_str().unwrap_or("unknown"),
-                sha256(&bytes)
-            )
-        })
-        .clone()
+    schema_root()["$id"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_owned()
 }
 
 pub(crate) fn sdk_field_schema_for(values: &Value, path: &str) -> Option<(Value, bool)> {

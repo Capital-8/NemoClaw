@@ -35,7 +35,11 @@ fn schema_generation_is_repeatable_and_check_rejects_missing_or_stale_output() {
         schema["$schema"],
         "https://json-schema.org/draft/2020-12/schema"
     );
-    assert_eq!(schema["$id"], "urn:nemoclaw:config:v1alpha1");
+    assert!(
+        schema["$id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("urn:nemoclaw:config:v1alpha1:sha256:"))
+    );
     assert!(generate(directory.path(), false).status.success());
     assert_eq!(fs::read(&path).unwrap(), first);
     assert!(generate(directory.path(), true).status.success());

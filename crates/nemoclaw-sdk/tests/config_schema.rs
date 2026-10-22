@@ -600,3 +600,21 @@ fn schema_patterns_reject_trailing_newlines_in_identifiers_and_pins() {
         agrees_at(&validator, &value, false, file, path);
     }
 }
+
+#[test]
+fn schema_id_ends_with_the_digest_of_the_rest_of_the_schema() {
+    use sha2::{Digest, Sha256};
+    let schema = input_schema();
+    let id = schema["$id"].as_str().unwrap();
+    let digest = id
+        .strip_prefix("urn:nemoclaw:config:v1alpha1:sha256:")
+        .unwrap_or_else(|| panic!("$id {id} names no revision"));
+    let mut rest = schema.clone();
+    rest.as_object_mut().unwrap().remove("$id");
+    rest.sort_all_objects();
+    let expected: String = Sha256::digest(serde_json::to_vec(&rest).unwrap())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(digest, expected);
+}
