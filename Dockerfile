@@ -2269,8 +2269,8 @@ RUN check_metadata() { \
         exit 1; \
       fi; \
     } \
-    && check_metadata /scripts/lib/verify-openclaw-official-plugin.mts 'root:root:644' \
-    && check_metadata /scripts/lib/openclaw-legacy-migrations.mts 'root:root:644' \
+    && check_metadata /scripts/lib/verify-openclaw-official-plugin.mts 'root:root:755' \
+    && check_metadata /scripts/lib/openclaw-legacy-migrations.mts 'root:root:755' \
     && check_metadata /scripts/lib/openclaw-legacy-session-admission.mts 'root:root:644' \
     && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root:644' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755' \
