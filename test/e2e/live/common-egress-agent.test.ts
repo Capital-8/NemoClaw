@@ -841,6 +841,8 @@ Format the answer as JSON with searchStatus (available, unavailable, or unknown)
         sandboxName: OPENCLAW_OPEN_SANDBOX,
         prompt: `Use the web_fetch tool to fetch exactly this URL:
 https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json
+If web_fetch is not a directly callable tool, invoke it through tool_call with id openclaw:core:web_fetch and the URL in args.url.
+You may use tool_search and tool_describe only to discover web_fetch. Do not call an unexposed tool directly.
 After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.`,
       });
       await artifacts.target.complete({
