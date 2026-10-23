@@ -529,10 +529,13 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     { toolName: "web_fetch", params: { url: "https://nvidianews.nvidia.com/news/earnings" } },
     { toolName: "tool_search", params: { query: "execute shell command" } },
     { toolName: "memory_search", params: { query: "my shopping list" } },
-  ])("preserves unrelated tools when search is disabled: $toolName $params", (event) => {
-    const { handler } = searchHook(false);
-    expect(handler(event)).toBeUndefined();
-  });
+  ])(
+    "preserves unrelated tools in identified runs when search is disabled: $toolName $params",
+    (event) => {
+      const { handler } = searchHook(false);
+      expect(handler(event, { runId: "ordinary-run" })).toBeUndefined();
+    },
+  );
 
   it.each([
     {},
@@ -574,16 +577,21 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     { toolName: "memory_search", params: { query: "installation" } },
     { toolName: "web_fetch", params: { url: "https://example.com/install" } },
     { toolName: "tool_search", params: { query: "read file" } },
-  ])("blocks substitutes without a run ID until agent_end: $toolName", async (event) => {
-    const { api, handler } = searchHook(false);
-    expect(handler(event)).toBeUndefined();
-    expect(handler({ toolName: "web_search", params: {} })).toMatchObject({ block: true });
-    expect(handler(event)).toMatchObject({ block: true });
-    expect(handler(event, { runId: "independent-run" })).toBeUndefined();
-    const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")?.[1];
-    await end!({ success: false }, { runId: "ended-run", sessionKey: "ended-session" });
-    expect(handler(event)).toBeUndefined();
-  });
+  ])(
+    "keeps unidentified substitutes blocked across unrelated lifecycle events: $toolName",
+    async (event) => {
+      const { api, handler } = searchHook(false);
+      expect(handler(event)).toMatchObject({ block: true });
+      expect(handler({ toolName: "web_search", params: {} })).toMatchObject({ block: true });
+      expect(handler(event)).toMatchObject({ block: true });
+      expect(handler(event, { runId: "independent-run" })).toBeUndefined();
+      const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")?.[1];
+      await end!({ success: false }, { runId: "ended-run", sessionKey: "ended-session" });
+      expect(handler(event)).toMatchObject({ block: true });
+      await end!({ success: true }, {});
+      expect(handler(event)).toMatchObject({ block: true });
+    },
+  );
 
   it.each(["sessionKey", "sessionId"])(
     "uses compatible %s context when runId is absent",
@@ -596,7 +604,7 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       });
       expect(handler(event, context)).toMatchObject({ block: true });
       expect(handler(event, { [identity]: "independent-session" })).toBeUndefined();
-      expect(handler(event)).toBeUndefined();
+      expect(handler(event)).toMatchObject({ block: true });
       const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")?.[1];
       await end!({ success: true }, { [identity]: "independent-session" });
       expect(handler(event, context)).toMatchObject({ block: true });
@@ -605,14 +613,14 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     },
   );
 
-  it("clears an identity-less denial when search is reenabled", () => {
+  it("allows unidentified substitutes only while search is enabled", () => {
     const { api, handler } = searchHook(false);
     const event = { toolName: "read", params: { file_path: "/sandbox/project/README.md" } };
     expect(handler({ toolName: "web_search", params: {} })).toMatchObject({ block: true });
     api.config.tools = { web: { search: { enabled: true } } };
     expect(handler(event)).toBeUndefined();
     api.config.tools = { web: { search: { enabled: false } } };
-    expect(handler(event)).toBeUndefined();
+    expect(handler(event)).toMatchObject({ block: true });
   });
 
   it("clears a run's denial when search is reenabled", async () => {
@@ -634,6 +642,28 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
         runId: "reconfigured-run",
       }),
     ).toBeUndefined();
+  });
+
+  it("expires abandoned identities after the host maximum turn deadline and cleanup grace", () => {
+    const now = vi.spyOn(Date, "now");
+    try {
+      now.mockReturnValue(1_000);
+      const { handler } = searchHook(false);
+      const read = { toolName: "read", params: { file_path: "/sandbox/project/README.md" } };
+      expect(handler({ toolName: "web_search", params: {} }, { runId: "abandoned" })).toMatchObject(
+        { block: true },
+      );
+      now.mockReturnValue(1_000 + 2_147_483_647);
+      expect(handler(read, { runId: "abandoned" })).toMatchObject({ block: true });
+      now.mockReturnValue(1_000 + 2_147_483_647 + 60_000);
+      expect(handler(read, { runId: "abandoned" })).toBeUndefined();
+      expect(handler({ toolName: "web_search", params: {} }, { runId: "new-run" })).toMatchObject({
+        block: true,
+      });
+      expect(handler(read, { runId: "new-run" })).toMatchObject({ block: true });
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("still blocks secrets in memory when search is disabled", () => {

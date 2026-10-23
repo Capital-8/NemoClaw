@@ -50,14 +50,12 @@ function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> |
 }
 
 /** Use the same host identity for tool denial and authoritative agent_end cleanup. */
-function searchTurnKey(args: readonly PluginValue[]): string {
+function searchTurnKey(args: readonly PluginValue[]): string | undefined {
   for (const key of ["runId", "sessionKey", "sessionId"]) {
     const value = readStringProperty(args[1], key) ?? readStringProperty(args[0], key);
     if (value?.trim()) return `${key}:${value}`;
   }
-  // Older hook envelopes omit identity. Keep those calls denied until their
-  // agent_end boundary, without poisoning separately identified work.
-  return "unidentified-turn";
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,11 +236,19 @@ export { getPluginConfig };
 /** Tool names that can write/modify files and should be scanned for secrets. */
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
 
+// OpenClaw clamps even per-run timeout overrides to the Node timer maximum.
+// Retain denial through that whole active window plus one minute for cleanup.
+const SEARCH_DENIAL_RETENTION_MS = 2_147_483_647 + 60_000;
+
 function blocksDisabledSearch(
   config: OpenClawConfig,
   event: BeforeToolCallEvent,
-  deniedSearchRuns: Set<string>,
+  deniedSearchRuns: Map<string, number>,
 ): boolean {
+  const now = Date.now();
+  for (const [identity, expiresAt] of deniedSearchRuns) {
+    if (expiresAt <= now) deniedSearchRuns.delete(identity);
+  }
   const tools = config.tools;
   const web = isToolParams(tools) ? tools["web"] : undefined;
   const search = isToolParams(web) ? web["search"] : undefined;
@@ -265,19 +271,19 @@ function blocksDisabledSearch(
     /^(?:exec|execute|shell|web_fetch|browser)$/u.test(effectiveTarget) &&
     /https?:\/\/(?:api\.tavily\.com|(?:api\.)?search\.brave\.com)(?:[/:?"\s]|$)/iu.test(probe);
   if (searchTool || searchDiscovery || providerProbe) {
-    if (event.runId) deniedSearchRuns.add(event.runId);
+    if (event.runId) deniedSearchRuns.set(event.runId, now + SEARCH_DENIAL_RETENTION_MS);
     return true;
   }
 
   // A denied search identifies the turn, not the subject of a local document.
-  // Compatible envelopes use session identity or the unidentified-turn fallback.
+  // Identity-less calls cannot safely correlate turns, so substitutes fail closed.
   const substituteTool =
     /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
-  return Boolean(event.runId && deniedSearchRuns.has(event.runId) && substituteTool.test(target));
+  return (!event.runId || deniedSearchRuns.has(event.runId)) && substituteTool.test(target);
 }
 
 export default function register(api: OpenClawPluginApi): void {
-  const deniedSearchRuns = new Set<string>();
+  const deniedSearchRuns = new Map<string, number>();
   // 1. Register /nemoclaw slash command (chat interface)
   api.registerCommand({
     name: "nemoclaw",
@@ -371,8 +377,7 @@ export default function register(api: OpenClawPluginApi): void {
     );
     api.on("agent_end", (...args: readonly PluginValue[]): undefined => {
       // Lifecycle context may carry more identity than an older tool envelope.
-      // Clear its session fallback too, and end the unidentified compatibility turn.
-      deniedSearchRuns.delete("unidentified-turn");
+      // Clear matching session fallback state without changing unidentified policy.
       for (const key of ["runId", "sessionKey", "sessionId"]) {
         const value = readStringProperty(args[1], key) ?? readStringProperty(args[0], key);
         if (value?.trim()) deniedSearchRuns.delete(`${key}:${value}`);

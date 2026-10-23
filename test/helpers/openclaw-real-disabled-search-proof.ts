@@ -1,0 +1,135 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import register, { type OpenClawPluginApi } from "../../nemoclaw/src/index.js";
+
+type ToolResult = { details?: { status?: string }; content: { text: string }[] };
+type ToolContext = { runId?: string; sessionKey?: string };
+type Hook = Parameters<OpenClawPluginApi["on"]>[1];
+type Registry = {
+  plugins: unknown[];
+  hooks: unknown[];
+  trustedToolPolicies: unknown[];
+  typedHooks: { pluginId: string; hookName: string; handler: Hook }[];
+};
+
+/** Exercise the pinned caller and hook runner, without inference or real tool effects. */
+export async function runRealOpenClawDisabledSearchProof(options: { dist: string }): Promise<void> {
+  const dist = options.dist;
+  const root = fs.mkdtempSync(path.join(path.dirname(dist), ".disabled-search-proof-"));
+  const previousState = process.env.OPENCLAW_STATE_DIR;
+  const previousConfig = process.env.OPENCLAW_CONFIG_PATH;
+  process.env.OPENCLAW_STATE_DIR = root;
+  process.env.OPENCLAW_CONFIG_PATH = path.join(root, "openclaw.json");
+  try {
+    async function load(prefix: string, name: string): Promise<unknown> {
+      const file = fs
+        .readdirSync(dist)
+        .find((file) => file.startsWith(prefix) && file.endsWith(".js"));
+      assert(file, "pinned runtime module exists: " + prefix);
+      const exports = (await import(
+        /* @vite-ignore */ pathToFileURL(path.join(dist, file)).href
+      )) as Record<string, unknown>;
+      const value = Object.values(exports).find(
+        (value) => typeof value === "function" && value.name === name,
+      );
+      assert.equal(typeof value, "function", "pinned export exists: " + name);
+      return value;
+    }
+    const initialize = (await load("hook-runner-global-", "initializeGlobalHookRunner")) as (
+      registry: Registry,
+    ) => void;
+    const runner = (await load("hook-runner-global-", "getGlobalHookRunner")) as () => {
+      runAgentEnd(
+        event: { success: boolean; messages: unknown[] },
+        ctx: ToolContext,
+      ): Promise<void>;
+    };
+    const reset = (await load("hook-runner-global-", "resetGlobalHookRunner")) as () => void;
+    type Tool = {
+      name: string;
+      description: string;
+      parameters: object;
+      execute: (id: string, params: object) => Promise<ToolResult>;
+    };
+    const wrap = (await load(
+      "agent-tools.before-tool-call-",
+      "wrapToolWithBeforeToolCallHook",
+    )) as (
+      tool: Tool,
+      ctx: ToolContext & { config: OpenClawPluginApi["config"] },
+      options: { emitDiagnostics: boolean },
+    ) => Tool;
+    const registry: Registry = { plugins: [], hooks: [], typedHooks: [], trustedToolPolicies: [] };
+    const config = { tools: { web: { search: { enabled: false } } } };
+    const logger = { info() {}, warn() {}, error() {}, debug() {} };
+    register({
+      id: "nemoclaw",
+      name: "NemoClaw",
+      config,
+      logger,
+      registerCommand() {},
+      registerProvider() {},
+      registerService() {},
+      resolvePath: (value) => value,
+      on(hookName, handler) {
+        registry.typedHooks.push({ pluginId: "nemoclaw", hookName, handler });
+      },
+    });
+    initialize(registry);
+    try {
+      let sideEffects = 0;
+      async function call(name: string, ctx: ToolContext, id: string): Promise<ToolResult> {
+        const tool = wrap(
+          {
+            name,
+            description: "controlled denial witness",
+            parameters: {},
+            async execute() {
+              sideEffects++;
+              return { content: [{ text: "executed" }] };
+            },
+          },
+          { ...ctx, config },
+          { emitDiagnostics: false },
+        );
+        return tool.execute(id, name === "read" ? { file_path: "/sandbox/README.md" } : {});
+      }
+      function blocked(result: ToolResult): void {
+        assert.equal(result.details?.status, "blocked");
+        assert.match(result.content[0]!.text, /Web search is unavailable in this sandbox/u);
+      }
+      blocked(await call("web_search", { runId: "denied-run" }, "search-1"));
+      blocked(await call("read", { runId: "denied-run" }, "read-1"));
+      assert.equal(sideEffects, 0, "real caller stops search and substitute execution");
+      await call("read", { runId: "other-run" }, "read-2");
+      assert.equal(sideEffects, 1, "ordinary identified work executes");
+      blocked(await call("web_search", { sessionKey: "compatible-session" }, "search-2"));
+      blocked(await call("read", { sessionKey: "compatible-session" }, "read-3"));
+      blocked(await call("web_search", {}, "search-3"));
+      await runner().runAgentEnd({ success: true, messages: [] }, { runId: "other-run" });
+      await runner().runAgentEnd({ success: true, messages: [] }, {});
+      blocked(await call("read", {}, "read-4"));
+      assert.equal(
+        sideEffects,
+        1,
+        "lifecycle events never allow unidentified substitute execution",
+      );
+      config.tools.web.search.enabled = true;
+      await call("web_search", {}, "search-4");
+      assert.equal(sideEffects, 2, "enabled search still executes");
+    } finally {
+      reset();
+    }
+  } finally {
+    if (previousState === undefined) delete process.env.OPENCLAW_STATE_DIR;
+    else process.env.OPENCLAW_STATE_DIR = previousState;
+    if (previousConfig === undefined) delete process.env.OPENCLAW_CONFIG_PATH;
+    else process.env.OPENCLAW_CONFIG_PATH = previousConfig;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
