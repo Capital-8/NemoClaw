@@ -7,6 +7,7 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
+import { resolveManagedOpenShellSdkStateDir } from "../../../adapters/openshell/sdk";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
 import { webSearchEnvFor } from "../../../inference/web-search";
 import { resolveGatewayStateDirForPort } from "../../../onboard/gateway/state-dir";
@@ -102,6 +103,37 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_TELEMETRY_CONTEXT_DIR",
   "NEMOCLAW_DISABLE_TELEMETRY",
 ] as const;
+
+/**
+ * Validate a configured gateway state location before rebuild changes anything.
+ * The replacement uses the SDK after the source is deleted, so a location the SDK
+ * rejects would otherwise strand the sandbox. Returns the reason, or null when usable.
+ */
+export function rebuildGatewayStateDirIssue(
+  entry: Pick<SandboxEntry, "name" | "gatewayName" | "gatewayPort">,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (
+    !env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() &&
+    !env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim()
+  ) {
+    return null;
+  }
+  try {
+    const port = registryEntryGatewayPort({
+      name: entry.name,
+      gatewayName: entry.gatewayName,
+      gatewayPort: entry.gatewayPort,
+    });
+    resolveManagedOpenShellSdkStateDir(
+      { kind: "named", gatewayName: resolveGatewayName(port) },
+      { env, homeDir: resolveHome(env) },
+    );
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
 
 /** Recover the recorded gateway location before rebuild can start or replace it. */
 export function restoreRecordedRebuildGatewayStateDir(

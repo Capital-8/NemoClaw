@@ -40,6 +40,7 @@ import {
   type RebuildSandboxEntry,
   resolveRebuildLiveState,
   prepareRebuildStoppedAgentState,
+  rebuildGatewayStateDirIssue,
   restoreRecordedRebuildGatewayStateDir,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
@@ -181,6 +182,16 @@ export async function runRebuildPreflightPhase(
   if (blockRebuildOnLegacySharedLocalRoute(sandboxName, sandboxEntry, bail)) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   restoreRecordedRebuildGatewayStateDir(sandboxEntry);
+  const gatewayStateDirIssue = rebuildGatewayStateDirIssue(sandboxEntry);
+  if (gatewayStateDirIssue) {
+    printRebuildPreflightFailure(
+      `OpenShell cannot use the configured gateway state directory. ${gatewayStateDirIssue}`,
+      "Point NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR (or NEMOCLAW_GATEWAY_MANAGEMENT) at this sandbox's gateway state directory, or unset it, then retry.",
+      "Configured OpenShell gateway state directory is unusable",
+      bail,
+    );
+    return null;
+  }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
