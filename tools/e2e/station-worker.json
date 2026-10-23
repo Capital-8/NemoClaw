@@ -1,5 +1,0 @@
-{
-  "schemaVersion": 1,
-  "persistentStateEnv": "NEMOCLAW_LIVE_STATION_STATE",
-  "receiptEnv": "NEMOCLAW_LIVE_STATION_RESULT"
-}

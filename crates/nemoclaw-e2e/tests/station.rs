@@ -153,6 +153,36 @@ async fn components(document: &Document, state: &Path, engine: &str) -> Result<V
     Ok(observations.into())
 }
 
+async fn settle_operation<T>(
+    operation: impl std::future::Future<Output = Result<T>>,
+    cancel: &CancellationToken,
+    stop: impl std::future::Future<Output = &'static str>,
+) -> Result<T> {
+    tokio::pin!(operation);
+    tokio::select! {
+        result = &mut operation => result,
+        reason = stop => {
+            cancel.cancel();
+            // Let SDK cancellation settle before teardown starts.
+            let _ = operation.await;
+            Err(reason.into())
+        }
+    }
+}
+
+async fn interrupted() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = signal(SignalKind::terminate()).expect("SIGTERM handler");
+        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires an owned ARM64 Station YAML with real image digests, verified bundle, and unused private run directory; destroys workloads and retains storage"]
 async fn station_example_components_are_running() -> Result<()> {
@@ -160,6 +190,15 @@ async fn station_example_components_are_running() -> Result<()> {
         (std::env::consts::OS, std::env::consts::ARCH),
         ("linux", "aarch64")
     );
+    // Hold the host lock across apply, observations and teardown. Preparation
+    // and recovery use the same lock, including between SDK operations.
+    let host_lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path("STATION_ROOT").join("host.lock"))?;
+    host_lock
+        .try_lock()
+        .map_err(|_| "another Station operation is active")?;
     let configuration = fs::read(path("NEMOCLAW_LIVE_STATION_EXAMPLE"))?;
     let document = Document::parse(configuration.as_slice())?;
     let state = path("NEMOCLAW_LIVE_STATION_STATE");
@@ -181,17 +220,29 @@ async fn station_example_components_are_running() -> Result<()> {
     }
     directory.create(&run)?;
     let deployment = Deployment::new(&state, &path("NEMOCLAW_TEST_BUNDLE"));
-    let result = async {
-        let applied = deployment
-            .apply(&document, &CancellationToken::new())
-            .await?;
+    let cancel = CancellationToken::new();
+    let operation = async {
+        let applied = deployment.apply(&document, &cancel).await?;
         if applied.outcome != Outcome::Succeeded || !applied.deferred.is_empty() {
             return Err("apply did not complete".into());
         }
         components(&document, &state, &gateway.engine).await
-    }
-    .await;
-    let cleanup = deployment.destroy(&CancellationToken::new()).await;
+    };
+    let stop = async {
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(95 * 60)) => "Station smoke deadline exceeded",
+            _ = interrupted() => "Station smoke interrupted",
+        }
+    };
+    let result = settle_operation(operation, &cancel, stop).await;
+    // The always-run workflow cleanup retries with the retained bundle if this
+    // process is killed before cooperative cancellation/teardown can finish.
+    let cleanup = tokio::time::timeout(
+        Duration::from_secs(8 * 60),
+        deployment.destroy(&CancellationToken::new()),
+    )
+    .await
+    .map_err(|_| "Station cleanup deadline exceeded")?;
     if let Err(error) = &cleanup {
         eprintln!("Workload cleanup failed: {error}");
     }
@@ -206,7 +257,7 @@ async fn station_example_components_are_running() -> Result<()> {
 }
 
 #[test]
-fn writes_the_cologit_receipt_after_successful_observation_and_destroy() -> Result<()> {
+fn writes_the_receipt_after_successful_observation_and_destroy() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let file = directory.path().join("result.json");
     let state = directory.path().join("retained-state");
@@ -288,4 +339,32 @@ fn rejects_stopped_paused_restarting_and_unhealthy_components() {
     let mut healthy = state;
     healthy["Health"] = serde_json::json!({"Status":"healthy"});
     assert!(running(&healthy));
+}
+
+#[tokio::test]
+async fn interrupted_operation_settles_before_cleanup_can_start() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let cancel = CancellationToken::new();
+    let settled = Arc::new(AtomicBool::new(false));
+    let operation = async {
+        cancel.cancelled().await;
+        settled.store(true, Ordering::SeqCst);
+        Ok(())
+    };
+    let result = settle_operation(operation, &cancel, std::future::ready("interrupted")).await;
+    assert_eq!(result.unwrap_err().to_string(), "interrupted");
+    assert!(cancel.is_cancelled());
+    assert!(settled.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn completed_operation_preserves_its_result_without_cancellation() {
+    let cancel = CancellationToken::new();
+    let result =
+        settle_operation(std::future::ready(Ok(42)), &cancel, std::future::pending()).await;
+    assert_eq!(result.unwrap(), 42);
+    assert!(!cancel.is_cancelled());
 }

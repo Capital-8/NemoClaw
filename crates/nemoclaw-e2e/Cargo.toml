@@ -22,7 +22,7 @@ name = "station"
 path = "tests/station.rs"
 
 [dependencies]
-reqwest.workspace = true
+getrandom.workspace = true
 rcgen = "0.14.10"
 rustls.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
@@ -50,6 +50,7 @@ tokio-stream.workspace = true
 tar.workspace = true
 
 [dev-dependencies]
+reqwest.workspace = true
 base64 = "0.22.1"
 bollard.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk", features = ["test-scenarios"] }
@@ -58,7 +59,6 @@ kube.workspace = true
 time.workspace = true
 url.workspace = true
 serde-saphyr.workspace = true
-getrandom.workspace = true
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [lints]
