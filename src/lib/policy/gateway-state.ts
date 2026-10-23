@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isTavilyProviderProfileId } from "../inference/web-search/provider-profile";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import {
@@ -243,7 +244,7 @@ export async function revokeTavilyProviders(
   for (const providerName of inventory.value.names) {
     const provider = await adapter.getProvider({ target: request.target, providerName });
     if (!provider.ok) throw new Error("Cannot inspect an attached provider.");
-    if (provider.value.type === "tavily") tavily.push(providerName);
+    if (isTavilyProviderProfileId(provider.value.type)) tavily.push(providerName);
   }
   revalidate();
   // Persist explicit disabled intent before a partial detach can interrupt removal.

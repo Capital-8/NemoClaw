@@ -555,26 +555,38 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     }
   });
 
-  it.each(["denied", "allowed", "stale", "wrong-host"])(
-    "requires post-removal Tavily audit evidence with %s events (#13082)",
-    (event) => {
-      const epoch = event === "stale" ? 1 : Math.floor(Date.now() / 1000) + 1;
-      const host = event === "wrong-host" ? "other.example.com" : "api.tavily.com";
-      const decision = event === "allowed" ? "ALLOWED" : "DENIED";
-      const result = spawnSync("bash", [dcodeTavilyCheck], {
-        encoding: "utf8",
-        env: {
-          PATH: DEFAULT_TEST_PATH,
-          SANDBOX_NAME: "deepagents-sandbox",
-          NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
-          NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: tavilyBlocked,
-          NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
-          NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE: `[${epoch}] ${decision} ${host}`,
-        },
-      });
-      expect(result.status, result.stdout + result.stderr).toBe(event === "denied" ? 0 : 1);
-    },
-  );
+  it.each([
+    "denied",
+    "allowed",
+    "stale",
+    "wrong-host",
+    "wrong-pid",
+    "wrong-port",
+    "wrong-binary",
+    "missing-pid",
+  ])("requires post-removal Tavily audit evidence with %s events (#13082)", (event) => {
+    const cursor = Math.floor(Date.now() / 1000);
+    const epoch = event === "stale" ? cursor - 1 : cursor + 1;
+    const pid = event === "wrong-pid" ? 4243 : 4242;
+    const port = event === "wrong-port" ? 8443 : 443;
+    const binary = event === "wrong-binary" ? "node" : "python3.12";
+    const host = event === "wrong-host" ? "other.example.com" : "api.tavily.com";
+    const decision = event === "allowed" ? "ALLOWED" : "DENIED";
+    const result = spawnSync("bash", [dcodeTavilyCheck], {
+      encoding: "utf8",
+      env: {
+        PATH: DEFAULT_TEST_PATH,
+        SANDBOX_NAME: "deepagents-sandbox",
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+        NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE:
+          event === "missing-pid" ? tavilyBlocked : `PROBE_PID:4242\n${tavilyBlocked}`,
+        NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
+        NEMOCLAW_E2E_TAVILY_AUDIT_BEFORE_FIXTURE: `[${cursor}] old event`,
+        NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE: `[${epoch}] [sandbox] [OCSF] [ocsf] NET:OPEN [WARN] ${decision} ${binary}(${pid}) -> ${host}:${port}`,
+      },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(event === "denied" ? 0 : 1);
+  });
 
   it("skips the DCode auto-approval check before optional host prerequisites", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-approval-skip-"));

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isTavilyProviderProfileId } from "../inference/web-search/provider-profile";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
@@ -104,7 +105,7 @@ async function probeExtraProvider(context: ProviderProbeContext): Promise<Provid
     timeoutMs: Math.max(1, Math.min(PROVIDER_PROBE_TIMEOUT_MS, Math.floor(remainingMs))),
   });
   if (result.ok) {
-    const excluded = context.excludeTavily === true && result.value.type === "tavily";
+    const excluded = context.excludeTavily === true && isTavilyProviderProfileId(result.value.type);
     return { keep: !excluded, excluded };
   }
   if (

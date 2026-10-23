@@ -174,18 +174,25 @@ describe("live OpenShell policy mutations", () => {
       );
     });
 
-    it("detaches only this sandbox's Tavily grant and disables its saved selection", async () => {
-      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
-      expect(attached).toEqual(["inference"]);
-      expect(mocks.detachProvider).toHaveBeenCalledExactlyOnceWith({
-        target: { kind: "named", gatewayName: "nemoclaw" },
-        sandboxName,
-        providerName: "shared-search",
-      });
-      expect(entry.webSearchEnabled).toBe(false);
-      expect(entry.webSearchProvider).toBeNull();
-      expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
-    });
+    it.each(["tavily", "tavily-hermes-v1"])(
+      "detaches only this sandbox's %s grant and disables its saved selection",
+      async (type) => {
+        mocks.getProvider.mockImplementation(({ providerName }) => ({
+          ok: true,
+          value: { name: providerName, type: providerName === "shared-search" ? type : "nvidia" },
+        }));
+        await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+        expect(attached).toEqual(["inference"]);
+        expect(mocks.detachProvider).toHaveBeenCalledExactlyOnceWith({
+          target: { kind: "named", gatewayName: "nemoclaw" },
+          sandboxName,
+          providerName: "shared-search",
+        });
+        expect(entry.webSearchEnabled).toBe(false);
+        expect(entry.webSearchProvider).toBeNull();
+        expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
+      },
+    );
 
     it("rejects a replaced sandbox before any write", async () => {
       mocks.inspectIdentity.mockReturnValueOnce("old-identity");

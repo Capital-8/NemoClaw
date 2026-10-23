@@ -15,14 +15,19 @@ afterEach(() => {
 });
 
 describe("planRegisteredExtraProviders probe outcomes", () => {
-  it.each([true, false])(
-    "preserves shared registrations while filtering revoked Tavily grants: %s (#13082)",
-    async (excludeTavily) => {
+  it.each([
+    ["tavily", true],
+    ["tavily", false],
+    ["tavily-hermes-v1", true],
+    ["tavily-hermes-v1", false],
+  ] as const)(
+    "preserves shared registrations while filtering revoked Tavily grants: %s/%s (#13082)",
+    async (type, excludeTavily) => {
       const getProvider = vi.fn(async ({ providerName }: { providerName: string }) => ({
         ok: true as const,
         value: {
           name: providerName,
-          type: providerName === "shared-search" ? "tavily" : "nvidia",
+          type: providerName === "shared-search" ? type : "nvidia",
           credentialKeys: [],
           configKeys: [],
         },

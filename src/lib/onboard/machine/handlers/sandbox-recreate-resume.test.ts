@@ -254,58 +254,61 @@ describe("handleSandboxState resume recreation", () => {
     expect(result.sandboxName).toBe("saved");
   });
 
-  it("excludes revoked Tavily from the authoritative recreate intent (#13082)", async () => {
-    const session = createSession({ sandboxName: "saved" });
-    session.steps.sandbox.status = "complete";
-    const journal = bindJournaledRecreate(session);
-    const planner = vi.fn((gatewayName: string, options = {}) =>
-      planRegisteredExtraProviders(gatewayName, {
-        ...options,
-        listExtraProviders: () => ["shared-search", "other"],
-        providerAdapter: {
-          getProvider: async ({ providerName }: { providerName: string }) => ({
-            ok: true,
-            value: {
-              name: providerName,
-              type: providerName === "shared-search" ? "tavily" : "nvidia",
-            },
-          }),
-        } as never,
-      }),
-    );
-    const { deps } = createDeps(
-      {
-        getSandboxReuseState: () => "ready",
-        getSandboxRecreateObservation: journal.observe,
-        getSandboxRegistryEntry: () => ({
-          name: "saved",
-          provider: "provider",
-          model: "model",
-          endpointUrl: null,
-          preferredInferenceApi: "openai-completions",
-          toolDisclosure: "progressive",
-          fromDockerfile: null,
-          hermesAuthMethod: null,
-          webSearchEnabled: false,
-          webSearchProvider: null,
+  it.each(["tavily", "tavily-hermes-v1"])(
+    "keeps saved opt-out on rebuild despite a retained %s registration used for live reattachment (#13082)",
+    async (profileType) => {
+      const session = createSession({ sandboxName: "saved" });
+      session.steps.sandbox.status = "complete";
+      const journal = bindJournaledRecreate(session);
+      const planner = vi.fn((gatewayName: string, options = {}) =>
+        planRegisteredExtraProviders(gatewayName, {
+          ...options,
+          listExtraProviders: () => ["shared-search", "other"],
+          providerAdapter: {
+            getProvider: async ({ providerName }: { providerName: string }) => ({
+              ok: true,
+              value: {
+                name: providerName,
+                type: providerName === "shared-search" ? profileType : "nvidia",
+              },
+            }),
+          } as never,
         }),
-        planRegisteredExtraProviders: planner,
-        createSandbox: journal.completeCreate,
-      },
-      session,
-    );
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "saved",
-      recreateSandbox: () => true,
-    });
-    expect(planner).toHaveBeenCalledWith("nemoclaw", { excludeTavily: true });
-    expect((journal.completeCreate.mock.calls[0] as unknown[])[15]).toMatchObject({
-      extraProviders: ["other"],
-      recreate: true,
-    });
-  });
+      );
+      const { deps } = createDeps(
+        {
+          getSandboxReuseState: () => "ready",
+          getSandboxRecreateObservation: journal.observe,
+          getSandboxRegistryEntry: () => ({
+            name: "saved",
+            provider: "provider",
+            model: "model",
+            endpointUrl: null,
+            preferredInferenceApi: "openai-completions",
+            toolDisclosure: "progressive",
+            fromDockerfile: null,
+            hermesAuthMethod: null,
+            webSearchEnabled: false,
+            webSearchProvider: null,
+          }),
+          planRegisteredExtraProviders: planner,
+          createSandbox: journal.completeCreate,
+        },
+        session,
+      );
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        recreateSandbox: () => true,
+      });
+      expect(planner).toHaveBeenCalledWith("nemoclaw", { excludeTavily: true });
+      expect((journal.completeCreate.mock.calls[0] as unknown[])[15]).toMatchObject({
+        extraProviders: ["other"],
+        recreate: true,
+      });
+    },
+  );
 
   it("passes an authoritative empty extra-provider list after reconciliation prunes stale names", async () => {
     const session = createSession({
