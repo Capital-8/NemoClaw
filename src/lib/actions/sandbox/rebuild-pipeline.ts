@@ -628,6 +628,7 @@ async function rebuildSandboxUnlocked(
           skipLiveDcodeRouteProbe,
           recreateOptions.targetGatewayPort,
           recreateOptions.runtimeSelection,
+          bail,
         ))
       ) {
         return;
