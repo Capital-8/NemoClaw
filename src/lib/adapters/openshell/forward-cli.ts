@@ -1534,7 +1534,7 @@ export function createCliOpenShellForwardAdapter(
   async function observeForwards(
     request: ObserveOpenShellForwardsRequest,
   ): Promise<readonly OpenShellForwardObservation[]> {
-    return (await observeWithEvidence(request)).observations;
+    return (await observeWithEvidence(request, request.acceptPreEndpoint === true)).observations;
   }
 
   type ForwardReadiness =

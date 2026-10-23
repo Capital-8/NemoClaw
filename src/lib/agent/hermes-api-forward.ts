@@ -56,7 +56,11 @@ export function createHermesApiForwardMigration(options: {
       // A loopback observation reports wildcard listeners as foreign. Require
       // proof of the wildcard identity before the adapter may retire its PID.
       const wildcard = { ...forward, localHost: "0.0.0.0" as const };
-      const [previous] = await adapter.observeForwards({ forwards: [wildcard], assertCurrent });
+      const [previous] = await adapter.observeForwards({
+        forwards: [wildcard],
+        acceptPreEndpoint: true,
+        assertCurrent,
+      });
       if (previous?.state !== "owned" && previous?.state !== "stale") return null;
       const retirement = await adapter.retireLegacyForward({
         forward: wildcard,

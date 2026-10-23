@@ -1,7 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createCliOpenShellForwardAdapter } from "../../adapters/openshell/forward-cli";
+import {
+  captured,
+  capturedForwardList,
+  createHarness,
+  createLinuxProcFixture,
+  missingCommand,
+  noActiveForwards,
+  runtimeSelection,
+  type SpawnForward,
+} from "../../adapters/openshell/forward-cli-test-fixture";
+import { createHermesApiForwardMigration } from "../../agent/hermes-api-forward";
 
 import type {
   ObserveOpenShellForwardsRequest,
@@ -581,3 +597,82 @@ describe("declared and cleanup forward sets", () => {
     expect(mocks.verifyForwardRelease.mock.calls[0]?.[0].forwards[0]?.localHost).toBe("0.0.0.0");
   });
 });
+
+it.each([
+  {
+    gateway: "nemoclaw",
+    state: "started",
+    signals: [[4_312, "SIGKILL"]],
+    starts: 1,
+    local: "127.0.0.1:8642",
+  },
+  { gateway: "other", state: null, signals: [], starts: 0, local: "0.0.0.0:8642" },
+] as const)(
+  "checks pre-endpoint Hermes API command ownership for gateway $gateway through the CLI adapter",
+  async ({ gateway, state, signals, starts, local }) => {
+    const fixture = createLinuxProcFixture({ pid: 4_312 });
+    const tcpPath = path.join(fixture.procRoot, "net", "tcp");
+    const originalTcp = readFileSync(tcpPath, "utf8");
+    const wildcardTcp = originalTcp.replace("0100007F:4965", "00000000:21C2");
+    const forward = {
+      gatewayEndpoint: "https://127.0.0.1:8080",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName: "demo",
+      localHost: "127.0.0.1" as const,
+      port: 8_642,
+    };
+    let command = [
+      fixture.executable,
+      `--gateway ${gateway} --workspace default`,
+      "forward service demo --target-port 8642 --target-host 127.0.0.1 --local 0.0.0.0:8642",
+    ].join(" ");
+    let started = false;
+    const { child } = createHarness();
+    const signalProcess = vi.fn(() => {
+      writeFileSync(tcpPath, originalTcp.split("\n")[0] + "\n");
+      rmSync(path.join(fixture.procRoot, "4312"), { recursive: true, force: true });
+    });
+    const spawn = vi.fn<SpawnForward>((_executable, args) => {
+      started = true;
+      command = [fixture.executable, ...args].join(" ");
+      fixture.addSocketOwner(child.pid!);
+      writeFileSync(tcpPath, wildcardTcp.replace("00000000:21C2", "0100007F:21C2"));
+      return child;
+    });
+    const adapter = createCliOpenShellForwardAdapter({
+      environment: {},
+      executable: fixture.executable,
+      gatewayEndpoint: forward.gatewayEndpoint,
+      hostProbe: async (executable) =>
+        executable === "/usr/bin/lsof" ? missingCommand() : captured(0, `${command}\n`),
+      platform: "linux",
+      probePort: async () => ({ state: started ? ("bound" as const) : ("unbound" as const) }),
+      procRoot: fixture.procRoot,
+      run: async () => capturedForwardList(noActiveForwards),
+      runtimeSelection,
+      signalProcess,
+      spawn,
+    });
+    writeFileSync(tcpPath, wildcardTcp);
+    try {
+      const wildcard = { ...forward, localHost: "0.0.0.0" as const };
+      await expect(adapter.observeForwards({ forwards: [wildcard] })).resolves.toEqual([
+        { state: "foreign", forward: wildcard },
+      ]);
+      const migration = createHermesApiForwardMigration({
+        forward,
+        readSandbox: () => ({ agent: "hermes", hermesApiPort: 8_642 }),
+        adapter,
+        assertCurrent: vi.fn(),
+      });
+      const result = await migration.migrate();
+      expect(result?.state ?? null).toBe(state);
+      expect(signalProcess.mock.calls).toEqual(signals);
+      expect(spawn).toHaveBeenCalledTimes(starts);
+      expect(command).toContain(`--local ${local}`);
+    } finally {
+      fixture.remove();
+    }
+  },
+);
