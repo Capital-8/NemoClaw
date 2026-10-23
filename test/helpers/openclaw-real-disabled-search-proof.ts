@@ -21,6 +21,18 @@ type Registry = {
 /** Exercise the pinned caller and hook runner, without inference or real tool effects. */
 export async function runRealOpenClawDisabledSearchProof(options: { dist: string }): Promise<void> {
   const dist = options.dist;
+  const runtime = JSON.parse(fs.readFileSync(path.join(dist, "../package.json"), "utf8"));
+  const plugin = JSON.parse(
+    fs.readFileSync(path.join(import.meta.dirname, "../../nemoclaw/package.json"), "utf8"),
+  );
+  assert.deepEqual(
+    plugin.openclaw.compat,
+    {
+      pluginApi: `>=${runtime.version}`,
+      minGatewayVersion: runtime.version,
+    },
+    "the real-runtime proof must exercise the advertised compatibility minimum",
+  );
   const root = fs.mkdtempSync(path.join(path.dirname(dist), ".disabled-search-proof-"));
   const previousState = process.env.OPENCLAW_STATE_DIR;
   const previousConfig = process.env.OPENCLAW_CONFIG_PATH;
