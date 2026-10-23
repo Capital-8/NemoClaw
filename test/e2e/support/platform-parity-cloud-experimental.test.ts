@@ -475,6 +475,27 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     },
   );
 
+  it.each(["denied", "allowed", "stale", "wrong-host"])(
+    "requires post-removal Tavily audit evidence with %s events (#13082)",
+    (event) => {
+      const epoch = event === "stale" ? 1 : Math.floor(Date.now() / 1000) + 1;
+      const host = event === "wrong-host" ? "other.example.com" : "api.tavily.com";
+      const decision = event === "allowed" ? "ALLOWED" : "DENIED";
+      const result = spawnSync("bash", [dcodeTavilyCheck], {
+        encoding: "utf8",
+        env: {
+          PATH: DEFAULT_TEST_PATH,
+          SANDBOX_NAME: "deepagents-sandbox",
+          NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+          NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: tavilyBlocked,
+          NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
+          NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE: `[${epoch}] ${decision} ${host}`,
+        },
+      });
+      expect(result.status, result.stdout + result.stderr).toBe(event === "denied" ? 0 : 1);
+    },
+  );
+
   it("skips the DCode auto-approval check before optional host prerequisites", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-approval-skip-"));
     try {

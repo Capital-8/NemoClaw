@@ -1989,7 +1989,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         requestedExtraProviders: createIntent?.extraProviders,
         resolvedIntent: createIntent?.resolved,
         planOrdinaryExtraProviders: () =>
-          planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
+          planRegisteredExtraProviders(GATEWAY_NAME, {
+            runOpenshell,
+            excludeTavily:
+              typeof registry.getSandbox(sandboxName)?.webSearchEnabled === "boolean" &&
+              webSearchConfig?.provider !== "tavily",
+          }),
       },
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;

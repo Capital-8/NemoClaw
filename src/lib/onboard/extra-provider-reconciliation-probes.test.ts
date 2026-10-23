@@ -15,6 +15,56 @@ afterEach(() => {
 });
 
 describe("planRegisteredExtraProviders probe outcomes", () => {
+  it.each([true, false])(
+    "preserves shared registrations while filtering revoked Tavily grants: %s (#13082)",
+    async (excludeTavily) => {
+      const getProvider = vi.fn(async ({ providerName }: { providerName: string }) => ({
+        ok: true as const,
+        value: {
+          name: providerName,
+          type: providerName === "shared-search" ? "tavily" : "nvidia",
+          credentialKeys: [],
+          configKeys: [],
+        },
+      }));
+      const plan = await planRegisteredExtraProviders("nemoclaw", {
+        listExtraProviders: () => ["shared-search", "inference"],
+        providerAdapter: { getProvider } as never,
+        excludeTavily,
+      });
+      expect(plan).toEqual({
+        extraProviders: excludeTavily ? ["inference"] : ["shared-search", "inference"],
+        staleExtraProviders: [],
+      });
+    },
+  );
+
+  it("still prunes a confirmed missing registration when Tavily is excluded (#13082)", async () => {
+    const plan = await planRegisteredExtraProviders("nemoclaw", {
+      listExtraProviders: () => ["missing-provider"],
+      providerAdapter: {
+        getProvider: vi.fn(async () => ({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "missing" },
+        })),
+      } as never,
+      excludeTavily: true,
+    });
+    expect(plan).toEqual({ extraProviders: [], staleExtraProviders: ["missing-provider"] });
+  });
+
+  it("stops rebuild when a revoked provider cannot be classified (#13082)", async () => {
+    await expect(
+      planRegisteredExtraProviders("nemoclaw", {
+        listExtraProviders: () => ["shared-search"],
+        providerAdapter: {
+          getProvider: vi.fn(async () => ({ ok: false, error: { kind: "timeout" } })),
+        } as never,
+        excludeTavily: true,
+      }),
+    ).rejects.toThrow("Cannot verify disabled Tavily provider selection");
+  });
+
   it("preserves providers when raw probe failures lack classifiable adapter diagnostics (#6501)", async () => {
     const warn = vi.fn();
     const recorded = [

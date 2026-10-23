@@ -65,6 +65,7 @@ nemoclaw_cli() {
 python_probe_source() {
   cat <<'PY'
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -89,9 +90,12 @@ def is_policy_denial(text):
 
 
 url = sys.argv[1]
+payload = {'query': 'nemoclaw reachability probe', 'max_results': 1}
+if os.environ.get('TAVILY_API_KEY'):
+    payload['api_key'] = os.environ['TAVILY_API_KEY']
 request = urllib.request.Request(
     url,
-    data=json.dumps({'query': 'nemoclaw reachability probe', 'max_results': 1}).encode('utf-8'),
+    data=json.dumps(payload).encode('utf-8'),
     headers={'Content-Type': 'application/json'},
     method='POST',
 )
@@ -106,23 +110,23 @@ except urllib.error.HTTPError as exc:
         body = ''
     details = f'{exc} {body}'.strip()
     if is_policy_denial(details):
-        print(f'BLOCKED:HTTPError:{details}')
+        print('BLOCKED:HTTPError')
     else:
         print(f'REACHED:{exc.code}')
 except urllib.error.URLError as exc:
     details = str(exc.reason if getattr(exc, 'reason', None) is not None else exc)
     if is_policy_denial(details):
-        print(f'BLOCKED:URLError:{details}')
+        print('BLOCKED:URLError')
     else:
-        print(f'ERROR:URLError:{details}')
+        print('ERROR:URLError')
 except OSError as exc:
     details = str(exc)
     if is_policy_denial(details):
-        print(f'BLOCKED:{type(exc).__name__}:{details}')
+        print(f'BLOCKED:{type(exc).__name__}')
     else:
-        print(f'ERROR:{type(exc).__name__}:{details}')
+        print(f'ERROR:{type(exc).__name__}')
 except Exception as exc:
-    print(f'ERROR:{type(exc).__name__}:{exc}')
+    print(f'ERROR:{type(exc).__name__}')
 PY
 }
 
@@ -152,17 +156,43 @@ verify_observability_state() {
   pass "host registry and persistent marker preserve enabled observability $phase"
 }
 
+tavily_denied_audit() {
+  local start_epoch="$1" output
+  if [ -n "${NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE+x}" ]; then
+    output="$NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE"
+  elif ! output="$(openshell logs "$SANDBOX_NAME" -n 500 --source all --since 2m 2>/dev/null)"; then
+    return 1
+  fi
+  printf '%s\n' "$output" | awk -v start="$start_epoch" '
+    /^\[[0-9]+(\.[0-9]+)?\]/ {
+      ts = substr($0, 2, index($0, "]") - 2) + 0;
+      keep = ts >= start;
+    }
+    keep && /api[.]tavily[.]com/ && /DENIED/ { found = 1 }
+    END { exit !found }
+  '
+}
+
 restore_tavily_denial() {
-  local cleanup_status=0 remove_output post_remove_probe_output
+  local cleanup_status=0 remove_output post_remove_probe_output audit_start
   if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
     fail_test "policy-remove tavily failed after the opt-in proof: $remove_output"
     cleanup_status=1
   else
     sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
+    audit_start="$(node -p 'Date.now() / 1000')"
     post_remove_probe_output="$(python_probe "https://api.tavily.com/search" || true)"
     if [[ "$post_remove_probe_output" == *"BLOCKED:"* &&
       "$post_remove_probe_output" != *"REACHED:"* ]]; then
       pass "managed Deep Agents Code python returns to the default Tavily denial"
+      if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ]; then
+        if tavily_denied_audit "$audit_start"; then
+          pass "post-removal Tavily request has DENIED audit evidence"
+        else
+          fail_test "post-removal Tavily DENIED audit evidence is missing"
+          cleanup_status=1
+        fi
+      fi
     else
       fail_test "policy-remove did not restore the default Tavily denial: $post_remove_probe_output"
       cleanup_status=1
@@ -245,6 +275,13 @@ else
   fail_test "tavily dry-run did not show api.tavily.com: $DRY_RUN_OUTPUT"
 fi
 
+if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ]; then
+  if ! openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value true >/dev/null 2>&1; then
+    fail_test "could not enable Tavily audit evidence"
+    exit 1
+  fi
+fi
+
 APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   fail_test "policy-add tavily failed: $APPLY_OUTPUT"
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
@@ -256,7 +293,10 @@ pass "tavily policy preset applies"
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
 
 PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search")"
-if echo "$PROBE_OUTPUT" | grep -q "REACHED:"; then
+if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ] \
+  && ! echo "$PROBE_OUTPUT" | grep -Fxq "REACHED:200"; then
+  fail_test "authenticated Tavily request did not succeed after policy-add"
+elif echo "$PROBE_OUTPUT" | grep -q "REACHED:"; then
   pass "managed Deep Agents Code python can reach Tavily after policy-add"
 elif echo "$PROBE_OUTPUT" | grep -q "BLOCKED:"; then
   fail_test "managed Deep Agents Code python is still policy-blocked after policy-add: $PROBE_OUTPUT"

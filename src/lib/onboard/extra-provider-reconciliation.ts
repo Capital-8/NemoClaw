@@ -23,6 +23,8 @@ export type ReconcileExtraProvidersDeps = {
   removeExtraProvider?: (name: string) => boolean;
   nowMs?: () => number;
   warn?: (message: string) => void;
+  /** Keep a sandbox search selection from inheriting shared Tavily grants. */
+  excludeTavily?: boolean;
 };
 
 export type ExtraProviderReconciliationPlan = {
@@ -76,6 +78,7 @@ function monotonicNowMs(): number {
 type ProviderProbeOutcome = {
   keep: boolean;
   reason?: IndeterminateProbeReason;
+  excluded?: boolean;
 };
 
 type ProviderProbeContext = {
@@ -84,18 +87,26 @@ type ProviderProbeContext = {
   providerAdapter: OpenShellProviderAdapter;
   nowMs: () => number;
   deadlineMs: number;
+  excludeTavily?: boolean;
 };
 
 async function probeExtraProvider(context: ProviderProbeContext): Promise<ProviderProbeOutcome> {
   const remainingMs = context.deadlineMs - context.nowMs();
-  if (remainingMs <= 0) return { keep: true, reason: "aggregate-time-budget" };
+  if (remainingMs <= 0) {
+    if (context.excludeTavily)
+      throw new Error("Cannot verify disabled Tavily provider selection before sandbox creation.");
+    return { keep: true, reason: "aggregate-time-budget" };
+  }
 
   const result = await context.providerAdapter.getProvider({
     target: namedOpenShellGateway(context.gatewayName),
     providerName: context.name,
     timeoutMs: Math.max(1, Math.min(PROVIDER_PROBE_TIMEOUT_MS, Math.floor(remainingMs))),
   });
-  if (result.ok) return { keep: true };
+  if (result.ok) {
+    const excluded = context.excludeTavily === true && result.value.type === "tavily";
+    return { keep: !excluded, excluded };
+  }
   if (
     result.error.kind === "validation" ||
     (result.error.kind === "transport" && result.error.reason === "identity_mismatch")
@@ -104,6 +115,9 @@ async function probeExtraProvider(context: ProviderProbeContext): Promise<Provid
   }
   if (result.error.kind === "command" && result.error.reason === "not_found") {
     return { keep: false };
+  }
+  if (context.excludeTavily) {
+    throw new Error("Cannot verify disabled Tavily provider selection before sandbox creation.");
   }
   if (result.error.kind === "timeout") return { keep: true, reason: "timeout-or-signal" };
   if (result.error.kind === "transport" && result.error.reason === "process_start") {
@@ -162,11 +176,12 @@ export async function planRegisteredExtraProviders(
       providerAdapter,
       nowMs,
       deadlineMs,
+      excludeTavily: deps.excludeTavily,
     });
     if (outcome.reason) recordIndeterminate(outcome.reason);
     if (outcome.keep) {
       reconciled.push(name);
-    } else {
+    } else if (!outcome.excluded) {
       staleExtraProviders.push(name);
     }
   }

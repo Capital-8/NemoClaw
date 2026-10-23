@@ -25,6 +25,11 @@ import {
   updateSandboxTelemetrySelections,
 } from "../state/registry/telemetry-selections";
 
+import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
+import { runOpenshellProviderCommand } from "../adapters/openshell/provider-command";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/sandbox-identity-cli";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
+
 export type PresetContentSource = { name: string; content: string | null };
 export type PresetContentGatewayState = "match" | "absent" | "drift" | null;
 
@@ -198,4 +203,96 @@ export function restoreAppliedPolicySelection(
     // Policy application remains successful when optional metadata cannot be saved.
     return false;
   }
+}
+
+function isMapping(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Detach sandbox grants; gateway credentials remain available to other sandboxes. */
+export async function revokeTavilyProviders(
+  sandboxName: string,
+  gatewayName: string,
+  registry: {
+    getSandbox(name: string): SandboxEntry | null;
+    updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean;
+  },
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Promise<() => void> {
+  const adapter = createManagedProviderAdapter((args, options) =>
+    runOpenshellProviderCommand(args, { ...options, runtimeSelection }),
+  );
+  const request = { target: { kind: "named" as const, gatewayName }, sandboxName };
+  let entry = registry.getSandbox(sandboxName);
+  if (!entry) throw new Error("Sandbox registry state is unavailable.");
+  const identityRequest = { sandboxName, gatewayName, runtimeSelection };
+  const identity = inspectOpenShellSandboxIdentityFingerprint(identityRequest);
+  const revalidate = () => {
+    if (
+      !isDeepStrictEqual(registry.getSandbox(sandboxName), entry) ||
+      inspectOpenShellSandboxIdentityFingerprint(identityRequest) !== identity ||
+      (entry?.lifecycleLiveIdentityFingerprint &&
+        entry.lifecycleLiveIdentityFingerprint !== identity)
+    )
+      throw new Error("Sandbox identity changed during Tavily removal.");
+  };
+  revalidate();
+  const inventory = await adapter.listProviderAttachments(request);
+  if (!inventory.ok) throw new Error("Cannot read sandbox provider attachments.");
+  const tavily: string[] = [];
+  for (const providerName of inventory.value.names) {
+    const provider = await adapter.getProvider({ target: request.target, providerName });
+    if (!provider.ok) throw new Error("Cannot inspect an attached provider.");
+    if (provider.value.type === "tavily") tavily.push(providerName);
+  }
+  revalidate();
+  // Persist explicit disabled intent before a partial detach can interrupt removal.
+  // Rebuild must not recover an old enabled selection from the onboarding session.
+  if (
+    entry.webSearchProvider === "tavily" ||
+    (entry.webSearchProvider == null && tavily.length > 0)
+  ) {
+    if (
+      !registry.updateSandbox(sandboxName, { webSearchEnabled: false, webSearchProvider: null })
+    ) {
+      throw new Error("Cannot save disabled Tavily search selection.");
+    }
+    entry = registry.getSandbox(sandboxName);
+    if (!entry || entry.webSearchEnabled !== false || entry.webSearchProvider != null) {
+      throw new Error("Cannot verify disabled Tavily search selection.");
+    }
+  }
+  for (const providerName of tavily) {
+    revalidate();
+    const result = await adapter.detachProvider({ ...request, providerName });
+    // Always read back a possibly applied write. Never retry an ambiguous detach.
+    const observed = await adapter.listProviderAttachments(request);
+    revalidate();
+    if (!result.ok || !observed.ok || observed.value.names.includes(providerName)) {
+      throw new Error(
+        "Tavily provider detachment is incomplete; inspect sandbox attachments before retrying.",
+      );
+    }
+  }
+  return revalidate;
+}
+
+/** A remaining overlapping rule prevents a claim that Tavily egress was revoked. */
+export function hasTavilyEgress(policy: unknown): boolean {
+  if (!isMapping(policy) || !isMapping(policy.network_policies)) {
+    throw new Error("Cannot verify effective network policy.");
+  }
+  return Object.values(policy.network_policies).some((rule) => {
+    if (!isMapping(rule) || !Array.isArray(rule.endpoints)) {
+      throw new Error("Cannot verify an effective network rule.");
+    }
+    return rule.endpoints.some((endpoint) => {
+      if (!isMapping(endpoint) || typeof endpoint.host !== "string") {
+        throw new Error("Cannot verify an effective network endpoint.");
+      }
+      const host = endpoint.host.toLowerCase().replace(/\.$/u, "");
+      const pattern = host.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*");
+      return new RegExp(`^${pattern}$`, "u").test("api.tavily.com");
+    });
+  });
 }
