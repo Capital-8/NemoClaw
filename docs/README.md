@@ -6,11 +6,17 @@
 These guides describe the v1 development branch.
 [Current limits](limits.md) lists what v1 does not do yet or has not tested, with the issue tracking each.
 
-## Get Started
+## About NemoClaw
 
 | Task | Guide |
 |---|---|
 | Understand the product and choose an interface | [NemoClaw overview](overview.md) |
+| Understand how NemoClaw, OpenShell, Fabric, and agent harnesses fit together | [Ecosystem](ecosystem.md) |
+
+## Get Started
+
+| Task | Guide |
+|---|---|
 | Check client, runtime, and model-host requirements | [Prerequisites](prerequisites.md) |
 | Deploy OpenClaw with existing gateway and inference services | [Get started](get-started.md) |
 | Assess a move from an earlier version | [Migration](migration.md) |

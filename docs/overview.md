@@ -6,6 +6,7 @@
 NemoClaw manages agent deployments from desired-state YAML.
 You declare the gateway, inference providers, sandbox, and agents, then use the CLI or Rust SDK to plan, apply, export, and destroy that deployment.
 Start with [prerequisites](prerequisites.md) and [deploy OpenClaw with existing services](get-started.md).
+See the [ecosystem](ecosystem.md) to understand how NemoClaw, OpenShell, Fabric, and agent harnesses fit together.
 
 ## Choose an Interface
 
