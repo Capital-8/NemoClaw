@@ -455,6 +455,92 @@ function promoteAfterReady(f: ReturnType<typeof fixture>): string {
 }
 
 describe("nemoclaw-start post-upgrade doctor", () => {
+  it.each([0, 7])(
+    "hands off 10.5 legacy migration before Doctor under sandbox step-down (exit %s)",
+    (migrationExitCode) => {
+      const source = fs.readFileSync(START_SCRIPT, "utf8");
+      const f = fixture("mjs", true);
+      try {
+        const coordinator = path.resolve(
+          import.meta.dirname,
+          "../../../../scripts/lib/openclaw-legacy-migrations.mts",
+        );
+        const node = path.join(f.fakeBin, "node");
+        const receipt = path.join(f.root, "migration-call.json");
+        fs.writeFileSync(
+          path.join(f.packageRoot, "package.json"),
+          JSON.stringify({ name: "openclaw", type: "module", version: "2026.10.5" }),
+        );
+        fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v2\n", {
+          mode: 0o600,
+        });
+        fs.mkdirSync(path.join(f.configDir, "state"));
+        const database = path.join(f.configDir, "state/openclaw.sqlite");
+        fs.writeFileSync(database, "preserve-restored-state");
+        // Observe the production wrapper's callee boundary; native coordinator
+        // behavior is covered separately, including the refusal test below.
+        fs.writeFileSync(
+          node,
+          `#!${process.execPath}
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args[0] === ${JSON.stringify(coordinator)}) {
+  fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ args, home: process.env.HOME, path: process.env.PATH }));
+  fs.appendFileSync(${JSON.stringify(f.calls)}, "migration\\n");
+  process.exit(${migrationExitCode});
+}
+const result = spawnSync(process.execPath, args, { stdio: "inherit" });
+process.exit(result.status ?? 1);
+`,
+          { mode: 0o755 },
+        );
+        const env = fixtureEnv(f, { HOME: f.root });
+        const release =
+          migrationExitCode === 0
+            ? `${releaseAfterReady(f)}\nrelease_pid=$!\ntrap 'kill "$release_pid" 2>/dev/null || true; wait "$release_pid" 2>/dev/null || true' EXIT\n`
+            : "";
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            `${doctorFunction(source, f.configDir, f.ready, true)}\n${release}${finishDoctorBeforeGateway}`,
+          ],
+          { encoding: "utf8", env, timeout: 10_000 },
+        );
+
+        const args = [
+          coordinator,
+          "--run-executable",
+          f.openclaw,
+          "/usr/local/lib/nemoclaw/openclaw-migrations",
+        ];
+        expect(JSON.parse(fs.readFileSync(receipt, "utf8"))).toEqual({
+          args,
+          home: "/sandbox",
+          path: `${env.PATH}:/sandbox/.local/bin`,
+        });
+        expect(fs.readFileSync(f.stepDownCalls, "utf8")).toContain(
+          ["/usr/bin/env", "HOME=/sandbox", `PATH=${env.PATH}:/sandbox/.local/bin`, node, ...args]
+            .map((arg) => `ARG=${arg}\n`)
+            .join(""),
+        );
+        expect(fs.readFileSync(f.calls, "utf8")).toBe(
+          migrationExitCode === 0
+            ? "migration\ndoctor --fix --yes --non-interactive\ndoctor --fix --yes --non-interactive\n"
+            : "migration\n",
+        );
+        expect(fs.existsSync(f.schemaRepairCalls)).toBe(migrationExitCode === 0);
+        expect(result.status, result.stderr).toBe(migrationExitCode === 0 ? 0 : 1);
+        expect(fs.existsSync(f.ready)).toBe(false);
+        expect(fs.existsSync(f.marker)).toBe(migrationExitCode !== 0);
+        expect(fs.readFileSync(database, "utf8")).toBe("preserve-restored-state");
+      } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("keeps the gate closed before schema repair when intermediate inspection fails", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture("mjs", true);
