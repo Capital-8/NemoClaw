@@ -808,7 +808,6 @@ exit 37
 
         // The shell program is a fixed literal; repository and temporary-file paths are
         // positional arguments and are expanded only inside double quotes.
-        // codeql[js/shell-command-injection-from-environment] Fixed shell literal; paths are quoted positional arguments.
         const result = spawnSync(
           "/bin/bash",
           [

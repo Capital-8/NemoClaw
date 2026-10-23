@@ -125,7 +125,6 @@ export function runInstallerSourcedBody(
   const basePath = options?.includeNodeOnPath
     ? `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`
     : TEST_SYSTEM_PATH;
-  // codeql[js/shell-command-injection-from-environment] Test helper executes its caller-supplied fixture body in a clean shell.
   const result = spawnSync(
     "bash",
     ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],

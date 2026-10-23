@@ -77,7 +77,6 @@ function log(message: string): void {
 
 function recordRequest(entry: JsonObject): void {
   if (!requestsFile) return;
-  // codeql[js/http-to-file-access] Test fixture intentionally records request metadata at the path selected by the harness.
   appendFileSync(requestsFile, `${JSON.stringify(entry)}\n`);
 }
 

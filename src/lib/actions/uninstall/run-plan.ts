@@ -580,7 +580,6 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
       deps.gatewayReuseObserver ?? createUninstallGatewayReuseObserver(run, env),
     commandExists: deps.commandExists ?? ((command) => defaultCommandExists(command, env)),
     env,
-    // codeql[js/clear-text-logging] Cleanup status and path messages do not receive the sibling runtime environment property.
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
     getTrustedActiveOpenShellGatewayUserServiceIdentity:

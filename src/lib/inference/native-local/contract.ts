@@ -92,7 +92,6 @@ export function nativeLocalIdentity(binding: NativeLocalBinding, policyVersion: 
   if (!normalized) throw new Error("Invalid native host-local inference boundary.");
   const profileHash = createHash("sha256")
     .update(
-      // codeql[js/insufficient-password-hash] Stable identity over validated configuration fields, never a password.
       JSON.stringify([
         normalized.provider,
         ...(normalized.agent === "openclaw" || normalized.agent === "pi" ? [normalized.agent] : []),
