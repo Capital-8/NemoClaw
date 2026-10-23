@@ -52,12 +52,13 @@ function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> |
 }
 
 /** Use the same host identity for tool denial and authoritative agent_end cleanup. */
-function searchTurnKey(args: readonly PluginValue[]): string | undefined {
+function searchTurnKeys(args: readonly PluginValue[]): string[] {
+  const identities: string[] = [];
   for (const key of ["runId", "sessionKey", "sessionId"]) {
     const value = readStringProperty(args[1], key) ?? readStringProperty(args[0], key);
-    if (value?.trim()) return `${key}:${value}`;
+    if (value?.trim()) identities.push(`${key}:${value}`);
   }
-  return undefined;
+  return identities;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +255,7 @@ function blocksDisabledSearch(
   config: OpenClawConfig,
   event: BeforeToolCallEvent,
   deniedSearchRuns: DeniedSearchState,
+  aliases: readonly string[],
 ): boolean {
   if (configuredSearchEnabled(config) !== false) {
     deniedSearchRuns.clear();
@@ -274,7 +276,7 @@ function blocksDisabledSearch(
     /^(?:exec|execute|shell|web_fetch|browser)$/u.test(effectiveTarget) &&
     /https?:\/\/(?:api\.tavily\.com|(?:api\.)?search\.brave\.com)(?:[/:?"\s]|$)/iu.test(probe);
   if (searchTool || searchDiscovery || providerProbe) {
-    if (event.runId) deniedSearchRuns.deny(event.runId);
+    if (event.runId) deniedSearchRuns.deny(event.runId, aliases);
     return true;
   }
 
@@ -283,7 +285,8 @@ function blocksDisabledSearch(
   const substituteTool =
     /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
   return (
-    (!deniedSearchRuns.hasAdmission(event.runId) || deniedSearchRuns.blocks(event.runId)) &&
+    (!deniedSearchRuns.hasAdmission(event.runId, aliases) ||
+      deniedSearchRuns.blocks(event.runId)) &&
     substituteTool.test(target)
   );
 }
@@ -332,7 +335,8 @@ export default function register(api: OpenClawPluginApi): void {
           deniedSearchRuns.clear();
           return undefined;
         }
-        const identity = searchTurnKey(args);
+        const identities = searchTurnKeys(args);
+        const identity = identities[0];
         if (!identity) {
           return {
             outcome: "block",
@@ -341,7 +345,7 @@ export default function register(api: OpenClawPluginApi): void {
               "This turn cannot start safely because OpenClaw did not provide a run or session identity. Check the gateway logs before retrying.",
           };
         }
-        if (deniedSearchRuns.admit(identity)) return undefined;
+        if (deniedSearchRuns.admit(identity, identities)) return undefined;
         return {
           outcome: "block",
           reason: "disabled-search turn admission unavailable",
@@ -363,12 +367,14 @@ export default function register(api: OpenClawPluginApi): void {
         const event = readBeforeToolCallEvent(args[0]);
         if (!event?.toolName || !event.params) return undefined;
 
-        const runId = searchTurnKey(args);
+        const identities = searchTurnKeys(args);
+        const runId = identities[0];
         if (
           blocksDisabledSearch(
             api.config,
             { toolName: event.toolName, params: event.params, runId },
             deniedSearchRuns,
+            identities,
           )
         ) {
           return {
@@ -418,12 +424,8 @@ export default function register(api: OpenClawPluginApi): void {
       return undefined;
     });
     api.on("agent_end", (...args: readonly PluginValue[]): undefined => {
-      // Lifecycle context may carry more identity than an older tool envelope.
-      // Clear matching session fallback state without changing unidentified policy.
-      for (const key of ["runId", "sessionKey", "sessionId"]) {
-        const value = readStringProperty(args[1], key) ?? readStringProperty(args[0], key);
-        if (value?.trim()) deniedSearchRuns.delete(`${key}:${value}`);
-      }
+      // Resolve all terminal identities together so a shared session cannot release another run.
+      deniedSearchRuns.delete(searchTurnKeys(args));
       return undefined;
     });
   } catch (err) {

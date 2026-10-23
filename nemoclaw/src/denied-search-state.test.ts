@@ -77,6 +77,18 @@ describe("denied-search identity retention", () => {
     expect(state.size).toBe(2);
   });
 
+  it("learns missing aliases from a known turn without losing its denial", () => {
+    state.admit("runId:known");
+    expect(
+      state.hasAdmission("runId:known", ["runId:known", "sessionKey:session", "sessionId:id"]),
+    ).toBe(true);
+    state.deny("sessionKey:session");
+    expect(state.blocks("runId:known")).toBe(true);
+    state.delete(["sessionId:id"]);
+    expect(state.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("cancels its last timer after matching cleanup or configuration recovery", () => {
     state.deny("finished");
     state.delete("finished");

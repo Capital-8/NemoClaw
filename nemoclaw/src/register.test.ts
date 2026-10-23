@@ -741,6 +741,49 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     );
   });
 
+  it.each(["sessionKey", "sessionId"])(
+    "releases run admission through its associated %s on completion",
+    async (field) => {
+      const { api, admission } = searchHook(false);
+      const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
+      const tool = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")![1];
+      expect(admission({}, { runId: "first", [field]: "associated" })).toBeUndefined();
+      expect(admission({}, { runId: "second" })).toBeUndefined();
+      expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
+      expect(tool({ toolName: "web_search", params: {} }, { runId: "first" })).toMatchObject({
+        block: true,
+      });
+      expect(tool({ toolName: "read", params: {} }, { [field]: "associated" })).toMatchObject({
+        block: true,
+      });
+      await end({ success: true }, { [field]: "associated" });
+      expect(admission({}, { runId: "new-turn" })).toBeUndefined();
+      expect(tool({ toolName: "read", params: {} }, { runId: "new-turn" })).toBeUndefined();
+    },
+  );
+
+  it("does not release another active run through a shared session alias", async () => {
+    const { api, admission } = searchHook(false);
+    const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
+    const tool = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")![1];
+    expect(admission({}, { runId: "first", sessionKey: "shared" })).toBeUndefined();
+    expect(admission({}, { runId: "second", sessionKey: "shared" })).toBeUndefined();
+    expect(tool({ toolName: "web_search", params: {} }, { runId: "second" })).toMatchObject({
+      block: true,
+    });
+    await end({ success: true }, { sessionKey: "shared" });
+    expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
+    await end({ success: true }, { runId: "unrelated", sessionKey: "shared" });
+    expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
+    await end({ success: true }, { runId: "first", sessionKey: "shared" });
+    expect(admission({}, { runId: "new-turn" })).toBeUndefined();
+    await end({ success: true }, { runId: "unrelated", sessionKey: "shared" });
+    expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
+    expect(tool({ toolName: "read", params: {} }, { runId: "second" })).toMatchObject({
+      block: true,
+    });
+  });
+
   it("rejects a disabled-search turn without correlatable identity", () => {
     const { admission } = searchHook(false);
     expect(admission({}, {})).toMatchObject({ outcome: "block" });

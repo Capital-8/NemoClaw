@@ -174,13 +174,17 @@ function replyFixture(reply: string, meta: Record<string, unknown> = {}) {
   const host = {
     command: vi.fn().mockResolvedValue({
       ...result,
-      stdout: JSON.stringify({ payloads: [{ text: reply }], meta }),
+      stdout: JSON.stringify({
+        payloads: [{ text: reply }],
+        meta: { finalAssistantVisibleText: reply, ...meta },
+      }),
     }),
   };
   const options = {
     apiKey: SECRET_SENTINEL,
     expected: "searchStatus",
     label: "unavailable-search",
+    finalReplyContract: "unavailable-search" as const,
     prompt: "report unavailable search",
     persistCommandArtifacts: false,
     redactOutputInFailure: true,
@@ -387,6 +391,32 @@ describe("unavailable-search assertion wiring", () => {
     },
   );
 
+  it.each([
+    undefined,
+    "",
+    "Official installation documentation: NVIDIA Announces NemoClaw, https://nvidianews.nvidia.com/",
+  ])(
+    "rejects a compliant payload when final visible text is missing or fabricated: %s",
+    async (finalAssistantVisibleText) => {
+      const f = replyFixture('{"searchStatus":"unavailable","installationDocumentation":null}', {
+        finalAssistantVisibleText,
+      });
+      try {
+        await expect(
+          runOpenClawAgentAssertion(
+            f.host as unknown as HostCliClient,
+            f.sandbox as unknown as SandboxClient,
+            f.artifacts,
+            f.options,
+          ),
+        ).rejects.toThrow(/final visible reply.*unavailable-search/u);
+        expect(f.host.command).toHaveBeenCalledTimes(1);
+      } finally {
+        rmSync(f.root, { force: true, recursive: true });
+      }
+    },
+  );
+
   it("reduces negative-path tool evidence without an expected fetch", async () => {
     const f = replyFixture('{"searchStatus":"unavailable","installationDocumentation":null}');
     const validator = vi.fn().mockReturnValue(true);
@@ -411,7 +441,9 @@ describe("unavailable-search assertion wiring", () => {
   });
 
   it("records reply evidence before a rejected reply can end the attempt", async () => {
-    const f = replyFixture("unparseable reply with a private query");
+    const f = replyFixture("unparseable reply with a private query", {
+      finalAssistantVisibleText: undefined,
+    });
     const recordReplyEvidence = vi.fn(async (reply: string, attempt: number) => {
       await f.artifacts.writeJson(
         `reply-${attempt}.json`,

@@ -754,6 +754,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
         apiKey,
         expected: "searchStatus",
         label: "c1-agent-unavailable-search",
+        finalReplyContract: "unavailable-search",
         persistCommandArtifacts: false,
         redactOutputInFailure: true,
         sandboxName: OPENCLAW_BALANCED_SANDBOX,

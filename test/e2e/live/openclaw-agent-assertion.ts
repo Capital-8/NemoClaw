@@ -19,6 +19,7 @@ import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
   buildOpenClawToolEvidenceReducerScript,
   classifyOpenClawAgentAssertion,
+  isUnavailableSearchReply,
   projectOpenClawAgentFailureArtifact,
   parseOpenClawToolEvidence,
   runOpenClawAgentAssertionRetry,
@@ -41,12 +42,13 @@ export interface OpenClawAgentAssertionEvidence {
 export interface OpenClawAgentAssertionOptions {
   apiKey: string;
   expected: string;
+  finalReplyContract?: "unavailable-search";
   label: string;
   prompt: string;
   persistCommandArtifacts?: boolean;
   publicFetchExpectation?: OpenClawPublicFetchExpectation;
   redactOutputInFailure?: boolean;
-  /** Final metadata text is diagnostic only and does not establish reply acceptance. */
+  /** Receives payload and final visible text, including failed attempts. */
   recordReplyEvidence?: (
     reply: string,
     attempt: number,
@@ -127,23 +129,30 @@ export async function runOpenClawAgentAssertion(
       );
       const combined = text(agent);
       const reply = parseOpenClawAgentText(agent.stdout);
-      if (args.recordReplyEvidence) {
-        const final = openClawFinalAgentResponse(parseOpenClawJsonDocuments(agent.stdout));
-        const visible = final?.meta.finalAssistantVisibleText;
-        await args.recordReplyEvidence(reply, attempt, typeof visible === "string" ? visible : "");
-      }
+      const final = openClawFinalAgentResponse(parseOpenClawJsonDocuments(agent.stdout));
+      const visible = final?.meta.finalAssistantVisibleText;
+      const finalVisibleReply = typeof visible === "string" ? visible : "";
+      await args.recordReplyEvidence?.(reply, attempt, finalVisibleReply);
       lastFailure = args.redactOutputInFailure
         ? `agent output omitted; exit=${agent.exitCode}`
         : `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
             0,
             240,
           )}' stderr='${agent.stderr.slice(0, 240)}'`;
-      const classification = classifyOpenClawAgentAssertion({
+      let classification = classifyOpenClawAgentAssertion({
         exitCode: agent.exitCode,
         expected: args.expected,
         reply,
         response: combined,
       });
+      if (
+        classification.passed &&
+        args.finalReplyContract === "unavailable-search" &&
+        !isUnavailableSearchReply(finalVisibleReply)
+      ) {
+        classification = { passed: false, failureClass: "deterministic" };
+        lastFailure = "final visible reply does not satisfy unavailable-search contract";
+      }
       const reduceToolEvidence = () =>
         sandbox.exec(
           args.sandboxName,
