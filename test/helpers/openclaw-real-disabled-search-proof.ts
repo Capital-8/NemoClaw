@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { SEARCH_DENIAL_IDENTITY_LIMIT } from "../../nemoclaw/src/denied-search-state.js";
 import register, { type OpenClawPluginApi } from "../../nemoclaw/src/index.js";
 
 type ToolResult = { details?: { status?: string }; content: { text: string }[] };
@@ -44,6 +45,10 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       registry: Registry,
     ) => void;
     const runner = (await load("hook-runner-global-", "getGlobalHookRunner")) as () => {
+      runBeforeAgentRun(
+        event: { prompt: string; messages: unknown[] },
+        ctx: ToolContext,
+      ): Promise<{ decision?: { outcome: string } } | undefined>;
       runBeforePromptBuild(
         event: { prompt: string; messages: unknown[] },
         ctx: ToolContext,
@@ -168,11 +173,25 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         assert.equal(result.details?.status, "blocked");
         assert.match(result.content[0]!.text, /Web search is unavailable in this sandbox/u);
       }
+      async function admit(ctx: ToolContext): Promise<void> {
+        const result = await runner().runBeforeAgentRun(
+          { prompt: "Read README.md.", messages: [] },
+          ctx,
+        );
+        assert.notEqual(
+          result?.decision?.outcome,
+          "block",
+          "real admission gate accepts owned turn",
+        );
+      }
+      await admit({ runId: "denied-run" });
       blocked(await call("web_search", { runId: "denied-run" }, "search-1"));
       blocked(await call("read", { runId: "denied-run" }, "read-1"));
       assert.equal(sideEffects, 0, "real caller stops search and substitute execution");
+      await admit({ runId: "other-run" });
       await call("read", { runId: "other-run" }, "read-2");
       assert.equal(sideEffects, 1, "ordinary identified work executes");
+      await admit({ sessionKey: "compatible-session" });
       blocked(await call("web_search", { sessionKey: "compatible-session" }, "search-2"));
       blocked(await call("read", { sessionKey: "compatible-session" }, "read-3"));
       blocked(await call("web_search", {}, "search-3"));
@@ -187,6 +206,34 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       config.tools.web.search.enabled = true;
       await call("web_search", {}, "search-4");
       assert.equal(sideEffects, 2, "enabled search still executes");
+      await runner().runGatewayStop({}, {});
+      config.tools.web.search.enabled = false;
+      for (let index = 0; index < SEARCH_DENIAL_IDENTITY_LIMIT; index++) {
+        await admit({ runId: `capacity-${index}` });
+      }
+      blocked(await call("web_search", { runId: "capacity-0" }, "capacity-search"));
+      const excess = await runner().runBeforeAgentRun(
+        { prompt: "Read README.md.", messages: [] },
+        { runId: "excess" },
+      );
+      assert.equal(
+        excess?.decision?.outcome,
+        "block",
+        "real gate refuses excess turn before inference",
+      );
+      blocked(await call("read", { runId: "excess" }, "excess-read"));
+      await call("read", { runId: "capacity-1" }, "ordinary-at-capacity");
+      assert.equal(sideEffects, 3, "admitted ordinary work remains available at capacity");
+      for (let index = 0; index < SEARCH_DENIAL_IDENTITY_LIMIT; index++) {
+        await runner().runAgentEnd({ success: true, messages: [] }, { runId: `capacity-${index}` });
+      }
+      await admit({ runId: "recovered" });
+      await call("read", { runId: "recovered" }, "recovered-read");
+      assert.equal(
+        sideEffects,
+        4,
+        "completion restores capacity without waiting for retention expiry",
+      );
     } finally {
       try {
         await runner().runGatewayStop({}, {});

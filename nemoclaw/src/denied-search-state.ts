@@ -6,10 +6,10 @@ const MAX_TURN_TIMEOUT_MS = 2_147_483_647;
 export const SEARCH_DENIAL_RETENTION_MS = MAX_TURN_TIMEOUT_MS + 60_000;
 export const SEARCH_DENIAL_IDENTITY_LIMIT = 1024;
 
-/** Bound gateway memory without forgetting an active denied turn's policy. */
+/** Reserve bounded turn ownership before inference so no active denial can overflow. */
 export class DeniedSearchState {
-  private readonly identities = new Map<string, number>();
-  private saturatedUntil = 0;
+  private readonly identities = new Map<string, { expiresAt: number; denied: boolean }>();
+  private capacityWarning = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   private readonly capacity: number;
@@ -25,25 +25,40 @@ export class DeniedSearchState {
     return this.identities.size;
   }
 
-  deny(identity: string): void {
+  admit(identity: string): boolean {
     this.expire();
-    const expiresAt = Date.now() + SEARCH_DENIAL_RETENTION_MS;
-    if (this.identities.has(identity) || this.size < this.capacity) {
-      this.identities.set(identity, expiresAt);
-    } else {
-      const firstOverflow = this.saturatedUntil === 0;
-      this.saturatedUntil = Math.max(this.saturatedUntil, expiresAt);
-      if (firstOverflow) this.onCapacity();
+    if (this.identities.has(identity)) return true;
+    if (this.size >= this.capacity) {
+      if (!this.capacityWarning) this.onCapacity();
+      this.capacityWarning = true;
+      return false;
     }
+    this.identities.set(identity, {
+      expiresAt: Date.now() + SEARCH_DENIAL_RETENTION_MS,
+      denied: false,
+    });
+    this.schedule();
+    return true;
+  }
+
+  hasAdmission(identity: string | undefined): boolean {
+    this.expire();
+    return identity !== undefined && this.identities.has(identity);
+  }
+
+  deny(identity: string): void {
+    if (!this.admit(identity)) return;
+    this.identities.set(identity, {
+      expiresAt: Date.now() + SEARCH_DENIAL_RETENTION_MS,
+      denied: true,
+    });
     this.schedule();
   }
 
   blocks(identity: string | undefined): boolean {
     this.expire();
     this.schedule();
-    // Overflow identities cannot be distinguished from ordinary identified work.
-    // Conservatively restrict substitutes until every untracked denial expires.
-    return !identity || this.saturatedUntil > 0 || this.identities.has(identity);
+    return !identity || this.identities.get(identity)?.denied === true;
   }
 
   delete(identity: string): void {
@@ -53,24 +68,23 @@ export class DeniedSearchState {
 
   clear(): void {
     this.identities.clear();
-    this.saturatedUntil = 0;
+    this.capacityWarning = false;
     this.schedule();
   }
 
   private expire(): void {
     const now = Date.now();
-    for (const [identity, expiresAt] of this.identities) {
+    for (const [identity, { expiresAt }] of this.identities) {
       if (expiresAt <= now) this.identities.delete(identity);
     }
-    if (this.saturatedUntil <= now) this.saturatedUntil = 0;
+    if (this.size < this.capacity) this.capacityWarning = false;
   }
 
   private schedule(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     const nextExpiry = Math.min(
-      ...this.identities.values(),
-      this.saturatedUntil || Number.POSITIVE_INFINITY,
+      ...Array.from(this.identities.values(), ({ expiresAt }) => expiresAt),
     );
     if (!Number.isFinite(nextExpiry)) return;
     // Retention includes cleanup grace beyond Node's largest timer delay.

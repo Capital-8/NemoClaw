@@ -17,7 +17,7 @@ describe("denied-search identity retention", () => {
     vi.useRealTimers();
   });
 
-  it("caps retained identities without allowing tracked or excess denied turns", () => {
+  it("caps admitted identities and rejects excess turns", () => {
     state.deny("run-first");
     state.deny("run-second");
     state.deny("run-overflow");
@@ -25,14 +25,30 @@ describe("denied-search identity retention", () => {
     expect(vi.getTimerCount()).toBe(1);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(state.blocks("run-first")).toBe(true);
-    expect(state.blocks("run-overflow")).toBe(true);
+    expect(state.admit("run-overflow")).toBe(false);
+    expect(state.hasAdmission("run-overflow")).toBe(false);
     expect(state.blocks(undefined)).toBe(true);
     state.delete("run-first");
     expect(state.size).toBe(1);
-    expect(state.blocks("run-first")).toBe(true);
+    expect(state.blocks("run-first")).toBe(false);
+    expect(state.admit("run-overflow")).toBe(true);
   });
 
-  it("expires idle retained and overflow state without another tool call", () => {
+  it("releases capacity after retained and excess turns finish", () => {
+    state.deny("retained-first");
+    state.deny("retained-second");
+    state.deny("overflow-first");
+    state.deny("overflow-second");
+    state.delete("retained-first");
+    state.delete("overflow-first");
+    state.delete("retained-second");
+    state.delete("overflow-second");
+    expect(state.blocks("unrelated-run")).toBe(false);
+    expect(state.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("expires abandoned admission slots without another tool call", () => {
     state.deny("run-first");
     state.deny("run-second");
     state.deny("run-overflow");
@@ -48,18 +64,17 @@ describe("denied-search identity retention", () => {
     expect(state.size).toBe(1);
   });
 
-  it("keeps a later overflow denial until its own deadline", () => {
-    state.deny("run-first");
-    state.deny("run-second");
-    vi.advanceTimersByTime(30_000);
-    state.deny("overflow");
-    vi.advanceTimersByTime(SEARCH_DENIAL_RETENTION_MS - 30_000);
-    expect(state.size).toBe(0);
-    expect(state.blocks("overflow")).toBe(true);
-    expect(state.blocks("ordinary-run")).toBe(true);
-    vi.advanceTimersByTime(30_000);
-    expect(state.blocks("ordinary-run")).toBe(false);
-    expect(vi.getTimerCount()).toBe(0);
+  it("preserves active denial when admission repeats and releases capacity on completion", () => {
+    expect(state.admit("ordinary")).toBe(true);
+    state.deny("denied");
+    expect(state.admit("denied")).toBe(true);
+    expect(state.blocks("denied")).toBe(true);
+    expect(state.blocks("ordinary")).toBe(false);
+    expect(state.admit("excess")).toBe(false);
+    state.delete("ordinary");
+    expect(state.admit("excess")).toBe(true);
+    expect(state.blocks("denied")).toBe(true);
+    expect(state.size).toBe(2);
   });
 
   it("cancels its last timer after matching cleanup or configuration recovery", () => {

@@ -174,8 +174,19 @@ export interface BeforePromptBuildResult {
   appendSystemContext?: string;
 }
 
+/** Return value from the host's pre-inference admission gate. */
+export interface BeforeAgentRunResult {
+  outcome: "block";
+  reason: string;
+  message: string;
+}
+
 /** Union of all hook result types. */
-export type HookResult = BeforeToolCallResult | BeforePromptBuildResult | undefined;
+export type HookResult =
+  | BeforeToolCallResult
+  | BeforePromptBuildResult
+  | BeforeAgentRunResult
+  | undefined;
 
 /**
  * The API object injected into the plugin's register function by the OpenClaw
@@ -271,13 +282,16 @@ function blocksDisabledSearch(
   // Identity-less calls cannot safely correlate turns, so substitutes fail closed.
   const substituteTool =
     /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
-  return deniedSearchRuns.blocks(event.runId) && substituteTool.test(target);
+  return (
+    (!deniedSearchRuns.hasAdmission(event.runId) || deniedSearchRuns.blocks(event.runId)) &&
+    substituteTool.test(target)
+  );
 }
 
 export default function register(api: OpenClawPluginApi): void {
   const deniedSearchRuns = new DeniedSearchState(() => {
     api.logger.warn(
-      "Disabled-search identity capacity reached; substitute tools are blocked until outstanding turn deadlines expire or the gateway restarts.",
+      "Disabled-search identity capacity reached; new turns are refused until an active turn finishes or its deadline expires.",
     );
   });
   // 1. Register /nemoclaw slash command (chat interface)
@@ -314,6 +328,37 @@ export default function register(api: OpenClawPluginApi): void {
   // the try/catch ensures the plugin still loads — the scanner just becomes
   // a no-op. Verify after OpenClaw upgrades that blocked writes still show
   // the expected error message.
+  try {
+    api.on(
+      "before_agent_run",
+      (...args: readonly PluginValue[]): BeforeAgentRunResult | undefined => {
+        if (configuredSearchEnabled(api.config) !== false) {
+          deniedSearchRuns.clear();
+          return undefined;
+        }
+        const identity = searchTurnKey(args);
+        if (!identity) {
+          return {
+            outcome: "block",
+            reason: "disabled-search turn identity missing",
+            message:
+              "This turn cannot start safely because OpenClaw did not provide a run or session identity. Check the gateway logs before retrying.",
+          };
+        }
+        if (deniedSearchRuns.admit(identity)) return undefined;
+        return {
+          outcome: "block",
+          reason: "disabled-search turn admission unavailable",
+          message:
+            "This turn cannot start safely while web search is disabled. Wait for an active turn to finish and retry. If no turn is active, restart the gateway.",
+        };
+      },
+    );
+  } catch (err) {
+    api.logger.warn(
+      `Could not register disabled-search admission gate: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   try {
     api.on(
       "before_tool_call",

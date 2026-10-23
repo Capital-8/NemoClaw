@@ -105,21 +105,35 @@ describe("plugin registration", () => {
     );
   });
 
-  it("continues registration when the runtime context hook is unsupported", () => {
-    const api = createMockApi();
-    vi.mocked(api.on).mockImplementation((hookName: string) => {
-      if (hookName === "before_prompt_build") {
-        throw new Error("unsupported hook");
-      }
-    });
-
-    register(api);
-
-    expect(api.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("Could not register runtime context hook: unsupported hook"),
-    );
-    expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
-  });
+  it.each(["before_prompt_build", "before_agent_run"])(
+    "preserves provider and secret-write registration when %s is unsupported",
+    (unsupportedHook) => {
+      const api = createMockApi();
+      vi.mocked(api.on).mockImplementation((hookName) => {
+        if (hookName === unsupportedHook) throw new Error("unsupported hook");
+      });
+      register(api);
+      expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("unsupported hook"));
+      expect(api.registerProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "inference" }),
+      );
+      const handler = vi
+        .mocked(api.on)
+        .mock.calls.find(([name]) => name === "before_tool_call")![1];
+      expect(
+        handler({
+          toolName: "write",
+          params: {
+            file_path: "/sandbox/.openclaw/memory/notes.md",
+            content: "nvapi-abcdefghijklmnopqrstuvwxyz",
+          },
+        }),
+      ).toMatchObject({
+        block: true,
+        blockReason: expect.stringContaining("Memory write blocked"),
+      });
+    },
+  );
 
   it("does NOT register CLI commands", () => {
     const api = createMockApi();
@@ -456,7 +470,15 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       const stop = vi.mocked(api.on).mock.calls.find(([name]) => name === "gateway_stop")?.[1];
       await stop?.({}, {});
     });
-    return { api, handler: handler! };
+    const admission = vi
+      .mocked(api.on)
+      .mock.calls.find(([name]) => name === "before_agent_run")?.[1];
+    // Tool-hook cases enter through the same admission gate as a host turn.
+    const admittedHandler: typeof handler = (...args) => {
+      void admission?.(...args);
+      return handler!(...args);
+    };
+    return { api, handler: admittedHandler!, admission: admission! };
   }
 
   it.each([
@@ -696,41 +718,39 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     }
   });
 
-  it("fails closed at identity capacity and clears owned timers on shutdown", async () => {
-    vi.useFakeTimers();
-    try {
-      const { api, handler } = searchHook(false);
-      expect(handler({ toolName: "web_search", params: {}, runId: "denied-first" })).toMatchObject({
-        block: true,
-      });
-      expect(handler({ toolName: "web_search", params: {}, runId: "denied-second" })).toMatchObject(
-        { block: true },
-      );
-      expect(
-        handler({ toolName: "web_search", params: {}, runId: "denied-overflow" }),
-      ).toMatchObject({ block: true });
-      expect(api.logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining("identity capacity reached"),
-      );
-      expect(vi.getTimerCount()).toBe(1);
-      expect(handler({ toolName: "read", params: {}, runId: "denied-first" })).toMatchObject({
-        block: true,
-      });
-      expect(handler({ toolName: "read", params: {}, runId: "denied-overflow" })).toMatchObject({
-        block: true,
-      });
-      expect(handler({ toolName: "read", params: {}, runId: "ordinary-run" })).toMatchObject({
-        block: true,
-      });
-      expect(handler({ toolName: "read", params: {} })).toMatchObject({ block: true });
-      const stop = vi.mocked(api.on).mock.calls.find(([name]) => name === "gateway_stop")?.[1];
-      expect(stop).toBeDefined();
-      await stop!({}, {});
-      expect(vi.getTimerCount()).toBe(0);
-      expect(handler({ toolName: "read", params: {}, runId: "ordinary-run" })).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
+  it("rejects excess turns and recovers capacity through matching lifecycle cleanup", async () => {
+    const { api, admission } = searchHook(false);
+    const tool = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")![1];
+    const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
+    const read = { toolName: "read", params: {} };
+    expect(admission({}, { runId: "ordinary-active" })).toBeUndefined();
+    expect(admission({}, { runId: "denied-active" })).toBeUndefined();
+    expect(tool({ toolName: "web_search", params: {} }, { runId: "denied-active" })).toMatchObject({
+      block: true,
+    });
+    expect(admission({}, { runId: "overflow" })).toMatchObject({ outcome: "block" });
+    expect(tool(read, { runId: "overflow" })).toMatchObject({ block: true });
+    expect(tool(read, { runId: "ordinary-active" })).toBeUndefined();
+    expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
+    // Retrying admission for the same active turn must not erase its denial.
+    expect(admission({}, { runId: "denied-active" })).toBeUndefined();
+    expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
+    await end({ success: true }, { runId: "ordinary-active" });
+    expect(admission({}, { runId: "next-turn" })).toBeUndefined();
+    expect(tool(read, { runId: "next-turn" })).toBeUndefined();
+    expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
+    await end({ success: true }, { runId: "denied-active" });
+    await end({ success: false }, { runId: "next-turn" });
+    expect(admission({}, { runId: "unrelated-run" })).toBeUndefined();
+    expect(tool(read, { runId: "unrelated-run" })).toBeUndefined();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("identity capacity reached"),
+    );
+  });
+
+  it("rejects a disabled-search turn without correlatable identity", () => {
+    const { admission } = searchHook(false);
+    expect(admission({}, {})).toMatchObject({ outcome: "block" });
   });
 
   it("recovers from identity capacity when search is reenabled", () => {
