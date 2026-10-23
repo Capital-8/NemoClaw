@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { buildConfig } from "../../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "./openclaw-env-fixture";
 import { SEARCH_DENIAL_IDENTITY_LIMIT } from "../../nemoclaw/src/denied-search-state.js";
 import register, { type OpenClawPluginApi } from "../../nemoclaw/src/index.js";
 
@@ -53,6 +55,18 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       assert.equal(typeof value, "function", "pinned export exists: " + name);
       return value;
     }
+    const conversationAccessAllowed = (await load(
+      "hook-policy-decisions-",
+      "resolveConversationAccessAllowed",
+    )) as (origin: string, policy: unknown) => boolean;
+    const generated = buildConfig({ ...baseOpenClawGenerationEnv(), HOME: root }) as {
+      plugins: { entries: { nemoclaw: { hooks?: object } } };
+    };
+    assert.equal(
+      conversationAccessAllowed("config", generated.plugins.entries.nemoclaw.hooks),
+      true,
+      "the pinned loader must admit the generated NemoClaw prompt, admission and completion hooks",
+    );
     const initialize = (await load("hook-runner-global-", "initializeGlobalHookRunner")) as (
       registry: Registry,
     ) => void;
