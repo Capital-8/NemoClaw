@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { shellQuote } from "../core/shell-quote";
 import {
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
   ensureManagedGatewayStateRoot,
@@ -115,6 +116,23 @@ describe("managed gateway state root ownership", () => {
       expect(fs.existsSync(stateDir)).toBe(false);
     } finally {
       fs.chmodSync(root, 0o700);
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("quotes an apostrophe in the suggested chmod path (#12496)", () => {
+    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-quoted-gateway-parent-"));
+    const ancestor = path.join(root, "owned'directory");
+    const stateDir = path.join(ancestor, "gateway");
+    try {
+      fs.mkdirSync(ancestor);
+      fs.chmodSync(ancestor, 0o775);
+
+      expect(() => ensureManagedGatewayStateRoot(target(stateDir))).toThrow(
+        `chmod go-w ${shellQuote(ancestor)}`,
+      );
+      expect(fs.existsSync(stateDir)).toBe(false);
+    } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
   });

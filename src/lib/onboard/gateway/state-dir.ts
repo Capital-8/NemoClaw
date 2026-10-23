@@ -110,7 +110,8 @@ function stateRootParentOwnershipFailure(stateDir: string): string | null {
       const chmodFixes = uid !== 0 && inspected.isDirectory() && inspected.uid === uid;
       if (!chmodFixes) return reason;
       const mode = (inspected.mode & 0o7777).toString(8).padStart(4, "0");
-      return `${reason}. It has mode ${mode}; remove group and other write permission (chmod go-w '${ancestor}'), then retry`;
+      const quotedAncestor = "'" + ancestor.replaceAll("'", "'\\''") + "'";
+      return `${reason}. It has mode ${mode}; remove group and other write permission (chmod go-w ${quotedAncestor}), then retry`;
     }
     const parent = path.dirname(ancestor);
     if (parent === ancestor) return null;
