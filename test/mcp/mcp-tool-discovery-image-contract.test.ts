@@ -214,7 +214,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "12c787ebf562b63523210030949a8227a44e4db389dc012a546c020049a3217f",
+      expectedHash: "23fc86eefdd37dcfce995c7f89ac9510abb792d95190aa53ca8ffdcc5e5e5591",
       relativePath: "managed-startup-direct-image-runtime.bundle",
     },
     {
@@ -222,15 +222,15 @@ describe("MCP tool discovery image contract", () => {
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
-      expectedHash: "724e7d681c32d786dab45d392c43311aff5083470f763bb385d428826f4393b0",
+      expectedHash: "ac66d8dd17bc3e9f52f7827edb65c81985acf204a721383bb5efbbab47bfbf8d",
       relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
     },
     {
-      expectedHash: "3aff9216ba63fa3238e0db9d907b8ef0bf68243445031247f1b3b0a58a022283",
+      expectedHash: "9062811af17af224d346f5884afb61b81b6a09e61c60d84cf75bf4ddfda4c4b7",
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "062b50521af428e3738d26aff88f3b58e64fbfd1f4af2088044b00eeb3bca607",
+      expectedHash: "f12a1ae443f5bdf764ac96f6f82d5fe2bfbddafded9dd8d3fbc9c220b5c2b3d9",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
@@ -560,7 +560,7 @@ case "$invocation" in
     ;;
   3)
     echo 'npm error code ENOTCACHED' >&2
-    echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
+    echo 'npm error request to https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz failed: cache mode is only-if-cached but no cached response is available.' >&2
     exit 1
     ;;
   4|5)
@@ -599,9 +599,9 @@ exit 0
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
           "ls --all --json --ignore-scripts --no-audit --no-fund --no-progress",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
-          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
+          "cache add https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.0.tgz",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
         ]);
       } finally {

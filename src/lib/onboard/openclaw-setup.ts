@@ -89,7 +89,11 @@ export interface OpenclawSetupDeps {
   step(n: number, total: number, msg: string): void;
   agentProductName(): string;
   shouldRestartNativeGateway(provider: string): boolean;
-  restartNativeGateway(sandboxName: string): Promise<
+  waitForGatewayStartup(sandboxName: string, gatewayName: string): Promise<boolean | null>;
+  restartNativeGateway(
+    sandboxName: string,
+    gatewayName?: string,
+  ): Promise<
     | { ok: true }
     | {
         ok: false;
@@ -115,6 +119,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     preferredInferenceApi: string | null = null,
     initializeNativeInferenceRoute = false,
     gatewayName?: string,
+    settleOpenclawPairingBeforeRestart?: () => Promise<boolean>,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
@@ -122,6 +127,11 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     if (initializeNativeInferenceRoute) {
       if (!gatewayName) {
         throw new Error("Initial OpenClaw inference route requires an explicit gateway name.");
+      }
+      if (settleOpenclawPairingBeforeRestart && !(await settleOpenclawPairingBeforeRestart())) {
+        throw new Error(
+          `External-image OpenClaw pairing did not settle after configuration for sandbox '${sandboxName}'.`,
+        );
       }
       await (deps.initializeOpenclawInferenceRoute ?? initializeDefaultOpenclawInferenceRoute)(
         sandboxName,
@@ -132,8 +142,17 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
         revalidateSandboxIdentity,
       );
     } else if (deps.shouldRestartNativeGateway(provider)) {
+      if (!gatewayName) {
+        throw new Error("Routed OpenClaw setup requires an explicit gateway name.");
+      }
+      revalidateSandboxIdentity?.(`wait for native OpenClaw gateway in sandbox '${sandboxName}'`);
+      if ((await deps.waitForGatewayStartup(sandboxName, gatewayName)) !== true) {
+        throw new Error(
+          `OpenClaw startup did not settle before routed gateway restart for sandbox '${sandboxName}'.`,
+        );
+      }
       revalidateSandboxIdentity?.(`restart native OpenClaw gateway in sandbox '${sandboxName}'`);
-      const restart = await deps.restartNativeGateway(sandboxName);
+      const restart = await deps.restartNativeGateway(sandboxName, gatewayName);
       if (!restart.ok) {
         throw new Error(
           `OpenClaw native gateway restart failed during setup (${restart.failureLayer}): ${restart.detail}`,
