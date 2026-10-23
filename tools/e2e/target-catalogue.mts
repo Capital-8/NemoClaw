@@ -655,6 +655,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     shard: "openclaw-balanced-weather",
     selector: "^common-egress.+C1.+$",
     owningPaths: [
+      "agents/openclaw/manifest.yaml",
+      "nemoclaw-blueprint/blueprint.yaml",
+      "nemoclaw/package.json",
       "nemoclaw/src/index.ts",
       "nemoclaw/src/denied-search-state.ts",
       "nemoclaw/src/runtime-context.ts",

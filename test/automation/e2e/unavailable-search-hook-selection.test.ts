@@ -6,6 +6,9 @@ import { expect, it } from "vitest";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 
 it.each([
+  "agents/openclaw/manifest.yaml",
+  "nemoclaw-blueprint/blueprint.yaml",
+  "nemoclaw/package.json",
   "nemoclaw/src/index.ts",
   "nemoclaw/src/denied-search-state.ts",
   "nemoclaw/src/runtime-context.ts",
