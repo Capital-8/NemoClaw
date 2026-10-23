@@ -265,12 +265,26 @@ export function reportsExactSandboxNotFound(
   );
 }
 
+// OpenShell reports a provider referenced only by a credential binding as a
+// wrapped precondition failure rather than NotAttached (#13644).
+const BINDING_ONLY_PROVIDER_PATTERN =
+  /^(?:[×x]\s+)?code:\s*'.*?',\s*message:\s*"credential_binding references provider '([^']+)', but that provider is not attached to the sandbox"$/iu;
+
+function bindingOnlyProviderName(output: string): string | null {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => stripIssueDecoration(line).replace(/^\|\s?/u, ""));
+  const text = stripDiagnosticPrefixes(joinDiagnosticLines(lines));
+  return BINDING_ONLY_PROVIDER_PATTERN.exec(text)?.[1] ?? null;
+}
+
 /** Accept an absent attachment only when the complete diagnostic matches this operation. */
 export function reportsProviderNotAttached(
   output: string,
   providerName: string,
   sandboxName: string,
 ): boolean {
+  if (bindingOnlyProviderName(output) === providerName) return true;
   const text = stripDiagnosticPrefixes(output.trim());
   if (/^(?:NotAttached|provider not attached to sandbox)[.!]?$/iu.test(text)) return true;
   const absent = /^provider (.+) was not attached to sandbox (.+?)[.!]?$/iu.exec(text);
