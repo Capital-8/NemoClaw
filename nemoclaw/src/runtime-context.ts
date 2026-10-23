@@ -122,7 +122,7 @@ export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: Nem
     const unavailableSearch =
       configuredSearchEnabled(api.config) === false &&
       typeof prompt === "string" &&
-      /(?:^|[.!?\n])\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:(?:search|browse|research)\s+(?:(?:the\s+)?(?:web|internet)|online)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+up))|search\s+(?:using|with|via)\s+(?:tavily|brave)|(?:find|look\s+up|locate|research)\s+[^.!?\n]*?\b(?:online|on\s+(?:the\s+)?(?:web|internet))(?=\s*(?:[.!?\n]|$|(?:and|for)\b)))\b/iu.test(
+      /(?:^|[.!?\n])\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:(?:search|research|browse(?!\s+(?:(?:the\s+)?(?:web|internet)|online)\b\s+(?:(?:using|with)\s+`?web_fetch`?\b|(?:and\s+)?(?:fetch|retrieve)\b)[^.!?]*https?:\/\/))\s+(?:(?:the\s+)?(?:web|internet)|online)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+up))|search\s+(?:using|with|via)\s+(?:tavily|brave)|(?:find|look\s+up|locate|research)\s+[^.!?\n]*?\b(?:online|on\s+(?:the\s+)?(?:web|internet))(?=\s*(?:[.!?\n]|$|(?:and|for)\b)))\b/iu.test(
         prompt,
       );
     return {
