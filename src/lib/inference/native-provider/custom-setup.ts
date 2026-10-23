@@ -87,11 +87,10 @@ export async function prepareCustomNativeProvider(input: {
   const bridge =
     input.provider === "compatible-anthropic-endpoint" &&
     isAllowedOpenShellSandboxBridgeUrl(new URL(endpointUrl));
-  if (bridge) {
-    const { isProtectedLocalInferencePort } = await import("../gateway/local-endpoint-ports");
-    if (isProtectedLocalInferencePort(Number(new URL(endpointUrl).port)))
-      throw new Error("The selected inference endpoint uses a protected host port.");
-  }
+  if (bridge)
+    throw new Error(
+      "Custom native inference cannot use an unverified OpenShell host bridge endpoint",
+    );
   const classified =
     input.provider === "compatible-anthropic-endpoint"
       ? classifyCustomAnthropicEndpoint(input.endpointUrl)
@@ -106,7 +105,7 @@ export async function prepareCustomNativeProvider(input: {
     previous.custom.api === api &&
     previous.custom.credentialEnv === input.credentialEnv;
   const admitted =
-    sameBinding || bedrock || bridge
+    sameBinding || bedrock
       ? undefined
       : await assertEndpointResolvesPublic(endpointUrl, input.lookup, {
           trustedPrivateHosts:

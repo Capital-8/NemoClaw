@@ -29,11 +29,9 @@ For AWS Bedrock Runtime, a host-local adapter holds the AWS credentials and Open
 ## Understand Native Endpoint Selection
 
 New qualifying custom endpoints use a sandbox-attached OpenShell provider.
-For a host service, use `http://host.openshell.internal:<port>` with an explicit port from `1024` through `65535`.
-The service must be reachable through the OpenShell host alias.
-NemoClaw rejects protected gateway, dashboard, agent API, Model Router, and credential-adapter ports, including their configured and recorded reservations.
-This host-service exception does not admit `host.docker.internal` or HTTPS on the OpenShell host alias.
-Public and explicitly trusted private endpoints retain their separate [security requirements](custom-endpoint-security).
+Use a public endpoint or an explicitly trusted private hostname or IP address.
+NemoClaw rejects an unverified Anthropic-compatible route that uses `host.openshell.internal` because the alias does not prove which process owns the selected port.
+Follow the [custom endpoint security requirements](custom-endpoint-security) for private destinations and address pinning.
 
 The native route binds the endpoint, API, and credential source to the selected sandbox.
 OpenShell supplies the host credential at egress; the agent receives a credential reference.

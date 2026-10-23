@@ -6,7 +6,7 @@ import YAML from "yaml";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { NativeProviderAttachment } from "./contract";
-import { boundCustomNativeProfile, customNativeProvider, isCustomNativeEndpoint } from "./custom";
+import { boundCustomNativeProfile, customNativeProvider } from "./custom";
 import { recordedNativeProviderAttachment } from "./recorded-selection";
 import { prepareCustomNativeProvider, usesCustomNativeOnboarding } from "./custom-setup";
 import { requireHostedProviderAttachment } from "./hosted-attachment";
@@ -173,7 +173,7 @@ describe("custom native endpoint ownership", () => {
     },
   );
 
-  it("binds the admitted Anthropic bridge to native policy without resolving a public hostname", async () => {
+  it("rejects an unverified Anthropic bridge before provider mutation", async () => {
     const h = harness();
     const bridge = {
       ...binding,
@@ -181,40 +181,12 @@ describe("custom native endpoint ownership", () => {
       endpointUrl: "http://host.openshell.internal:49152",
       allowedIps: [],
     };
-    h.select(bridge);
-    const receipt = await prepareCustomNativeProvider({ ...h.input, ...bridge });
-    const definition = customNativeProvider(bridge);
-    const policy = YAML.parse(
-      buildNativeHostedSandboxPolicy("network_policies: {}", receipt.providerName, receipt),
+    await expect(prepareCustomNativeProvider({ ...h.input, ...bridge })).rejects.toThrow(
+      "cannot use an unverified OpenShell host bridge endpoint",
     );
-    expect(policy.network_policies.native_hosted_inference.endpoints).toEqual([
-      {
-        host: "host.openshell.internal",
-        port: 49152,
-        protocol: "rest",
-        enforcement: "enforce",
-        rules: [
-          { allow: { method: "GET", path: "/v1/models" } },
-          { allow: { method: "POST", path: "/v1/chat/completions" } },
-        ],
-      },
-    ]);
-    expect(receipt.endpointUrl).toBe("http://host.openshell.internal:49152/v1");
     expect(h.lookup).not.toHaveBeenCalled();
-    expect(isCustomNativeEndpoint(bridge.provider, bridge.endpointUrl)).toBe(true);
-    expect(
-      getSandboxInferenceConfig(
-        "selected-model",
-        bridge.provider,
-        bridge.api,
-        true,
-        bridge.endpointUrl,
-        "hermes",
-      ).inferenceBaseUrl,
-    ).toBe(definition.endpointUrl);
-    expect(nativeHostedAgentConfig(bridge.provider, receipt.endpointUrl!)?.apiKey).toBe(
-      "openshell:resolve:env:COMPATIBLE_ANTHROPIC_API_KEY",
-    );
+    expect(h.adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(h.adapter.createProvider).not.toHaveBeenCalled();
   });
 
   it.each([

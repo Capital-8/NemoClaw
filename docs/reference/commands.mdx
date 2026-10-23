@@ -3835,8 +3835,9 @@ Recognized underscore spellings of canonical provider IDs and hyphenated install
 For example, `ollama_local` normalizes to `ollama-local`, `nvidia_prod` normalizes to `nvidia-prod`, and `open_router` normalizes to `openrouter-api`.
 NemoClaw preserves an unrecognized underscore spelling for normal provider validation.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
-When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
-Before it persists the route in the NemoClaw registry or agent config, the command sends a validation request from the target sandbox.
+NemoClaw rejects an unverified custom route that uses `host.openshell.internal` because the alias and port do not prove which host process owns the destination.
+Qualified OpenAI-compatible native-local routes and managed adapter routes retain their recorded host bridge endpoint.
+Use a public endpoint or an explicitly trusted private hostname or IP address.
 The output limit is 16 tokens for ordinary providers and 256 tokens for Google Gemini.
 When the switch changes the API family and that request returns HTTP `400` or `404`, NemoClaw retries up to two times after delays of 2 and 4 seconds.
 NemoClaw uses the same retry schedule when validation fails before it receives an HTTP status, such as while the gateway route is reloading.
@@ -3867,7 +3868,7 @@ When you supply endpoint options, missing or `inference set` provenance and ever
 For public HTTP URLs, NemoClaw stores the validated IP address to prevent DNS rebinding.
 For a DNS-backed HTTPS URL, NemoClaw routes the endpoint through a local HTTPS Pin Runtime adapter that terminates a pinned, SNI-correct outbound connection to the real upstream hostname; the sandbox and the persisted registry only ever see a local `host.openshell.internal` route, never the real hostname.
 HTTPS IP-literal URLs remain supported and do not need the adapter.
-NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
+NemoClaw reserves `host.openshell.internal` for qualified OpenAI-compatible native-local routes and routes created from recorded runtime authority, such as managed credential and HTTPS pin adapters.
 `--credential-env` may also be supplied for compatible provider metadata; supported `--inference-api` values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 
 </AgentOnly>

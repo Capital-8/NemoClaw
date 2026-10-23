@@ -28,10 +28,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import {
   type CompatibleAnthropicSwitchBinding,
-  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
 } from "../fixtures/compatible-anthropic-switch.ts";
+import { discoverHostAddress } from "../fixtures/host-address.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
@@ -78,6 +78,7 @@ export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-c
 export const RUNTIME_SWITCH_API =
   resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
+const SWITCH_NATIVE_CUSTOM = process.env.NEMOCLAW_SWITCH_NATIVE_CUSTOM === "1";
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 export const PROXY_RESOLUTION_PROVIDER = "compatible-endpoint";
 export const PROXY_RESOLUTION_MODEL = "nvidia/nemotron-proxy-resolution-e2e";
@@ -528,7 +529,11 @@ function openAiSseResponse(res: http.ServerResponse, chunks: unknown[]): void {
   );
 }
 
-async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProvider> {
+async function startMockAnthropicProvider(
+  host: HostCliClient,
+): Promise<MockCompatibleAnthropicProvider> {
+  const trustedPrivateHost = (await discoverHostAddress(host, "native-anthropic-endpoint-address"))
+    .address;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://mock.local");
     if (req.method === "GET" && url.pathname === "/health")
@@ -651,18 +656,18 @@ async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProv
     throw new Error("mock Anthropic provider did not expose a TCP port");
   }
   return {
-    endpointUrl: compatibleAnthropicMockEndpointUrl((address as AddressInfo).port),
+    endpointUrl: `http://${trustedPrivateHost}:${String((address as AddressInfo).port)}`,
     close: () => closeServer(server),
   };
 }
 
 export async function prepareCompatibleAnthropicSwitchBinding(
-  _host: HostCliClient,
+  host: HostCliClient,
   cleanup: { add(name: string, run: () => Promise<void> | void): void },
 ): Promise<CompatibleAnthropicSwitchBinding | null> {
   if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint" || SWITCH_API !== "anthropic-messages")
     return null;
-  const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider() : undefined;
+  const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider(host) : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
   const binding = compatibleAnthropicSwitchBinding(
     process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "",
@@ -735,6 +740,13 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: `hermes-inference-set-${attempt}`,
         env: env(undefined, {
           ...compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null),
+          ...(SWITCH_NATIVE_CUSTOM && options.compatibleBinding
+            ? {
+                NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: new URL(
+                  options.compatibleBinding.endpointUrl,
+                ).hostname,
+              }
+            : {}),
           ...(options.publicNvidiaApiKey
             ? { NVIDIA_INFERENCE_API_KEY: options.publicNvidiaApiKey }
             : {}),

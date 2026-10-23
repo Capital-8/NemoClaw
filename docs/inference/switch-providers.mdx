@@ -121,8 +121,9 @@ Follow the printed rebuild hint before relying on the running agent.
 
 Use `--no-verify` only when OpenShell cannot verify the target provider at switch time and you have already confirmed its provider and credential.
 This flag does not bypass shared-gateway compatibility checks.
-When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
-It then sends a validation request from the target sandbox before persisting the route in NemoClaw state.
+NemoClaw rejects an unverified custom route that uses `host.openshell.internal` because the alias and port do not prove which host process owns the destination.
+Qualified OpenAI-compatible native-local routes and managed adapter routes retain their recorded host bridge endpoint.
+Use a public endpoint or an explicitly trusted private hostname or IP address.
 The output limit is 16 tokens for ordinary providers and 256 tokens for Google Gemini.
 Before sandbox verification, NemoClaw waits 6 seconds when the provider, model, or provider attachment changes.
 This wait also applies when a custom endpoint change replaces the attachment but keeps the provider and model names.

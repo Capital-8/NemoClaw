@@ -574,7 +574,7 @@ describe("Hermes native gateway credential refresh", () => {
 });
 
 describe("custom native inference selection", () => {
-  it("switches Hermes from its native local attachment to an Anthropic bridge without shared routing", async () => {
+  it("rejects an unverified Anthropic bridge before replacing native local inference", async () => {
     const binding = { ...nativeLocalTestReceipt(), agent: "hermes" as const };
     const local = {
       ...binding,
@@ -611,37 +611,26 @@ describe("custom native inference selection", () => {
     });
     attached.get("alpha")!.add(local.providerName);
     existing.add(local.providerName);
-    await runInferenceSet(
-      {
-        provider: bridge.logicalProvider,
-        model: "mock-anthropic-model",
-        endpointUrl: bridge.custom.endpointUrl,
-        inferenceApi: "openai-completions",
-      },
-      deps,
-    );
-    expect(entry.nativeHostedProviderAttachment?.custom).toEqual(bridge.custom);
-    expect(entry.nativeLocalProviderAttachment).toBeUndefined();
-    expect([...attached.get("alpha")!]).toEqual([bridge.providerName]);
+    const before = structuredClone(entry);
+    await expect(
+      runInferenceSet(
+        {
+          provider: bridge.logicalProvider,
+          model: "mock-anthropic-model",
+          endpointUrl: bridge.custom.endpointUrl,
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("cannot use an unverified OpenShell host bridge endpoint");
+    expect(entry).toEqual(before);
+    expect([...attached.get("alpha")!]).toEqual([local.providerName]);
     expect([...attached.get("beta")!]).toEqual(["unrelated-provider"]);
     expect(deps.inferenceRouteObserver.observeInferenceRoute).not.toHaveBeenCalled();
-    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        nativeProvider: true,
-        nativeEndpointUrl: bridge.endpoint,
-        preferredInferenceApi: "openai-completions",
-      }),
-    );
-    expect(JSON.stringify(deps.calls.writeSandboxConfig.mock.calls)).toContain(
-      "${COMPATIBLE_ANTHROPIC_API_KEY}",
-    );
-    expect(JSON.stringify(deps.calls.writeSandboxConfig.mock.calls)).not.toContain(
-      "canary-host-secret",
-    );
-    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
-    deps.resolveCredentialValue = () => "";
-    await runInferenceSet({ provider: bridge.logicalProvider, model: "another-model" }, deps);
-    expect(calls.updateProvider).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(calls.importProviderProfile).not.toHaveBeenCalled();
+    expect(calls.createProvider).not.toHaveBeenCalled();
   });
   const custom = customNativeProvider({
     provider: "compatible-endpoint",
