@@ -656,6 +656,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     selector: "^common-egress.+C1.+$",
     owningPaths: [
       "nemoclaw/src/index.ts",
+      "nemoclaw/src/denied-search-state.ts",
       "nemoclaw/src/runtime-context.ts",
       "src/lib/openclaw/agent-json-provenance.ts",
     ],

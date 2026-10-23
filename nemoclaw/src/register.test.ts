@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type MockInstance,
+  onTestFinished,
+  vi,
+} from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
 
 vi.mock("./runtime-context.js", () => ({
@@ -9,6 +18,19 @@ vi.mock("./runtime-context.js", () => ({
     api.on("before_prompt_build", () => undefined);
   }),
 }));
+
+// A smaller supported limit exercises overflow with a direct three-turn setup.
+vi.mock("./denied-search-state.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./denied-search-state.js")>();
+  return {
+    ...actual,
+    DeniedSearchState: class extends actual.DeniedSearchState {
+      constructor(onCapacity: () => void) {
+        super(onCapacity, 2);
+      }
+    },
+  };
+});
 
 import register, { getPluginConfig } from "./index.js";
 
@@ -430,6 +452,10 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     register(api);
     const handler = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")?.[1];
     expect(handler).toBeDefined();
+    onTestFinished(async () => {
+      const stop = vi.mocked(api.on).mock.calls.find(([name]) => name === "gateway_stop")?.[1];
+      await stop?.({}, {});
+    });
     return { api, handler: handler! };
   }
 
@@ -663,6 +689,66 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       expect(handler(read, { runId: "new-run" })).toMatchObject({ block: true });
     } finally {
       now.mockRestore();
+    }
+  });
+
+  it("fails closed at identity capacity and clears owned timers on shutdown", async () => {
+    vi.useFakeTimers();
+    try {
+      const { api, handler } = searchHook(false);
+      expect(handler({ toolName: "web_search", params: {}, runId: "denied-first" })).toMatchObject({
+        block: true,
+      });
+      expect(handler({ toolName: "web_search", params: {}, runId: "denied-second" })).toMatchObject(
+        { block: true },
+      );
+      expect(
+        handler({ toolName: "web_search", params: {}, runId: "denied-overflow" }),
+      ).toMatchObject({ block: true });
+      expect(api.logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("identity capacity reached"),
+      );
+      expect(vi.getTimerCount()).toBe(1);
+      expect(handler({ toolName: "read", params: {}, runId: "denied-first" })).toMatchObject({
+        block: true,
+      });
+      expect(handler({ toolName: "read", params: {}, runId: "denied-overflow" })).toMatchObject({
+        block: true,
+      });
+      expect(handler({ toolName: "read", params: {}, runId: "ordinary-run" })).toMatchObject({
+        block: true,
+      });
+      expect(handler({ toolName: "read", params: {} })).toMatchObject({ block: true });
+      const stop = vi.mocked(api.on).mock.calls.find(([name]) => name === "gateway_stop")?.[1];
+      expect(stop).toBeDefined();
+      await stop!({}, {});
+      expect(vi.getTimerCount()).toBe(0);
+      expect(handler({ toolName: "read", params: {}, runId: "ordinary-run" })).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers from identity capacity when search is reenabled", () => {
+    vi.useFakeTimers();
+    try {
+      const { api, handler } = searchHook(false);
+      expect(handler({ toolName: "web_search", params: {}, runId: "denied-first" })).toMatchObject({
+        block: true,
+      });
+      expect(handler({ toolName: "web_search", params: {}, runId: "denied-second" })).toMatchObject(
+        { block: true },
+      );
+      expect(
+        handler({ toolName: "web_search", params: {}, runId: "denied-overflow" }),
+      ).toMatchObject({ block: true });
+      api.config.tools = { web: { search: { enabled: true } } };
+      expect(handler({ toolName: "read", params: {}, runId: "ordinary-run" })).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+      api.config.tools = { web: { search: { enabled: false } } };
+      expect(handler({ toolName: "read", params: {}, runId: "ordinary-run" })).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
     }
   });
 

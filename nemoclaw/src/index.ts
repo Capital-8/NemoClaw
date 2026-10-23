@@ -12,6 +12,7 @@
  */
 
 import { renderBox } from "./banner.js";
+import { DeniedSearchState } from "./denied-search-state.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import { readNativeRoute } from "./onboard/native-route.js";
 import { getPluginConfig } from "./plugin-config.js";
@@ -236,24 +237,16 @@ export { getPluginConfig };
 /** Tool names that can write/modify files and should be scanned for secrets. */
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
 
-// OpenClaw clamps even per-run timeout overrides to the Node timer maximum.
-// Retain denial through that whole active window plus one minute for cleanup.
-const SEARCH_DENIAL_RETENTION_MS = 2_147_483_647 + 60_000;
-
 function blocksDisabledSearch(
   config: OpenClawConfig,
   event: BeforeToolCallEvent,
-  deniedSearchRuns: Map<string, number>,
+  deniedSearchRuns: DeniedSearchState,
 ): boolean {
-  const now = Date.now();
-  for (const [identity, expiresAt] of deniedSearchRuns) {
-    if (expiresAt <= now) deniedSearchRuns.delete(identity);
-  }
   const tools = config.tools;
   const web = isToolParams(tools) ? tools["web"] : undefined;
   const search = isToolParams(web) ? web["search"] : undefined;
   if (!isToolParams(search) || search["enabled"] !== false) {
-    if (event.runId) deniedSearchRuns.delete(event.runId);
+    deniedSearchRuns.clear();
     return false;
   }
 
@@ -271,7 +264,7 @@ function blocksDisabledSearch(
     /^(?:exec|execute|shell|web_fetch|browser)$/u.test(effectiveTarget) &&
     /https?:\/\/(?:api\.tavily\.com|(?:api\.)?search\.brave\.com)(?:[/:?"\s]|$)/iu.test(probe);
   if (searchTool || searchDiscovery || providerProbe) {
-    if (event.runId) deniedSearchRuns.set(event.runId, now + SEARCH_DENIAL_RETENTION_MS);
+    if (event.runId) deniedSearchRuns.deny(event.runId);
     return true;
   }
 
@@ -279,11 +272,15 @@ function blocksDisabledSearch(
   // Identity-less calls cannot safely correlate turns, so substitutes fail closed.
   const substituteTool =
     /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
-  return (!event.runId || deniedSearchRuns.has(event.runId)) && substituteTool.test(target);
+  return deniedSearchRuns.blocks(event.runId) && substituteTool.test(target);
 }
 
 export default function register(api: OpenClawPluginApi): void {
-  const deniedSearchRuns = new Map<string, number>();
+  const deniedSearchRuns = new DeniedSearchState(() => {
+    api.logger.warn(
+      "Disabled-search identity capacity reached; substitute tools are blocked until outstanding turn deadlines expire or the gateway restarts.",
+    );
+  });
   // 1. Register /nemoclaw slash command (chat interface)
   api.registerCommand({
     name: "nemoclaw",
@@ -375,6 +372,10 @@ export default function register(api: OpenClawPluginApi): void {
         };
       },
     );
+    api.on("gateway_stop", (): undefined => {
+      deniedSearchRuns.clear();
+      return undefined;
+    });
     api.on("agent_end", (...args: readonly PluginValue[]): undefined => {
       // Lifecycle context may carry more identity than an older tool envelope.
       // Clear matching session fallback state without changing unidentified policy.

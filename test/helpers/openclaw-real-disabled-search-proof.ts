@@ -44,6 +44,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       registry: Registry,
     ) => void;
     const runner = (await load("hook-runner-global-", "getGlobalHookRunner")) as () => {
+      runGatewayStop(event: object, ctx: object): Promise<void>;
       runAgentEnd(
         event: { success: boolean; messages: unknown[] },
         ctx: ToolContext,
@@ -123,7 +124,11 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       await call("web_search", {}, "search-4");
       assert.equal(sideEffects, 2, "enabled search still executes");
     } finally {
-      reset();
+      try {
+        await runner().runGatewayStop({}, {});
+      } finally {
+        reset();
+      }
     }
   } finally {
     if (previousState === undefined) delete process.env.OPENCLAW_STATE_DIR;
