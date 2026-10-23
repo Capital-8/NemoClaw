@@ -13,8 +13,7 @@ const CREDENTIAL_KEY = /^[A-Z][A-Z0-9_]{0,127}$/u;
 
 /** Build a stable identifier from validated names, never from credential values. */
 function profileIdentityDigest(value: string): string {
-  // lgtm[js/insufficient-password-hash] Input is validated identifier names, never secrets.
-  return createHash("sha256").update(value).digest("hex");
+  return createHash("sha256").update(value).digest("hex"); // codeql[js/insufficient-password-hash] Validated identifier names, never credential values.
 }
 
 function familyKeys(primary: string, keys: readonly string[]): string[] {

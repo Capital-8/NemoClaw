@@ -105,7 +105,7 @@ export function nativeLocalIdentity(binding: NativeLocalBinding, policyVersion: 
         ...(normalized.agent === "hermes" ? [normalized.agent] : []),
       ]),
     )
-    .digest("hex")
+    .digest("hex") // codeql[js/insufficient-password-hash] Stable identity over validated configuration fields, never a password.
     .slice(0, 24);
   const profileId = `nemoclaw-local-${normalized.authMode}-v1-${profileHash}`;
   const instanceHash = createHash("sha256")
@@ -117,7 +117,7 @@ export function nativeLocalIdentity(binding: NativeLocalBinding, policyVersion: 
         ...(normalized.transactionId ? [normalized.transactionId] : []),
       ]),
     )
-    .digest("hex")
+    .digest("hex") // codeql[js/insufficient-password-hash] Stable identity over validated configuration fields, never a password.
     .slice(0, 24);
   return { profileId, providerName: `nemoclaw-local-v1-${instanceHash}` };
 }

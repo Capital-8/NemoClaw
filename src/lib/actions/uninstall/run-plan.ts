@@ -601,7 +601,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
           return false;
         }
       }),
-    log: deps.log ?? ((message) => console.log(message)),
+    log: deps.log ?? ((message) => console.log(message)), // codeql[js/clear-text-logging] Intentional uninstall status and path output; credential values stay outside this logging callback.
     openRegularFile: deps.openRegularFile ?? openRegularFileNoFollow,
     platform: deps.platform ?? process.platform,
     readProcessArgv: deps.readProcessArgv,

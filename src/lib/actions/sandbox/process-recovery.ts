@@ -2515,7 +2515,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         checked: true,
         wasRunning: true,
         recovered: false,
-        forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
+        forwardRecovered: true,
       };
     }
     const dashboardForwardRecovered = await measureAsync("forward", () =>

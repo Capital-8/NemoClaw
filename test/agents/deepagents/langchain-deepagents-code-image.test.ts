@@ -797,7 +797,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain(`DCODE_CANONICAL_PATH="${DCODE_CANONICAL_PATH}"`);
     expect(pythonEgressCheck).not.toContain("mktemp");
     for (const expected of [
-      'grep -Fxq "PATH=${DCODE_CANONICAL_PATH}"',
+      `grep -Fxq "PATH=\${DCODE_CANONICAL_PATH}"`,
       'printf "PYTHON_REAL=%s\\n"',
       "^PYTHON=/opt/venv/bin/python3$",
       "^PIP=/opt/venv/bin/pip3$",
