@@ -124,6 +124,8 @@ describe("platform evidence workflow", () => {
       timeout_minutes: number;
     }>;
     const firstShard = shards.find((entry) => entry.shard === 1)!;
+    // Reserve time for shard-1 root contracts, runtime startup and live-evidence upload.
+    const shardOneReserveMinutes = 30;
     const nonLiveMinutes = Math.max(
       ...shards.filter((entry) => entry.shard !== 1).map((entry) => entry.timeout_minutes),
     );
@@ -139,7 +141,8 @@ describe("platform evidence workflow", () => {
       nonLiveMinutes +
         FULL_E2E_TEST_TIMEOUT_MINUTES +
         dashboardMinutes +
-        2 * FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES,
+        2 * FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES +
+        shardOneReserveMinutes,
     );
   });
 
