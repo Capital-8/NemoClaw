@@ -59,14 +59,18 @@ export function getRuntimeSummary(pluginConfig: NemoClawConfig): RuntimeSummary 
   };
 }
 
-function searchContext(config: OpenClawConfig): string[] {
+function configuredSearchEnabled(config: OpenClawConfig): unknown {
   // Read only the enable flag. Provider configuration can contain credentials.
   const tools = config.tools;
   const web = tools && typeof tools === "object" && !Array.isArray(tools) ? tools.web : undefined;
   const search = web && typeof web === "object" && !Array.isArray(web) ? web.search : undefined;
-  const enabled =
-    search && typeof search === "object" && !Array.isArray(search) ? search.enabled : undefined;
+  return search && typeof search === "object" && !Array.isArray(search)
+    ? search.enabled
+    : undefined;
+}
 
+function searchContext(config: OpenClawConfig): string[] {
+  const enabled = configuredSearchEnabled(config);
   let availability = "Web search availability is not confirmed by OpenClaw configuration.";
   if (enabled === false) {
     availability =
@@ -116,10 +120,23 @@ function buildRuntimeContextText(summary: RuntimeSummary, config: OpenClawConfig
 }
 
 /**
- * Prepends sandbox and search context in a `<nemoclaw-runtime>` block each turn.
+ * Prepends runtime context and withholds tools for explicit disabled-search turns.
  */
 export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: NemoClawConfig): void {
-  api.on("before_prompt_build", () => ({
-    prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig), api.config),
-  }));
+  api.on("before_prompt_build", (event) => {
+    const prompt =
+      event && typeof event === "object" && !Array.isArray(event) ? event.prompt : undefined;
+    // A tool-call denial happens after the model has already attempted discovery.
+    // Narrow only explicit search turns; ordinary local work and direct fetches keep their tools.
+    const unavailableSearch =
+      configuredSearchEnabled(api.config) === false &&
+      typeof prompt === "string" &&
+      /(?:^|[.!?\n])\s*(?:please\s+)?(?:search\s+(?:the\s+)?(?:web|internet)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+up))|search\s+(?:using|with|via)\s+(?:tavily|brave))\b/iu.test(
+        prompt,
+      );
+    return {
+      prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig), api.config),
+      ...(unavailableSearch ? { toolsAllow: [] } : {}),
+    };
+  });
 }

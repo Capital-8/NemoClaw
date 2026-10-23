@@ -44,6 +44,10 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       registry: Registry,
     ) => void;
     const runner = (await load("hook-runner-global-", "getGlobalHookRunner")) as () => {
+      runBeforePromptBuild(
+        event: { prompt: string; messages: unknown[] },
+        ctx: ToolContext,
+      ): Promise<{ toolsAllow?: string[] }>;
       runGatewayStop(event: object, ctx: object): Promise<void>;
       runAgentEnd(
         event: { success: boolean; messages: unknown[] },
@@ -65,6 +69,19 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       ctx: ToolContext & { config: OpenClawPluginApi["config"] },
       options: { emitDiagnostics: boolean },
     ) => Tool;
+    const applyToolAllowlist = (await load(
+      "attempt-tool-construction-plan-",
+      "applyEmbeddedAttemptToolsAllow",
+    )) as (tools: { name: string }[], toolsAllow?: string[]) => { name: string }[];
+    const promptToolPolicy = (await load(
+      "tool-surface-plan-",
+      "createAgentHarnessPromptToolPolicy",
+    )) as (params: { tools: { name: string }[] }) => {
+      apply(input: { toolsAllow?: string[] }): {
+        tools: { name: string }[];
+        callableToolNames: string[];
+      };
+    };
     const registry: Registry = { plugins: [], hooks: [], typedHooks: [], trustedToolPolicies: [] };
     const config = { tools: { web: { search: { enabled: false } } } };
     const logger = { info() {}, warn() {}, error() {}, debug() {} };
@@ -83,6 +100,48 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
     });
     initialize(registry);
     try {
+      const availableTools = ["tool_search", "tool_call", "read", "exec", "web_fetch"].map(
+        (name) => ({ name }),
+      );
+      const searchPrompt =
+        "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.";
+      const searchTurn = await runner().runBeforePromptBuild(
+        { prompt: searchPrompt, messages: [] },
+        { runId: "search-prompt" },
+      );
+      assert.deepEqual(
+        searchTurn.toolsAllow,
+        [],
+        "source plugin narrows the real prompt hook result",
+      );
+      const submitted = promptToolPolicy({ tools: availableTools }).apply(searchTurn);
+      assert.deepEqual(submitted.tools, [], "real prompt policy submits no tools");
+      assert.deepEqual(submitted.callableToolNames, [], "discovery controls are not callable");
+      assert.deepEqual(
+        applyToolAllowlist(availableTools, searchTurn.toolsAllow),
+        [],
+        "real runtime submits no discovery or substitute tools",
+      );
+      const localTurn = await runner().runBeforePromptBuild(
+        { prompt: "Read /sandbox/README.md.", messages: [] },
+        { runId: "local-prompt" },
+      );
+      assert.deepEqual(
+        applyToolAllowlist(availableTools, localTurn.toolsAllow),
+        availableTools,
+        "the next local turn keeps its tools",
+      );
+      config.tools.web.search.enabled = true;
+      const enabledTurn = await runner().runBeforePromptBuild(
+        { prompt: searchPrompt, messages: [] },
+        { runId: "enabled-prompt" },
+      );
+      assert.deepEqual(
+        applyToolAllowlist(availableTools, enabledTurn.toolsAllow),
+        availableTools,
+        "configuration recovery keeps search tools",
+      );
+      config.tools.web.search.enabled = false;
       let sideEffects = 0;
       async function call(name: string, ctx: ToolContext, id: string): Promise<ToolResult> {
         const tool = wrap(

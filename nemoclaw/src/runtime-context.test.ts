@@ -111,6 +111,68 @@ describe("registerRuntimeContext", () => {
     mockedLoadState.mockReturnValue(blankState());
   });
 
+  it.each([
+    "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.\nFormat the answer as JSON with searchStatus (available, unavailable, or unknown) and installationDocumentation (an object with title and url, or null).",
+    "Search the web for NemoClaw installation documentation.",
+    "Search using Brave for today's release notes.",
+    "Run a web_search for the official docs.",
+  ])(
+    "withholds tools for an explicit search request when search is disabled: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).toMatchObject({
+        toolsAllow: [],
+      });
+    },
+  );
+
+  it.each([
+    "Read /sandbox/README.md.",
+    "Search local files for the installation instructions.",
+    "Fetch https://www.wikidata.org/wiki/Q30 with web_fetch.",
+    "Run curl https://wttr.in/:help.",
+    "Edit the Tavily configuration file.",
+    "Run exactly this shell command: curl https://wttr.in/:help.\nDo not use web_fetch, web_search, or any other weather provider.",
+    "Use web_fetch to fetch https://www.wikidata.org/wiki/Q30. Do not use web_search, Brave, or Tavily.",
+  ])("preserves tools for ordinary work when search is disabled: %s", async (prompt) => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
+
+    expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+      "toolsAllow",
+    );
+  });
+
+  it.each([true, undefined, "false"])(
+    "preserves search tools unless configuration disables them: %s",
+    async (enabled) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(
+        await api._trigger("before_prompt_build", { prompt: "Search the web for NemoClaw." }, {}),
+      ).not.toHaveProperty("toolsAllow");
+    },
+  );
+
+  it("releases the tool restriction on the next local turn and after configuration recovery", async () => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
+    const request = { prompt: "Use Tavily to search for official documentation." };
+    expect(await api._trigger("before_prompt_build", request, {})).toHaveProperty("toolsAllow", []);
+    expect(
+      await api._trigger("before_prompt_build", { prompt: "Read README.md." }, {}),
+    ).not.toHaveProperty("toolsAllow");
+    api.config = { tools: { web: { search: { enabled: true } } } };
+    expect(await api._trigger("before_prompt_build", request, {})).not.toHaveProperty("toolsAllow");
+  });
+
   it("registers a before_prompt_build hook", () => {
     const api = createMockApi();
 

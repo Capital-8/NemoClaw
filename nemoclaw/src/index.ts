@@ -165,6 +165,7 @@ export interface BeforeToolCallResult {
 
 /** Return value from a before_prompt_build hook. */
 export interface BeforePromptBuildResult {
+  toolsAllow?: string[];
   systemPrompt?: string;
   prependContext?: string;
   appendContext?: string;
