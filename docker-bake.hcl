@@ -15,13 +15,6 @@ variable "AGENT_PLATFORM" {
   }
 }
 
-variable "PLATFORM_HARNESSES" {
-  default = {
-    "linux/arm64" = ["deepagents", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "openclaw", "hermes", "pi"]
-    "linux/amd64" = ["deepagents", "openclaw"]
-  }
-}
-
 variable "HARNESSES" {
   default = {
     deepagents     = { stage = "generic", adapter = "deepagents", adapter_id = "nvidia.fabric.langchain.deepagents", extra = "deepagents" }
@@ -34,6 +27,7 @@ variable "HARNESSES" {
     openclaw       = { stage = "openclaw", adapter = "openclaw", adapter_id = "nvidia.fabric.openclaw", extra = "openclaw" }
     hermes         = { stage = "hermes", adapter = "hermes", adapter_id = "nvidia.fabric.hermes", extra = "hermes-agent" }
     pi             = { stage = "pi", adapter = "", adapter_id = "nvidia.fabric.pi", extra = "" }
+    opencode       = { stage = "opencode", adapter = "", adapter_id = "nvidia.fabric.opencode", extra = "" }
   }
 }
 
@@ -50,7 +44,7 @@ target "_fabric" {
 target "agents" {
   inherits = ["_fabric"]
   name = harness
-  matrix = { harness = PLATFORM_HARNESSES[AGENT_PLATFORM] }
+  matrix = { harness = keys(HARNESSES) }
   target = HARNESSES[harness].stage
   args = {
     HARNESS = harness
@@ -58,6 +52,8 @@ target "agents" {
     # The Fabric extra whose locked dependencies the image installs.
     EXTRA = HARNESSES[harness].extra
     ADAPTER_ID = HARNESSES[harness].adapter_id
+    # The stage that `cargo images build` catalogs and labels.
+    STAGE = HARNESSES[harness].stage
   }
   tags = ["${IMAGE_PREFIX}:${harness}"]
 }
@@ -140,7 +136,7 @@ target "proxy-tests" {
 target "dummy" {
   inherits = ["_fabric"]
   target = "dummy"
-  args = { HARNESS = "dummy" }
+  args = { HARNESS = "dummy", STAGE = "dummy" }
   tags = ["${IMAGE_PREFIX}:dummy"]
 }
 
