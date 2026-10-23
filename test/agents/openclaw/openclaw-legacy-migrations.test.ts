@@ -110,6 +110,51 @@ describe("empty Telegram thread-binding restoration", () => {
     expect(fs.readFileSync(`${proof.file}.original`, "utf8")).toBe('{"version":1,"bindings":[]}');
     expect(() => archiveEmptyTelegramThreadBindings(proof.state)).toThrow(/Incomplete/);
   });
+
+  it("retains a pending archive replaced with a symlink before verification", () => {
+    const proof = source('{"version":1,"bindings":[]}');
+    const outside = path.join(proof.state, "outside.json");
+    fs.writeFileSync(outside, "outside-state");
+    const originalRename = fs.renameSync;
+    vi.spyOn(fs, "renameSync").mockImplementationOnce((from, to) => {
+      originalRename(from, to);
+      originalRename(to, `${String(to)}.original`);
+      fs.symlinkSync(outside, to);
+    });
+    expect(() => archiveEmptyTelegramThreadBindings(proof.state)).toThrow();
+    const pending = fs.readdirSync(proof.directory).find((name) => name.startsWith(".nemoclaw-"))!;
+    expect(pending).not.toMatch(/\.migrated$/);
+    expect(fs.readlinkSync(path.join(proof.directory, pending, path.basename(proof.file)))).toBe(
+      outside,
+    );
+    expect(fs.readFileSync(outside, "utf8")).toBe("outside-state");
+    expect(() => archiveEmptyTelegramThreadBindings(proof.state)).toThrow(/Incomplete/);
+  });
+
+  it("retains a pending archive when its pathname changes after descriptor validation", () => {
+    const proof = source('{"version":1,"bindings":[]}');
+    const originalRead = fs.readFileSync;
+    vi.spyOn(fs, "readFileSync")
+      .mockImplementationOnce(originalRead)
+      .mockImplementationOnce((file, ...args) => {
+        expect(typeof file).toBe("number");
+        const bytes = originalRead(file, ...args);
+        const pending = fs
+          .readdirSync(proof.directory)
+          .find((name) => name.startsWith(".nemoclaw-"))!;
+        const archived = path.join(proof.directory, pending, path.basename(proof.file));
+        fs.renameSync(archived, `${archived}.original`);
+        fs.writeFileSync(archived, "replacement-state");
+        return bytes;
+      });
+    expect(() => archiveEmptyTelegramThreadBindings(proof.state)).toThrow(/archive changed/);
+    const pending = fs.readdirSync(proof.directory).find((name) => name.startsWith(".nemoclaw-"))!;
+    expect(pending).not.toMatch(/\.migrated$/);
+    expect(
+      fs.readFileSync(path.join(proof.directory, pending, path.basename(proof.file)), "utf8"),
+    ).toBe("replacement-state");
+    expect(() => archiveEmptyTelegramThreadBindings(proof.state)).toThrow(/Incomplete/);
+  });
 });
 
 function fixture(

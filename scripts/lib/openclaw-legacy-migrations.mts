@@ -303,14 +303,22 @@ export function archiveEmptyTelegramThreadBindings(stateDir: string): void {
   for (const name of entries) {
     if (!/^thread-bindings-.+\.json$/.test(name)) continue;
     const source = path.join(directory, name);
-    const entry = fs.lstatSync(source);
-    if (!entry.isFile() || entry.nlink !== 1) continue;
-    const fd = fs.openSync(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+    let fd: number;
+    try {
+      fd = fs.openSync(source, flags);
+    } catch (error) {
+      // Leave symlinks for the native retirement detector without following them.
+      if ((error as NodeJS.ErrnoException).code === "ELOOP") continue;
+      throw error;
+    }
     try {
       const opened = fs.fstatSync(fd);
+      if (!opened.isFile() || opened.nlink !== 1) continue;
+      const entry = fs.lstatSync(source);
       if (
-        !opened.isFile() ||
-        opened.nlink !== 1 ||
+        !entry.isFile() ||
+        entry.nlink !== 1 ||
         opened.ino !== entry.ino ||
         opened.dev !== entry.dev
       )
@@ -322,15 +330,29 @@ export function archiveEmptyTelegramThreadBindings(stateDir: string): void {
       const pending = fs.mkdtempSync(path.join(directory, EMPTY_ARCHIVE_PREFIX));
       const archived = path.join(pending, name);
       fs.renameSync(source, archived);
-      const moved = fs.lstatSync(archived);
-      if (
-        !moved.isFile() ||
-        moved.nlink !== 1 ||
-        moved.ino !== opened.ino ||
-        moved.dev !== opened.dev ||
-        !fs.readFileSync(archived).equals(bytes)
-      ) {
-        throw new Error("Telegram source changed during archival; retained for recovery");
+      const archivedFd = fs.openSync(archived, flags);
+      try {
+        const moved = fs.fstatSync(archivedFd);
+        if (
+          !moved.isFile() ||
+          moved.nlink !== 1 ||
+          moved.ino !== opened.ino ||
+          moved.dev !== opened.dev ||
+          !fs.readFileSync(archivedFd).equals(bytes)
+        ) {
+          throw new Error("Telegram source changed during archival; retained for recovery");
+        }
+        const retained = fs.lstatSync(archived);
+        if (
+          !retained.isFile() ||
+          retained.nlink !== 1 ||
+          retained.ino !== moved.ino ||
+          retained.dev !== moved.dev
+        ) {
+          throw new Error("Telegram archive changed during verification; retained for recovery");
+        }
+      } finally {
+        fs.closeSync(archivedFd);
       }
       fs.renameSync(pending, `${pending}.migrated`);
     } finally {
