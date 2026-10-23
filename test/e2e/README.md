@@ -21,7 +21,9 @@ that malformed native inference evidence stops connect before session attach;
 native response bodies remain absent from diagnostics.
 
 The `ubuntu-repo-cloud-langchain-deepagents-code` target requires `TAVILY_API_KEY` in addition
-to its inference credential. Its Tavily check enables `NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1`,
+to its inference credential. Dispatch this target through the canonical main workflow.
+Planning rejects runs that cannot receive the Tavily credential under the workflow's trust rules.
+Its Tavily check enables `NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1`,
 registers a uniquely named disposable provider on the host, and attaches it to the test sandbox.
 The real key stays in the host/gateway credential path. Sandbox Python submits a placeholder
 that OpenShell rewrites at egress. The check requires HTTP 200 before removal and a new

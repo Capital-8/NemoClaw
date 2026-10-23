@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { writeE2eWorkflowPlanCiOutput } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type E2eWorkflow = {
@@ -66,6 +70,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "tavily-fixture-key",
+      null,
     ],
     [
       "main dispatch",
@@ -74,6 +79,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "tavily-fixture-key",
+      null,
     ],
     [
       "branch dispatch",
@@ -82,6 +88,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
+      new Error("Tavily E2E requires the trusted main workflow with authorized credentials"),
     ],
     [
       "branch workflow",
@@ -90,6 +97,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
+      new Error("Tavily E2E requires the trusted main workflow with authorized credentials"),
     ],
     [
       "fork",
@@ -98,6 +106,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
+      new Error("Tavily E2E requires the trusted main workflow with authorized credentials"),
     ],
     [
       "pull request",
@@ -106,6 +115,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
+      new Error("Tavily E2E requires the trusted main workflow with authorized credentials"),
     ],
     [
       "admitted candidate",
@@ -114,6 +124,7 @@ describe("trusted E2E planning boundary", () => {
       "true",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "tavily-fixture-key",
+      null,
     ],
     [
       "unadmitted candidate",
@@ -122,18 +133,20 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
+      new Error("Manual PR E2E requires an authorized source branch in NVIDIA/NemoClaw"),
     ],
     [
       "other target",
       { event_name: "workflow_dispatch" },
       "a".repeat(40),
       "true",
-      "another-target",
+      "ubuntu-repo-cloud-openclaw",
       "",
+      null,
     ],
   ])(
     "evaluates Tavily credential access for %s",
-    (_name, githubOverrides, checkout, admission, target, expected) => {
+    (_name, githubOverrides, checkout, admission, target, expected, expectedPlanError) => {
       const workflow = readWorkflow() as E2eWorkflow;
       const run = workflow.jobs.live!.steps.find((step) => step.name === "Run live E2E tests")!;
       const context = {
@@ -174,6 +187,35 @@ describe("trusted E2E planning boundary", () => {
         ),
       );
       expect(observed).toBe(expected);
+      const directory = mkdtempSync(path.join(tmpdir(), "tavily-dispatch-plan-"));
+      const output = path.join(directory, "output");
+      try {
+        const plan = () =>
+          writeE2eWorkflowPlanCiOutput(
+            { targets: target },
+            {
+              INFERENCE_MODE: "mock",
+              GITHUB_REPOSITORY: context.github.repository,
+              GITHUB_REF: context.github.ref,
+              GITHUB_WORKFLOW_REF: context.github.workflow_ref,
+              EVENT_NAME: context.github.event_name,
+              NEMOCLAW_E2E_EXPECTED_SHA: checkout,
+              NEMOCLAW_E2E_CREDENTIALS_ALLOWED: admission,
+              GITHUB_OUTPUT: output,
+              GITHUB_STEP_SUMMARY: path.join(directory, "summary"),
+            },
+          );
+        let planError: unknown = null;
+        try {
+          plan();
+        } catch (error) {
+          planError = error;
+        }
+        expect(planError).toEqual(expectedPlanError);
+        expect(existsSync(output)).toBe(expectedPlanError === null);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     },
   );
 
