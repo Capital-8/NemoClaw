@@ -26,7 +26,8 @@ Use the provider ID in the output with the new model ID.
 
 <AgentOnly variant="openclaw,hermes">
 
-Runtime model changes update the OpenShell route and synchronize the selected running agent configuration.
+Runtime model changes synchronize the selected running agent configuration.
+Shared-route selections also update the OpenShell route.
 Pass `--sandbox <name>` when you do not want to use the default sandbox.
 
 For an older NVIDIA Endpoints sandbox without a native provider attachment, a same-provider model change exits with status `2`.
@@ -35,7 +36,8 @@ Follow the recreation guidance in [Use NVIDIA Endpoints](../hosted-inference/use
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-A native hosted model change restarts the Hermes gateway and can interrupt active agent requests.
+If the current or selected route uses a native hosted or local provider, the model change restarts the Hermes gateway.
+Active agent requests can be interrupted during the restart.
 If restart fails, the selection remains committed.
 Follow the restart recovery in [Switch Providers](switch-providers#switch-the-provider-at-runtime).
 
@@ -83,7 +85,7 @@ Shared-route sandboxes on one gateway use one live route, even when NemoClaw rec
 This applies to retained legacy, custom, local, and Model Router shared routes.
 Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a model that another registered sandbox shares.
 For shared-route selections, runtime `inference set` stops when provider identity conflicts or required route metadata is incomplete.
-Native model changes update only the selected sandbox attachment and do not re-point the shared gateway route.
+Native model changes affect only the selected sandbox and do not change the shared gateway route.
 
 ## Verify the Change
 
