@@ -250,8 +250,7 @@ export function runOpenshellInstall(deps: RunOpenshellInstallDeps): OpenShellIns
   // for the whole download/verify (#4431). `inherit` keeps this call synchronous
   // (no async ripple into the onboard entrypoint) while the child writes straight
   // to the terminal in real time.
-  const installScript = path.join(deps.scriptsDir, "install-openshell.sh");
-  const result = spawnSync("bash", [installScript], {
+  const result = spawnSync("bash", [path.join(deps.scriptsDir, "install-openshell.sh")], {
     cwd: deps.cwd,
     env: installEnv,
     stdio: redirectInheritedChildStdoutToStderr(["ignore", "inherit", "inherit"]),
