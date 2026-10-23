@@ -396,8 +396,8 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy wire safety", () =
         );
       })();
     `;
+    // codeql[js/shell-command-injection-from-environment] Fixed shell literal forwards the test process path as a quoted positional argument.
     const result = spawnSync(
-      // codeql[js/shell-command-injection-from-environment] Fixed shell literal forwards the test process path as a quoted positional argument.
       "bash",
       [
         "-c",

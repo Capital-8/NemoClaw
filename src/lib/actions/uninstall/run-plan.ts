@@ -580,6 +580,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
       deps.gatewayReuseObserver ?? createUninstallGatewayReuseObserver(run, env),
     commandExists: deps.commandExists ?? ((command) => defaultCommandExists(command, env)),
     env,
+    // codeql[js/clear-text-logging] Cleanup status and path messages do not receive the sibling runtime environment property.
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
     getTrustedActiveOpenShellGatewayUserServiceIdentity:
@@ -601,7 +602,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
           return false;
         }
       }),
-    log: deps.log ?? ((message) => console.log(message)), // codeql[js/clear-text-logging] Intentional uninstall status and path output; credential values stay outside this logging callback.
+    log: deps.log ?? ((message) => console.log(message)),
     openRegularFile: deps.openRegularFile ?? openRegularFileNoFollow,
     platform: deps.platform ?? process.platform,
     readProcessArgv: deps.readProcessArgv,

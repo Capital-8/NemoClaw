@@ -808,6 +808,7 @@ exit 37
 
         // The shell program is a fixed literal; repository and temporary-file paths are
         // positional arguments and are expanded only inside double quotes.
+        // codeql[js/shell-command-injection-from-environment] Fixed shell literal; paths are quoted positional arguments.
         const result = spawnSync(
           "/bin/bash",
           [
@@ -825,7 +826,7 @@ exit 37
               MOCK_STATUS_MODE: mode,
             },
           },
-        ); // codeql[js/shell-command-injection-from-environment] Fixed shell literal; paths are quoted positional arguments.
+        );
 
         expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
         expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
