@@ -20,15 +20,19 @@ NVIDIA endpoint keeps its existing request shape. The headless check verifies
 that malformed native inference evidence stops connect before session attach;
 native response bodies remain absent from diagnostics.
 
-The Deep Agents Code Tavily opt-in check supports `NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1`
-on a disposable sandbox onboarded with a valid Tavily provider. This mode requires an HTTP 200
-response before removal and a new `DENIED` audit event for `api.tavily.com` after removal.
-Run it on Linux x86_64 and WSL ARM to qualify #13082. Credentials stay inside the sandbox;
-the check does not print request credentials or service error bodies. Removal retains gateway
-credentials for other sandboxes. Reconfigure web search explicitly to restore provider access;
-adding the preset alone restores its direct network rule.
+The `ubuntu-repo-cloud-langchain-deepagents-code` target requires `TAVILY_API_KEY` in addition
+to its inference credential. Its Tavily check enables `NEMOCLAW_E2E_TAVILY_AUTHENTICATED=1`,
+registers a uniquely named disposable provider on the host, and attaches it to the test sandbox.
+The real key stays in the host/gateway credential path. Sandbox Python submits a placeholder
+that OpenShell rewrites at egress. The check requires HTTP 200 before removal and a new
+`DENIED` audit event for `api.tavily.com` afterward. Cleanup removes the disposable provider
+and restores the prior `ocsf_json_enabled` setting, including its unset state.
+Removal preserves shared gateway credentials and unrelated sandbox attachments.
+Adding the preset alone restores its direct network rule; provider access requires an explicit attachment.
+Linux x86_64 qualification uses the existing target. WSL ARM qualification remains manual;
+there is no supported WSL ARM selector for this scenario.
 The policy live-state tests own attachment discovery, identity checks, partial failures, and operator-rule preservation.
-The extra-provider planning tests own rebuild exclusion and explicit re-enable behavior.
+The extra-provider planning and recreate tests own rebuild exclusion and explicit re-enable behavior.
 
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.

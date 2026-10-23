@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { planRegisteredExtraProviders } from "../../extra-provider-reconciliation";
 import { createSession } from "../../../state/onboard-session";
 import { recordCheckpointEffectGroup } from "../../checkpoint-record";
 import { handleSandboxState } from "./sandbox";
@@ -253,6 +254,59 @@ describe("handleSandboxState resume recreation", () => {
     expect(result.sandboxName).toBe("saved");
   });
 
+  it("excludes revoked Tavily from the authoritative recreate intent (#13082)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const journal = bindJournaledRecreate(session);
+    const planner = vi.fn((gatewayName: string, options = {}) =>
+      planRegisteredExtraProviders(gatewayName, {
+        ...options,
+        listExtraProviders: () => ["shared-search", "other"],
+        providerAdapter: {
+          getProvider: async ({ providerName }: { providerName: string }) => ({
+            ok: true,
+            value: {
+              name: providerName,
+              type: providerName === "shared-search" ? "tavily" : "nvidia",
+            },
+          }),
+        } as never,
+      }),
+    );
+    const { deps } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getSandboxRecreateObservation: journal.observe,
+        getSandboxRegistryEntry: () => ({
+          name: "saved",
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-completions",
+          toolDisclosure: "progressive",
+          fromDockerfile: null,
+          hermesAuthMethod: null,
+          webSearchEnabled: false,
+          webSearchProvider: null,
+        }),
+        planRegisteredExtraProviders: planner,
+        createSandbox: journal.completeCreate,
+      },
+      session,
+    );
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      recreateSandbox: () => true,
+    });
+    expect(planner).toHaveBeenCalledWith("nemoclaw", { excludeTavily: true });
+    expect((journal.completeCreate.mock.calls[0] as unknown[])[15]).toMatchObject({
+      extraProviders: ["other"],
+      recreate: true,
+    });
+  });
+
   it("passes an authoritative empty extra-provider list after reconciliation prunes stale names", async () => {
     const session = createSession({
       sandboxName: "saved",
@@ -279,7 +333,9 @@ describe("handleSandboxState resume recreation", () => {
       sandboxName: "saved",
     });
 
-    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw", {
+      excludeTavily: true,
+    });
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
     expect(createSandboxCall[14]).toEqual({

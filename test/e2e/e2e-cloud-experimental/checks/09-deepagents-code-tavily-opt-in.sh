@@ -65,7 +65,6 @@ nemoclaw_cli() {
 python_probe_source() {
   cat <<'PY'
 import json
-import os
 import sys
 import urllib.error
 import urllib.request
@@ -90,9 +89,8 @@ def is_policy_denial(text):
 
 
 url = sys.argv[1]
-payload = {'query': 'nemoclaw reachability probe', 'max_results': 1}
-if os.environ.get('TAVILY_API_KEY'):
-    payload['api_key'] = os.environ['TAVILY_API_KEY']
+# OpenShell replaces this placeholder at egress; the sandbox never receives the key.
+payload = {'query': 'nemoclaw reachability probe', 'max_results': 1, 'api_key': 'openshell-placeholder'}
 request = urllib.request.Request(
     url,
     data=json.dumps(payload).encode('utf-8'),
@@ -173,6 +171,48 @@ tavily_denied_audit() {
   '
 }
 
+AUDIT_SETTING_BEFORE=""
+TAVILY_PROVIDER=""
+
+capture_audit_setting() {
+  openshell settings get "$SANDBOX_NAME" --json | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  const settings = JSON.parse(input).settings;
+  if (!settings || typeof settings !== "object") process.exit(1);
+  const value = settings.ocsf_json_enabled;
+  if (value !== undefined && !["<unset>", "true", "false"].includes(value)) process.exit(1);
+  process.stdout.write(value ?? "<unset>");
+});'
+}
+
+restore_audit_setting() {
+  [ -n "$AUDIT_SETTING_BEFORE" ] || return 0
+  if [ "$AUDIT_SETTING_BEFORE" = "<unset>" ]; then
+    openshell settings delete "$SANDBOX_NAME" --key ocsf_json_enabled --yes >/dev/null 2>&1 || return 1
+  else
+    openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value "$AUDIT_SETTING_BEFORE" >/dev/null 2>&1 || return 1
+  fi
+  [ "$(capture_audit_setting)" = "$AUDIT_SETTING_BEFORE" ]
+}
+
+cleanup_tavily_check() {
+  local status=0
+  restore_tavily_denial || status=1
+  if [ -n "$TAVILY_PROVIDER" ]; then
+    if ! nemoclaw_cli credentials reset "$TAVILY_PROVIDER" --yes >/dev/null 2>&1; then
+      fail_test "could not remove disposable Tavily provider"
+      status=1
+    fi
+  fi
+  if ! restore_audit_setting; then
+    fail_test "could not restore the prior Tavily audit setting"
+    status=1
+  fi
+  return "$status"
+}
+
 restore_tavily_denial() {
   local cleanup_status=0 remove_output post_remove_probe_output audit_start
   if ! remove_output="$(nemoclaw_cli "$SANDBOX_NAME" policy-remove tavily --yes 2>&1)"; then
@@ -220,6 +260,32 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
   }
   python_probe "https://api.tavily.com/search"
   exit 0
+fi
+
+if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "audit-cleanup" ]; then
+  AUDIT_FIXTURE="$(mktemp)"
+  printf '%s' "${NEMOCLAW_E2E_AUDIT_BEFORE:-<unset>}" >"$AUDIT_FIXTURE"
+  trap 'rm -f "$AUDIT_FIXTURE"' EXIT
+  AUDIT_RESTORING=0
+  openshell() {
+    if [ "$AUDIT_RESTORING" = "1" ] && [ "${NEMOCLAW_E2E_AUDIT_RESTORE_FIXTURE:-ok}" = "fail" ]; then
+      return 1
+    fi
+    case "$2" in
+      get) printf '{"settings":{"ocsf_json_enabled":"%s"}}' "$(cat "$AUDIT_FIXTURE")" ;;
+      set) printf '%s' "$7" >"$AUDIT_FIXTURE" ;;
+      delete) printf '%s' '<unset>' >"$AUDIT_FIXTURE" ;;
+      *) return 1 ;;
+    esac
+  }
+  AUDIT_SETTING_BEFORE="$(capture_audit_setting)"
+  openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value true
+  AUDIT_RESTORING=1
+  restore_tavily_denial() { return "${NEMOCLAW_E2E_REMOVE_STATUS:-0}"; }
+  cleanup_status=0
+  cleanup_tavily_check || cleanup_status=1
+  printf 'RESTORED:%s\n' "$(cat "$AUDIT_FIXTURE")"
+  exit "$cleanup_status"
 fi
 
 if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "restore-denial" ]; then
@@ -275,9 +341,28 @@ else
   fail_test "tavily dry-run did not show api.tavily.com: $DRY_RUN_OUTPUT"
 fi
 
+trap 'cleanup_tavily_check || exit 1' EXIT
 if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ]; then
+  if [ -z "${TAVILY_API_KEY:-}" ]; then
+    fail_test "authenticated Tavily check requires the host credential"
+    exit 1
+  fi
+  AUDIT_SETTING_BEFORE="$(capture_audit_setting)" || {
+    fail_test "could not capture the prior Tavily audit setting"
+    exit 1
+  }
   if ! openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value true >/dev/null 2>&1; then
     fail_test "could not enable Tavily audit evidence"
+    exit 1
+  fi
+  TAVILY_PROVIDER="e2e-tavily-$(node -p 'require("node:crypto").randomUUID()')"
+  if ! nemoclaw_cli credentials add "$TAVILY_PROVIDER" --type tavily --agent dcode --credential TAVILY_API_KEY >/dev/null 2>&1; then
+    fail_test "could not register disposable Tavily provider"
+    exit 1
+  fi
+  unset TAVILY_API_KEY
+  if ! openshell sandbox provider attach "$SANDBOX_NAME" "$TAVILY_PROVIDER" >/dev/null 2>&1; then
+    fail_test "could not attach disposable Tavily provider"
     exit 1
   fi
 fi
@@ -287,7 +372,6 @@ APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
-trap restore_tavily_denial EXIT
 pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
@@ -328,7 +412,7 @@ else
 fi
 
 # Do not leak this check's durable opt-in into later sequential checks.
-restore_tavily_denial || true
+cleanup_tavily_check || true
 trap - EXIT
 
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
