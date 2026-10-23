@@ -385,6 +385,14 @@ try {
         throw 'The packaged startup service differs from the pinned transaction helper.'
     }
     $receipt['compiledMsi'] = Get-CompiledMsiCounts $msi
+    # RemoveExistingProducts supplies this exact compiled identity to the old
+    # MSI. The enclosing Burn transaction must use the same journal owner.
+    $productRows = @([NativeRuntimeMsiAudit]::Rows($msi, 'SELECT `Value` FROM `Property` WHERE `Property` = ''ProductCode''', 1))
+    if ($productRows.Count -ne 1 -or $productRows[0][0] -cnotmatch '^\{[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}\}$') {
+        throw 'The compiled MSI must have one valid transaction owner ProductCode.'
+    }
+    $runtimeProductCode = [string]$productRows[0][0]
+    $receipt['runtimeProductCode'] = $runtimeProductCode
     $payloadFiles = @(Get-ChildItem -LiteralPath $payload -Recurse -File)
     $receipt['payload'] = @{ fileCount = $payloadFiles.Count; bytes = [long](($payloadFiles | Measure-Object -Property Length -Sum).Sum) }
     $receipt.phase = 'native-burn-build'
@@ -413,6 +421,7 @@ try {
         '-d', 'SystemDriveMetadataPreparation=true', '-d', "SystemDrivePrepPath=$SystemDrivePrepPath", '-d', "SystemDrivePrepSha256=$systemDriveSha",
         '-d', "RuntimeImageFinalization=$($imageDelivery.ToString().ToLowerInvariant())", '-d', "RuntimeFinalizerPath=$helper",
         '-d', "RuntimeFinalizerSha256=$helperSha", '-d', "RuntimeTuple=$runtimeTuple", '-d', "RuntimeId=$($assembly.runtime.runtimeId)",
+        '-d', "RuntimeProductCode=$runtimeProductCode",
         '-d', "BootstrapperPath=$(Join-Path $publish 'NemoClaw.Bootstrapper.exe')", '-d', "BootstrapperRoot=$publish",
         (Join-Path $windows 'Bundle.wxs'), $bootstrapperAuthoring, '-pdbtype', 'none', '-wx', '-sw1161', '-out', $setup) 'burn-build'
     $receipt['runtime'] = $assembly.runtime

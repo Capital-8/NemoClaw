@@ -202,6 +202,71 @@ fn commit_cannot_select_an_unverified_runtime() {
 }
 
 #[test]
+fn bundle_upgrade_joins_the_nested_msi_and_preserves_commit_and_rollback() {
+    for fail in [false, true] {
+        let mut store = Store::old();
+        let next = identity('e');
+        let command = [
+            vec!["begin-install".into()],
+            next.fields(),
+            vec![PRODUCT.into()],
+        ]
+        .concat();
+        crate::bundle_transaction(&mut store, &command).unwrap();
+        let journal = store.journal.clone();
+        assert_eq!(journal.as_ref().unwrap().owner_product_code, PRODUCT);
+        assert_eq!(
+            join_remove(
+                &mut store,
+                &identity('a').runtime_id,
+                "{1BA739B8-B632-4A8C-BB02-95058CC3A960}"
+            ),
+            Err(Error::ForeignTransaction)
+        );
+        assert_eq!(store.journal, journal);
+        dispatch(
+            &mut store,
+            &[
+                "join-remove".into(),
+                identity('a').runtime_id,
+                PRODUCT.to_uppercase(),
+            ],
+        )
+        .unwrap();
+        if fail {
+            crate::bundle_transaction(&mut store, &["rollback".into(), next.runtime_id.clone()])
+                .unwrap();
+            assert_eq!(store.selected, Some(identity('a')));
+        } else {
+            crate::bundle_transaction(
+                &mut store,
+                &[vec!["complete-install".into()], next.fields()].concat(),
+            )
+            .unwrap();
+            assert_eq!(store.selected, Some(next));
+        }
+        assert!(store.journal.is_none());
+    }
+}
+
+#[test]
+fn bundle_install_rejects_missing_or_invalid_product_before_mutation() {
+    for product in [
+        None,
+        Some("invalid"),
+        Some("{348F4796-F919-458A-AFAE-61B186378149} extra"),
+    ] {
+        let mut store = Store::old();
+        let mut command = [vec!["begin-install".into()], identity('e').fields()].concat();
+        command.extend(product.map(String::from));
+        assert!(crate::bundle_transaction(&mut store, &command).is_err());
+        assert!(store.events.is_empty());
+        assert!(store.journal.is_none());
+        assert_eq!(store.selected, Some(identity('a')));
+    }
+}
+
+#[test]
 fn a_partial_commit_keeps_rollback_identity_and_admission_closed() {
     let mut store = Store::old();
     let next = identity('e');

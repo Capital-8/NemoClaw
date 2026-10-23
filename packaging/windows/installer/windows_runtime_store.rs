@@ -94,6 +94,16 @@ unsafe extern "system" {
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn CloseHandle(handle: RawHandle) -> i32;
+    fn GetVolumeInformationW(
+        root: *const u16,
+        label: *mut u16,
+        label_size: u32,
+        serial: *mut u32,
+        maximum_component: *mut u32,
+        flags: *mut u32,
+        filesystem: *mut u16,
+        filesystem_size: u32,
+    ) -> i32;
     #[allow(clashing_extern_declarations)]
     #[link_name = "CreateFileW"]
     fn StoreCreateFileW(
@@ -686,6 +696,7 @@ fn verify_directory(
     relative: &str,
     expected: &BTreeMap<String, Entry>,
     seen: &mut BTreeSet<String>,
+    read_only_image_root: bool,
 ) -> Result<(), Error> {
     let path = if relative.is_empty() {
         prefix.to_owned()
@@ -711,6 +722,17 @@ fn verify_directory(
         } else {
             format!("{relative}/{name}")
         };
+        if !expected.contains_key(&name)
+            && super::runtime_image_attachment::is_volume_metadata(
+                read_only_image_root,
+                &name,
+                std::fs::symlink_metadata(item.path())
+                    .map_err(|_| Error::Native("runtime-enumeration"))?
+                    .file_attributes(),
+            )
+        {
+            continue;
+        }
         runtime_manifest::validate_relative(&name)?;
         if seen.len() >= runtime_manifest::MAX_ENTRIES || !seen.insert(name.clone()) {
             return Err(Error::Identity);
@@ -720,7 +742,7 @@ fn verify_directory(
             .map_err(|_| Error::Native("runtime-enumeration"))?;
         match expected.get(&name) {
             Some(Entry::Directory) if kind.is_dir() => {
-                verify_directory(control, installed, prefix, &name, expected, seen)?
+                verify_directory(control, installed, prefix, &name, expected, seen, false)?
             }
             Some(Entry::File { size, sha256 }) if kind.is_file() => {
                 let mut file = control
@@ -916,6 +938,28 @@ impl NativeStore for WindowsStore {
         }
         let mut seen = BTreeSet::new();
         let installation = native::installed_path().map_err(native_error)?;
+        let (image, mount) = Self::image_paths(&expected.runtime_id)?;
+        let read_only_image_root = if image.is_file() {
+            let path = mount
+                .join("")
+                .as_os_str()
+                .encode_wide()
+                .chain(Some(0))
+                .collect::<Vec<_>>();
+            let mut flags = 0;
+            let mut filesystem = [0u16; 32];
+            if unsafe {
+                GetVolumeInformationW(
+                    path.as_ptr(), null_mut(), 0, null_mut(), null_mut(),
+                    &mut flags, filesystem.as_mut_ptr(), filesystem.len() as u32,
+                )
+            } == 0 {
+                return Err(Error::Native("runtime-image-volume-information"));
+            }
+            flags & 0x0008_0000 != 0 && filesystem[..5] == [78, 84, 70, 83, 0]
+        } else {
+            false
+        };
         verify_directory(
             control,
             Path::new(&installation),
@@ -923,6 +967,7 @@ impl NativeStore for WindowsStore {
             "",
             &entries,
             &mut seen,
+            read_only_image_root,
         )?;
         if seen.len() != entries.len() {
             return Err(Error::Native("runtime-inventory-incomplete"));

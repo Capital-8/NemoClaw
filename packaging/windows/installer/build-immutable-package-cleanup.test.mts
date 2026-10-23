@@ -6,6 +6,63 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+test("bundle owner is the unique compiled MSI ProductCode", () => {
+  const source = readFileSync(new URL("./build-immutable-package.ps1", import.meta.url));
+  const script = String.raw`
+Set-StrictMode -Version Latest
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(),[ref]$tokens,[ref]$errors)
+if ($errors.Count) { throw 'Builder syntax invalid.' }
+Add-Type -TypeDefinition @'
+using System;
+public static class NativeRuntimeMsiAudit {
+    public static string[][] Result;
+    public static string[][] Rows(string path, string query, uint fields) {
+        if (path != "fixture.msi" || query != "SELECT \u0060Value\u0060 FROM \u0060Property\u0060 WHERE \u0060Property\u0060 = 'ProductCode'" || fields != 1)
+            throw new Exception("Unexpected compiled product query.");
+        return Result;
+    }
+}
+'@
+$start=$ast.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$productRows'},$true)
+$end=$ast.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$runtimeProductCode'},$true)
+if (-not $start -or -not $end) { throw 'Compiled product binding missing.' }
+$body=$ast.Extent.Text.Substring($start.Extent.StartOffset,$end.Extent.EndOffset-$start.Extent.StartOffset)
+$msi='fixture.msi'
+$expected='{348F4796-F919-458A-AFAE-61B186378149}'
+foreach($case in @(
+    @{rows=[string[][]]@(@($expected));accept=$true},
+    @{rows=[string[][]]@();accept=$false},
+    @{rows=[string[][]]@(@($expected),@($expected));accept=$false},
+    @{rows=[string[][]]@(@('invalid'));accept=$false},
+    @{rows=[string[][]]@(@($expected+' extra'));accept=$false}
+)) {
+    [NativeRuntimeMsiAudit]::Result=$case.rows
+    $runtimeProductCode=$null; $failed=$false
+    try { . ([scriptblock]::Create($body)) } catch { $failed=$true }
+    if ($failed -eq $case.accept) { throw 'Wrong product identity admission.' }
+    if ($case.accept -and $runtimeProductCode -cne $expected) { throw 'Compiled product identity changed.' }
+}
+$build=$ast.Find({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Invoke-BuildTool' -and $n.Extent.Text.Contains("'burn-build'")},$true)
+if (-not $build.Extent.Text.Contains('"RuntimeProductCode=$runtimeProductCode"')) { throw 'Burn owner define missing.' }
+Write-Output 'PASS compiled MSI owner binding'
+`;
+  const result = spawnSync(
+    process.env.NEMOCLAW_TEST_PWSH ?? "pwsh",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+    { input: source, encoding: "utf8", timeout: 30000, maxBuffer: 1024 * 1024 },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /PASS compiled MSI owner binding/u);
+});
+
 test("reviewed builder refuses changed original native artifacts and never recompiles them", () => {
   const source = readFileSync(new URL("./build-immutable-package.ps1", import.meta.url));
   const script = String.raw`

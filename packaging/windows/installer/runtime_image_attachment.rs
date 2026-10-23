@@ -7,6 +7,12 @@ use super::runtime_transaction::{Error, RuntimeIdentity};
 // with these read-only handles; the MSI-owned service restores the image at boot.
 pub(super) const INSTALLED_IMAGE_ATTACH_FLAGS: u32 = 0x1 | 0x2 | 0x4;
 
+// NTFS creates this volume-root directory independently of the package payload.
+// Never exempt a loose-runtime entry, nested name, file, or reparse point.
+pub(super) fn is_volume_metadata(read_only_image_root: bool, relative: &str, attributes: u32) -> bool {
+    read_only_image_root && relative == "System Volume Information" && attributes == 0x16
+}
+
 pub(super) fn validate_boot_restore(
     expected: &RuntimeIdentity,
     selected: &RuntimeIdentity,
@@ -49,6 +55,22 @@ pub(super) fn finish_attachment(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn volume_metadata_is_not_a_package_inventory_exemption() {
+        assert!(is_volume_metadata(true, "System Volume Information", 0x16));
+        for (image, name, attributes) in [
+            (false, "System Volume Information", 0x16),
+            (true, "hermes/System Volume Information", 0x16),
+            (true, "system volume information", 0x16),
+            (true, "extra.exe", 0x16),
+            (true, "System Volume Information", 0x06),
+            (true, "System Volume Information", 0x10),
+            (true, "System Volume Information", 0x416),
+        ] {
+            assert!(!is_volume_metadata(image, name, attributes));
+        }
+    }
 
     fn identity() -> RuntimeIdentity {
         RuntimeIdentity {

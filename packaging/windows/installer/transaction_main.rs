@@ -271,8 +271,11 @@ fn failure_exit_code(error: &str) -> i32 {
     }
 }
 
-#[cfg(windows)]
-fn bundle_transaction(arguments: &[String]) -> Result<(), String> {
+#[cfg(any(windows, test))]
+fn bundle_transaction<S: runtime_transaction::NativeStore>(
+    store: &mut S,
+    arguments: &[String],
+) -> Result<(), String> {
     const OWNER: &str = "{1BA739B8-B632-4A8C-BB02-95058CC3A960}";
     let Some(action) = arguments.first().map(String::as_str) else {
         return Err("The native bundle transaction command is invalid.".into());
@@ -280,17 +283,11 @@ fn bundle_transaction(arguments: &[String]) -> Result<(), String> {
     if action == "noop" && arguments.len() == 1 {
         return Ok(());
     }
-    let mut store = windows_runtime_store::WindowsStore::new();
     let (commands, rollback_begin_failure) = match (action, &arguments[1..]) {
-        ("begin-install", fields) if fields.len() == 5 => (
-            vec![
-                [
-                    vec!["begin-install".into()],
-                    fields.to_vec(),
-                    vec![OWNER.into()],
-                ]
-                .concat(),
-            ],
+        // The nested old MSI receives the new MSI ProductCode, not Burn's
+        // UpgradeCode. Bind the journal to that compiled product identity.
+        ("begin-install", fields) if fields.len() == 6 => (
+            vec![[vec!["begin-install".into()], fields.to_vec()].concat()],
             true,
         ),
         ("complete-install", fields) if fields.len() == 5 => (
@@ -313,14 +310,14 @@ fn bundle_transaction(arguments: &[String]) -> Result<(), String> {
         _ => return Err("The native bundle transaction command is invalid.".into()),
     };
     for command in commands {
-        if let Err(error) = runtime_transaction::dispatch(&mut store, &command) {
+        if let Err(error) = runtime_transaction::dispatch(store, &command) {
             let primary = format!("{error:?}");
             // A failed begin is not considered executed by Burn, so undo any
             // journal it created here. Completion failures deliberately leave
             // the journal for Burn to roll MSI back before invoking rollback.
             if rollback_begin_failure {
                 let _ = runtime_transaction::dispatch(
-                    &mut store,
+                    store,
                     &[
                         "rollback".into(),
                         arguments.get(1).cloned().unwrap_or_default(),
@@ -395,7 +392,10 @@ fn main() {
                 runtime_transaction::dispatch(&mut store, &arguments[1..])
                     .map_err(|error| format!("{error:?}"))
             }
-            ["--runtime-bundle", ..] => bundle_transaction(&arguments[1..]),
+            ["--runtime-bundle", ..] => bundle_transaction(
+                &mut windows_runtime_store::WindowsStore::new(),
+                &arguments[1..],
+            ),
             _ => Err("The native MSI transaction command is invalid.".into()),
         };
         if let Err(error) = result {
@@ -460,7 +460,10 @@ mod tests {
         let remove_begin = source.find("NemoClawRuntimeRemovalBegin").unwrap();
         let remove_commit = source.find("NemoClawRuntimeRemovalCommit").unwrap();
         assert!(remove_commit < begin && begin < msi && msi < complete && complete < remove_begin);
-        assert!(source.contains("--runtime-bundle begin-install $(var.RuntimeTuple)"));
+        assert_eq!(
+            source.matches("--runtime-bundle begin-install $(var.RuntimeTuple) &quot;$(var.RuntimeProductCode)&quot;").count(),
+            2
+        );
         assert!(source.contains("--runtime-bundle complete-install $(var.RuntimeTuple)"));
         assert!(source.contains("--runtime-bundle begin-remove $(var.RuntimeId)"));
         assert!(source.contains("--runtime-bundle complete-remove $(var.RuntimeId)"));
