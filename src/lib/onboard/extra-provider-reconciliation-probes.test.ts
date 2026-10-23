@@ -16,10 +16,8 @@ afterEach(() => {
 
 describe("planRegisteredExtraProviders probe outcomes", () => {
   it.each([
-    ["tavily", true],
-    ["tavily", false],
-    ["tavily-hermes-v1", true],
-    ["tavily-hermes-v1", false],
+    ["tavily", undefined],
+    ["tavily-hermes-v1", undefined],
     ["tavily", null],
     ["tavily", "brave"],
     ["tavily", "tavily"],
@@ -29,7 +27,7 @@ describe("planRegisteredExtraProviders probe outcomes", () => {
   ] as const)(
     "preserves shared registrations while filtering revoked Tavily grants: %s/%s (#13082)",
     async (type, selection) => {
-      const excluded = selection === true || selection === null || selection === "brave";
+      const excluded = selection === null || selection === "brave";
       const getProvider = vi.fn(async ({ providerName }: { providerName: string }) => ({
         ok: true as const,
         value: {
@@ -42,9 +40,7 @@ describe("planRegisteredExtraProviders probe outcomes", () => {
       const plan = await planRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => ["shared-search", "inference"],
         providerAdapter: { getProvider } as never,
-        ...(typeof selection === "boolean"
-          ? { excludeTavily: selection }
-          : { webSearchProvider: selection }),
+        webSearchProvider: selection,
       });
       expect(plan).toEqual({
         extraProviders: excluded ? ["inference"] : ["shared-search", "inference"],
@@ -62,7 +58,7 @@ describe("planRegisteredExtraProviders probe outcomes", () => {
           error: { kind: "command", reason: "not_found", message: "missing" },
         })),
       } as never,
-      excludeTavily: true,
+      webSearchProvider: null,
     });
     expect(plan).toEqual({ extraProviders: [], staleExtraProviders: ["missing-provider"] });
   });
@@ -74,7 +70,7 @@ describe("planRegisteredExtraProviders probe outcomes", () => {
         providerAdapter: {
           getProvider: vi.fn(async () => ({ ok: false, error: { kind: "timeout" } })),
         } as never,
-        excludeTavily: true,
+        webSearchProvider: null,
       }),
     ).rejects.toThrow("Cannot verify disabled Tavily provider selection");
   });

@@ -24,8 +24,6 @@ export type ReconcileExtraProvidersDeps = {
   removeExtraProvider?: (name: string) => boolean;
   nowMs?: () => number;
   warn?: (message: string) => void;
-  /** Keep a sandbox search selection from inheriting shared Tavily grants. */
-  excludeTavily?: boolean;
   /** Null disables inheritance; omission preserves registration-only reconciliation. */
   webSearchProvider?: "brave" | "tavily" | null;
 };
@@ -179,9 +177,7 @@ export async function planRegisteredExtraProviders(
       providerAdapter,
       nowMs,
       deadlineMs,
-      excludeTavily:
-        deps.excludeTavily === true ||
-        (deps.webSearchProvider !== undefined && deps.webSearchProvider !== "tavily"),
+      excludeTavily: deps.webSearchProvider !== undefined && deps.webSearchProvider !== "tavily",
     });
     if (outcome.reason) recordIndeterminate(outcome.reason);
     if (outcome.keep) {
