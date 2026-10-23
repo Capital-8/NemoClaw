@@ -1117,8 +1117,12 @@ async function rebuildSandboxUnlocked(
         const window = sourceOpenClawDoctorWindow;
         sourceOpenClawDoctorWindow = null;
         try {
-          await releaseRebuildSourceOpenClawWindow(window);
+          const released = await releaseRebuildSourceOpenClawWindow(window);
+          if (!released.ok) {
+            throw new Error("OpenClaw source maintenance cleanup did not complete.");
+          }
         } catch (error) {
+          telemetryCleanupComplete = false;
           if (unwinding) {
             console.error(
               `  Warning: OpenClaw source maintenance cleanup failed: ${rebuildFailureDetail(error)}`,
