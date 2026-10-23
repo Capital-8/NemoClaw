@@ -321,6 +321,12 @@ For OpenClaw, those checks also run the shared agent-reload proof against the im
 gateway policy and installed distribution. The proof checks live named-agent discovery, gateway
 health, and a nonzero exit after a restart-class bind failure. Google Chat's reload-off exception
 is tracked separately in #13274.
+Both OpenClaw platforms also require the shared native legacy migration proof, using the image's
+pinned 2026.9.5 and 2026.9.7 runtimes, installed migration coordinator, and 2026.10.5 target.
+It checks a copied JSON backup through native Doctors, canonical data and config preservation,
+unchanged backup bytes, idempotence, and refusal of downgrades or nonempty retired Telegram data.
+This isolated migration proof does not cover snapshot extraction or the full restore startup gate;
+the `state-backup-restore` live test owns that boundary.
 Docker activation selects the matching platform catalog and runs the existing all-agent lifecycle test.
 Rootless Podman activation remains AMD64. The catalog reader accepts only one platform per catalog;
 it rejects missing agents, mixed platforms, revisions, releases, and cohorts.

@@ -14,6 +14,7 @@ export interface LegacyMigrationProofOptions {
   runtime95: string;
   runtime97: string;
   targetRuntime: string;
+  migrationRunner?: string;
 }
 
 function snapshotFiles(directory: string): Record<string, string> {
@@ -160,7 +161,8 @@ export function proveRealLegacyMigrationBridges(options: LegacyMigrationProofOpt
     fs.symlinkSync(runtime.root, path.join(modules, "openclaw"), "dir");
   }
   const bridgeArgs = [
-    path.resolve(import.meta.dirname, "../../scripts/lib/openclaw-legacy-migrations.mts"),
+    options.migrationRunner ??
+      path.resolve(import.meta.dirname, "../../scripts/lib/openclaw-legacy-migrations.mts"),
     "--run",
     options.targetRuntime,
     migrationRoot,

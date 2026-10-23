@@ -473,6 +473,7 @@ describe("complete managed-image publication workflow", () => {
         ".github/actions/ci-reviewed-npm-audit/**",
         "ci/reviewed-npm-audit.json",
         "test/helpers/openclaw-real-agent-reload-proof.ts",
+        "test/helpers/openclaw-real-legacy-migration-proof.ts",
       ]),
     );
     expect(reviewedAudit).toMatchObject({
@@ -797,6 +798,7 @@ describe("complete managed-image publication workflow", () => {
     expect(baseImagePaths).toEqual(
       expect.arrayContaining([
         "test/helpers/openclaw-real-agent-reload-proof.ts",
+        "test/helpers/openclaw-real-legacy-migration-proof.ts",
         "test/e2e/fixtures/gateway-runtime-start.ts",
         "test/e2e/fixtures/phases/lifecycle.ts",
       ]),
