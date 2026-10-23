@@ -3932,7 +3932,11 @@ Register a provider credential with the OpenShell gateway by name and type. Each
 
 After a successful provider creation or attachment, NemoClaw compares a previously verified profile with its current gateway definition. If it warns that verification did not complete or the profile changed, the successful operation remains successful. Ask the gateway operator to inspect the profile before relying on its credential boundary.
 
-Registered providers are gateway-wide and attach to every sandbox you build or rebuild after the call. `nemoclaw credentials reset <PROVIDER>` removes the provider from the gateway and detaches it from every sandbox currently using it; it cannot limit the provider to selected sandboxes. To replace a credential, reset the provider, register the replacement, and rebuild each detached sandbox.
+Registered providers are gateway-wide and can attach during later sandbox builds or rebuilds.
+Tavily providers are excluded when the sandbox has saved disabled Tavily intent or selected another web-search provider.
+Removing the Tavily preset preserves that exclusion through rebuilds and keeps the gateway credential available to other sandboxes.
+`nemoclaw credentials reset <PROVIDER>` removes the provider from the gateway and detaches it from every sandbox currently using it; it cannot limit the provider to selected sandboxes.
+To replace a credential, reset the provider, register the replacement, and rebuild each detached sandbox.
 
 Tavily requires a provider profile that permits the intended agent runtime.
 Use `--type tavily --agent hermes` to select the versioned `tavily-hermes-v1` profile for Hermes Python.

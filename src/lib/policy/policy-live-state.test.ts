@@ -236,6 +236,90 @@ describe("live OpenShell policy mutations", () => {
       expect(mocks.setSandboxPolicy).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ["other port", { host: "api.tavily.com", port: 8443 }],
+      ["other port list", { host: "api.tavily.com", ports: [80, 8443] }],
+      [
+        "other route",
+        {
+          host: "api.tavily.com",
+          port: 443,
+          protocol: "rest",
+          rules: [{ allow: { method: "POST", path: "/status" } }],
+        },
+      ],
+      [
+        "other method",
+        {
+          host: "api.tavily.com",
+          port: 443,
+          protocol: "rest",
+          rules: [{ allow: { method: "GET", path: "/search" } }],
+        },
+      ],
+      [
+        "endpoint path",
+        {
+          host: "api.tavily.com",
+          port: 443,
+          protocol: "rest",
+          path: "/status",
+          rules: [{ allow: { method: "*", path: "/**" } }],
+        },
+      ],
+    ])("preserves an unrelated same-host %s rule after removal", async (_label, endpoint) => {
+      const approved = { endpoints: [endpoint], binaries: [{ path: "/opt/venv/bin/python3*" }] };
+      livePolicy = YAML.stringify({ version: 1, network_policies: { tavily, approved } });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(true);
+      expect(YAML.parse(livePolicy).network_policies).toEqual({ approved });
+    });
+
+    it.each([
+      [
+        "REST search",
+        { protocol: "rest", rules: [{ allow: { method: "POST", path: "/search" } }] },
+      ],
+      [
+        "REST extract",
+        { protocol: "rest", rules: [{ allow: { method: "post", path: "/extract" } }] },
+      ],
+      ["REST wildcard", { protocol: "rest", rules: [{ allow: { method: "*", path: "/**" } }] }],
+      [
+        "audit mode",
+        {
+          protocol: "rest",
+          enforcement: "audit",
+          rules: [{ allow: { method: "GET", path: "/status" } }],
+        },
+      ],
+      [
+        "TLS passthrough",
+        {
+          protocol: "rest",
+          tls: "passthrough",
+          rules: [{ allow: { method: "GET", path: "/status" } }],
+        },
+      ],
+      ["ancestor binary", {}],
+      [
+        "uninspected protocol",
+        { protocol: "tcp", rules: [{ allow: { method: "GET", path: "/status" } }] },
+      ],
+      [
+        "unknown glob",
+        { protocol: "rest", rules: [{ allow: { method: "POST", path: "/{search,status}" } }] },
+      ],
+      ["malformed port", { port: "443" }],
+    ])("refuses unrevoked %s access after removal", async (_label, fields) => {
+      const approved = {
+        endpoints: [{ host: "api.tavily.com", ports: [443], ...fields }],
+        binaries: [{ path: "/bin/bash" }],
+      };
+      livePolicy = YAML.stringify({ version: 1, network_policies: { tavily, approved } });
+      await expect(removePreset(sandboxName, "tavily")).resolves.toBe(false);
+      expect(YAML.parse(livePolicy).network_policies).toEqual({ approved });
+    });
+
     it.each(["api.tavily.com", "*.tavily.com", "*"])(
       "preserves an overlapping operator rule for %s and reports incomplete revocation",
       async (host) => {

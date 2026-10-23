@@ -249,7 +249,7 @@ Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 nemo-deepagents <sandbox-name> policy remove tavily --yes
 ```
 
-Removal detaches every Tavily provider from this sandbox and verifies that effective policy no longer permits Tavily.
+Removal detaches every Tavily provider from this sandbox and verifies that effective policy no longer permits Tavily search or extraction requests.
 Rebuilds preserve that disabled selection.
 The gateway-wide `tavily-search` registration and its credential remain available to other sandboxes.
 To restore access explicitly, add the preset and run `openshell sandbox provider attach <sandbox-name> tavily-search`.

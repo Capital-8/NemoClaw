@@ -277,7 +277,71 @@ export async function revokeTavilyProviders(
   return revalidate;
 }
 
-/** A remaining overlapping rule prevents a claim that Tavily egress was revoked. */
+/** Match the simple host/path globs used by OpenShell; unknown syntax is inconclusive. */
+function policyGlobMatches(pattern: unknown, value: string, separator: string): boolean {
+  if (typeof pattern !== "string" || /[[\]{}\\]/u.test(pattern)) {
+    throw new Error("Cannot verify effective policy glob.");
+  }
+  const expression = pattern
+    .split(/(\*\*|\*|\?)/u)
+    .map((part) => {
+      if (part === "**") return ".*";
+      if (part === "*") return `[^${separator}]*`;
+      if (part === "?") return `[^${separator}]`;
+      return part.replace(/[.+?^${}()|[\]\\]/gu, "\\$&");
+    })
+    .join("");
+  return new RegExp(`^${expression}$`, "u").test(value);
+}
+
+function endpointMayAllowTavily(endpoint: Record<string, unknown>): boolean {
+  const ports = endpoint.ports ?? [];
+  if (
+    !Array.isArray(ports) ||
+    ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)
+  ) {
+    throw new Error("Cannot verify effective endpoint ports.");
+  }
+  const port = endpoint.port;
+  if (
+    port !== undefined &&
+    (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535)
+  ) {
+    throw new Error("Cannot verify effective endpoint port.");
+  }
+  if (
+    port !== 443 &&
+    !ports.includes(443) &&
+    ((typeof port === "number" && port > 0) || ports.length > 0)
+  )
+    return false;
+  if (typeof endpoint.host !== "string") throw new Error("Cannot verify effective endpoint host.");
+  const host = endpoint.host.toLowerCase().replace(/\.$/u, "");
+  if (host !== "*" && !policyGlobMatches(host, "api.tavily.com", ".")) return false;
+  // Only enforced REST rules prove a route disjoint. Audit and passthrough
+  // modes, other protocols, and missing constraints cannot establish denial.
+  if (
+    endpoint.protocol !== "rest" ||
+    endpoint.enforcement === "audit" ||
+    endpoint.tls === "passthrough"
+  )
+    return true;
+  const rules = endpoint.rules;
+  if (rules === undefined) return true;
+  if (!Array.isArray(rules)) throw new Error("Cannot verify effective REST rules.");
+  return ["/search", "/extract"].some((path) => {
+    if (endpoint.path !== undefined && !policyGlobMatches(endpoint.path, path, "/")) return false;
+    return rules.some((rule: unknown) => {
+      if (!isMapping(rule) || !isMapping(rule.allow) || typeof rule.allow.method !== "string") {
+        throw new Error("Cannot verify effective REST matcher.");
+      }
+      const method = rule.allow.method.toUpperCase();
+      return (method === "POST" || method === "*") && policyGlobMatches(rule.allow.path, path, "/");
+    });
+  });
+}
+
+/** Prove disjoint port/REST scopes without assuming the requesting process identity. */
 export function hasTavilyEgress(policy: unknown): boolean {
   if (!isMapping(policy) || !isMapping(policy.network_policies)) {
     throw new Error("Cannot verify effective network policy.");
@@ -286,13 +350,11 @@ export function hasTavilyEgress(policy: unknown): boolean {
     if (!isMapping(rule) || !Array.isArray(rule.endpoints)) {
       throw new Error("Cannot verify an effective network rule.");
     }
+    // OpenShell also matches ancestors and can relax binary identity at runtime.
+    // A different binary path in this document is not proof of Tavily denial.
     return rule.endpoints.some((endpoint) => {
-      if (!isMapping(endpoint) || typeof endpoint.host !== "string") {
-        throw new Error("Cannot verify an effective network endpoint.");
-      }
-      const host = endpoint.host.toLowerCase().replace(/\.$/u, "");
-      const pattern = host.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*");
-      return new RegExp(`^${pattern}$`, "u").test("api.tavily.com");
+      if (!isMapping(endpoint)) throw new Error("Cannot verify an effective network endpoint.");
+      return endpointMayAllowTavily(endpoint);
     });
   });
 }
