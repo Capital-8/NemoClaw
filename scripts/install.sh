@@ -2456,10 +2456,8 @@ NODE
   info "Installed OpenShell gateway user service at $service_path"
 }
 
-# Its user-local fallback creates ~/.local/bin. Ubuntu's login umask 0002 would
-# leave ~/.local group-writable, and the OpenShell gateway state check rejects it.
 run_install_openshell_script() {
-  (umask g-w,o-w && bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh")
+  bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
 }
 
 # Run scripts/install-openshell.sh during install_nemoclaw when appropriate.

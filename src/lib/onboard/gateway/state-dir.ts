@@ -116,7 +116,11 @@ function stateRootParentOwnershipFailure(stateDir: string): string | null {
     ) {
       const reason = `the gateway state directory's ancestor '${ancestor}' is not a trusted real directory owned by the current user or root without group or world write access`;
       // Only suggest chmod for the user's own directories; never for shared ones like /tmp.
-      const chmodFixes = uid !== 0 && inspected.isDirectory() && inspected.uid === uid;
+      const chmodFixes =
+        uid !== 0 &&
+        inspected.isDirectory() &&
+        inspected.uid === uid &&
+        (inspected.mode & 0o1000) === 0;
       if (!chmodFixes) return reason;
       const mode = (inspected.mode & 0o7777).toString(8).padStart(4, "0");
       const quotedAncestor = "'" + ancestor.replaceAll("'", "'\\''") + "'";
