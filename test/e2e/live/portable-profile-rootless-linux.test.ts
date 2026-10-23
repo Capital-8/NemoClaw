@@ -1107,7 +1107,7 @@ async function main(
       env: process.env,
       origin: "generated",
       buildImage: (args, options) =>
-        buildPortableSandboxImageWithEvidence(args, options, artifacts),
+        buildPortableSandboxImageWithEvidence(args, options, artifacts, progress),
       log: console.log,
     });
     const imageRef = prebuild.imageRef;

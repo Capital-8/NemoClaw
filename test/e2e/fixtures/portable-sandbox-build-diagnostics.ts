@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-
 import type { ArtifactSink } from "./artifacts.ts";
+import { spawnObservedChild } from "./observed-child-process.ts";
+import type { TestProgress } from "./progress.ts";
 
-const BUILD_TIMEOUT_MS = 4 * 60_000;
+const BUILD_TIMEOUT_MS = 20 * 60_000;
 const DIAGNOSTIC_TAIL_CHARS = 8_192;
 const SAFE_ERROR_CODES = new Set(["EACCES", "ENOENT", "EPERM", "ETIMEDOUT"]);
 type BuildResult = {
@@ -15,24 +15,63 @@ type BuildResult = {
   error?: Error;
 };
 
-type BuildRunner = (args: readonly string[], env: NodeJS.ProcessEnv) => BuildResult;
+type BuildRunner = (
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+  progress: TestProgress,
+) => Promise<BuildResult>;
 
-function runPodmanBuild(args: readonly string[], env: NodeJS.ProcessEnv): BuildResult {
-  const result = spawnSync("podman", [...args], {
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf8",
-    timeout: BUILD_TIMEOUT_MS,
-    killSignal: "SIGKILL",
-    maxBuffer: 8 * 1024 * 1024,
+function runPodmanBuild(
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+  progress: TestProgress,
+): Promise<BuildResult> {
+  let child: ReturnType<typeof spawnObservedChild>;
+  try {
+    child = spawnObservedChild("podman", args, {
+      activityLabel: "command: portable-sandbox-image-build",
+      progress,
+      spawn: { env, stdio: ["ignore", "pipe", "pipe"], shell: false },
+    });
+  } catch (cause) {
+    return Promise.resolve({
+      status: null,
+      signal: null,
+      diagnostic: "",
+      error: cause instanceof Error ? cause : new Error("Podman build could not start"),
+    });
+  }
+  return new Promise((resolve) => {
+    let diagnostic = "";
+    let error: Error | undefined;
+    let timedOut = false;
+    const appendDiagnostic = (chunk: Buffer) => {
+      // Dockerfile steps can print credentials. Keep only a bounded in-memory tail.
+      diagnostic = (diagnostic + chunk.toString("utf8")).slice(-DIAGNOSTIC_TAIL_CHARS);
+    };
+    child.stdout?.on("data", appendDiagnostic);
+    child.stderr?.on("data", appendDiagnostic);
+    const deadline = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.once("error", (cause) => {
+      error = cause;
+    });
+    child.once("close", (status, signal) => {
+      clearTimeout(deadline);
+      resolve({
+        status,
+        signal,
+        diagnostic,
+        error: timedOut
+          ? Object.assign(new Error("Podman build timed out"), { code: "ETIMEDOUT" })
+          : error,
+      });
+    });
   });
-  // Keep raw build output in memory only because Dockerfile steps can print credentials.
-  return {
-    status: result.status,
-    signal: result.signal,
-    diagnostic: `${result.stdout ?? ""}\n${result.stderr ?? ""}`.slice(-DIAGNOSTIC_TAIL_CHARS),
-    error: result.error,
-  };
 }
 
 function failureCategory(output: string): string {
@@ -64,9 +103,10 @@ export async function buildPortableSandboxImageWithEvidence(
   args: readonly string[],
   options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
   artifacts: ArtifactSink,
+  progress: TestProgress,
   runBuild: BuildRunner = runPodmanBuild,
 ): Promise<number | null> {
-  const result = runBuild(args, options.env);
+  const result = await runBuild(args, options.env, BUILD_TIMEOUT_MS, progress);
   if (result.status !== 0 || result.error) {
     const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
     await artifacts.writeJson("portable-sandbox-image-build-failure.json", {
