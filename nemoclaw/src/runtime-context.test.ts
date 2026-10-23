@@ -114,6 +114,9 @@ describe("registerRuntimeContext", () => {
   it.each([
     "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.\nFormat the answer as JSON with searchStatus (available, unavailable, or unknown) and installationDocumentation (an object with title and url, or null).",
     "Search the web for NemoClaw installation documentation.",
+    "Research online for the official NemoClaw installation documentation",
+    "Could you research the web for NemoClaw installation documentation?",
+    "Research NemoClaw installation documentation on the internet.",
     "Browse the internet for the official NemoClaw installation documentation.",
     "Could you browse online for the NemoClaw installation documentation?",
     "Can you search online for the NemoClaw installation documentation?",
@@ -139,6 +142,8 @@ describe("registerRuntimeContext", () => {
 
   it.each([
     "Read /sandbox/README.md.",
+    "Research local files for installation instructions.",
+    "Do not research online. Read /sandbox/README.md.",
     "Browse local files for installation instructions.",
     "Could you browse local files for installation instructions?",
     "Can you use web_fetch to fetch https://docs.nvidia.com/nemoclaw/?",

@@ -125,6 +125,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const prompt of [
         searchPrompt,
         "Find the official NemoClaw installation documentation online.",
+        "Research online for the official NemoClaw installation documentation",
         "Browse the internet for the official NemoClaw installation documentation.",
         "Could you browse online for the NemoClaw installation documentation?",
       ]) {
