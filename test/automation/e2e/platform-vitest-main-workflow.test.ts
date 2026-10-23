@@ -9,6 +9,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES,
+  FULL_E2E_TEST_TIMEOUT_MINUTES,
+} from "../../../tools/e2e/full-e2e-timeout-contract.mts";
+
+import {
   readRepoText,
   readYaml,
   type Workflow,
@@ -109,6 +114,33 @@ describe("platform evidence workflow", () => {
     expect(detection.run).toContain("-User $env:WSL_TEST_USER");
     expect(live.run).toContain("-User $env:WSL_TEST_USER");
     expect(live.run).toContain('test "`$(git rev-parse HEAD)" = "$env:GITHUB_SHA"');
+  });
+
+  // source-shape-contract: compatibility -- The WSL job budget must contain its selected serial live tests and cleanup without terminating evidence upload
+  it("budgets WSL shard 1 for serial live tests, cleanup and evidence upload", () => {
+    expect(job("wsl-vitest")["timeout-minutes"]).toBe("${{ matrix.timeout_minutes }}");
+    const shards = job("wsl-vitest").strategy?.matrix?.include as Array<{
+      shard: number;
+      timeout_minutes: number;
+    }>;
+    const firstShard = shards.find((entry) => entry.shard === 1)!;
+    const nonLiveMinutes = Math.max(
+      ...shards.filter((entry) => entry.shard !== 1).map((entry) => entry.timeout_minutes),
+    );
+    const dashboardSource = readRepoText("test/e2e/live/dashboard-remote-bind.test.ts");
+    const dashboardMinutes = Number(
+      dashboardSource.match(/const TEST_TIMEOUT_MS = (\d+) \* 60_000;/u)?.[1],
+    );
+    expect(dashboardMinutes).toBeGreaterThan(0);
+    expect(step("wsl-vitest", "Run WSL live E2E").run).toContain(
+      "dashboard-remote-bind.test.ts -t hermes",
+    );
+    expect(firstShard.timeout_minutes).toBeGreaterThanOrEqual(
+      nonLiveMinutes +
+        FULL_E2E_TEST_TIMEOUT_MINUTES +
+        dashboardMinutes +
+        2 * FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES,
+    );
   });
 
   it("runs Hermes remote-dashboard isolation before and after restart on WSL", () => {

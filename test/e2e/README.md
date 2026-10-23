@@ -657,7 +657,9 @@ It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in fo
 The matrix disables `fail-fast`.
 Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
 job has a 150-minute budget, including its 70-minute live test and cleanup.
-The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+The first WSL shard has a 270-minute budget: 90 minutes for setup and non-live contracts,
+100 minutes for full E2E, 50 minutes for the selected Hermes dashboard case, and 15 minutes
+after each live suite for cleanup and artifact retention. The other shards have 90 minutes.
 
 WSL setup checks the systemd manager after package installation. An unavailable bus or a timed-out
 probe permits one restart of the job's Ubuntu distro, followed by bounded readiness probes.
