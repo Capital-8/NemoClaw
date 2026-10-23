@@ -20,9 +20,16 @@ describe("planRegisteredExtraProviders probe outcomes", () => {
     ["tavily", false],
     ["tavily-hermes-v1", true],
     ["tavily-hermes-v1", false],
+    ["tavily", null],
+    ["tavily", "brave"],
+    ["tavily", "tavily"],
+    ["tavily-hermes-v1", null],
+    ["tavily-hermes-v1", "brave"],
+    ["tavily-hermes-v1", "tavily"],
   ] as const)(
     "preserves shared registrations while filtering revoked Tavily grants: %s/%s (#13082)",
-    async (type, excludeTavily) => {
+    async (type, selection) => {
+      const excluded = selection === true || selection === null || selection === "brave";
       const getProvider = vi.fn(async ({ providerName }: { providerName: string }) => ({
         ok: true as const,
         value: {
@@ -35,10 +42,12 @@ describe("planRegisteredExtraProviders probe outcomes", () => {
       const plan = await planRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => ["shared-search", "inference"],
         providerAdapter: { getProvider } as never,
-        excludeTavily,
+        ...(typeof selection === "boolean"
+          ? { excludeTavily: selection }
+          : { webSearchProvider: selection }),
       });
       expect(plan).toEqual({
-        extraProviders: excludeTavily ? ["inference"] : ["shared-search", "inference"],
+        extraProviders: excluded ? ["inference"] : ["shared-search", "inference"],
         staleExtraProviders: [],
       });
     },

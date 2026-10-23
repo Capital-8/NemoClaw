@@ -358,7 +358,7 @@ export interface SandboxStateOptions<
       gatewayName: string,
       options?: Pick<
         import("../../extra-provider-reconciliation").ReconcileExtraProvidersDeps,
-        "excludeTavily"
+        "webSearchProvider"
       >,
     ):
       | import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan
@@ -2439,17 +2439,14 @@ class SandboxStateFlow<
         requestedSandboxName,
         registryMessagingAuthoritySnapshot,
       );
-      const excludeTavily =
-        typeof this.deps.getSandboxRegistryEntry(requestedSandboxName)?.webSearchEnabled ===
-          "boolean" &&
-        (!state.webSearchConfig ||
-          webSearchProviderForConfig(state.webSearchConfig as unknown as SharedWebSearchConfig) !==
-            "tavily");
-      const extraProviderPlan = excludeTavily
-        ? await this.deps.planRegisteredExtraProviders(this.options.gatewayName, {
-            excludeTavily: true,
-          })
-        : await this.deps.planRegisteredExtraProviders(this.options.gatewayName);
+      const extraProviderPlan = await this.deps.planRegisteredExtraProviders(
+        this.options.gatewayName,
+        {
+          webSearchProvider: state.webSearchConfig
+            ? webSearchProviderForConfig(state.webSearchConfig as unknown as SharedWebSearchConfig)
+            : null,
+        },
+      );
       if (
         this.options.apfInterceptorRequested === true &&
         (extraProviderPlan.extraProviders.length > 0 ||

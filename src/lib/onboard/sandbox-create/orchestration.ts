@@ -1991,9 +1991,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         planOrdinaryExtraProviders: () =>
           planRegisteredExtraProviders(GATEWAY_NAME, {
             runOpenshell,
-            excludeTavily:
-              typeof registry.getSandbox(sandboxName)?.webSearchEnabled === "boolean" &&
-              webSearchConfig?.provider !== "tavily",
+            webSearchProvider: webSearchConfig?.provider ?? null,
           }),
       },
     );

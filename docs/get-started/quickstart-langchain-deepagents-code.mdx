@@ -258,7 +258,8 @@ To restore access to the current sandbox, add the preset and run `openshell sand
 This recovery is temporary: the saved selection remains disabled, and the next rebuild omits the Tavily provider again.
 Deep Agents Code has no NemoClaw-managed web-search configuration that makes this attachment durable.
 When no sandbox needs the provider, remove it globally with `nemo-deepagents credentials reset tavily-search --yes`.
-The command detaches current sandbox attachments, removes the gateway provider, and reports every detached sandbox that you must rebuild after registering a replacement.
+The command detaches current sandbox attachments and removes the gateway provider.
+After registering a replacement, explicitly attach it to each sandbox that still needs Tavily, including after any required rebuild.
 
   </Accordion>
 

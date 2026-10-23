@@ -18,6 +18,11 @@ vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
 }));
 
+vi.mock("../../sandbox-registration", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../sandbox-registration")>()),
+  withSandboxImageRegistrationFence: async (operation: () => Promise<unknown>) => operation(),
+}));
+
 const GPU_PROOF = {
   status: "verified",
   cudaVerified: true,
@@ -228,7 +233,9 @@ describe("handleSandboxState resume recreation", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  [resume] Recreate sandbox requested; recreating sandbox.",
     );
-    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw", {
+      webSearchProvider: null,
+    });
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
@@ -253,6 +260,46 @@ describe("handleSandboxState resume recreation", () => {
     });
     expect(result.sandboxName).toBe("saved");
   });
+
+  it.each(["tavily", "tavily-hermes-v1"])(
+    "omits shared %s credentials when fresh creation has no web-search selection (#13082)",
+    async (profileType) => {
+      const session = createSession();
+      const { deps, calls } = createDeps(
+        {
+          getSandboxRegistryEntry: () => ({
+            name: "my-assistant",
+            provider: "provider",
+            model: "model",
+            endpointUrl: null,
+            preferredInferenceApi: "openai-completions",
+            toolDisclosure: "progressive",
+            fromDockerfile: null,
+            hermesAuthMethod: null,
+          }),
+          planRegisteredExtraProviders: (gatewayName, options = {}) =>
+            planRegisteredExtraProviders(gatewayName, {
+              ...options,
+              listExtraProviders: () => ["shared-search", "other"],
+              providerAdapter: {
+                getProvider: async ({ providerName }: { providerName: string }) => ({
+                  ok: true,
+                  value: {
+                    name: providerName,
+                    type: providerName === "shared-search" ? profileType : "nvidia",
+                  },
+                }),
+              } as never,
+            }),
+        },
+        session,
+      );
+      await handleSandboxState(baseOptions(deps, session));
+      expect((calls.createSandbox.mock.calls[0] as unknown[])[15]).toMatchObject({
+        extraProviders: ["other"],
+      });
+    },
+  );
 
   it.each(["tavily", "tavily-hermes-v1"])(
     "keeps saved opt-out on rebuild despite a retained %s registration used for live reattachment (#13082)",
@@ -302,7 +349,7 @@ describe("handleSandboxState resume recreation", () => {
         sandboxName: "saved",
         recreateSandbox: () => true,
       });
-      expect(planner).toHaveBeenCalledWith("nemoclaw", { excludeTavily: true });
+      expect(planner).toHaveBeenCalledWith("nemoclaw", { webSearchProvider: null });
       expect((journal.completeCreate.mock.calls[0] as unknown[])[15]).toMatchObject({
         extraProviders: ["other"],
         recreate: true,
@@ -337,7 +384,7 @@ describe("handleSandboxState resume recreation", () => {
     });
 
     expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw", {
-      excludeTavily: true,
+      webSearchProvider: null,
     });
     expect(journal.completeCreate).toHaveBeenCalledTimes(1);
     const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];

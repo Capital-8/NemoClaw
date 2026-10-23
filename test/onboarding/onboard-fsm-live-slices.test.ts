@@ -329,7 +329,7 @@ if (scenario.mode === "revoked-tavily-planner") {
   const coreComposition = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/machine/core-flow-composition.ts"))});
   const extraProviders = require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/extra-provider-reconciliation.ts"))});
   extraProviders.planRegisteredExtraProviders = (gatewayName, options) => {
-    called.push("extra-plan:" + gatewayName + ":" + String(options.excludeTavily) + ":" + typeof options.runOpenshell);
+    called.push("extra-plan:" + gatewayName + ":" + String(options.webSearchProvider) + ":" + typeof options.runOpenshell);
     return { extraProviders: [], staleExtraProviders: [] };
   };
   const createCore = coreComposition.createCoreOnboardFlowPhases;
@@ -632,7 +632,7 @@ flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime, phases }) 
 
 flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime, phases }) => {
   if (scenario.mode === "revoked-tavily-planner") {
-    await boundExtraProviderPlanner("nemoclaw", { excludeTavily: true });
+    await boundExtraProviderPlanner("nemoclaw", { webSearchProvider: null });
     throw sentinel;
   }
   if (scenario.mode === "providerless-external-component") {
@@ -1120,7 +1120,7 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
   it("forwards revoked Tavily intent through the production planner binding (#13082)", async (context) => {
     assert.deepEqual(
       await runSliceProbe({ slice: "core", mode: "revoked-tavily-planner" }, context),
-      ["initial:init", "extra-plan:nemoclaw:true:function"],
+      ["initial:init", "extra-plan:nemoclaw:null:function"],
     );
   });
 
