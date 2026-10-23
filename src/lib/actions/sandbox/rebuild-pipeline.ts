@@ -50,15 +50,17 @@ import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase"
 import {
   type HermesCronRestoreIdentity,
   HermesCronRestoreIncompleteError,
-  DeferredRebuildCliExit,
   printHermesCronRestoreRecoveryCommand,
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
   runRebuildPostRestorePhase,
   recordRebuildCompletion,
 } from "./rebuild-post-restore-phase";
-import type { RebuildBail } from "./rebuild-credential-preflight";
-import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import {
+  DeferredRebuildCliExit,
+  printRebuildPreflightFailure,
+  type RebuildBail,
+} from "./rebuild/cli-exit";
 import {
   assertSandboxRebuildCommandAvailable,
   revalidateManagedWorkloadRebuildBeforeDelete,

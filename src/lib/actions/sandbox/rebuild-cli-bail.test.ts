@@ -63,11 +63,14 @@ describe("interactive rebuild bail after backup (#12919)", () => {
     );
   });
 
-  it("keeps the late bail when releasing the source window also rejects", async () => {
+  it("reconciles a rejected source release before a late CLI exit", async () => {
     const harness = createRebuildFlowHarness();
-    const release = vi
-      .spyOn(rebuildBackupPhase, "releaseRebuildSourceOpenClawWindow")
+    const finish = vi
+      .spyOn(openClawLifecycle, "finishOpenClawBackupQuiesce")
       .mockRejectedValue(new Error("injected release failure"));
+    const abort = vi.spyOn(openClawLifecycle, "abortOpenClawPostRestoreDoctor").mockResolvedValue({
+      ok: true,
+    });
     vi.spyOn(rebuildBackupPhase, "bindRebuildSnapshotGpuAuthority").mockImplementation(() => {
       throw new Error("injected GPU authority conflict");
     });
@@ -77,9 +80,13 @@ describe("interactive rebuild bail after backup (#12919)", () => {
 
     const errors = harness.errorSpy.mock.calls.flat().join("\n");
     expect(errors).toContain("injected release failure");
+    expect(errors).toContain("The retained sandbox was stopped");
     expect(errors).toContain("Captured sandbox GPU authority cannot be replayed safely");
     expect(exit).toHaveBeenCalledExactlyOnceWith(1);
-    expect(release.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0]);
+    expect(finish).toHaveBeenCalledOnce();
+    expect(abort).toHaveBeenCalledOnce();
+    expect(finish.mock.invocationCallOrder[0]).toBeLessThan(abort.mock.invocationCallOrder[0]);
+    expect(abort.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0]);
     expect(harness.releaseOnboardLockSpy.mock.invocationCallOrder[0]).toBeLessThan(
       exit.mock.invocationCallOrder[0],
     );

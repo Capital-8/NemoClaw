@@ -19,8 +19,12 @@ import * as registry from "../../state/registry";
 import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
-import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
+import {
+  DeferredRebuildCliExit,
+  redactBoundedRebuildTerminalDiagnostic,
+  type RebuildBail,
+  type RebuildLog,
+} from "./rebuild/cli-exit";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -57,16 +61,6 @@ export {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
-
-export class DeferredRebuildCliExit extends Error {
-  constructor(
-    message: string,
-    readonly code: number | undefined,
-    readonly exit: RebuildBail,
-  ) {
-    super(message);
-  }
-}
 
 export function printHermesCronRestoreRecoveryCommand(
   sandboxName: string,
