@@ -523,6 +523,7 @@ esac`,
         {
           currentMinOpenshellVersion: "0.1.3",
           currentMaxOpenshellVersion: "0.1.3",
+          finishInstallMode: "source",
           openshellVersion: version,
         },
       );

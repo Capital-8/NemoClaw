@@ -4749,6 +4749,9 @@ preinstall_backup_and_retire_legacy_gateway() {
   supported_range="$(resolve_current_openshell_version_range)" \
     || error "Could not resolve the current OpenShell version range. Existing gateway and sandboxes were left unchanged."
   read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  # Keep the 0.1.x retained-state refusal before prepared-state handling,
+  # backup, gateway retirement, and the install-openshell.sh component handoff.
+  # The component installer repeats the guard for direct invocations.
   if version_gte "$max_openshell_version" "0.1.0"; then
     if ! command_exists openshell; then prefer_user_local_openshell; fi
     command_exists openshell \
