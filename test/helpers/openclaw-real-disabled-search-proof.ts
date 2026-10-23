@@ -113,6 +113,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const prompt of [
         searchPrompt,
         "Find the official NemoClaw installation documentation online.",
+        "Browse the internet for the official NemoClaw installation documentation.",
       ]) {
         const searchTurn = await runner().runBeforePromptBuild(
           { prompt, messages: [] },

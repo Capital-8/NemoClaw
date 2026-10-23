@@ -122,7 +122,7 @@ export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: Nem
     const unavailableSearch =
       configuredSearchEnabled(api.config) === false &&
       typeof prompt === "string" &&
-      /(?:^|[.!?\n])\s*(?:please\s+)?(?:search\s+(?:the\s+)?(?:web|internet)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+up))|search\s+(?:using|with|via)\s+(?:tavily|brave)|(?:find|look\s+up|locate)\s+[^.!?\n]*?\b(?:online|on\s+(?:the\s+)?(?:web|internet))(?=\s*(?:[.!?\n]|$|(?:and|for)\b)))\b/iu.test(
+      /(?:^|[.!?\n])\s*(?:please\s+)?(?:(?:search|browse)\s+(?:the\s+)?(?:web|internet)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+up))|search\s+(?:using|with|via)\s+(?:tavily|brave)|(?:find|look\s+up|locate)\s+[^.!?\n]*?\b(?:online|on\s+(?:the\s+)?(?:web|internet))(?=\s*(?:[.!?\n]|$|(?:and|for)\b)))\b/iu.test(
         prompt,
       );
     return {

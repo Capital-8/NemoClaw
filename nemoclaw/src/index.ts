@@ -313,6 +313,7 @@ export default function register(api: OpenClawPluginApi): void {
     api.logger.warn(
       `Could not register runtime context hook: ${err instanceof Error ? err.message : String(err)}`,
     );
+    throw err;
   }
 
   const bannerEndpoint = route.endpoint;
@@ -322,12 +323,7 @@ export default function register(api: OpenClawPluginApi): void {
   if (route.managedModel) api.registerProvider(registeredProviderForConfig(route));
 
   // 3. Enforce disabled search and block secrets in memory writes.
-  // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
-  // (PluginHookBeforeToolCallEvent/Result in openclaw/src/plugins/types.ts).
-  // If the hook name or return shape changes in a future OpenClaw release,
-  // the try/catch ensures the plugin still loads — the scanner just becomes
-  // a no-op. Verify after OpenClaw upgrades that blocked writes still show
-  // the expected error message.
+  // Search can be disabled after load, so enforcement hooks are mandatory even when currently enabled.
   try {
     api.on(
       "before_agent_run",
@@ -358,6 +354,7 @@ export default function register(api: OpenClawPluginApi): void {
     api.logger.warn(
       `Could not register disabled-search admission gate: ${err instanceof Error ? err.message : String(err)}`,
     );
+    throw err;
   }
   try {
     api.on(
@@ -433,6 +430,7 @@ export default function register(api: OpenClawPluginApi): void {
     api.logger.warn(
       `[SECURITY] Could not register tool safety hooks: ${err instanceof Error ? err.message : String(err)}`,
     );
+    throw err;
   }
 
   const bannerLines = [

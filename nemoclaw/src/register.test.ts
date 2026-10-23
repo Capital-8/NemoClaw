@@ -105,33 +105,26 @@ describe("plugin registration", () => {
     );
   });
 
-  it.each(["before_prompt_build", "before_agent_run"])(
-    "preserves provider and secret-write registration when %s is unsupported",
-    (unsupportedHook) => {
+  it.each([
+    { hook: "before_prompt_build", enabled: false },
+    { hook: "before_prompt_build", enabled: true },
+    { hook: "before_agent_run", enabled: false },
+    { hook: "before_tool_call", enabled: false },
+    { hook: "before_agent_run", enabled: true },
+    { hook: "before_tool_call", enabled: true },
+    { hook: "gateway_stop", enabled: false },
+    { hook: "agent_end", enabled: false },
+  ])(
+    "refuses plugin registration when required $hook fails with search enabled=$enabled",
+    ({ hook, enabled }) => {
       const api = createMockApi();
+      api.config.tools = { web: { search: { enabled } } };
+      const failure = new Error("unsupported required hook");
       vi.mocked(api.on).mockImplementation((hookName) => {
-        if (hookName === unsupportedHook) throw new Error("unsupported hook");
+        if (hookName === hook) throw failure;
       });
-      register(api);
-      expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("unsupported hook"));
-      expect(api.registerProvider).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "inference" }),
-      );
-      const handler = vi
-        .mocked(api.on)
-        .mock.calls.find(([name]) => name === "before_tool_call")![1];
-      expect(
-        handler({
-          toolName: "write",
-          params: {
-            file_path: "/sandbox/.openclaw/memory/notes.md",
-            content: "nvapi-abcdefghijklmnopqrstuvwxyz",
-          },
-        }),
-      ).toMatchObject({
-        block: true,
-        blockReason: expect.stringContaining("Memory write blocked"),
-      });
+      expect(() => register(api)).toThrow(failure);
+      expect(stderrOutput()).not.toContain("NemoClaw registered");
     },
   );
 
