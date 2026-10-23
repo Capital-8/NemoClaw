@@ -50,12 +50,14 @@ import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase"
 import {
   type HermesCronRestoreIdentity,
   HermesCronRestoreIncompleteError,
+  DeferredRebuildCliExit,
   printHermesCronRestoreRecoveryCommand,
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
   runRebuildPostRestorePhase,
   recordRebuildCompletion,
 } from "./rebuild-post-restore-phase";
+import type { RebuildBail } from "./rebuild-credential-preflight";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   assertSandboxRebuildCommandAvailable,
@@ -179,7 +181,22 @@ export async function rebuildSandbox(
         }
       }),
     { loadRegistry: registry.load, withLifecycleLock: withMcpLifecycleLock },
-  );
+  ).catch((error: unknown) => {
+    if (!(error instanceof DeferredRebuildCliExit)) throw error;
+    return error.code === undefined
+      ? error.exit(error.message)
+      : error.exit(error.message, error.code);
+  });
+}
+
+function deferRebuildCliExit(
+  exitBail: RebuildBail,
+  throwOnError: boolean | undefined,
+): RebuildBail {
+  if (throwOnError) return exitBail;
+  return (message, code) => {
+    throw new DeferredRebuildCliExit(message, code, exitBail);
+  };
 }
 
 async function rebuildSandboxUnlocked(
@@ -226,7 +243,7 @@ async function rebuildSandboxUnlocked(
     stoppedSource,
     releaseOnboardLock,
     log,
-    bail,
+    bail: exitBail,
   } = preflight;
   const {
     resumeConfig,
@@ -251,6 +268,8 @@ async function rebuildSandboxUnlocked(
   let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
+  // The CLI exit must occur after rebuild and facade cleanup have unwound.
+  const bail = deferRebuildCliExit(exitBail, opts.throwOnError);
   // A stopped source has no live DCode route to probe. Keep the replacement,
   // registry, image, and gateway-schema checks, but use the same route-probe
   // exemption at every destructive-boundary revalidation that preflight used.
@@ -278,6 +297,7 @@ async function rebuildSandboxUnlocked(
     let sourceOpenClawDoctorWindow: NonNullable<
       RebuildBackupPhaseResult["sourceOpenClawDoctorWindow"]
     > | null = null;
+    let unwinding = false;
 
     try {
       const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
@@ -727,6 +747,7 @@ async function rebuildSandboxUnlocked(
             }
             log(`Hermes cron restore recovery for accepted replacement: ${outcome}`);
           } catch (error) {
+            if (error instanceof DeferredRebuildCliExit) throw error;
             console.error("");
             console.error(
               `  Hermes cron restore could not validate and release the accepted replacement: ${rebuildFailureDetail(error)}`,
@@ -1043,6 +1064,7 @@ async function rebuildSandboxUnlocked(
               hermesCronRestoreIdentity = transaction.identity;
               return transaction.result;
             } catch (error) {
+              if (error instanceof DeferredRebuildCliExit) throw error;
               console.error("");
               console.error(
                 error instanceof HermesCronRestoreIncompleteError
@@ -1085,10 +1107,27 @@ async function rebuildSandboxUnlocked(
       }
       retainPolicyHandoffForRecovery = false;
       telemetryVerified = postRestoreVerification?.complete === true;
+    } catch (error) {
+      unwinding = true;
+      throw error;
     } finally {
+      let releaseFailed = false;
+      let releaseFailure: unknown;
       if (sourceOpenClawDoctorWindow) {
-        await releaseRebuildSourceOpenClawWindow(sourceOpenClawDoctorWindow);
+        const window = sourceOpenClawDoctorWindow;
         sourceOpenClawDoctorWindow = null;
+        try {
+          await releaseRebuildSourceOpenClawWindow(window);
+        } catch (error) {
+          if (unwinding) {
+            console.error(
+              `  Warning: OpenClaw source maintenance cleanup failed: ${rebuildFailureDetail(error)}`,
+            );
+          } else {
+            releaseFailed = true;
+            releaseFailure = error;
+          }
+        }
       }
       const handoffManifest = rebuildPolicyHandoffManifest;
       if (
@@ -1110,6 +1149,7 @@ async function rebuildSandboxUnlocked(
             `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
           ) && telemetryCleanupComplete;
       }
+      if (releaseFailed) throw releaseFailure;
     }
   } finally {
     if (stoppedSource)

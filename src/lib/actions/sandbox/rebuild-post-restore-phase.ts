@@ -32,6 +32,7 @@ import {
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
+
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   type McpRebuildPreparation,
@@ -56,6 +57,16 @@ export {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
+
+export class DeferredRebuildCliExit extends Error {
+  constructor(
+    message: string,
+    readonly code: number | undefined,
+    readonly exit: RebuildBail,
+  ) {
+    super(message);
+  }
+}
 
 export function printHermesCronRestoreRecoveryCommand(
   sandboxName: string,
@@ -351,6 +362,7 @@ export async function runRebuildPostRestorePhase(
         effectiveMessagingPlan = finalizedMessagingPlan;
       }
     } catch (error) {
+      if (error instanceof DeferredRebuildCliExit) throw error;
       bail(
         `Could not finalize pending messaging removals after rebuild: ${
           error instanceof Error ? error.message : String(error)
