@@ -37,6 +37,7 @@ import {
 } from "./container-runtime-resources";
 import { assessNvidiaCdiHost } from "./docker-cdi";
 import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
+import { isPodmanGatewayRuntimeEnabled } from "./runtime-provider/configured-runtime";
 import { isSshSession } from "./ssh-forward-hint";
 
 export {
@@ -601,6 +602,7 @@ function parseSystemctlState(value = ""): boolean | null {
 export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
+  const probeDocker = !isPodmanGatewayRuntimeEnabled(env);
   const runCaptureImpl =
     opts.runCaptureImpl ??
     ((command: readonly string[], options?: { ignoreError?: boolean; timeout?: number }) =>
@@ -638,7 +640,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   let dockerProbeIssue: HostAssessment["dockerProbeIssue"];
   let dockerReachable = false;
   let dockerRunning = false;
-  if (dockerInstalled && !dockerHostInvalid && dockerInfoOutput === undefined) {
+  if (probeDocker && dockerInstalled && !dockerHostInvalid && dockerInfoOutput === undefined) {
     if (runCaptureExImpl) {
       try {
         const result = runCaptureExImpl(["docker", "info", "--format", "{{json .}}"], {
@@ -695,6 +697,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
       ? observeDockerAuthorityConflict
       : undefined);
   const dockerAuthorityConflict =
+    probeDocker &&
     observeConflict !== undefined &&
     dockerInstalled &&
     !dockerHostInvalid &&
@@ -708,7 +711,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   // socket is reclassified below. Only probed when the daemon is reachable so a
   // down/absent Docker never pays for the extra call (#7320).
   let dockerVersionOutput = opts.dockerVersionOutput;
-  if (dockerReachable && !dockerHostInvalid && dockerVersionOutput === undefined) {
+  if (probeDocker && dockerReachable && !dockerHostInvalid && dockerVersionOutput === undefined) {
     if (runCaptureExImpl) {
       try {
         const result = runCaptureExImpl(["docker", "version", "--format", "{{json .}}"], {
@@ -821,7 +824,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerUsesContainerdSnapshotter;
   const dockerDefaultCgroupnsMode = readDockerDefaultCgroupnsMode(readFileImpl);
   const dockerServiceActive =
-    platform === "linux" && systemctlAvailable && dockerInstalled
+    probeDocker && platform === "linux" && systemctlAvailable && dockerInstalled
       ? parseSystemctlState(
           runCaptureImpl(["systemctl", "is-active", "docker"], {
             ignoreError: true,
@@ -829,7 +832,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
         )
       : null;
   const dockerServiceEnabled =
-    platform === "linux" && systemctlAvailable && dockerInstalled
+    probeDocker && platform === "linux" && systemctlAvailable && dockerInstalled
       ? parseSystemctlState(
           runCaptureImpl(["systemctl", "is-enabled", "docker"], {
             ignoreError: true,
