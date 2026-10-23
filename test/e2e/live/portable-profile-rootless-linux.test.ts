@@ -79,6 +79,7 @@ import {
   withoutPodmanConnectionSelectors,
   writePortableRegistry,
 } from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
+import { buildPortableSandboxImageWithEvidence } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
@@ -1105,6 +1106,8 @@ async function main(
       dockerDriverGateway: true,
       env: process.env,
       origin: "generated",
+      buildImage: (args, options) =>
+        buildPortableSandboxImageWithEvidence(args, options, artifacts),
       log: console.log,
     });
     const imageRef = prebuild.imageRef;
