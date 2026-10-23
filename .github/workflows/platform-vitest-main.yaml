@@ -488,8 +488,14 @@ jobs:
           $exports
           test "`$(git rev-parse HEAD)" = "$env:GITHUB_SHA"
           export NEMOCLAW_RUN_LIVE_E2E=1
-          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
-          E2E_ARTIFACT_DIR=$dashboardArtifacts NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1 npx vitest run --project e2e-live test/e2e/live/dashboard-remote-bind.test.ts -t hermes --silent=false --reporter=default
+          full_e2e_status=0
+          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default || full_e2e_status=`$?
+          dashboard_status=0
+          E2E_ARTIFACT_DIR=$dashboardArtifacts NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1 npx vitest run --project e2e-live test/e2e/live/dashboard-remote-bind.test.ts -t hermes --silent=false --reporter=default || dashboard_status=`$?
+          if [ "`$full_e2e_status" -ne 0 ]; then
+            exit "`$full_e2e_status"
+          fi
+          exit "`$dashboard_status"
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 

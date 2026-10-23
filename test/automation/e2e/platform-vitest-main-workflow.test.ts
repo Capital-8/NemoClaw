@@ -115,7 +115,8 @@ describe("platform evidence workflow", () => {
     const live = step("wsl-vitest", "Run WSL live E2E");
     const command = live.run
       ?.split("\n")
-      .find((line) => line.includes("test/e2e/live/dashboard-remote-bind.test.ts"));
+      .find((line) => line.includes("test/e2e/live/dashboard-remote-bind.test.ts"))
+      ?.split(" || ")[0];
     expect(command).toBeDefined();
     const result = spawnSync(
       "bash",
@@ -147,9 +148,14 @@ describe("platform evidence workflow", () => {
       "--reporter=default",
     ]);
   });
-  it.each([0, 17])(
-    "preserves full-suite status %s on the native Docker WSL runner",
-    (fullStatus) => {
+  it.each([
+    [0, 0],
+    [17, 0],
+    [0, 19],
+    [17, 19],
+  ])(
+    "runs both WSL suites and preserves failure for full=%s and dashboard=%s",
+    (fullStatus, dashboardStatus) => {
       const run = step("wsl-vitest", "Run WSL live E2E").run ?? "";
       const script = run.match(/\$script = @"\n([\s\S]*?)\n"@/u)?.[1];
       expect(script).toBeDefined();
@@ -171,8 +177,8 @@ describe("platform evidence workflow", () => {
           python3() { return 42; }
           npx() {
             case "$*" in
-              *full-e2e.test.ts*) return "$TEST_FULL_STATUS" ;;
-              *dashboard-remote-bind.test.ts*) return 0 ;;
+              *full-e2e.test.ts*) echo full-e2e; return "$TEST_FULL_STATUS" ;;
+              *dashboard-remote-bind.test.ts*) echo dashboard; return "$TEST_DASHBOARD_STATUS" ;;
               *) echo 'Native Docker has no IPv6-only host alias' >&2; return 42 ;;
             esac
           }
@@ -185,11 +191,13 @@ describe("platform evidence workflow", () => {
               PATH: process.env.PATH,
               TEST_WORKSPACE: workspace,
               TEST_FULL_STATUS: String(fullStatus),
+              TEST_DASHBOARD_STATUS: String(dashboardStatus),
             },
           },
         );
         expect(result.error).toBeUndefined();
-        expect(result.status, result.stderr).toBe(fullStatus);
+        expect(result.status, result.stderr).toBe(fullStatus || dashboardStatus);
+        expect(result.stdout.trim().split("\n")).toEqual(["full-e2e", "dashboard"]);
       } finally {
         rmSync(workspace, { recursive: true, force: true });
       }
