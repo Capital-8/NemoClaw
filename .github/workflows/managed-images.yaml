@@ -690,6 +690,19 @@ jobs:
           resolution_labels=()
           audit_options=()
           if [ "$AGENT" = "openclaw" ]; then
+            # Layer export exhausts the hosted runner's 16 GiB RAM and 3 GiB
+            # swap. Keep this additional swap until the disposable runner is
+            # retired; turning it off while Docker retains pages can cause OOM.
+            available_kib="$(df -Pk "$RUNNER_TEMP" | awk 'NR == 2 {print $4}')"
+            if [[ ! "$available_kib" =~ ^[0-9]+$ ]] || [ "$available_kib" -lt 67108864 ]; then
+              echo "ERROR: OpenClaw export needs 32 GiB swap plus 32 GiB free disk." >&2
+              exit 1
+            fi
+            swap_file="$(mktemp "$RUNNER_TEMP/nemoclaw-openclaw-export.XXXXXX")"
+            sudo fallocate -l 32G "$swap_file"
+            sudo chmod 0600 "$swap_file"
+            sudo mkswap "$swap_file"
+            sudo swapon "$swap_file"
             # Retain resource evidence before a runner can disappear during
             # layer export. Sample only capacity counters, never credentials.
             (
