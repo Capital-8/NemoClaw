@@ -79,7 +79,9 @@ Enter the server base URL and the model ID reported by the server.
 Use a host-routable URL such as `http://localhost:8000/v1` when you want onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
-NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+NemoClaw validates the entered URL from the host.
+For eligible loopback endpoints, it registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+Other qualifying custom endpoints retain their entered endpoint.
 For an authenticated backend already reachable at `http://host.openshell.internal:<port>/v1`, native attachments preserve the accepted unprivileged port.
 NemoClaw rejects ports reserved for its gateways, Model Router, dashboards, and credential proxies.
 Automatic loopback rewriting remains limited to the ports listed above.
