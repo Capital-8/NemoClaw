@@ -17,6 +17,7 @@ import { handleSlashCommand } from "./commands/slash.js";
 import { readNativeRoute } from "./onboard/native-route.js";
 import { getPluginConfig } from "./plugin-config.js";
 import { registerRuntimeContext } from "./runtime-context.js";
+import { configuredSearchEnabled } from "./search-config.js";
 import { safeResolvePath } from "./security/safe-resolve-path.js";
 import { isMemoryPath, scanForSecrets } from "./security/secret-scanner.js";
 
@@ -243,10 +244,7 @@ function blocksDisabledSearch(
   event: BeforeToolCallEvent,
   deniedSearchRuns: DeniedSearchState,
 ): boolean {
-  const tools = config.tools;
-  const web = isToolParams(tools) ? tools["web"] : undefined;
-  const search = isToolParams(web) ? web["search"] : undefined;
-  if (!isToolParams(search) || search["enabled"] !== false) {
+  if (configuredSearchEnabled(config) !== false) {
     deniedSearchRuns.clear();
     return false;
   }

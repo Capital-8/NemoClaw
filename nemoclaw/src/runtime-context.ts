@@ -3,6 +3,7 @@
 
 import { loadState } from "./blueprint/state.js";
 import type { NemoClawConfig, OpenClawConfig, OpenClawPluginApi } from "./index.js";
+import { configuredSearchEnabled } from "./search-config.js";
 import * as importedSandboxName from "./shared/sandbox-name.cjs";
 
 const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
@@ -57,16 +58,6 @@ export function getRuntimeSummary(pluginConfig: NemoClawConfig): RuntimeSummary 
     networkLines: STATIC_NETWORK_LINES,
     filesystemLines: STATIC_FILESYSTEM_LINES,
   };
-}
-
-function configuredSearchEnabled(config: OpenClawConfig): unknown {
-  // Read only the enable flag. Provider configuration can contain credentials.
-  const tools = config.tools;
-  const web = tools && typeof tools === "object" && !Array.isArray(tools) ? tools.web : undefined;
-  const search = web && typeof web === "object" && !Array.isArray(web) ? web.search : undefined;
-  return search && typeof search === "object" && !Array.isArray(search)
-    ? search.enabled
-    : undefined;
 }
 
 function searchContext(config: OpenClawConfig): string[] {
@@ -131,7 +122,7 @@ export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: Nem
     const unavailableSearch =
       configuredSearchEnabled(api.config) === false &&
       typeof prompt === "string" &&
-      /(?:^|[.!?\n])\s*(?:please\s+)?(?:search\s+(?:the\s+)?(?:web|internet)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+up))|search\s+(?:using|with|via)\s+(?:tavily|brave))\b/iu.test(
+      /(?:^|[.!?\n])\s*(?:please\s+)?(?:search\s+(?:the\s+)?(?:web|internet)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+up))|search\s+(?:using|with|via)\s+(?:tavily|brave)|(?:find|look\s+up|locate)\s+[^.!?\n]*?\b(?:online|on\s+(?:the\s+)?(?:web|internet))(?=\s*(?:[.!?\n]|$|(?:and|for)\b)))\b/iu.test(
         prompt,
       );
     return {

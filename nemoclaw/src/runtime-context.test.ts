@@ -116,6 +116,9 @@ describe("registerRuntimeContext", () => {
     "Search the web for NemoClaw installation documentation.",
     "Search using Brave for today's release notes.",
     "Run a web_search for the official docs.",
+    "Find the official NemoClaw installation documentation online.",
+    "Please look up the installation instructions on the web.",
+    "Locate official installation documentation on the internet.",
   ])(
     "withholds tools for an explicit search request when search is disabled: %s",
     async (prompt) => {
@@ -135,6 +138,8 @@ describe("registerRuntimeContext", () => {
     "Fetch https://www.wikidata.org/wiki/Q30 with web_fetch.",
     "Run curl https://wttr.in/:help.",
     "Edit the Tavily configuration file.",
+    "Find the word online in /sandbox/README.md.",
+    "Do not find documentation online. Read README.md instead.",
     "Run exactly this shell command: curl https://wttr.in/:help.\nDo not use web_fetch, web_search, or any other weather provider.",
     "Use web_fetch to fetch https://www.wikidata.org/wiki/Q30. Do not use web_search, Brave, or Tavily.",
   ])("preserves tools for ordinary work when search is disabled: %s", async (prompt) => {
@@ -147,18 +152,24 @@ describe("registerRuntimeContext", () => {
     );
   });
 
-  it.each([true, undefined, "false"])(
-    "preserves search tools unless configuration disables them: %s",
-    async (enabled) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled } } } };
-      registerRuntimeContext(api, defaultConfig);
+  it.each([
+    {},
+    { tools: null },
+    { tools: [] },
+    { tools: { web: [] } },
+    { tools: { web: { search: null } } },
+    { tools: { web: { search: [] } } },
+    { tools: { web: { search: { enabled: true } } } },
+    { tools: { web: { search: { enabled: "false" } } } },
+  ])("preserves search tools unless configuration disables them: %j", async (config) => {
+    const api = createMockApi();
+    api.config = config;
+    registerRuntimeContext(api, defaultConfig);
 
-      expect(
-        await api._trigger("before_prompt_build", { prompt: "Search the web for NemoClaw." }, {}),
-      ).not.toHaveProperty("toolsAllow");
-    },
-  );
+    expect(
+      await api._trigger("before_prompt_build", { prompt: "Search the web for NemoClaw." }, {}),
+    ).not.toHaveProperty("toolsAllow");
+  });
 
   it("releases the tool restriction on the next local turn and after configuration recovery", async () => {
     const api = createMockApi();

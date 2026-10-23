@@ -566,7 +566,11 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   it.each([
     {},
     { tools: null },
+    { tools: [] },
     { tools: { web: [] } },
+    { tools: { web: { search: null } } },
+    { tools: { web: { search: [] } } },
+    { tools: { web: { search: { enabled: true } } } },
     { tools: { web: { search: { enabled: "false" } } } },
   ])("does not infer disabled search from malformed configuration: %j", (config) => {
     const { api, handler } = searchHook(false);

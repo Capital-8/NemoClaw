@@ -105,23 +105,28 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       );
       const searchPrompt =
         "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.";
-      const searchTurn = await runner().runBeforePromptBuild(
-        { prompt: searchPrompt, messages: [] },
-        { runId: "search-prompt" },
-      );
-      assert.deepEqual(
-        searchTurn.toolsAllow,
-        [],
-        "source plugin narrows the real prompt hook result",
-      );
-      const submitted = promptToolPolicy({ tools: availableTools }).apply(searchTurn);
-      assert.deepEqual(submitted.tools, [], "real prompt policy submits no tools");
-      assert.deepEqual(submitted.callableToolNames, [], "discovery controls are not callable");
-      assert.deepEqual(
-        applyToolAllowlist(availableTools, searchTurn.toolsAllow),
-        [],
-        "real runtime submits no discovery or substitute tools",
-      );
+      for (const prompt of [
+        searchPrompt,
+        "Find the official NemoClaw installation documentation online.",
+      ]) {
+        const searchTurn = await runner().runBeforePromptBuild(
+          { prompt, messages: [] },
+          { runId: "search-prompt" },
+        );
+        assert.deepEqual(
+          searchTurn.toolsAllow,
+          [],
+          "source plugin narrows the real prompt hook result",
+        );
+        const submitted = promptToolPolicy({ tools: availableTools }).apply(searchTurn);
+        assert.deepEqual(submitted.tools, [], "real prompt policy submits no tools");
+        assert.deepEqual(submitted.callableToolNames, [], "discovery controls are not callable");
+        assert.deepEqual(
+          applyToolAllowlist(availableTools, searchTurn.toolsAllow),
+          [],
+          "real runtime submits no discovery or substitute tools",
+        );
+      }
       const localTurn = await runner().runBeforePromptBuild(
         { prompt: "Read /sandbox/README.md.", messages: [] },
         { runId: "local-prompt" },
