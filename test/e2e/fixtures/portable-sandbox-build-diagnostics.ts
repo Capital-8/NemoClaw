@@ -52,7 +52,7 @@ function runPodmanBuild(
           ? "command: portable-sandbox-image-publish"
           : "command: portable-sandbox-image-build",
       progress,
-      spawn: { env, stdio: ["ignore", "pipe", "pipe"], shell: false },
+      spawn: { env, stdio: ["ignore", "pipe", "pipe"], shell: false, detached: true },
     });
   } catch (cause) {
     return Promise.resolve({
@@ -97,9 +97,18 @@ function runPodmanBuild(
     };
     const deadline = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
-      // A descendant may keep a pipe open after the direct child is killed.
-      // Bound both the exit wait and the subsequent output drain.
+      // Detached Podman leads a process group. Kill descendants that may still
+      // build or hold an output pipe after the direct child exits.
+      if (child.pid && child.pid > 0) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+      } else {
+        child.kill("SIGKILL");
+      }
+      // Bound exit wait and output drain even if signaling fails or a pipe stays open.
       postKillTimer = setTimeout(closeOpenPipesAndSettle, POST_KILL_EXIT_WAIT_MS);
     }, timeoutMs);
     child.once("error", (cause) => {

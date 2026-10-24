@@ -35,10 +35,13 @@ it("settles a timed-out Podman build when a descendant keeps its output pipe ope
     logLine: () => undefined,
   });
   const child = Object.assign(new EventEmitter(), {
+    pid: 4242,
     stdout: new PassThrough(),
     stderr: new PassThrough(),
     kill: vi.fn(() => true),
   });
+  const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+  vi.mocked(spawnObservedChild).mockClear();
   vi.mocked(spawnObservedChild).mockReturnValueOnce(
     child as unknown as ReturnType<typeof spawnObservedChild>,
   );
@@ -52,7 +55,12 @@ it("settles a timed-out Podman build when a descendant keeps its output pipe ope
     );
     child.stderr.write("permission denied; credential=private-build-token");
     await vi.advanceTimersByTimeAsync(PORTABLE_IMAGE_COMMAND_TIMEOUT_MS);
-    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(vi.mocked(spawnObservedChild).mock.calls[0]?.[2].spawn).toMatchObject({
+      detached: true,
+      shell: false,
+    });
+    expect(kill).toHaveBeenCalledWith(-child.pid, "SIGKILL");
+    expect(child.kill).not.toHaveBeenCalled();
     child.emit("exit", null, "SIGKILL");
     await vi.advanceTimersByTimeAsync(1_000);
 
@@ -72,6 +80,7 @@ it("settles a timed-out Podman build when a descendant keeps its output pipe ope
     });
     expect(published).not.toContain("private-build-token");
   } finally {
+    kill.mockRestore();
     vi.useRealTimers();
     progress.stop();
     child.stdout.destroy();
