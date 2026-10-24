@@ -79,7 +79,10 @@ import {
   withoutPodmanConnectionSelectors,
   writePortableRegistry,
 } from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
-import { buildPortableSandboxImageWithEvidence } from "../fixtures/portable-sandbox-build-diagnostics.ts";
+import {
+  buildPortableSandboxImageWithEvidence,
+  publishPortableSandboxImage,
+} from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
@@ -1108,11 +1111,11 @@ async function main(
       origin: "generated",
       buildImage: (args, options) =>
         buildPortableSandboxImageWithEvidence(args, options, artifacts, progress),
+      publishImage: (args, options) => publishPortableSandboxImage(args, options, progress),
       log: console.log,
     });
     const imageRef = prebuild.imageRef;
     assert.equal(imageRef, "127.0.0.1:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
-
     run("podman", ["image", "rm", "--force", imageRef]);
     run("podman", ["pull", imageRef]);
     assert.match(
@@ -1170,6 +1173,7 @@ async function main(
         env: process.env,
         buildImage: (args, options) =>
           buildPortableSandboxImageWithEvidence(args, options, artifacts, progress),
+        publishImage: (args, options) => publishPortableSandboxImage(args, options, progress),
         origin: "generated",
         log: console.log,
       });

@@ -7,8 +7,13 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../../src/lib/sandbox/build-context.ts";
+import { prebuildSandboxImageIfEligible } from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildPortableSandboxImageWithEvidence } from "../fixtures/portable-sandbox-build-diagnostics.ts";
+import {
+  buildPortableSandboxImageWithEvidence,
+  publishPortableSandboxImage,
+} from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
 it("records a fixed Podman failure category without build output (#13482)", async () => {
@@ -104,6 +109,67 @@ it("retains a build signal and allowlisted error code without error text (#13482
     expect(published).not.toContain("private error text");
   } finally {
     progress.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps a failed registry push separate from build evidence (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-publish-diagnostic-"));
+  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
+  const dockerfile = path.join(buildCtx, "Dockerfile");
+  fs.writeFileSync(dockerfile, "FROM scratch\n");
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const progress = startTestProgress("portable build diagnostics", ["build", "publish"], {
+    logLine: () => undefined,
+  });
+  const fetchRegistry = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response("{}", { status: 200 }));
+  const runBuild = vi.fn(async (_args: readonly string[], _env: NodeJS.ProcessEnv) => ({
+    status: 0,
+    signal: null,
+    diagnostic: "",
+  }));
+  const runPublish = vi.fn(
+    async (_args: readonly string[], _env: NodeJS.ProcessEnv, _timeoutMs: number) => ({
+      status: 125,
+      signal: null,
+      diagnostic: "registry push refused; credential=private-push-token",
+    }),
+  );
+
+  try {
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: "rootless-e2e",
+        createArgs: ["--from", dockerfile, "--name", "portable-e2e"],
+        sandboxName: "portable-e2e",
+        dockerDriverGateway: true,
+        env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable", NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        origin: "generated",
+        buildImage: (args, options) =>
+          buildPortableSandboxImageWithEvidence(args, options, artifacts, progress, runBuild),
+        publishImage: (args, options) =>
+          publishPortableSandboxImage(args, options, progress, runPublish),
+        inspectImageId: () => `sha256:${"a".repeat(64)}`,
+        log: () => undefined,
+      }),
+    ).rejects.toThrow("Managed local registry publish failed (exit 125)");
+
+    expect(fetchRegistry).toHaveBeenCalledOnce();
+    expect(runBuild).toHaveBeenCalledOnce();
+    expect(runBuild.mock.calls[0]?.[0]?.[0]).toBe("build");
+    expect(runPublish).toHaveBeenCalledOnce();
+    expect(runPublish.mock.calls[0]?.[0]?.[0]).toBe("push");
+    expect(runPublish.mock.calls[0]?.[2]).toBe(20 * 60_000);
+    expect(fs.existsSync(artifacts.pathFor("portable-sandbox-image-build-failure.json"))).toBe(
+      false,
+    );
+  } finally {
+    fetchRegistry.mockRestore();
+    progress.stop();
+    fs.rmSync(buildCtx, { recursive: true, force: true });
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });

@@ -15,7 +15,7 @@ type BuildResult = {
   error?: Error;
 };
 
-type BuildRunner = (
+type ImageCommandRunner = (
   args: readonly string[],
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
@@ -31,7 +31,10 @@ function runPodmanBuild(
   let child: ReturnType<typeof spawnObservedChild>;
   try {
     child = spawnObservedChild("podman", args, {
-      activityLabel: "command: portable-sandbox-image-build",
+      activityLabel:
+        args[0] === "push"
+          ? "command: portable-sandbox-image-publish"
+          : "command: portable-sandbox-image-build",
       progress,
       spawn: { env, stdio: ["ignore", "pipe", "pipe"], shell: false },
     });
@@ -40,7 +43,7 @@ function runPodmanBuild(
       status: null,
       signal: null,
       diagnostic: "",
-      error: cause instanceof Error ? cause : new Error("Podman build could not start"),
+      error: cause instanceof Error ? cause : new Error("Podman image command could not start"),
     });
   }
   return new Promise((resolve) => {
@@ -67,7 +70,7 @@ function runPodmanBuild(
         signal,
         diagnostic,
         error: timedOut
-          ? Object.assign(new Error("Podman build timed out"), { code: "ETIMEDOUT" })
+          ? Object.assign(new Error("Podman image command timed out"), { code: "ETIMEDOUT" })
           : error,
       });
     });
@@ -104,7 +107,7 @@ export async function buildPortableSandboxImageWithEvidence(
   options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
   artifacts: ArtifactSink,
   progress: TestProgress,
-  runBuild: BuildRunner = runPodmanBuild,
+  runBuild: ImageCommandRunner = runPodmanBuild,
 ): Promise<number | null> {
   const result = await runBuild(args, options.env, BUILD_TIMEOUT_MS, progress);
   if (result.status !== 0 || result.error) {
@@ -118,4 +121,15 @@ export async function buildPortableSandboxImageWithEvidence(
     });
   }
   return result.status;
+}
+
+/** Keep registry publication separate from build-failure evidence. */
+export async function publishPortableSandboxImage(
+  args: readonly string[],
+  options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
+  progress: TestProgress,
+  runPublish: ImageCommandRunner = runPodmanBuild,
+): Promise<number | null> {
+  const result = await runPublish(args, options.env, BUILD_TIMEOUT_MS, progress);
+  return result.error ? null : result.status;
 }
