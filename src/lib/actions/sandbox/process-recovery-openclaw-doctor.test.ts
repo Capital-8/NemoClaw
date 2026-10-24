@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { ok as assertOk } from "node:assert";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +21,7 @@ import {
   buildOpenClawPostUpgradeDoctorReleaseCommand,
   finishOpenClawBackupQuiesce,
   finishOpenClawPostRestoreDoctor,
+  prepareOpenClawPostRestoreDoctor,
   releaseOpenClawPostRestoreDoctorForDelete,
   retireOpenClawPostRestoreDoctorForDelete,
 } from "./process-recovery";
@@ -429,6 +431,36 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     expect(execute.mock.calls[4]?.[1]).not.toContain("curl");
     expect(execute.mock.calls[5]?.[1]).toContain("curl");
     expect(execute.mock.calls[6]?.[1]).not.toContain("curl");
+  });
+
+  it("migrates restored state without releasing the gateway before offline writers", async () => {
+    const execute = vi.fn(async () => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = {
+      captureOpenshell: vi.fn() as never,
+      executeSandboxExecCommand: execute,
+      now: () => 0,
+      sleep: vi.fn(async () => undefined),
+    };
+    const runtimeSelection = { gatewayName: "selected-gateway", workspace: "default" } as const;
+    const result = await prepareOpenClawPostRestoreDoctor(
+      { sandboxName: "alpha", kind: "backup", runtimeSelection },
+      deps,
+    );
+
+    expect(result).toEqual({ ok: true, window: { sandboxName: "alpha", runtimeSelection } });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      buildOpenClawBackupQuiescePromotionCommand(),
+      30_000,
+      { runtimeSelection },
+    );
+    expect(deps.captureOpenshell).not.toHaveBeenCalled();
+    assertOk(result.ok, "expected migration window");
+    execute.mockClear();
+    expect(await prepareOpenClawPostRestoreDoctor(result.window, deps)).toEqual(result);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("refuses to bypass doctor through the backup-only release path", async () => {

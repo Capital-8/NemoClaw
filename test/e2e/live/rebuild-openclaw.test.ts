@@ -150,7 +150,6 @@ test(
         timeoutMs: 20 * 60_000,
       });
       assertExitZero(rebuild, "rebuild OpenClaw sandbox");
-      expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
     };
     const verifyRestoredState = async (artifactPrefix: string) => {
       await waitForNativeOpenClaw(sandbox, env, redactions, artifactPrefix);

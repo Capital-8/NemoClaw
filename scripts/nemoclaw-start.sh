@@ -4540,6 +4540,11 @@ EOF
   # any other startup mutation. The source PVC must remain a read-only backup
   # input until the host either releases this gate or retires the sandbox.
   rm -f -- "$ready" || return 1
+  # Container stop/start changes the PID namespace. Preserve native locks and
+  # wait for their owner to be provably stopped before advertising offline writes.
+  run_openclaw_config_as_owner /usr/local/bin/node \
+    /usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts \
+    --wait-gateway-executable "$OPENCLAW" 2026.10.5 || return 1
   if [ "$(id -u)" -eq 0 ]; then
     ready_owner="$marker_owner"
   fi

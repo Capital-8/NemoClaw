@@ -213,6 +213,7 @@ if (uniqueFactories.length !== 1) {
 const createOpenClawTools = uniqueFactories[0];
 const tools = createOpenClawTools({
   config,
+  agentSessionKey: "agent:main:main",
   sandboxed: true,
   workspaceDir: "/sandbox/.openclaw/workspace-main",
   wrapBeforeToolCallHook: false,

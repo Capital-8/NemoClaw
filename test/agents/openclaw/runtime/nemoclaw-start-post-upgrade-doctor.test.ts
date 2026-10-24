@@ -332,7 +332,13 @@ const finishDoctorBeforeGateway =
 function backupQuiesceFunction(source: string): string {
   return [
     extractShellFunctionFromSource(source, "_nemoclaw_safe_replace_tmp_file"),
+    extractShellFunctionFromSource(source, "run_openclaw_config_as_owner"),
     extractShellFunctionFromSource(source, "run_requested_openclaw_backup_quiesce")
+      .replace("/usr/local/bin/node", shellQuote(process.execPath))
+      .replace(
+        "/usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts",
+        '"$NEMOCLAW_TEST_OWNER_RUNNER"',
+      )
       .replaceAll("/sandbox/.openclaw", "${NEMOCLAW_TEST_CONFIG_DIR}")
       .replaceAll("/tmp/nemoclaw-post-upgrade-doctor-ready", "${NEMOCLAW_TEST_READY}"),
   ]
@@ -355,10 +361,21 @@ function fixture(moduleExtension = "js", native105 = false, prefix = "nemoclaw-s
   const leaseActive = path.join(root, "lease-active");
   const leaseViolation = path.join(root, "lease-violation");
   const schemaRepairCalls = path.join(packageRoot, "schema-repair-calls");
+  const ownerRunner = path.join(root, "owner-probe.mjs");
   fs.mkdirSync(configDir);
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(path.dirname(openclaw), { recursive: true });
   fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
+  fs.writeFileSync(
+    ownerRunner,
+    [
+      'import fs from "node:fs";',
+      'import assert from "node:assert/strict";',
+      'assert.deepEqual(process.argv.slice(2), ["--wait-gateway-executable", process.env.OPENCLAW, "2026.10.5"]);',
+      "assert.equal(fs.existsSync(process.env.NEMOCLAW_TEST_READY), false);",
+      'process.exit(Number(process.env.NEMOCLAW_TEST_OWNER_EXIT ?? "0"));',
+    ].join("\n"),
+  );
   fs.writeFileSync(
     path.join(packageRoot, "package.json"),
     JSON.stringify({ name: "openclaw", type: "module", version: "2026.9.5" }),
@@ -402,6 +419,7 @@ function fixture(moduleExtension = "js", native105 = false, prefix = "nemoclaw-s
     leaseViolation,
     marker,
     openclaw,
+    ownerRunner,
     packageRoot,
     ready,
     root,
@@ -425,6 +443,7 @@ function fixtureEnv(
       "../../../../scripts/lib/openclaw-legacy-migrations.mts",
     ),
     OPENCLAW: f.openclaw,
+    NEMOCLAW_TEST_OWNER_RUNNER: f.ownerRunner,
     PATH: `${f.fakeBin}:${process.env.PATH ?? ""}`,
     STEP_DOWN: f.stepDown,
   };
@@ -619,6 +638,28 @@ process.exit(result.status ?? 1);
       expect(fs.existsSync(f.marker)).toBe(false);
       expect(fs.existsSync(f.ready)).toBe(false);
       expect(fs.existsSync(f.calls)).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not publish backup readiness when native ownership remains unverified", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.marker, "nemoclaw-openclaw-backup-quiesce-v1\n", { mode: 0o600 });
+      const result = spawnSync(
+        "bash",
+        ["-c", `${backupQuiesceFunction(source)}\nrun_requested_openclaw_backup_quiesce`],
+        {
+          encoding: "utf8",
+          env: fixtureEnv(f, { NEMOCLAW_TEST_OWNER_EXIT: "1" }),
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(fs.existsSync(f.ready)).toBe(false);
+      expect(fs.existsSync(f.calls)).toBe(false);
+      expect(fs.readFileSync(f.marker, "utf8")).toBe("nemoclaw-openclaw-backup-quiesce-v1\n");
     } finally {
       fs.rmSync(f.root, { recursive: true, force: true });
     }

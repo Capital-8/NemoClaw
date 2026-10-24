@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   assertLegacySessionSourcesPreserved,
   MixedLegacySessionsError,
@@ -19,6 +20,51 @@ const BRIDGES = [
 ] as const;
 type Bridge = (typeof BRIDGES)[number];
 type NativeFunction = (...args: unknown[]) => unknown;
+
+/** Wait for native ownership to end without reading config or changing any state. */
+export async function waitForOpenClawGatewayOwner(
+  root: string,
+  deps: { now?: () => number; sleep?: (milliseconds: number) => Promise<unknown> } = {},
+): Promise<void> {
+  if (manifest(root).version !== "2026.10.5") throw new Error("Unreviewed ownership inspector");
+  const readOwner = await nativeFunction(root, "gateway-lock-", "readActiveGatewayLockIdentity");
+  const now = deps.now ?? (() => performance.now());
+  const wait = deps.sleep ?? sleep;
+  // A stopped foreign owner expires after 90 seconds. Leave time for config
+  // generation inside the existing five-minute managed root-apply deadline.
+  const deadline = now() + 120_000;
+  let reported = false;
+  while (now() < deadline) {
+    try {
+      const owner = await readOwner({
+        env: process.env,
+        requireInspection: true,
+        includeEmbedded: true,
+        timeoutMs: Math.max(1, Math.min(5_000, deadline - now())),
+      });
+      if (owner === undefined) return;
+      if (!Number.isSafeInteger(object(owner).pid))
+        throw new Error("Invalid native owner identity");
+    } catch (error) {
+      // A foreign PID namespace cannot prove death while the native heartbeat
+      // is fresh. Retry only that refusal; malformed or unreadable locks fail.
+      if (
+        !(error instanceof Error) ||
+        error.name !== "GatewayLockError" ||
+        !(error.cause instanceof Error) ||
+        error.cause.name !== "GatewayLockNamespaceError"
+      )
+        throw error;
+    }
+    if (!reported) {
+      process.stderr.write("[setup] Waiting for OpenClaw native gateway ownership to end\n");
+      reported = true;
+    }
+    const remaining = deadline - now();
+    if (remaining > 0) await wait(Math.min(2_000, remaining));
+  }
+  throw new Error("OpenClaw gateway ownership did not end within the maintenance budget");
+}
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -363,6 +409,23 @@ export function archiveEmptyTelegramThreadBindings(stateDir: string): void {
 
 class DoctorExitError extends Error {}
 
+function reportInspectionFailure(args: string[], interrupted: boolean): void {
+  // Neither native stderr nor runtime/config paths are safe to publish. These
+  // fixed labels identify the failed gate without exposing its private input.
+  const operations: Record<string, string> = {
+    "--eligible": "schema admission",
+    "--preview": "config preview",
+    "--sessions": "session preservation",
+    "--retired": "retired Telegram state inspection",
+  };
+  const operation = operations[args[1] ?? ""];
+  const bridge = BRIDGES.find((candidate) => candidate.version === args[3]);
+  if (!operation || !bridge) return;
+  process.stderr.write(
+    `[migration] OpenClaw ${bridge.version} ${operation} ${interrupted ? "did not complete" : "failed"}; native details withheld to protect restored state.\n`,
+  );
+}
+
 function child(args: string[], timeout: number, inspect: boolean, input?: string): string {
   const env = { ...process.env };
   delete env.VITEST;
@@ -395,10 +458,15 @@ function child(args: string[], timeout: number, inspect: boolean, input?: string
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
   }
-  if (result.error || result.signal || result.status === null)
+  if (result.error || result.signal || result.status === null) {
+    if (inspect) reportInspectionFailure(args, true);
     throw new Error("OpenClaw migration command did not complete");
+  }
   if (inspect && result.status === 42) throw new MixedLegacySessionsError();
-  if (result.status !== 0) throw new DoctorExitError("OpenClaw migration command failed");
+  if (result.status !== 0) {
+    if (inspect) reportInspectionFailure(args, false);
+    throw new DoctorExitError("OpenClaw migration command failed");
+  }
   return result.stdout ?? "";
 }
 
@@ -462,7 +530,7 @@ async function main(): Promise<void> {
   const [mode, root, value, extra] = process.argv.slice(2);
   if (!root || !value || extra) throw new Error("Expected migration operation and runtime paths");
   if (mode === "--run") return runOpenClawLegacyMigrations(root, value);
-  if (mode === "--run-executable") {
+  if (mode === "--run-executable" || mode === "--wait-gateway-executable") {
     const executable = fs.realpathSync(root);
     let directory = fs.statSync(executable).isDirectory() ? executable : path.dirname(executable);
     while (true) {
@@ -476,6 +544,10 @@ async function main(): Promise<void> {
           fs.existsSync(packagePath) &&
           object(JSON.parse(fs.readFileSync(packagePath, "utf8"))).name === "openclaw"
         ) {
+          if (mode === "--wait-gateway-executable") {
+            if (value !== "2026.10.5") throw new Error("Unreviewed ownership inspection request");
+            return waitForOpenClawGatewayOwner(candidate);
+          }
           return runOpenClawLegacyMigrations(candidate, value);
         }
       }
@@ -512,7 +584,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     }
     // Native inspection errors can contain config values. Keep this boundary opaque.
     process.stderr.write(
-      "[migration] OpenClaw intermediate migration could not safely complete; gateway remains stopped.\n",
+      process.argv[2] === "--wait-gateway-executable"
+        ? "[setup] OpenClaw gateway ownership could not be verified as stopped.\n"
+        : "[migration] OpenClaw intermediate migration could not safely complete; gateway remains stopped.\n",
     );
     process.exitCode = 1;
   });

@@ -6,6 +6,10 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
+import {
+  buildOpenClawRestoreLogCommand,
+  formatOpenClawRestoreLogs,
+} from "./gateway-wedge-diagnostics";
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -533,6 +537,20 @@ export async function restartSandboxGatewayWithDeps(
   ) {
     const detail = `gateway process restarted but ${agentName === "openclaw" ? "readiness" : "health"} did not pass before timeout`;
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
+    if (agentName === "openclaw") {
+      // The legacy wedge signature misses failures during a fresh 10.5 process start.
+      let diagnostic: GatewayRestartCommandResult | null = null;
+      try {
+        diagnostic = await deps.executeSandboxExecCommand(
+          sandboxName,
+          buildOpenClawRestoreLogCommand(),
+          15_000,
+        );
+      } catch {
+        // Diagnostic transport cannot replace the original readiness failure.
+      }
+      for (const line of formatOpenClawRestoreLogs(diagnostic)) console.error(`  ${line}`);
+    }
     await deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };
   }

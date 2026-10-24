@@ -59,7 +59,8 @@ function installedWebFetchProbe(dist: string): string {
 }
 
 const nativeToolsFixture = `
-export function createOpenClawTools() {
+export function createOpenClawTools(options) {
+  if (options.agentSessionKey !== "agent:main:main") throw new Error("explicit probe agent is required");
   return [{ name: "web_fetch", async execute(_id, {url}) {
     if (url.endsWith("/denied")) throw new Error("Web fetch failed (403)");
     return { content: "approved-marker" };

@@ -126,8 +126,12 @@ export const teamsManifest = {
           // placeholder under TEAMS_CLIENT_SECRET through its runtime alias.
           tenantId: "{{teamsConfig.tenantId}}",
           webhook: {
-            port: "{{teamsConfig.webhookPort}}",
             path: TEAMS_OPENCLAW_WEBHOOK_RENDER_CONTRACT.webhookPath,
+          },
+          // OpenClaw 10.5 routes webhooks through the gateway. Preserve the
+          // configured listener that NemoClaw forwards for existing Teams bots.
+          legacyWebhook: {
+            port: "{{teamsConfig.webhookPort}}",
           },
           healthMonitor: {
             enabled: false,

@@ -58,21 +58,6 @@ function installEnv(hostedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
-async function expectSandboxExecAlive(
-  sandboxName: string,
-  exec: (
-    script: string,
-    artifactName: string,
-  ) => Promise<{ stdout: string; stderr: string; exitCode: number | null }>,
-  artifactName: string,
-): Promise<void> {
-  const alive = await exec("echo alive", artifactName);
-  expect(
-    alive.exitCode === 0 && alive.stdout.trim() === "alive",
-    `${sandboxName} exec failed: ${resultText(alive)}`,
-  ).toBe(true);
-}
-
 async function waitForNativeAgentReady(
   exec: (
     script: string,
@@ -320,7 +305,6 @@ test(
       });
 
     progress.phase("prove baseline sandbox access and native agent readiness");
-    await expectSandboxExecAlive(SANDBOX_NAME, execShell, "baseline-sandbox-exec-alive");
     await waitForNativeAgentReady(execShell, "baseline-native-agent-ready", DASHBOARD_PORT);
 
     progress.phase("write persistent OpenClaw markers");

@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { archiveEmptyTelegramThreadBindings } from "../../../scripts/lib/openclaw-legacy-migrations.mts";
+import {
+  archiveEmptyTelegramThreadBindings,
+  waitForOpenClawGatewayOwner,
+} from "../../../scripts/lib/openclaw-legacy-migrations.mts";
 
 const script = path.resolve(
   import.meta.dirname,
@@ -17,6 +20,72 @@ const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe("native ownership before offline state writes", () => {
+  function runtime(body: string) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-owner-probe-"));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, "dist"));
+    fs.writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ name: "openclaw", version: "2026.10.5" }),
+    );
+    fs.writeFileSync(
+      path.join(root, "dist/gateway-lock-test.mjs"),
+      [
+        'import assert from "node:assert/strict";',
+        "let calls = 0;",
+        "async function readActiveGatewayLockIdentity(options) {",
+        "assert.equal(options.requireInspection, true); assert.equal(options.includeEmbedded, true);",
+        "assert.ok(options.timeoutMs > 0 && options.timeoutMs <= 5000); calls++;",
+        body,
+        "}",
+        "export { readActiveGatewayLockIdentity as o };",
+      ].join("\n"),
+    );
+    return root;
+  }
+
+  it.each([
+    "if (calls < 3) return { pid: 123 };",
+    'if (calls < 3) { const cause = new Error("fresh owner"); cause.name = "GatewayLockNamespaceError"; const error = new Error("inspection unavailable", { cause }); error.name = "GatewayLockError"; throw error; }',
+  ])("waits for native proof without changing source state (%s)", async (body) => {
+    const root = runtime(body);
+    const source = path.join(root, "openclaw.json");
+    fs.writeFileSync(source, "malformed config must still be backed up");
+    let clock = 0;
+    await waitForOpenClawGatewayOwner(root, {
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    expect(clock).toBe(4000);
+    expect(fs.readFileSync(source, "utf8")).toBe("malformed config must still be backed up");
+  });
+
+  it("refuses a continuously live owner within the existing readiness budget", async () => {
+    let clock = 0;
+    await expect(
+      waitForOpenClawGatewayOwner(runtime("return { pid: 123 };"), {
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      }),
+    ).rejects.toThrow(/maintenance budget/);
+    expect(clock).toBe(120_000);
+  });
+
+  it.each(['throw new Error("unreadable lock");', "return null;", 'return { pid: "invalid" };'])(
+    "refuses unverifiable native inspection without retry (%s)",
+    async (body) => {
+      const wait = vi.fn();
+      await expect(waitForOpenClawGatewayOwner(runtime(body), { sleep: wait })).rejects.toThrow();
+      expect(wait).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("empty Telegram thread-binding restoration", () => {
@@ -371,6 +440,11 @@ describe("OpenClaw intermediate restore migrations", () => {
     expect(
       result.stderr.includes("Legacy session JSON and populated SQLite sessions coexist"),
     ).toBe(scenario.status === 42);
+    expect(result.stderr.includes("OpenClaw 2026.9.5 session preservation failed")).toBe(
+      scenario.status === 1,
+    );
+    expect(result.stderr).not.toContain(source);
+    expect(result.stderr).not.toContain(sqlite);
     expect(proof.calls()).toHaveLength(scenario.admitted ? 4 : 0);
     expect(fs.readFileSync(sqlite)).toEqual(before);
     expect(fs.readFileSync(source, "utf8")).toBe(scenario.entries);
@@ -487,6 +561,11 @@ describe("OpenClaw intermediate restore migrations", () => {
       const result = proof.run();
       expect(result.status).not.toBe(0);
       expect(result.stderr).not.toContain("fixture-secret-value");
+      expect(result.stderr).not.toContain(proof.configPath);
+      expect(result.stderr).not.toContain(proof.target);
+      expect(result.stderr).toContain(
+        `OpenClaw 2026.9.5 ${scenario === "unknown-config" || scenario === "preview-error" ? "config preview" : "schema admission"} failed; native details withheld`,
+      );
       expect(proof.calls()).toEqual([]);
       expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
     },
@@ -498,7 +577,10 @@ describe("OpenClaw intermediate restore migrations", () => {
   });
   it("refuses stranded Telegram state even when both older runtimes were skipped", () => {
     const proof = fixture({ writer: "2026.10.5", scenario: "retired-remains" });
-    expect(proof.run().status).not.toBe(0);
+    const result = proof.run();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OpenClaw 2026.9.7 retired Telegram state inspection failed");
+    expect(result.stderr).not.toContain("unmigrated source");
     expect(proof.calls()).toEqual([]);
     expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
   });

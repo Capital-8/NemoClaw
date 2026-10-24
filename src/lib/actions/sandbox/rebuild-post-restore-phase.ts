@@ -47,6 +47,7 @@ import {
   abortUnregisteredOpenClawPostRestoreDoctor,
   beginUnregisteredOpenClawBackupQuiesce,
   finishUnregisteredOpenClawPostRestoreDoctor,
+  prepareUnregisteredOpenClawPostRestoreDoctor,
   type OpenClawPostRestoreDoctorWindow,
 } from "./runtime/openclaw-lifecycle";
 
@@ -304,6 +305,15 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
       if (!openClawDoctorWindow) return;
+      // Native config patch requires a valid current schema. Doctor must migrate
+      // restored channel settings before manifest writes, without starting the gateway.
+      const prepared = await prepareUnregisteredOpenClawPostRestoreDoctor(openClawDoctorWindow);
+      if (!prepared.ok) {
+        log(`OpenClaw offline state migration failed (${prepared.stage}).`);
+        bail("OpenClaw restored state could not be migrated before messaging configuration.");
+        return;
+      }
+      openClawDoctorWindow = prepared.window;
     }
 
     if (targetAgentName === "openclaw" || targetAgentName === "hermes") {

@@ -11,6 +11,19 @@ Changes to the OpenClaw scope patch select the compatible-endpoint, latency, ski
 The full OpenClaw cases verify readiness after explicit admin approval and an ordinary agent turn. When the approved device matches the calling CLI's existing identity, the CLI confirms the already-granted admin scope through a read-only gateway request before exiting, so later ordinary calls retain the rotated token's approved metadata. This confirmation uses the existing transport with normal token-cache writes; other device commands keep their read-only shared-state behavior. Approvals for confirmed other devices retain their existing behavior. If reading the local identity fails, the CLI reports that approval completed but the handoff failed, and exits unsuccessfully with recovery guidance.
 The llama.cpp GPU case proves ordinary inference before approval, then uses the existing admin-only cron operation and exact-request helper for denial, approval, and privileged-consumer evidence. Its former requirement for an ordinary greeting to request admin is replaced by successful inference; GPU, model, authentication, and cleanup assertions remain live.
 
+The OpenClaw Discord and Slack pairing targets approve the sandbox CLI's exact
+pending admin request before invoking native pairing management. They retain
+the state-root checks, pending code and user checks, approval, allowlist state,
+repeat-approval refusal, and cleanup. The initial list command must succeed;
+its echoed channel name adds no pairing evidence and is no longer asserted.
+The pairing targets keep their existing assertion limits.
+
+The rebuild target verifies command success and restored native state without
+checking completion wording. The survival target proves baseline sandbox access
+through its native readiness command, which checks both command success and the
+expected response. It omits the duplicate `echo alive` probe. Restore, denial,
+native execution, and cleanup checks remain live.
+
 OpenClaw owns TUI turn ordering and `chat.send` correlation.
 Fixes and regression coverage for those behaviors belong upstream.
 

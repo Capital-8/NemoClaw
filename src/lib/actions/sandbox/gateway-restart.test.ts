@@ -158,7 +158,9 @@ describe("restartSandboxGateway native lifecycle", () => {
       const { waitForRecoveredSandboxGateway: _wait, ...deps } = baseDeps();
       deps.executeSandboxExecCommand
         .mockImplementation(async (_name, command) => {
-          expect(command).toContain("http://127.0.0.1:18791/readyz");
+          expect(command).toMatch(
+            /http:\/\/127\.0\.0\.1:18791\/readyz|^\/usr\/bin\/python3 -I -S -c/,
+          );
           return seconds >= readyAt
             ? { status: 0, stdout: '{"ready":true}\n200', stderr: "" }
             : { status: 22, stdout: '{"ready":false}\n503', stderr: "" };
@@ -252,9 +254,56 @@ describe("restartSandboxGateway native lifecycle", () => {
       ok: false,
       failureLayer: "health timeout",
     });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      label: "available",
+      expectedDiagnostic: "startup failed: <REDACTED>",
+      diagnostic: async () => ({
+        status: 0,
+        stdout: "startup failed: opaque-restart-diagnostic-secret",
+        stderr: "",
+      }),
+    },
+    {
+      label: "transport lost",
+      expectedDiagnostic: "command unavailable",
+      diagnostic: async () => {
+        throw new SandboxCommandTransportError("unavailable");
+      },
+    },
+  ])(
+    "retains OpenClaw readiness failure with bounded diagnostics ($label)",
+    async ({ diagnostic, expectedDiagnostic }) => {
+      silenceConsole();
+      const secret = "opaque-restart-diagnostic-secret";
+      vi.stubEnv("NVIDIA_API_KEY", secret);
+      const execute = vi
+        .fn(diagnostic)
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+      const deps = baseDeps({
+        executeSandboxExecCommand: execute,
+        waitForRecoveredSandboxGateway: vi.fn(async () => false),
+      });
+      await expect(restartSandboxGateway("alpha", { quiet: true, deps })).resolves.toMatchObject({
+        ok: false,
+        failureLayer: "health timeout",
+      });
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute.mock.calls[1]).toEqual([
+        "alpha",
+        expect.stringContaining("/usr/bin/python3 -I -S -c"),
+        15_000,
+      ]);
+      const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(output).not.toContain(secret);
+      expect(output).toContain(expectedDiagnostic);
+      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+    },
+  );
 
   it("requires health proof when Hermes restart closes the exec relay before status", async () => {
     silenceConsole();

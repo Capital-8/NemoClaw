@@ -1133,21 +1133,33 @@ export function finishOpenClawBackupQuiesce(
   return releaseAndVerifyOpenClawMaintenanceWindow(window, deps);
 }
 
+/** Migrate restored state before native config writers, keeping the gateway held down. */
+export async function prepareOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+  deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  if (window.kind === "backup") {
+    const promoted = await promoteOpenClawBackupQuiesceToDoctor(window, deps);
+    if (!promoted.ok) return promoted;
+    return {
+      ok: true,
+      window: {
+        sandboxName: window.sandboxName,
+        ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
+      },
+    };
+  }
+  return { ok: true, window };
+}
+
 /** Run doctor against restored state, release its gate, then prove final gateway health. */
 export async function finishOpenClawPostRestoreDoctor(
   window: OpenClawPostRestoreDoctorWindow,
   deps: OpenClawPostRestoreDoctorDeps = OPENCLAW_POST_RESTORE_DOCTOR_DEPS,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
-  let verifiedWindow = window;
-  if (window.kind === "backup") {
-    const promoted = await promoteOpenClawBackupQuiesceToDoctor(window, deps);
-    if (!promoted.ok) return promoted;
-    verifiedWindow = {
-      sandboxName: window.sandboxName,
-      ...(window.runtimeSelection ? { runtimeSelection: window.runtimeSelection } : {}),
-    };
-  }
-  return await releaseAndVerifyOpenClawMaintenanceWindow(verifiedWindow, deps);
+  const prepared = await prepareOpenClawPostRestoreDoctor(window, deps);
+  if (!prepared.ok) return prepared;
+  return await releaseAndVerifyOpenClawMaintenanceWindow(prepared.window, deps);
 }
 
 const OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
@@ -1180,6 +1192,12 @@ export function finishUnregisteredOpenClawPostRestoreDoctor(
   window: OpenClawPostRestoreDoctorWindow,
 ): Promise<Exclude<OpenClawPostRestoreDoctorResult, { ok: true }> | { ok: true }> {
   return finishOpenClawPostRestoreDoctor(window, OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS);
+}
+
+export function prepareUnregisteredOpenClawPostRestoreDoctor(
+  window: OpenClawPostRestoreDoctorWindow,
+): Promise<OpenClawPostRestoreDoctorResult> {
+  return prepareOpenClawPostRestoreDoctor(window, OPENCLAW_UNREGISTERED_POST_RESTORE_DOCTOR_DEPS);
 }
 
 export function abortUnregisteredOpenClawPostRestoreDoctor(
