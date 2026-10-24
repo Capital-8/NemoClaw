@@ -77,6 +77,7 @@ it("settles a timed-out Podman build when a descendant keeps its output pipe ope
       signal: "SIGKILL",
       errorCode: "ETIMEDOUT",
       category: "permission",
+      observedBuildStep: "unknown",
     });
     expect(published).not.toContain("private-build-token");
   } finally {
@@ -89,7 +90,7 @@ it("settles a timed-out Podman build when a descendant keeps its output pipe ope
   }
 });
 
-it("records a fixed Podman failure category without build output (#13482)", async () => {
+it("records fixed Podman failure category and build step without output (#13482)", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));
   const progress = startTestProgress(
     "portable build diagnostics",
@@ -103,7 +104,8 @@ it("records a fixed Podman failure category without build output (#13482)", asyn
     const runBuild = vi.fn(async () => ({
       status: 1,
       signal: null,
-      diagnostic: "Error: permission denied; credential=private-build-token",
+      diagnostic:
+        "STEP 1/2: FROM private-base\nSTEP 2/2: RUN credential=private-build-token\nError: permission denied",
     }));
 
     const status = await buildPortableSandboxImageWithEvidence(
@@ -134,8 +136,30 @@ it("records a fixed Podman failure category without build output (#13482)", asyn
       signal: null,
       errorCode: null,
       category: "permission",
+      observedBuildStep: "dockerfile-run",
     });
     expect(published).not.toContain("private-build-token");
+
+    await buildPortableSandboxImageWithEvidence(
+      ["build", "-t", "localhost/test:fixed", "."],
+      { env: {}, stdio: "inherit" },
+      artifacts,
+      progress,
+      vi.fn(async () => ({
+        status: 1,
+        signal: null,
+        diagnostic: "STEP 1/2: FROM private-base\nError: credential=private-base-token",
+      })),
+    );
+    const baseFailure = fs.readFileSync(
+      artifacts.pathFor("portable-sandbox-image-build-failure.json"),
+      "utf8",
+    );
+    expect(JSON.parse(baseFailure)).toMatchObject({
+      category: "unclassified",
+      observedBuildStep: "base-image",
+    });
+    expect(baseFailure).not.toContain("private-base-token");
   } finally {
     progress.stop();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -188,6 +212,7 @@ it("rejects an errored image build even when Podman reports exit zero (#13482)",
       signal: null,
       errorCode: "ETIMEDOUT",
       category: "unclassified",
+      observedBuildStep: "unknown",
     });
   } finally {
     fetchRegistry.mockRestore();
@@ -252,6 +277,7 @@ it("retains a build signal and allowlisted error code without error text (#13482
       signal: "SIGTERM",
       errorCode: "EACCES",
       category: "unclassified",
+      observedBuildStep: "unknown",
     });
     expect(published).not.toContain("private-build-token");
     expect(published).not.toContain("private error text");

@@ -150,6 +150,14 @@ function failureCategory(output: string): string {
   return "unclassified";
 }
 
+function observedBuildStep(output: string): "base-image" | "dockerfile-run" | "unknown" {
+  const stepLines = [...output.matchAll(/^STEP [12]\/2: (FROM|RUN)\b/gmu)];
+  const lastStep = stepLines.at(-1)?.[1];
+  if (lastStep === "FROM") return "base-image";
+  if (lastStep === "RUN") return "dockerfile-run";
+  return "unknown";
+}
+
 /** Keep only fixed failure categories from the fixed live build. */
 export async function buildPortableSandboxImageWithEvidence(
   args: readonly string[],
@@ -167,6 +175,7 @@ export async function buildPortableSandboxImageWithEvidence(
       signal: result.signal,
       errorCode: errorCode && SAFE_ERROR_CODES.has(errorCode) ? errorCode : null,
       category: failureCategory(result.diagnostic),
+      observedBuildStep: observedBuildStep(result.diagnostic),
     });
   }
   return result.error ? null : result.status;
