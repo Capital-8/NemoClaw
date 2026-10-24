@@ -90,6 +90,129 @@ it("settles a timed-out Podman build when a descendant keeps its output pipe ope
   }
 });
 
+it("reports a live build group when group termination fails (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));
+  const artifacts = new ArtifactSink(path.join(directory, "portable-build"));
+  const progress = startTestProgress("portable build diagnostics", ["prepare", "build"], {
+    logLine: () => undefined,
+  });
+  const child = Object.assign(new EventEmitter(), {
+    pid: 4242,
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn(() => true),
+  });
+  const denyGroupSignal = () => {
+    throw Object.assign(new Error("group signal denied"), { code: "EPERM" });
+  };
+  const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+    expect(pid).toBe(-child.pid);
+    return signal === "SIGKILL" ? denyGroupSignal() : true;
+  });
+  vi.mocked(spawnObservedChild).mockClear();
+  vi.mocked(spawnObservedChild).mockReturnValueOnce(
+    child as unknown as ReturnType<typeof spawnObservedChild>,
+  );
+  vi.useFakeTimers();
+  try {
+    let completed = false;
+    const build = buildPortableSandboxImageWithEvidence(
+      ["build", "-t", "localhost/test:fixed", "."],
+      { env: {}, stdio: "inherit" },
+      artifacts,
+      progress,
+    ).then((result) => {
+      completed = true;
+      return result;
+    });
+    await vi.advanceTimersByTimeAsync(PORTABLE_IMAGE_COMMAND_TIMEOUT_MS);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    child.emit("exit", null, "SIGKILL");
+    child.emit("close", null, "SIGKILL");
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(completed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await build).toBeNull();
+    expect(kill).toHaveBeenCalledWith(-child.pid, 0);
+    expect(
+      JSON.parse(
+        fs.readFileSync(artifacts.pathFor("portable-sandbox-image-build-failure.json"), "utf8"),
+      ),
+    ).toMatchObject({
+      status: null,
+      signal: "SIGKILL",
+      errorCode: "EUNRECONCILED",
+      category: "process-isolation",
+    });
+  } finally {
+    kill.mockRestore();
+    vi.useRealTimers();
+    progress.stop();
+    child.stdout.destroy();
+    child.stderr.destroy();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("reconciles a build group that disappears after a failed group signal (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));
+  const artifacts = new ArtifactSink(path.join(directory, "portable-build"));
+  const progress = startTestProgress("portable build diagnostics", ["prepare", "build"], {
+    logLine: () => undefined,
+  });
+  const child = Object.assign(new EventEmitter(), {
+    pid: 4242,
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn(() => true),
+  });
+  let groupSignalAttempts = 0;
+  const failGroupSignal = () => {
+    throw Object.assign(new Error("group signal unavailable"), { code: "EPERM" });
+  };
+  const absentGroup = () => {
+    throw Object.assign(new Error("group is absent"), { code: "ESRCH" });
+  };
+  const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+    expect(pid).toBe(-child.pid);
+    return signal === 0 ? absentGroup() : groupSignalAttempts++ === 0 ? failGroupSignal() : true;
+  });
+  vi.mocked(spawnObservedChild).mockClear();
+  vi.mocked(spawnObservedChild).mockReturnValueOnce(
+    child as unknown as ReturnType<typeof spawnObservedChild>,
+  );
+  vi.useFakeTimers();
+  try {
+    const build = buildPortableSandboxImageWithEvidence(
+      ["build", "-t", "localhost/test:fixed", "."],
+      { env: {}, stdio: "inherit" },
+      artifacts,
+      progress,
+    );
+    await vi.advanceTimersByTimeAsync(PORTABLE_IMAGE_COMMAND_TIMEOUT_MS);
+    child.emit("exit", null, "SIGKILL");
+    child.emit("close", null, "SIGKILL");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await build).toBeNull();
+    expect(groupSignalAttempts).toBe(2);
+    expect(
+      JSON.parse(
+        fs.readFileSync(artifacts.pathFor("portable-sandbox-image-build-failure.json"), "utf8"),
+      ),
+    ).toMatchObject({
+      errorCode: "ETIMEDOUT",
+      category: "unclassified",
+    });
+  } finally {
+    kill.mockRestore();
+    vi.useRealTimers();
+    progress.stop();
+    child.stdout.destroy();
+    child.stderr.destroy();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 it("records fixed Podman failure category and build step without output (#13482)", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));
   const progress = startTestProgress(

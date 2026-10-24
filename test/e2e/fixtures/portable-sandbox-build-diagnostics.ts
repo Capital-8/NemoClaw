@@ -23,7 +23,7 @@ export const PORTABLE_PROFILE_LIVE_TIMEOUT_MS =
 const DIAGNOSTIC_TAIL_CHARS = 8_192;
 const POST_KILL_EXIT_WAIT_MS = 3_000;
 const POST_KILL_OUTPUT_DRAIN_MS = 1_000;
-const SAFE_ERROR_CODES = new Set(["EACCES", "ENOENT", "EPERM", "ETIMEDOUT"]);
+const SAFE_ERROR_CODES = new Set(["EACCES", "ENOENT", "EPERM", "ETIMEDOUT", "EUNRECONCILED"]);
 type BuildResult = {
   status: number | null;
   signal: NodeJS.Signals | null;
@@ -67,6 +67,8 @@ function runPodmanBuild(
     let error: Error | undefined;
     let timedOut = false;
     let settled = false;
+    let groupReconciliationPending = false;
+    let groupUnreconciled = false;
     let postKillTimer: ReturnType<typeof setTimeout> | undefined;
     let exitStatus: number | null = null;
     let exitSignal: NodeJS.Signals | null = null;
@@ -86,7 +88,9 @@ function runPodmanBuild(
         signal,
         diagnostic,
         error: timedOut
-          ? Object.assign(new Error("Podman image command timed out"), { code: "ETIMEDOUT" })
+          ? Object.assign(new Error("Podman image command timed out"), {
+              code: groupUnreconciled ? "EUNRECONCILED" : "ETIMEDOUT",
+            })
           : error,
       });
     };
@@ -102,10 +106,32 @@ function runPodmanBuild(
       if (child.pid && child.pid > 0) {
         try {
           process.kill(-child.pid, "SIGKILL");
-        } catch {
+        } catch (cause) {
+          groupReconciliationPending = (cause as NodeJS.ErrnoException).code !== "ESRCH";
           child.kill("SIGKILL");
+          if (groupReconciliationPending) {
+            // A direct-child kill does not prove its build descendants stopped.
+            // Retry the group signal, then verify the group is absent before settling.
+            postKillTimer = setTimeout(() => {
+              try {
+                process.kill(-child.pid!, "SIGKILL");
+              } catch {
+                // The existence probe below owns the final result.
+              }
+              try {
+                process.kill(-child.pid!, 0);
+                groupUnreconciled = true;
+              } catch (probeError) {
+                groupUnreconciled = (probeError as NodeJS.ErrnoException).code !== "ESRCH";
+              }
+              groupReconciliationPending = false;
+              closeOpenPipesAndSettle();
+            }, POST_KILL_EXIT_WAIT_MS);
+            return;
+          }
         }
       } else {
+        groupUnreconciled = true;
         child.kill("SIGKILL");
       }
       // Bound exit wait and output drain even if signaling fails or a pipe stays open.
@@ -117,12 +143,16 @@ function runPodmanBuild(
     child.once("exit", (status, signal) => {
       exitStatus = status;
       exitSignal = signal;
-      if (timedOut) {
+      if (timedOut && !groupReconciliationPending) {
         if (postKillTimer) clearTimeout(postKillTimer);
         postKillTimer = setTimeout(closeOpenPipesAndSettle, POST_KILL_OUTPUT_DRAIN_MS);
       }
     });
-    child.once("close", settle);
+    child.once("close", (status, signal) => {
+      exitStatus = status;
+      exitSignal = signal;
+      if (!groupReconciliationPending) settle(status, signal);
+    });
   });
 }
 
@@ -174,7 +204,8 @@ export async function buildPortableSandboxImageWithEvidence(
       status: result.status,
       signal: result.signal,
       errorCode: errorCode && SAFE_ERROR_CODES.has(errorCode) ? errorCode : null,
-      category: failureCategory(result.diagnostic),
+      category:
+        errorCode === "EUNRECONCILED" ? "process-isolation" : failureCategory(result.diagnostic),
       observedBuildStep: observedBuildStep(result.diagnostic),
     });
   }
