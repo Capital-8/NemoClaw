@@ -396,6 +396,7 @@ print('request admitted')
 
 test("Personal state-owner admission binds source files, same run, exact path and ARM64 executable bytes", (t) => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "personal-owner-build-"));
+  let launcherDescriptor: number | undefined;
   try {
     const source = path.join(temporary, "source");
     fs.mkdirSync(path.join(source, "src"), { recursive: true });
@@ -439,8 +440,9 @@ test("Personal state-owner admission binds source files, same run, exact path an
     );
     assert.equal(materialize.status, 0, materialize.stderr || String(materialize.error));
     assert.equal(fs.statSync(compiled).nlink, 2);
-    assert.equal(fs.statSync(launcher).nlink, 1);
-    assert.deepEqual(fs.readFileSync(launcher), bytes);
+    launcherDescriptor = fs.openSync(launcher, "r+");
+    assert.equal(fs.fstatSync(launcherDescriptor).nlink, 1);
+    assert.deepEqual(fs.readFileSync(launcherDescriptor), bytes);
     assert.equal(verifyNativeEdgeIdentityLauncher(fileIdentity(launcher)), launcher);
     const build = {
       schemaVersion: 1,
@@ -502,9 +504,10 @@ test("Personal state-owner admission binds source files, same run, exact path an
       "explicit unit fixture: src/state_session.rs",
     );
     bytes.writeUInt16LE(0x8664, 68);
-    fs.writeFileSync(launcher, bytes);
+    fs.writeSync(launcherDescriptor, bytes, 0, bytes.length, 0);
     assert.throws(() => read({ ...build, sha256: fileIdentity(launcher).sha256 }));
   } finally {
+    if (launcherDescriptor !== undefined) fs.closeSync(launcherDescriptor);
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 });

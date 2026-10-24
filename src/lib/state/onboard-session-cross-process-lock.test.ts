@@ -520,6 +520,13 @@ describe("cross-process onboard lock", () => {
   });
 
   it("reconstructs retained recovery after an independent writer failure and restart (#9833)", () => {
+    const createAuthority = {
+      schemaVersion: 1,
+      runtime: "native-linux-default-docker",
+      reservationSessionId: "recovery-writer",
+      gatewayStateDir: path.join(tempHome, "gateway"),
+      daemonId: "original-daemon",
+    };
     const fingerprint = "a".repeat(64);
     const createAttemptNonce = "b".repeat(62);
     const lifecycleGeneration = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -556,6 +563,7 @@ describe("cross-process onboard lock", () => {
           gatewayPort: 8080,
           lifecycleGeneration,
           createAttemptNonce,
+          createAuthority,
         }),
       ],
       { env: { ...process.env, HOME: tempHome }, encoding: "utf8" },
@@ -573,6 +581,7 @@ describe("cross-process onboard lock", () => {
         gatewayPort: 8080,
         lifecycleGeneration,
         createAttemptNonce,
+        createAuthority,
       }),
     ]);
   });
