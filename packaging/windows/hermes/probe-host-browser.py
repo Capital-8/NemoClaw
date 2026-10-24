@@ -436,7 +436,9 @@ def own_fixed_process(
         verify_inputs()
         state.mkdir()
         owned = True
-        for name in ["home", "temp"]:
+        # Windows shell APIs resolve these beneath USERPROFILE, independently of
+        # LOCALAPPDATA. Node also inherits USERPROFILE into its Edge child.
+        for name in ["home", "home/AppData", "home/AppData/Local", "home/AppData/Roaming", "temp"]:
             (state / name).mkdir()
         stage = "create-job"
         native.create_job()

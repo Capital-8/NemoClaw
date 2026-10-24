@@ -159,6 +159,7 @@ class PersonalNativeHost(unittest.TestCase):
     def test_controller_is_assigned_before_resume_and_natural_completion_retains_its_receipt(self):
         record, native, captured, remains = self.run_owner("success")
         self.assertEqual(native.calls[:4], ["job", "suspended", "assign", "resume"])
+        self.assertTrue(native.profile_ready)
         self.assertEqual(captured["environment"]["NEMOCLAW_RUNTIME_JOB_OWNED"], "1")
         self.assertNotIn("GH_TOKEN", captured["environment"])
         self.assertTrue(record["operationSucceeded"])

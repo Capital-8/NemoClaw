@@ -39,7 +39,11 @@ class FixtureJob:
         self.calls.append("job")
         self.job = 3
 
-    def start(self, *_args):
+    def start(self, _command, _environment, cwd):
+        self.profile_ready = all(
+            (Path(cwd) / name).is_dir()
+            for name in ("home/AppData/Local", "home/AppData/Roaming")
+        )
         self.calls.append("suspended")
         self.process = 1
         self.thread = 2
@@ -141,6 +145,7 @@ class HostBrowserOwner(unittest.TestCase):
     def test_success_assigns_before_resume_retains_output_and_waits_for_empty_job(self):
         r, native, remains = self.run_owner("success")
         self.assertEqual(native.calls[:4], ["job", "suspended", "assign", "resume"])
+        self.assertTrue(native.profile_ready)
         self.assertTrue(
             r["operationSucceeded"] and r["childrenClosed"] and r["cleanupComplete"]
         )
