@@ -31,6 +31,7 @@ function openClawCleanupController() {
     "create",
     "stopChild",
     "passed",
+    "sandboxAbsentFromRegistry",
     "cliEnvironment",
     "run",
     "openshell",
@@ -68,6 +69,8 @@ for (const failure of [
   "gateway-stop",
   "gateway-dispose",
   "registry",
+  "before-create",
+  "already-absent",
 ] as const) {
   test(`OpenClaw turn retains temporary roots when cleanup is unconfirmed: ${failure}`, async () => {
     const removed: string[] = [];
@@ -75,14 +78,18 @@ for (const failure of [
     const gateway = { pid: 1234 };
     const errors = await openClawCleanupController()(
       attemptNativeUiCleanup,
-      { pid: 5678 },
+      failure === "before-create" ? undefined : { pid: 5678 },
       async () => failure !== "request-stop",
       false,
+      ["before-create", "already-absent"].includes(failure),
       {},
-      async () => {},
+      async () => {
+        assert.notEqual(failure, "already-absent", "Confirmed removal must not be repeated");
+      },
       "owned-openshell",
       "owned-sandbox",
       async () => {
+        assert.notEqual(failure, "already-absent", "Confirmed absence survives gateway shutdown");
         if (failure === "registry") throw new Error("unconfirmed registry");
       },
       gateway,
@@ -116,7 +123,7 @@ for (const failure of [
       },
       { error() {} },
     );
-    if (["request-stop", "gateway-stop", "gateway-dispose"].includes(failure)) {
+    if (["request-stop", "gateway-stop", "gateway-dispose", "registry"].includes(failure)) {
       assert.deepEqual(removed, [], "Unconfirmed process cleanup must not remove any owned root.");
       assert.equal(
         errors.filter((label: string) => label.startsWith("temporary root removal:")).length,
@@ -124,8 +131,9 @@ for (const failure of [
       );
     } else {
       assert.deepEqual(removed, roots);
-      assert.deepEqual(errors, failure === "registry" ? ["sandbox registry verification"] : []);
+      assert.deepEqual(errors, []);
     }
+    assert.equal(errors.includes("sandbox registry verification"), failure === "registry");
   });
 }
 
@@ -154,10 +162,12 @@ for (const failure of [
   "ui-owner",
   "inference-owner",
   "registry",
+  "before-create",
 ] as const) {
   test(`OpenClaw web cleanup retains roots until backend cleanup is confirmed: ${failure}`, async () => {
     const removed: string[] = [];
     const roots = ["web-run", "web-share", "web-runtime"];
+    const recovery: Record<string, unknown>[] = [];
     const errors = await runCleanupFragment(
       "./run-installed-native-web-ui.mts",
       '    const runId = randomBytes(5).toString("hex");',
@@ -181,7 +191,7 @@ for (const failure of [
           },
         },
         onboarding: null,
-        create: { pid: 5678 },
+        create: failure === "before-create" ? undefined : { pid: 5678 },
         gateway: { pid: 1234 },
         gatewaySession: {
           async stopGateway() {
@@ -205,6 +215,11 @@ for (const failure of [
         gatewayLogPath: "",
         gatewayErrorPath: "",
         ownedRoots: roots,
+        diagnostics: {
+          capture(_channel: string, text: string) {
+            recovery.push(JSON.parse(text));
+          },
+        },
         removeDirectory: async (directory: string) => {
           removed.push(directory);
           return true;
@@ -213,17 +228,74 @@ for (const failure of [
       },
       "await cleanup()",
     );
-    if (["request-stop", "gateway-cleanup", "ui-owner", "inference-owner"].includes(failure)) {
+    if (
+      ["request-stop", "gateway-cleanup", "ui-owner", "inference-owner", "registry"].includes(
+        failure,
+      )
+    ) {
       assert.deepEqual(removed, []);
       assert(errors.includes("temporary runtime directories"));
+      assert.deepEqual(recovery, [
+        {
+          sandboxName: "fixture",
+          sandboxAbsentFromRegistry: failure !== "registry",
+          retainedRuntimeRoots: roots,
+        },
+      ]);
     } else {
       assert.deepEqual(removed, roots);
-      assert.deepEqual(errors, failure === "registry" ? ["sandbox registry"] : []);
+      assert.deepEqual(errors, []);
     }
+    assert.equal(errors.includes("sandbox registry"), failure === "registry");
   });
 }
 
-for (const failure of ["none", "gateway-stop", "gateway-cleanup", "file-owner"] as const) {
+for (const registryFails of [false, true]) {
+  test(`Hermes console failure cleanup records confirmed sandbox absence: ${registryFails}`, async () => {
+    const failures: string[] = [];
+    const absent = await runCleanupFragment(
+      "./run-installed-native-console-agent.mts",
+      "      if (!passed) {",
+      "      const gatewayStopped = await gatewaySession.stopGateway();",
+      {
+        passed: false,
+        sandboxAbsentFromRegistry: false,
+        sandboxName: "owned-sandbox",
+        diagnostics: {
+          cleanupFailed(label: string) {
+            failures.push(label);
+          },
+          capture() {},
+        },
+        statusFiles: { async write() {} },
+        runId: "fixture",
+        relay: null,
+        brokerRelay: null,
+        browserRelay: null,
+        openshell: "fixture",
+        cliEnvironment: {},
+        gateway: {},
+        stateSession: {},
+        gatewaySession: { ownCommandProcess() {} },
+        requestNativeUiSandboxDeletion: async () => {},
+        confirmNativeUiRegistryEmpty: async () => {
+          if (registryFails) throw new Error("registry unavailable");
+        },
+      },
+      "sandboxAbsentFromRegistry",
+    );
+    assert.equal(absent, !registryFails);
+    assert.deepEqual(failures, registryFails ? ["native sandbox registry"] : []);
+  });
+}
+
+for (const failure of [
+  "none",
+  "gateway-stop",
+  "gateway-cleanup",
+  "file-owner",
+  "registry",
+] as const) {
   test(`console cleanup retains temporary roots when an owner cannot stop: ${failure}`, async () => {
     const removed: string[] = [];
     const roots = ["console-run", "console-runtime", "dashboard", "status", "broker", "browser"];
@@ -232,6 +304,8 @@ for (const failure of ["none", "gateway-stop", "gateway-cleanup", "file-owner"] 
       "    const cleanupFailures: string[] = [];",
       "    let released = false;",
       {
+        sandboxName: "owned-sandbox",
+        sandboxAbsentFromRegistry: failure !== "registry",
         diagnostics: { capture() {} },
         relay: {
           async close() {},
@@ -289,6 +363,8 @@ for (const failure of ["none", "edge", "broker", "browser", "status", "removal"]
     const receipts = new Map<string, Record<string, unknown>>();
     let statusClosed = false;
     const context = {
+      sandboxName: "owned-sandbox",
+      sandboxAbsentFromRegistry: true,
       diagnostics: { capture() {} },
       gatewaySession: {
         root: "private-gateway",
@@ -454,6 +530,8 @@ test("Edge startup cleanup keeps the caller owner when readiness rejects", async
     "    const cleanupFailures: string[] = [];",
     "    let released = false;",
     {
+      sandboxName: "",
+      sandboxAbsentFromRegistry: true,
       diagnostics: { capture() {} },
       relay: null,
       statusFiles: null,

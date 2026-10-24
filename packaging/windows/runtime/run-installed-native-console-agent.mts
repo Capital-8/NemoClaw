@@ -740,6 +740,8 @@ async function runNativeConsoleAgentInternal(
   let relay;
   let webSession = options.webSession;
   let sessionPassed = false;
+  let sandboxName = "";
+  let sandboxAbsentFromRegistry = true;
   let consoleSessionEnded = false;
   let dashboardRelayRoot;
   let statusRoot;
@@ -940,7 +942,7 @@ async function runNativeConsoleAgentInternal(
     const temp = path.join(agentRuntimeRoot, "temp");
     fs.mkdirSync(temp, { recursive: true });
     const gatewayPort = await freePort();
-    const sandboxName = `${adapter.sandboxPrefix}-${runId}`;
+    sandboxName = `${adapter.sandboxPrefix}-${runId}`;
     const gatewayName = `nemoclaw-${agentId}-${runId}`;
     stateSession.assertHeld();
     await gatewaySession.prepare();
@@ -1232,6 +1234,7 @@ async function runNativeConsoleAgentInternal(
       diagnostics.stage("sandbox");
       webSession?.progress("sandbox");
       try {
+        sandboxAbsentFromRegistry = false;
         await run(
           openshell,
           createArgs,
@@ -1405,6 +1408,7 @@ async function runNativeConsoleAgentInternal(
         gatewaySession.ownCommandProcess,
       );
       passed = true;
+      sandboxAbsentFromRegistry = true;
       sessionPassed = true;
       console.log(`\n${adapter.displayName} closed. NemoClaw removed the temporary sandbox.`);
     } catch (error) {
@@ -1449,8 +1453,8 @@ async function runNativeConsoleAgentInternal(
             gatewaySession.ownCommandProcess,
           ),
         );
-        await cleanup("native sandbox registry", () =>
-          confirmNativeUiRegistryEmpty(
+        await cleanup("native sandbox registry", async () => {
+          await confirmNativeUiRegistryEmpty(
             openshell,
             cliEnvironment,
             {
@@ -1459,8 +1463,9 @@ async function runNativeConsoleAgentInternal(
               stateSession,
             },
             gatewaySession.ownCommandProcess,
-          ),
-        );
+          );
+          sandboxAbsentFromRegistry = true;
+        });
       }
       const gatewayStopped = await gatewaySession.stopGateway();
       dashboardGatewayStopped = gatewayStopped;
@@ -1541,7 +1546,7 @@ async function runNativeConsoleAgentInternal(
       }
       await gatewaySession?.dispose();
     });
-    const runtimeOwnersStopped = cleanupFailures.length === 0;
+    const runtimeOwnersStopped = cleanupFailures.length === 0 && sandboxAbsentFromRegistry;
     for (const directory of [
       runRoot,
       runtimeRoot,
@@ -1554,7 +1559,12 @@ async function runNativeConsoleAgentInternal(
         if (directory && !runtimeOwnersStopped) {
           rootsRemoved = false;
           throw new Error(
-            "Temporary native runtime files were retained because owner cleanup is unconfirmed.",
+            "Temporary native runtime files were retained because owner cleanup is unconfirmed: " +
+              JSON.stringify({
+                sandboxName,
+                sandboxAbsentFromRegistry,
+                retainedRuntimeRoot: directory,
+              }),
           );
         }
         if (directory && !(await removeDirectory(directory))) {
@@ -1571,6 +1581,8 @@ async function runNativeConsoleAgentInternal(
           schemaVersion: 1,
           agent: agentId,
           sandboxDeleted: sessionPassed,
+          sandboxName,
+          sandboxAbsentFromRegistry,
           gatewayStopped: dashboardGatewayStopped,
           ephemeralRootsRemoved:
             runtimeOwnersStopped &&
@@ -1615,6 +1627,8 @@ async function runNativeConsoleAgentInternal(
             runtimeBytesCopied: runtimeLease.runtimeBytesCopied,
             runtimeFilesHashedAtLaunch: runtimeLease.runtimeFilesHashedAtLaunch,
             sandboxDeleted: sessionPassed,
+            sandboxName,
+            sandboxAbsentFromRegistry,
             gatewayStopped: dashboardGatewayStopped,
             ephemeralRootsRemoved:
               rootsRemoved &&

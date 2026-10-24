@@ -52,8 +52,8 @@ protect their filesystem boundaries through shutdown.
 The host build pins OpenShell 624f55b3c6affedd4f2757c7eb32132196b4c3e8
 and source-built MXC 7cd00d1ee6af9208322c924ef64e5113f6704639.
 It includes the OpenShell supervisor, Windows sandbox executable, and Z3 DLL.
-The older launcher settings still require migration to that protocol.
-This intermediate source state is not a usable or qualified installer.
+The launcher writes the version 2 gateway configuration for that protocol.
+Build and startup evidence alone does not qualify the full installer journey.
 The separate Windows-tip cycles allowed host loopback. They do not establish
 denied host loopback, port-only isolation, live policy revocation, or production
 LPAC and governed network-policy parity. New package bytes need new acceptance.

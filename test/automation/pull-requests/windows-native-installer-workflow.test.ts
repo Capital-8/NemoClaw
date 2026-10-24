@@ -614,6 +614,7 @@ const mutations: Mutation[] = [
     "build-immutable-package-cleanup.test.mts",
     "qualify-installed-openclaw.test.mts",
     "native-turn-cleanup.test.mts",
+    "native-hermes-turn-cleanup.test.mts",
     "runtime-published-resources.test.mts",
   ].map((file) => ({
     name: "missing early " + file,

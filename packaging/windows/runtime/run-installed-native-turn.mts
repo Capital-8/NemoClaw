@@ -524,6 +524,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
   let create: ChildProcess | null = null;
   let cliEnvironment: NodeJS.ProcessEnv | undefined;
   let passed = false;
+  let sandboxAbsentFromRegistry = true;
   let primaryFailed = false;
   let receipt: Record<string, unknown> | undefined;
   try {
@@ -677,6 +678,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
       stdio: "ignore",
       windowsHide: true,
     });
+    sandboxAbsentFromRegistry = false;
     create.once("error", (error) => {
       createFailure.error = error;
     });
@@ -738,6 +740,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
       },
       gatewaySession.ownCommandProcess,
     );
+    sandboxAbsentFromRegistry = true;
     if (!(await gatewaySession.stopGateway())) fail("OpenShell MXC gateway did not stop");
     await gatewaySession.dispose();
     fs.closeSync(gatewayLog);
@@ -787,7 +790,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
       [
         "sandbox removal",
         async () => {
-          if (!passed && create && cliEnvironment)
+          if (!sandboxAbsentFromRegistry && create && cliEnvironment)
             await run(
               openshell,
               ["sandbox", "delete", sandboxName],
@@ -802,7 +805,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
       [
         "sandbox registry verification",
         async () => {
-          if (!passed && create && cliEnvironment)
+          if (!sandboxAbsentFromRegistry && create && cliEnvironment) {
             await confirmNativeUiRegistryEmpty(
               openshell,
               cliEnvironment,
@@ -813,6 +816,8 @@ async function main(runtimeLease: NativeRuntimeSession) {
               },
               gatewaySession.ownCommandProcess,
             );
+            sandboxAbsentFromRegistry = true;
+          }
         },
       ],
       [
@@ -868,7 +873,8 @@ async function main(runtimeLease: NativeRuntimeSession) {
           [
             "temporary root removal: " + path.basename(directory),
             async () => {
-              if (!requestStopped || !gatewayCleanupConfirmed) throw new Error();
+              if (!requestStopped || !gatewayCleanupConfirmed || !sandboxAbsentFromRegistry)
+                throw new Error();
               if (!(await removeDirectory(directory))) throw new Error();
             },
           ] as const,
@@ -883,6 +889,8 @@ async function main(runtimeLease: NativeRuntimeSession) {
               schemaVersion: 1,
               classification: "installed-nemoclaw-native-windows-turn",
               verdict: "fail",
+              sandboxName,
+              sandboxAbsentFromRegistry,
               cleanupFailures: failures,
               ownedQualificationRootsRemoved:
                 ownedRoots.every((directory) => !fs.existsSync(directory)) &&

@@ -3,12 +3,14 @@
 
 import copy
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
 import tomllib
 import unittest
 import unittest.mock
+from types import SimpleNamespace
 
 SPEC = importlib.util.spec_from_file_location(
     "host_builder", Path(__file__).with_name("prepare-finished-host.py")
@@ -248,6 +250,46 @@ class NativeHostInputs(unittest.TestCase):
                     }
                 },
             )
+
+    def test_finished_host_preserves_reviewed_preview_notice_and_inventory(self):
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            native, source, build = self.openshell_build(root)
+            self.verify_build(native, source, build)
+            mxc_build = self.mxc_build(native)
+            (native / "mxc-build.json").write_text(json.dumps(mxc_build))
+            node = root / "node"
+            node.mkdir()
+            (node / "node.exe").write_bytes(executable())
+            (node / "LICENSE").write_text("fixture license")
+            node_hash = MODULE.digest(node / "node.exe")
+            (node / "node-input.json").write_text(json.dumps({
+                "nodeSha256": node_hash, "controllerSource": "a" * 40,
+                "runtime": {"version": "22.23.2", "platform": "win32", "architecture": "arm64"},
+                "licenseSha256": MODULE.digest(node / "LICENSE"),
+            }))
+            output = root / "output"
+            args = SimpleNamespace(source_root=source, openshell_binaries=native,
+                                   mxc_binaries=native, node_root=node, output=output)
+            license_bytes = b"fixture OpenShell license"
+            with (
+                unittest.mock.patch.object(MODULE.argparse.ArgumentParser, "parse_args", return_value=args),
+                unittest.mock.patch.object(MODULE, "os", SimpleNamespace(name="nt", environ={
+                    "GITHUB_ACTIONS": "true", "GITHUB_SHA": "a" * 40,
+                    "GITHUB_RUN_ID": "1234", "GITHUB_RUN_ATTEMPT": "2", "ProgramFiles": str(root),
+                })),
+                unittest.mock.patch.object(MODULE.subprocess, "check_output", return_value="a" * 40),
+                unittest.mock.patch.object(MODULE, "NODE_SHA256", node_hash),
+                unittest.mock.patch.object(MODULE, "MXC_LICENSE_SHA256", mxc_build["licenseSha256"]),
+                unittest.mock.patch.object(MODULE, "OPENSHELL_LICENSE_SHA256", MODULE.hashlib.sha256(license_bytes).hexdigest()),
+                unittest.mock.patch.object(MODULE.urllib.request, "urlopen", return_value=io.BytesIO(license_bytes)),
+            ):
+                MODULE.main()
+            notice = output / "NATIVE-PREVIEW.txt"
+            self.assertEqual(notice.read_bytes(), (source / "packaging/windows/NATIVE-PREVIEW.txt").read_bytes())
+            receipt = json.loads((output / "runtime-payload-receipt.json").read_text())
+            self.assertIn({"file": notice.name, "bytes": notice.stat().st_size,
+                           "sha256": MODULE.digest(notice)}, receipt["files"])
 
     def test_x64_binary_cannot_be_labeled_arm64(self):
         with tempfile.TemporaryDirectory() as value:

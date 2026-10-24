@@ -268,11 +268,8 @@ def main():
     )
     if digest(args.output / "MXC-LICENSE.txt") != MXC_LICENSE_SHA256:
         raise ValueError("The MXC license changed during its build copy.")
-    (args.output / "NATIVE-PREVIEW.txt").write_text(
-        "NemoClaw finished native Windows preview.\nAgent qualification is continuing.\n"
-        "Application code and dependencies are built in CI; settings do not install them.\n"
-        "Use NemoClaw Setup for application updates.\n",
-        encoding="utf-8",
+    shutil.copy2(
+        source / "packaging/windows/NATIVE-PREVIEW.txt", args.output / "NATIVE-PREVIEW.txt"
     )
     files = [
         {

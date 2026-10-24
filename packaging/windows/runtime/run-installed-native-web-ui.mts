@@ -1103,6 +1103,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     let gatewayCleanupConfirmed = false;
     let uiOwnerStopped = false;
     let inferenceOwnerStopped = false;
+    let sandboxAbsentFromRegistry = false;
     const cleanup = () =>
       (cleanupPromise ??= attemptNativeUiCleanup([
         [
@@ -1161,17 +1162,18 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         [
           "sandbox registry",
           async () => {
-            if (!create) return;
-            await confirmNativeUiRegistryEmpty(
-              openshell,
-              cliEnvironment,
-              {
-                sandboxName,
-                gateway,
-                stateSession,
-              },
-              gatewaySession!.ownCommandProcess,
-            );
+            if (create)
+              await confirmNativeUiRegistryEmpty(
+                openshell,
+                cliEnvironment,
+                {
+                  sandboxName,
+                  gateway,
+                  stateSession,
+                },
+                gatewaySession!.ownCommandProcess,
+              );
+            sandboxAbsentFromRegistry = true;
           },
         ],
         [
@@ -1238,9 +1240,19 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
               !requestStopped ||
               !gatewayCleanupConfirmed ||
               !uiOwnerStopped ||
-              !inferenceOwnerStopped
-            )
+              !inferenceOwnerStopped ||
+              !sandboxAbsentFromRegistry
+            ) {
+              diagnostics.capture(
+                "cleanup.stderr",
+                JSON.stringify({
+                  sandboxName,
+                  sandboxAbsentFromRegistry,
+                  retainedRuntimeRoots: ownedRoots,
+                }) + "\n",
+              );
               throw new Error();
+            }
             let failed = false;
             for (const directory of ownedRoots) {
               try {

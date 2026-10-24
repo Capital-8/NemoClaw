@@ -420,22 +420,17 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             // Only the registered old Burn package receives its supported quiet
             // uninstall command. New native helper flags never reach its launcher.
             var code = await NativeMaintenance.RunRelatedActionAsync(uninstall: true, cancellation.Token);
-            if (code == 3010)
+            this.result = code;
+            NativeMaintenance.CompleteRelatedAction(code, () =>
             {
-                this.result = code;
-                this.window?.ShowFailure("The previous preview was removed. Restart Windows, then open this installer to complete installation.", this.BundleLogPath());
-                return;
-            }
-            if (code != 0) throw new InvalidOperationException("Windows could not remove the previous preview. Your agent data and keys were kept.");
-            NativeDesktopIntegration.RemoveOwned(NativeSetupOperations.InstalledLauncher());
-            this.installed = false;
-            this.relatedOnly = false;
-            this.replacedPreviousPreview = true;
-            this.result = 0;
-            this.preparingMaintenance = false;
-            // Re-enter the normal native choice/configuration flow in this same
-            // window only after Windows reports the previous product removed.
-            this.Engine.Detect();
+                NativeDesktopIntegration.RemoveOwned(NativeSetupOperations.InstalledLauncher());
+                this.installed = false;
+                this.relatedOnly = false;
+                this.replacedPreviousPreview = true;
+                this.preparingMaintenance = false;
+                // Re-enter setup only after Windows confirms removal without a pending restart.
+                this.Engine.Detect();
+            }, message => this.window?.ShowFailure(message, this.BundleLogPath()));
         }
         catch (Exception error)
         {

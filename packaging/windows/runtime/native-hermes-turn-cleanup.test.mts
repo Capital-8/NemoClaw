@@ -45,6 +45,7 @@ test("Hermes registration, completion and successful deletion pass the gateway p
     gateway,
     runtimeLease: lease,
     gatewaySession: { ownCommandProcess: owner },
+    sandboxAbsentFromRegistry: false,
     create: { pid: 1 },
     fail: (message: string) => {
       throw new Error(message);
@@ -85,13 +86,14 @@ test("Hermes registration, completion and successful deletion pass the gateway p
     },
   };
   await execute(between("    await run(\n", "    const sandboxEnvironment ="), context);
-  await execute(
+  const absent = await execute(
     between(
       "    const completion = await waitForNativeMxcCompletion(",
       "    if (!(await gatewaySession.stopGateway()))",
-    ),
+    ) + "\nreturn sandboxAbsentFromRegistry;",
     context,
   );
+  assert.equal(absent, true);
   assert.deepEqual(
     commands.map((args) => args[1]),
     [
@@ -127,7 +129,7 @@ async function cleanup(scenario: string, primaryFailed = true) {
     attemptNativeUiCleanup,
     shareCreator: { pid: 101 },
     shareCreatorStopped: false,
-    create: { pid: 102 },
+    create: scenario === "before-create" ? undefined : { pid: 102 },
     stopChild: async (child: { pid: number }) => {
       operations.push(child.pid === 101 ? "share-stop" : "request-stop");
       if (scenario === "request-throws" && child.pid === 102) throw new Error("stop failed");
@@ -137,6 +139,7 @@ async function cleanup(scenario: string, primaryFailed = true) {
       );
     },
     passed: false,
+    sandboxAbsentFromRegistry: ["before-create", "already-absent"].includes(scenario),
     primaryFailed,
     cliEnvironment: environment,
     openshell: "owned-openshell",
@@ -239,6 +242,8 @@ for (const scenario of [
   "gateway-stop",
   "gateway-dispose",
   "registry",
+  "before-create",
+  "already-absent",
   "share-stop",
   "unconfirmed-share",
 ]) {
@@ -246,16 +251,23 @@ for (const scenario of [
     const { removed, receipt, error, operations, ownedRoots } = await cleanup(scenario);
     assert.equal(error, undefined, "Cleanup must preserve the existing primary error");
     assert.equal(receipt.verdict, "fail");
+    assert.equal(receipt.sandboxName, "owned-sandbox");
+    assert.equal(receipt.sandboxAbsentFromRegistry, scenario !== "registry");
     assert.deepEqual(operations, [
       "share-stop",
-      "request-stop",
-      "sandbox-delete",
-      "registry",
+      ...(scenario === "before-create" ? [] : ["request-stop"]),
+      ...(["before-create", "already-absent"].includes(scenario)
+        ? []
+        : ["sandbox-delete", "registry"]),
       "gateway-stop",
       "gateway-dispose",
       "log-close",
     ]);
-    if (["request-stop", "request-throws", "gateway-stop", "gateway-dispose"].includes(scenario)) {
+    if (
+      ["request-stop", "request-throws", "gateway-stop", "gateway-dispose", "registry"].includes(
+        scenario,
+      )
+    ) {
       assert.deepEqual(removed, []);
       assert.deepEqual(receipt.retainedQualificationRoots, ownedRoots);
       assert.equal(receipt.ownedQualificationRootsRemoved, false);
@@ -272,15 +284,17 @@ for (const scenario of [
       );
       assert.deepEqual(
         receipt.cleanupFailures,
-        scenario === "registry"
-          ? ["sandbox registry verification"]
-          : scenario === "share-stop"
-            ? ["private share creator stop", "temporary root removal: owned-share"]
-            : scenario === "unconfirmed-share"
-              ? ["private share ownership verification"]
-              : [],
+        scenario === "share-stop"
+          ? ["private share creator stop", "temporary root removal: owned-share"]
+          : scenario === "unconfirmed-share"
+            ? ["private share ownership verification"]
+            : [],
       );
     }
+    assert.equal(
+      receipt.cleanupFailures.includes("sandbox registry verification"),
+      scenario === "registry",
+    );
     assert.equal(
       receipt.unconfirmedShareRoot,
       scenario === "unconfirmed-share" ? "owned-share" : null,

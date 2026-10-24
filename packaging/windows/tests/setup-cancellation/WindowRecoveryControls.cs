@@ -17,6 +17,18 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal static class WindowRecoveryControls
 {
+    private static void AssertOnboardingAdmission()
+    {
+        var entry = typeof(MainWindow).Assembly.GetType("Nvidia.NemoClaw.Bootstrapper.Program")!
+            .GetMethod("Main", BindingFlags.Static | BindingFlags.NonPublic)!;
+        foreach (var agent in new[] { "pi", "langchain-deepagents-code", "nemocua", "Hermes", "", "../hermes" })
+            if ((int)entry.Invoke(null, new object[] { new[] { "--onboard", "--agent", agent } })! != 2)
+                throw new InvalidOperationException("Invalid onboarding input reached an agent's setup.");
+        foreach (var arguments in new[] { new[] { "--onboard", "hermes" }, new[] { "--onboard", "hermes", "--agent" }, new[] { "--onboard", "--agent", "hermes", "extra" } })
+            if ((int)entry.Invoke(null, new object[] { arguments })! != 2)
+                throw new InvalidOperationException("Malformed onboarding arguments were admitted.");
+    }
+
     private static void AssertSupersededBundleCallbacks()
     {
         var type = typeof(MainWindow).Assembly.GetType("Nvidia.NemoClaw.Bootstrapper.NemoClawBootstrapperApplication")!;
@@ -726,6 +738,7 @@ internal static class WindowRecoveryControls
                     RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
                 AssertUpgradePresentation();
                 AssertSupersededBundleCallbacks();
+                AssertOnboardingAdmission();
                 window = new MainWindow();
                 AssertCompletionPresentation(window);
                 AssertProviderChoices(window);

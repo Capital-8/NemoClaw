@@ -411,6 +411,7 @@ export function assertWindowsInstallerWorkflow(input: WindowsInstallerWorkflowSo
       "qualify-installed-openclaw.test.mts",
       "review-hermes-availability.test.mts",
       "native-turn-cleanup.test.mts",
+      "native-hermes-turn-cleanup.test.mts",
       "runtime-published-resources.test.mts",
     ])
       assert.ok(preflightTests.run?.includes(name));

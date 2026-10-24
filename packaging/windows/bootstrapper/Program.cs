@@ -35,7 +35,7 @@ internal static class Program
             {
                 if (arguments.Length == 1) exitCode = NativeOnboarding.Run(null);
                 else if (arguments.Length == 3 && arguments[1] == "--agent" &&
-                    NativeDesktopIntegration.Agents.Contains(arguments[2], StringComparer.Ordinal))
+                    arguments[2] is "openclaw" or "hermes")
                 {
                     exitCode = NativeOnboarding.Run(arguments[2]);
                 }

@@ -314,6 +314,9 @@ internal static class Program
         var application = File.ReadAllText(Path.Combine(bootstrapperRoot, "NemoClawBootstrapperApplication.cs"));
         var beginMaintenance = ProductionMethod(application, "private async Task BeginMaintenanceAsync", "private async Task ReplacePreviousPreviewAsync");
         var replacePreview = ProductionMethod(application, "private async Task ReplacePreviousPreviewAsync", "private void ShowRecoverableMaintenanceError");
+        if (!replacePreview.Contains("NativeMaintenance.CompleteRelatedAction(code, () =>", StringComparison.Ordinal) ||
+            !replacePreview.Contains("message => this.window?.ShowFailure(message, this.BundleLogPath())", StringComparison.Ordinal))
+            throw new InvalidOperationException("Replacement must use the tested restart-aware completion owner and close-only presentation.");
         const string recover = "this.ShowRecoverableMaintenanceError(error);";
         if (!beginMaintenance.Contains(recover, StringComparison.Ordinal) ||
             !replacePreview.Contains(recover, StringComparison.Ordinal))

@@ -1945,6 +1945,8 @@ test("dashboard and console cleanup emit their held runtime tuple and cleanup re
           runtimeLease,
           gatewaySession: { root: "private-gateway" },
           sessionPassed: succeeded,
+          sandboxName: "owned-sandbox",
+          sandboxAbsentFromRegistry: succeeded,
           dashboardGatewayStopped: succeeded,
           rootsRemoved: succeeded,
           runRoot: "run",
@@ -1973,6 +1975,8 @@ test("dashboard and console cleanup emit their held runtime tuple and cleanup re
       assert.equal(written[0].options.flag, "wx");
       const result = written[0].document;
       assert.equal(result.agent, "hermes");
+      assert.equal(result.sandboxName, "owned-sandbox");
+      assert.equal(result.sandboxAbsentFromRegistry, succeeded);
       assert.equal(result.stateRetained, true);
       assert.equal(result.retainedPrivateGatewayRoot, succeeded ? null : "private-gateway");
       for (const key of [
