@@ -156,6 +156,8 @@ export class NativeProviderLifecycle<ProfileId extends string, ProviderName exte
     credentialValue: string | null;
     reuseExistingCredential?: boolean;
     expected?: NativeProviderAttachment<ProfileId, ProviderName>;
+    /** Registry sandbox whose receipt is the only ownership evidence for `expected`. */
+    recordedSandboxName?: string;
     profilePath?: string;
   }): Promise<NativeProviderAttachment<ProfileId, ProviderName>> {
     if (input.expected) this.requireExpectedReceipt(input.expected);

@@ -7,6 +7,7 @@ import type {
   OpenShellProviderError,
   OpenShellProviderMetadata,
 } from "../../adapters/openshell/sandbox-observer";
+import { isValidName } from "../../sandbox-name-contract";
 
 export type NativeProviderAttachment = Readonly<{
   schemaVersion: 1;
@@ -231,6 +232,8 @@ export async function ensureNativeProvider(input: {
   /** Provider-owned policy preparation after identity and credential checks. */
   prepareProviderPolicy?: () => Promise<void>;
   expected?: NativeProviderAttachment;
+  /** Registry sandbox whose receipt is the only ownership evidence for `expected`. */
+  recordedSandboxName?: string;
   profilePath?: string;
 }): Promise<NativeProviderAttachment> {
   const { adapter, target, profile } = input;
@@ -290,6 +293,12 @@ export async function ensureNativeProvider(input: {
     return confirmed;
   }
 
+  const recordedSandboxName = input.recordedSandboxName;
+  if (input.expected && recordedSandboxName && isValidName(recordedSandboxName)) {
+    throw new NativeProviderError(
+      `OpenShell provider '${profile.providerName}' is missing, and only the NemoClaw registry record for sandbox '${recordedSandboxName}' shows that NemoClaw owned it. If that sandbox no longer exists on this gateway, run 'nemoclaw ${recordedSandboxName} destroy' to clear the stale record, then onboard again. Otherwise, recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,
+    );
+  }
   if (input.expected) {
     throw new NativeProviderError(
       `OpenShell provider '${profile.providerName}' is missing. If this gateway has no sandboxes after a reinstall, complete uninstall without --keep-openshell, then onboard again. Otherwise, recreate the sandbox before using native ${profile.label} inference. No provider was changed.`,

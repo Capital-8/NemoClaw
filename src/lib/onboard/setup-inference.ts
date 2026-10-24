@@ -1577,6 +1577,8 @@ export function createSetupInference(
                 recordedSandbox?.provider === provider
                   ? recordedSandbox.nativeHostedProviderAttachment
                   : undefined,
+              recordedSandboxName:
+                recordedSandbox?.provider === provider ? recordedSandbox.name : null,
               lookup: endpointPinnedAddresses
                 ? async () => endpointPinnedAddresses!.map((address) => ({ address }))
                 : deps.resolveEndpointHost,
@@ -1688,9 +1690,10 @@ export function createSetupInference(
                 `Sandbox '${sandboxName}' predates native NVIDIA provider attachments. Recreate this beta sandbox before using native NVIDIA inference; NemoClaw does not migrate existing beta sandboxes automatically.`,
               );
             }
+            const gatewayAuthority = deps.getNativeNvidiaProviderAuthority?.(gatewayName);
             const providerAuthority = resolveGatewayNativeNvidiaProviderAuthority({
               gatewayName,
-              gatewayAuthority: deps.getNativeNvidiaProviderAuthority?.(gatewayName),
+              gatewayAuthority,
               recordedAttachment,
             });
             nativeNvidiaProviderAttachment = await ensureNativeNvidiaProvider({
@@ -1699,6 +1702,9 @@ export function createSetupInference(
               credentialValue,
               reuseExistingCredential: options.reuseGatewayCredentialWithoutLocalKey === true,
               ...(providerAuthority ? { expected: providerAuthority } : {}),
+              ...(providerAuthority && !gatewayAuthority && recordedSandbox
+                ? { recordedSandboxName: recordedSandbox.name }
+                : {}),
             });
             if (deps.getNativeNvidiaProviderAuthority && deps.setNativeNvidiaProviderAuthority) {
               await persistNativeNvidiaProviderAuthority({
