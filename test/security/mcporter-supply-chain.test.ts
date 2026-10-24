@@ -28,6 +28,8 @@ const expectedFastUriVersion = "3.1.7";
 const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
+const expectedZodVersion = "4.6.6";
+const expectedZodTarball = "https://registry.npmjs.org/zod/-/zod-4.6.6.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 const reviewedAuditConfig = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
@@ -106,9 +108,6 @@ describe("mcporter image supply-chain controls", () => {
     expect(findDependency(graph, "body-parser")).toEqual(
       expect.objectContaining({ overridden: true, version: "2.4.0" }),
     );
-    expect(findDependency(graph, "zod")).toEqual(
-      expect.objectContaining({ overridden: true, version: "4.6.6" }),
-    );
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
     expect(findDependency(graph, "@modelcontextprotocol/sdk")).toEqual(
       expect.objectContaining({ overridden: true, version: "1.32.0" }),
@@ -139,6 +138,13 @@ describe("mcporter image supply-chain controls", () => {
         overridden: true,
         resolved: expectedIpAddressTarball,
         version: expectedIpAddressVersion,
+      }),
+    );
+    expect(findDependency(graph, "zod")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedZodTarball,
+        version: expectedZodVersion,
       }),
     );
   });

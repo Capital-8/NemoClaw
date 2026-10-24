@@ -86,15 +86,21 @@ The install refuses package removals, preserving the runner's Docker and contain
   Unavailable diagnostics do not suppress the readiness failure.
   Trusted Portable Podman setup requires at least 128 tasks of remaining headroom
   on its finite API-service boundary before registry creation. The job selects a
-  1024-task limit and disabled per-container cgroups, and the pinned setup action
-  owns rendering both settings before service startup. Focused containers
-  inherit that boundary, and the live scenario verifies that the registry shares
-  its service cgroup with sufficient remaining headroom. Setup records service,
-  user, host, and cgroup headroom in `portable-podman-process-headroom.json`.
+  1024-task limit, disabled per-container cgroups, and the `crun` OCI runtime
+  because `runc` cannot launch containers without separate cgroups. The pinned
+  setup action creates the initial service configuration. The trusted E2E workflow
+  selects SHA-256-verified crun 1.28, writes its runtime mapping, and restarts
+  the service before candidate checkout. Rootless Podman may place the registry
+  in a sibling scope even with container cgroups disabled. After registry HTTP
+  readiness, the live scenario verifies a finite effective limit and at least
+  128 tasks of headroom across the registry's actual cgroup and every non-root
+  ancestor. Cgroup v2 has no `pids.max` limit on its root.
+  Setup records service, user, host, and cgroup headroom in
+  `portable-podman-process-headroom.json`; the workflow retains its
+  runtime selection in `portable-podman-crun-authority.json`.
   It fails when RLIMIT_NPROC, service TasksMax, host-thread, or cgroup pids
   headroom is less than 128 tasks. The live scenario requires registry HTTP 200
-  and retains
-  bounded container-cgroup diagnostics if readiness fails. Unavailable
+  and retains bounded container-cgroup diagnostics if readiness fails. Unavailable
   diagnostics do not suppress the readiness failure.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
@@ -2272,9 +2278,7 @@ After a failure, inspect the workflow artifacts and remove resources that target
 
 For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary, cohort-owned NIM container. Managed candidate sandboxes receive generated local route tokens instead of this key. Before starting NIM or vLLM, the live fixture rejects a pre-existing cohort container name. It records the full container ID, requested image, immutable image ID, cohort owner, and provider label, then removes only the container with that exact full container ID after revalidating every field. Missing, ambiguous, name-reused, drifted, or indeterminate cleanup evidence fails the test, as does any retained ID or name. A fail-closed refusal can leave the secret-bearing NIM container alive until runner teardown; inspect the redacted artifacts and remove only the verified container. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Revoke it, or rotate it and disable the old value, in the issuing NVIDIA service. Verify that the exposed key is no longer valid.
 
-Before the NIM image pull, the trusted fixture attempts to record root, workspace, and Docker-root capacity plus aggregate Docker usage. During readiness and on failure, `wait-nim` also attempts to record the `/opt/nim/.cache` mount and size. Probe command failures do not gate NIM qualification, but artifact write failures can still fail the fixture. `wait-nim` writes its captured output when the command finishes, so a full runner disk can prevent its samples from reaching the uploaded artifact. The probe does not inspect the container environment, which holds the NGC key. Manual PR E2E uses trusted `main`, so this probe runs only after merge.
-
-When `docker run` reports that it could not find the digest-pinned vLLM image locally, this run pulled the image. After the vLLM container is removed, the fixture removes that image. When the Docker image store and the NIM model cache share a filesystem, this frees space for the NIM model download. The `nim-storage-*` probe output shows the filesystems that a run used. The `remove-run-pulled-vllm-image` artifact records the removal result. A removal failure does not fail the test by itself; NIM readiness remains the gate. The fixture leaves a pre-existing vLLM image in place.
+When `docker run` reports that it could not find the digest-pinned vLLM image locally, this run pulled the image. After the vLLM container is removed, the fixture removes that image. When the Docker image store and the NIM model cache share a filesystem, this frees space for the NIM model download. The `remove-run-pulled-vllm-image` artifact records the removal result. A removal failure does not fail the test by itself; NIM readiness remains the gate. The fixture leaves a pre-existing vLLM image in place.
 
 Before you dispatch `native-runtime-qualification-producer`, review the `NVIDIA_API_KEY` boundary below.
 The host-side preparation step receives the long-lived repository secret and uses it to create runner-local registry authentication and pull pinned GPU images.
