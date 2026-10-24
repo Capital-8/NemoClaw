@@ -3426,7 +3426,7 @@ After restore, the command starts Deep Agents with the complete source native ho
 Deep Agents also uses attached providers for hosted compatible endpoints outside the Personal tier and qualified local endpoints; a fresh Personal-tier hosted selection stays on the shared route.
 Local NVIDIA NIM, other agents' shared local selections, and custom endpoints without an attachment retain the shared `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check or as the apply step for legacy MCP migration.
 To enable Tavily egress, apply the `tavily` preset, register the credential on the host, and explicitly attach the provider.
-Follow [Optional Tavily Egress](../get-started/quickstart#optional-tavily-egress).
+Follow [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress).
 Repeat the attachment after rebuilding if Tavily access is still needed; rebuild omits the provider unless a saved enabled selection exists.
 Deep Agents Code has no NemoClaw-managed web-search selection that makes this attachment durable.
 Legacy Deep Agents Code local sandboxes without an attachment stop before rebuild. Local NVIDIA NIM retains its shared rebuild path.
