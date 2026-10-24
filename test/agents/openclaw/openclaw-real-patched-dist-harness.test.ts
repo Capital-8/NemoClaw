@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
 import { verifyInstalledNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import { remediateOpenClawRuntimeDependencies } from "../../../scripts/lib/remediate-openclaw-runtime-dependencies.mts";
 import {
   buildConfig,
   buildManagedInferenceSafeguardCompaction,
@@ -633,6 +634,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
             },
           );
           requireSpawnSuccess(install, "install reviewed OpenClaw runtime lock without scripts");
+          remediateOpenClawRuntimeDependencies(runtimeRoot);
           const lockfilePath = path.join(runtimeRoot, "package-lock.json");
           const expectedLockSha256 = crypto
             .createHash("sha256")

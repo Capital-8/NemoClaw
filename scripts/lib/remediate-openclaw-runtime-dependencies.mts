@@ -4,7 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { existsSync, lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import fs, { existsSync, lstatSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -26,6 +26,41 @@ import {
 
 type LockEntry = Record<string, unknown>;
 
+function rewriteRegularFile(
+  filename: string,
+  label: string,
+  transform: (original: string) => string,
+): void {
+  const descriptor = fs.openSync(
+    filename,
+    fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error(`${label} must be a real file`);
+    const original = fs.readFileSync(descriptor, "utf8");
+    const patched = transform(original);
+    if (patched === original) return;
+    const bytes = Buffer.from(patched);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = fs.writeSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      if (!written) throw new Error(`${label} write made no progress`);
+      offset += written;
+    }
+    fs.ftruncateSync(descriptor, bytes.length);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function writeUnchangedJsonObject(filename: string, expected: string, updated: object): void {
+  rewriteRegularFile(filename, "OpenClaw remediation metadata", (original) => {
+    if (JSON.stringify(JSON.parse(original)) !== expected)
+      throw new Error("OpenClaw remediation metadata changed before writing");
+    return `${JSON.stringify(updated, null, 2)}\n`;
+  });
+}
+
 /** OpenClaw copies these overrides into each official plugin's managed npm project. */
 export function patchOpenClawManagedPluginOverrides(packageDirectory: string): void {
   requireRealDirectory(packageDirectory, "OpenClaw managed override owner");
@@ -37,25 +72,23 @@ export function patchOpenClawManagedPluginOverrides(packageDirectory: string): v
     throw new Error("OpenClaw managed override owner identity has drifted");
   }
   const filename = join(packageDirectory, "pnpm-workspace.yaml");
-  const metadata = lstatSync(filename);
-  if (!metadata.isFile() || metadata.isSymbolicLink())
-    throw new Error("OpenClaw managed overrides must be a real file");
-  const original = readFileSync(filename, "utf8");
-  const digest = (text: string) => createHash("sha256").update(text).digest("hex");
-  if (digest(original) === "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb")
-    return;
-  if (digest(original) !== "c95a6b7be1fa13956265abbff9bc9895064bf6677123c88314ef4dc20410bda3")
-    throw new Error("OpenClaw managed override source integrity mismatch");
-  const patched = original
-    .replace(
-      "overrides:\n",
-      "overrides:\n" +
-        '  "@azure/msal-node": 7.1.0\n  body-parser: 2.4.0\n  undici: 8.12.3\n  zod: 4.6.6\n',
-    )
-    .replace("  qs: 6.16.0\n", "  qs: 6.16.1\n");
-  if (digest(patched) !== "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb")
-    throw new Error("OpenClaw managed override replacement integrity mismatch");
-  writeFileSync(filename, patched);
+  rewriteRegularFile(filename, "OpenClaw managed overrides", (original) => {
+    const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+    if (digest(original) === "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb")
+      return original;
+    if (digest(original) !== "c95a6b7be1fa13956265abbff9bc9895064bf6677123c88314ef4dc20410bda3")
+      throw new Error("OpenClaw managed override source integrity mismatch");
+    const patched = original
+      .replace(
+        "overrides:\n",
+        "overrides:\n" +
+          '  "@azure/msal-node": 7.1.0\n  body-parser: 2.4.0\n  undici: 8.12.3\n  zod: 4.6.6\n',
+      )
+      .replace("  qs: 6.16.0\n", "  qs: 6.16.1\n");
+    if (digest(patched) !== "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb")
+      throw new Error("OpenClaw managed override replacement integrity mismatch");
+    return patched;
+  });
 }
 
 function remediatePluginDependencies(
@@ -151,6 +184,7 @@ export function remediateOpenClawRuntimeDependencies(
   requireRealDirectory(join(root, "node_modules"), "OpenClaw runtime node_modules");
   const lockfile = join(root, "package-lock.json");
   const lock = readJsonObject(lockfile, "OpenClaw runtime lock");
+  const originalLock = JSON.stringify(lock);
   if (!lock.packages || typeof lock.packages !== "object" || Array.isArray(lock.packages)) {
     throw new Error("OpenClaw runtime lock has no packages map");
   }
@@ -229,6 +263,7 @@ export function remediateOpenClawRuntimeDependencies(
     patchOpenClawManagedPluginOverrides(join(root, "node_modules/openclaw"));
     const ownerFile = join(root, "node_modules/openclaw/package.json");
     const owner = readJsonObject(ownerFile, "OpenClaw runtime owner");
+    const originalOwner = JSON.stringify(owner);
     const dependencies = owner.dependencies as Record<string, unknown>;
     if (dependencies?.undici !== "8.11.2" && dependencies?.undici !== "8.12.3")
       throw new Error("OpenClaw HTTP dependency declaration has drifted");
@@ -236,11 +271,11 @@ export function remediateOpenClawRuntimeDependencies(
     if (dependencies.npm !== "12.2.0" && dependencies.npm !== "12.2.1")
       throw new Error("OpenClaw npm dependency declaration has drifted");
     dependencies.npm = "12.2.1";
-    writeFileSync(ownerFile, `${JSON.stringify(owner, null, 2)}\n`);
+    writeUnchangedJsonObject(ownerFile, originalOwner, owner);
     if (options.updateLock) packages["node_modules/openclaw"].dependencies = dependencies;
   }
   remediatePluginDependencies(root, packages, options.updateLock === true);
-  if (options.updateLock) writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+  if (options.updateLock) writeUnchangedJsonObject(lockfile, originalLock, lock);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

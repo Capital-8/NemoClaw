@@ -358,7 +358,7 @@ try {
     runtime95: '/usr/local/lib/nemoclaw/openclaw-migrations/2026.9.5/node_modules/openclaw',
     runtime97: '/usr/local/lib/nemoclaw/openclaw-migrations/2026.9.7/node_modules/openclaw',
     targetRuntime: '/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw',
-    migrationRunner: '/scripts/lib/openclaw-legacy-migrations.mts',
+    migrationRunner: '/usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts',
   });
 } finally {
   fs.rmSync(home, { recursive: true, force: true });

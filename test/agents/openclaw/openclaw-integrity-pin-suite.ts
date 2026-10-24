@@ -222,6 +222,7 @@ function runInstallBlock(
     baseProvenanceSymlink?: boolean;
     auditExceptionPolicy?: string;
     failOpenClawNpmCi?: boolean;
+    failOpenClawRemediation?: boolean;
     failOpenClawVerifyInstalledLock?: boolean;
   } = {},
 ) {
@@ -249,6 +250,7 @@ function runInstallBlock(
     baseProvenanceSymlink = false,
     auditExceptionPolicy = fs.readFileSync(NPM_AUDIT_EXCEPTION_FILE, "utf-8"),
     failOpenClawNpmCi = false,
+    failOpenClawRemediation = false,
     failOpenClawVerifyInstalledLock = false,
   } = options;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-integrity-"));
@@ -401,7 +403,9 @@ function runInstallBlock(
     `installed_mcporter_version=${JSON.stringify(installedMcporterVersion)}`,
     `fail_openclaw_npm_ci=${failOpenClawNpmCi ? "1" : "0"}`,
     `fail_openclaw_verify_installed_lock=${failOpenClawVerifyInstalledLock ? "1" : "0"}`,
+    `fail_openclaw_remediation=${failOpenClawRemediation ? "1" : "0"}`,
     "node() {",
+    `  if [ "\${1:-}" = "/scripts/lib/remediate-openclaw-runtime-dependencies.mts" ]; then printf "node %s\\n" "$*" >> "$call_log"; [ "$#" -eq 3 ] && [ "\${2:-}" = "--prefix" ] && [ "\${3:-}" = ${JSON.stringify(openclawRuntime)} ] || return 46; [ "$fail_openclaw_remediation" = "0" ] || return 45; return 0; fi`,
     '  if printf "%s\\n" "$*" | grep -q -- "--verify-installed-lock"; then printf "node %s\\n" "$*" >> "$call_log"; [ "$fail_openclaw_verify_installed_lock" = "0" ] || return 44; return 0; fi',
     `  if [ "\${1:-}" = ${JSON.stringify(path.join(openclawRuntime, "node_modules", "openclaw", "scripts", "postinstall-bundled-plugins.mjs"))} ] || [ "\${1:-}" = ${JSON.stringify(path.join(openclawGlobal, "scripts", "postinstall-bundled-plugins.mjs"))} ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi`,
     '  if [ "${1:-}" = "--input-type=module" ] && [ "${2:-}" = "-e" ] && printf "%s\\n" "${3:-}" | grep -q "StreamableHTTPServerTransport"; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
@@ -1262,7 +1266,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           },
         );
 
-        expect(result.status).toBe(0);
+        expect(result.status, result.stderr).toBe(0);
         expect(result.stdout).toContain("lacks matching reviewed provenance");
         expect(calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
@@ -1705,6 +1709,31 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(outcome.runtimeExposed).toBe(false);
         expect(outcome.provenanceExists).toBe(false);
       });
+
+      it.each([
+        [
+          DOCKERFILE,
+          "# OPENCLAW_VERSION is the NemoClaw runtime build target",
+          "# Patch OpenClaw media fetch",
+        ],
+        [DOCKERFILE_BASE, "# Install OpenClaw CLI + PyYAML.", "# Baseline health check."],
+      ])(
+        "leaves no runtime exposure when dependency remediation fails in %s",
+        (file, start, end) => {
+          const outcome = runInstallBlock(extractRunBlock(file, start, end), {
+            openclawVersion: PINNED_OPENCLAW_VERSION,
+            committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
+            failOpenClawRemediation: true,
+          });
+          expect(outcome.result.status, outcome.result.stderr).toBe(45);
+          expect(outcome.calls).toContain("remediate-openclaw-runtime-dependencies.mts --prefix");
+          expect(outcome.calls).not.toContain("--verify-installed-lock");
+          expect(outcome.calls).not.toContain("postinstall-bundled-plugins.mjs");
+          expect(outcome.runtimeExposed).toBe(false);
+          expect(outcome.provenanceExists).toBe(false);
+        },
+      );
 
       it("leaves no runtime exposure when installed-lock verification fails", () => {
         const installBlocks = [

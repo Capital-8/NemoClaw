@@ -49,7 +49,10 @@ const CONFIG = JSON.parse(
 
 describe("reviewed archive graph materialization", () => {
   it("selects patched npm for the aggregate archive audit", () => {
-    expect(reviewedArchiveGraphManifest("7.5.21").overrides.npm).toBe("12.2.1");
+    expect(reviewedArchiveGraphManifest("7.5.21").overrides.npm).toEqual({
+      ".": "12.2.1",
+      undici: "6.29.1",
+    });
   });
 
   it("rejects an affected tar release", () => {

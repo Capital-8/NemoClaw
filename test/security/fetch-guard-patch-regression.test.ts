@@ -188,6 +188,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(mcporterIntegrity)}`,
     `MCPORTER_0_7_3_TARBALL=${JSON.stringify(mcporterTarball)}`,
     "node() {",
+    `  if [ "\${1:-}" = "/scripts/lib/remediate-openclaw-runtime-dependencies.mts" ]; then [ "$#" -eq 3 ] && [ "\${2:-}" = "--prefix" ] && [ "\${3:-}" = ${JSON.stringify(openclawRuntime)} ] || return 86; printf "node %s\\n" "$*" >> "$call_log"; return 0; fi`,
     '  if [ "${1:-}" = "$postinstall_path" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  if [ "${1:-}" = "--input-type=module" ] && [ "${2:-}" = "-e" ] && printf "%s\\n" "${3:-}" | grep -q "StreamableHTTPServerTransport"; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  if [ "${1:-}" = "/scripts/lib/reviewed-npm-audit.mts" ]; then',
@@ -355,6 +356,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(stale.calls).toMatch(
       /npm --prefix \S+\/openclaw-runtime ci --ignore-scripts --omit=dev --no-audit --no-fund --no-progress/,
     );
+    expect(stale.calls).toContain("remediate-openclaw-runtime-dependencies.mts --prefix");
     expect(stale.calls).toContain("postinstall-bundled-plugins.mjs");
     expect(stale.calls).not.toContain("npm install -g");
     expect(stale.calls).not.toContain("npm pack");
@@ -367,6 +369,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(current.calls).toMatch(
       /npm --prefix \S+\/openclaw-runtime ci --ignore-scripts --omit=dev --no-audit --no-fund --no-progress/,
     );
+    expect(current.calls).toContain("remediate-openclaw-runtime-dependencies.mts --prefix");
     expect(current.calls).toContain("postinstall-bundled-plugins.mjs");
     expect(current.calls).not.toContain("npm install -g");
     expect(current.calls).not.toContain("npm pack");

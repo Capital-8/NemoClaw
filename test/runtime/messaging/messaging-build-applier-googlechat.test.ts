@@ -365,7 +365,7 @@ it("patches the installed official Slack bundle only after registry provenance i
         OPENCLAW_PLUGIN_INSTALL_PATH: outside,
       }),
     ).toThrow(
-      "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph",
+      "OpenClaw plugin remediation requires a valid managed npm package directory and reviewed dependency graph",
     );
     const alias = path.join(path.dirname(installed), "slack-alias");
     fs.symlinkSync(installed, alias, "dir");
@@ -375,7 +375,7 @@ it("patches the installed official Slack bundle only after registry provenance i
         OPENCLAW_PLUGIN_INSTALL_PATH: alias,
       }),
     ).toThrow(
-      "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph",
+      "OpenClaw plugin remediation requires a valid managed npm package directory and reviewed dependency graph",
     );
     expect(fs.readFileSync(path.join(target, "index.js"), "utf8")).toBe(expectedContent.stdout);
     const outsideDependency = path.join(

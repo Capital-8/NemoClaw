@@ -674,7 +674,7 @@ COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/verify-openclaw-official-plugin.mts scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/lib/patch-bundled-npm-undici.mts scripts/lib/remediate-openclaw-runtime-dependencies.mts /scripts/lib/
 COPY --chmod=0555 scripts/lib/install-openclaw-optional-plugins.sh scripts/lib/install-openclaw-cli-wrapper.sh /scripts/lib/
-COPY scripts/lib/openclaw-legacy-migrations.mts scripts/lib/openclaw-legacy-session-admission.mts /scripts/lib/
+COPY scripts/lib/openclaw-legacy-migrations.mts scripts/lib/openclaw-legacy-session-admission.mts /usr/local/lib/nemoclaw/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
 COPY scripts/patch-bundled-npm-brace-expansion.mts scripts/patch-bundled-npm-tar.mts scripts/upgrade-bundled-npm.mts /scripts/
 COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
@@ -2259,8 +2259,8 @@ RUN check_metadata() { \
       fi; \
     } \
     && check_metadata /scripts/lib/verify-openclaw-official-plugin.mts 'root:root:755' \
-    && check_metadata /scripts/lib/openclaw-legacy-migrations.mts 'root:root:755' \
-    && check_metadata /scripts/lib/openclaw-legacy-session-admission.mts 'root:root:644' \
+    && check_metadata /usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts 'root:root:755' \
+    && check_metadata /usr/local/lib/nemoclaw/openclaw-legacy-session-admission.mts 'root:root:644' \
     && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root:644' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755' \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root:755' \

@@ -116,6 +116,8 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "85c2394c101b9ca593293e053ff466c14a4b84eb11e6c9e7257660e7377a15d4",
   // The same read-only checks with the committed executable helper modes.
   "acf3fcc15d20f086b453fb75fdb6ca787aa944a6e4fae171574afd7fe1e9b558",
+  // Read-only metadata checks including both reviewed dependency remediation helpers.
+  "023af5e7ce435663cd10bb8f3e4cd465b82b094fcb00c6b8c5e481cbbe323514",
   // Reviewed local NemoClaw plugin installation with explicit capability
   // acceptance; the following inspect and pruning steps are unchanged.
   "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",

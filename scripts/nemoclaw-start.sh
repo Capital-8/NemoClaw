@@ -5199,7 +5199,7 @@ run_openclaw_legacy_migrations() {
   local -a migration_command
   node_bin="$(command -v node 2>/dev/null)" || return 1
   migration_command=(
-    "$node_bin" /scripts/lib/openclaw-legacy-migrations.mts
+    "$node_bin" /usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts
     --run-executable "$OPENCLAW" /usr/local/lib/nemoclaw/openclaw-migrations
   )
   if [ "$(id -u)" -eq 0 ]; then

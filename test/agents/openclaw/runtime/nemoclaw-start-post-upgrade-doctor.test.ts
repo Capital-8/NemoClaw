@@ -309,7 +309,10 @@ function doctorFunction(source: string, rootMode = false): string {
       .replace('[ "$(id -u)" -eq 0 ]', rootMode ? '[ "0" -eq 0 ]' : '[ "1000" -eq 0 ]'),
     extractShellFunctionFromSource(source, "wait_for_openclaw_startup_migration_lease"),
     extractShellFunctionFromSource(source, "run_openclaw_legacy_migrations")
-      .replace("/scripts/lib/openclaw-legacy-migrations.mts", '"$NEMOCLAW_TEST_MIGRATION_RUNNER"')
+      .replace(
+        "/usr/local/lib/nemoclaw/openclaw-legacy-migrations.mts",
+        '"$NEMOCLAW_TEST_MIGRATION_RUNNER"',
+      )
       .replace('[ "$(id -u)" -eq 0 ]', rootMode ? '[ "0" -eq 0 ]' : '[ "1000" -eq 0 ]'),
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
       .replaceAll("/sandbox/.openclaw", "${NEMOCLAW_TEST_CONFIG_DIR}")
