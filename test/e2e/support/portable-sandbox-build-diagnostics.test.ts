@@ -4,12 +4,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 
 import { expect, it, vi } from "vitest";
 
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../../src/lib/sandbox/build-context.ts";
 import { prebuildSandboxImageIfEligible } from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import {
   PORTABLE_ASSERTION_CLEANUP_RESERVE_MS,
   PORTABLE_GATEWAY_STARTUP_BUDGET_MS,
@@ -22,6 +25,60 @@ import {
   publishPortableSandboxImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
+
+vi.mock("../fixtures/observed-child-process.ts", () => ({ spawnObservedChild: vi.fn() }));
+
+it("settles a timed-out Podman build when a descendant keeps its output pipe open (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));
+  const artifacts = new ArtifactSink(path.join(directory, "portable-build"));
+  const progress = startTestProgress("portable build diagnostics", ["prepare", "build"], {
+    logLine: () => undefined,
+  });
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn(() => true),
+  });
+  vi.mocked(spawnObservedChild).mockReturnValueOnce(
+    child as unknown as ReturnType<typeof spawnObservedChild>,
+  );
+  vi.useFakeTimers();
+  try {
+    const build = buildPortableSandboxImageWithEvidence(
+      ["build", "-t", "localhost/test:fixed", "."],
+      { env: {}, stdio: "inherit" },
+      artifacts,
+      progress,
+    );
+    child.stderr.write("permission denied; credential=private-build-token");
+    await vi.advanceTimersByTimeAsync(PORTABLE_IMAGE_COMMAND_TIMEOUT_MS);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    child.emit("exit", null, "SIGKILL");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(await build).toBeNull();
+    expect(child.stdout.destroyed).toBe(true);
+    expect(child.stderr.destroyed).toBe(true);
+    const published = fs.readFileSync(
+      artifacts.pathFor("portable-sandbox-image-build-failure.json"),
+      "utf8",
+    );
+    expect(JSON.parse(published)).toEqual({
+      schemaVersion: 1,
+      status: null,
+      signal: "SIGKILL",
+      errorCode: "ETIMEDOUT",
+      category: "permission",
+    });
+    expect(published).not.toContain("private-build-token");
+  } finally {
+    vi.useRealTimers();
+    progress.stop();
+    child.stdout.destroy();
+    child.stderr.destroy();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 it("records a fixed Podman failure category without build output (#13482)", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));

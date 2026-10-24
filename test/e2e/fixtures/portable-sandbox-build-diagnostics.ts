@@ -21,6 +21,8 @@ export const PORTABLE_PROFILE_LIVE_TIMEOUT_MS =
   PORTABLE_SANDBOX_DELETE_BUDGET_MS +
   PORTABLE_ASSERTION_CLEANUP_RESERVE_MS;
 const DIAGNOSTIC_TAIL_CHARS = 8_192;
+const POST_KILL_EXIT_WAIT_MS = 3_000;
+const POST_KILL_OUTPUT_DRAIN_MS = 1_000;
 const SAFE_ERROR_CODES = new Set(["EACCES", "ENOENT", "EPERM", "ETIMEDOUT"]);
 type BuildResult = {
   status: number | null;
@@ -64,21 +66,21 @@ function runPodmanBuild(
     let diagnostic = "";
     let error: Error | undefined;
     let timedOut = false;
+    let settled = false;
+    let postKillTimer: ReturnType<typeof setTimeout> | undefined;
+    let exitStatus: number | null = null;
+    let exitSignal: NodeJS.Signals | null = null;
     const appendDiagnostic = (chunk: Buffer) => {
       // Dockerfile steps can print credentials. Keep only a bounded in-memory tail.
       diagnostic = (diagnostic + chunk.toString("utf8")).slice(-DIAGNOSTIC_TAIL_CHARS);
     };
     child.stdout?.on("data", appendDiagnostic);
     child.stderr?.on("data", appendDiagnostic);
-    const deadline = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, timeoutMs);
-    child.once("error", (cause) => {
-      error = cause;
-    });
-    child.once("close", (status, signal) => {
+    const settle = (status: number | null, signal: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(deadline);
+      if (postKillTimer) clearTimeout(postKillTimer);
       resolve({
         status,
         signal,
@@ -87,7 +89,31 @@ function runPodmanBuild(
           ? Object.assign(new Error("Podman image command timed out"), { code: "ETIMEDOUT" })
           : error,
       });
+    };
+    const closeOpenPipesAndSettle = () => {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      settle(exitStatus, exitSignal);
+    };
+    const deadline = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+      // A descendant may keep a pipe open after the direct child is killed.
+      // Bound both the exit wait and the subsequent output drain.
+      postKillTimer = setTimeout(closeOpenPipesAndSettle, POST_KILL_EXIT_WAIT_MS);
+    }, timeoutMs);
+    child.once("error", (cause) => {
+      error = cause;
     });
+    child.once("exit", (status, signal) => {
+      exitStatus = status;
+      exitSignal = signal;
+      if (timedOut) {
+        if (postKillTimer) clearTimeout(postKillTimer);
+        postKillTimer = setTimeout(closeOpenPipesAndSettle, POST_KILL_OUTPUT_DRAIN_MS);
+      }
+    });
+    child.once("close", settle);
   });
 }
 
