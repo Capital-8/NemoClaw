@@ -106,6 +106,31 @@ describe("managed startup OpenClaw dashboard origins (#13177)", () => {
     ).toThrow(/dashboard\.extraOrigins/);
   });
 
+  it("makes an earlier CLI refuse a profile with extra origins instead of dropping them", () => {
+    const earlierOpenClawDashboardKeys = [
+      "agent",
+      "mode",
+      "url",
+      "port",
+      "bindAddress",
+      "wslExposure",
+    ];
+    const decoded = JSON.parse(
+      Buffer.from(encodeManagedStartupProfile(profileWith(EXTRA_ORIGINS)), "base64url").toString(
+        "utf8",
+      ),
+    ) as { dashboard: Record<string, unknown> };
+
+    expect(
+      Object.keys(decoded.dashboard).filter((key) => !earlierOpenClawDashboardKeys.includes(key)),
+    ).toEqual(["extraOrigins"]);
+    expect(() =>
+      validateManagedStartupProfile(
+        withDashboard(profileWith(EXTRA_ORIGINS), { fieldFromALaterCli: true }),
+      ),
+    ).toThrow(/dashboard contains unsupported fields/);
+  });
+
   it("refuses extra origins for another agent instead of dropping them", () => {
     expect(() =>
       buildManagedStartupOnboardProfile(
