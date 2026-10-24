@@ -69,8 +69,6 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery
 FROM scratch AS managed-startup-runtime-builder
 COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-direct-image-runtime.bundle /out/managed-startup-image-runtime.cjs
 
-# GPU builds import checksum-pinned archives from the amd64 cache.
-# Package installs stay offline.
 FROM scratch AS wechat-npm-archives
 
 ADD --checksum=sha256:69dd18af16a992edbe3700d244f9591ab52f5f58abfe976a9f1250bd8eacdbbb https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.10.tgz /openclaw-weixin-2.4.10.tgz
@@ -98,8 +96,7 @@ ADD --chmod=0444 --checksum=sha256:3844297c05417cd619668a01c7af090c15a62b9d35f10
 # hadolint ignore=DL3006
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
-# Reviewed-archive invariants (#5896): checksum-addressed source archives,
-# committed SRI verification, offline installation, and architecture selection.
+# Install checksum-pinned ACP archives offline for the selected architecture.
 FROM npm12 AS codex-acp-runtime
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
@@ -618,7 +615,6 @@ ADD --chmod=0444 --checksum=sha256:96a03e2ac0906b035085ec4e2307dd8076fb02673b8f5
 # hadolint ignore=DL3006
 FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives
 
-# Selected and managed-union plugins share the reviewed offline dependency cache.
 FROM npm12 AS openclaw-managed-messaging-npm-cache-1
 ARG TARGETARCH
 ENV NPM_CONFIG_AUDIT=false \
@@ -1720,18 +1716,13 @@ RUN set -eu; \
 # hadolint ignore=DL3059,DL4006,SC2016
 RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro . /scripts/lib/install-openclaw-optional-plugins.sh
 
-# Keep the reviewed cache root-owned and immutable. Add messaging source after
-# the core install so channel-only changes invalidate only this plugin layer;
-# messaging intentionally stays out of openclaw-runtime-payload.
+# Keep the reviewed cache immutable and messaging source in its own layer.
 USER root
 COPY src/lib/messaging/ /src/lib/messaging/
 RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
     && chmod -R a+rX /src/lib/messaging
 
-# Bake reduced messaging runtime metadata for the entrypoint. The full
-# NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only
-# forwards explicit runtime env, so nemoclaw-start reads this generic artifact
-# when the env plan is absent.
+# Persist the reduced messaging plan for runtime startup.
 # hadolint ignore=DL3059
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 USER sandbox
