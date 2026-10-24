@@ -502,6 +502,155 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     },
   );
 
+  it.each([
+    { stage: "register", status: 1, policy: "present", calls: ["register", "provider-reset"] },
+    {
+      stage: "attach",
+      status: 1,
+      policy: "present",
+      calls: ["register", "attach", "provider-reset"],
+    },
+    {
+      stage: "policy-add",
+      status: 1,
+      policy: "present",
+      calls: ["register", "attach", "policy-add", "provider-reset"],
+    },
+    {
+      stage: "probe",
+      status: 1,
+      policy: "absent",
+      calls: ["register", "attach", "policy-add", "policy-remove", "provider-reset"],
+    },
+    {
+      stage: "complete",
+      status: 0,
+      policy: "absent",
+      calls: ["register", "attach", "policy-add", "policy-remove", "provider-reset"],
+    },
+  ])(
+    "limits Tavily cleanup to completed opt-in setup ($stage)",
+    ({ stage, status, policy, calls }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-setup-"));
+      const cli = path.join(root, "nemoclaw.cjs");
+      const callLog = path.join(root, "calls");
+      const audit = path.join(root, "audit");
+      const policyState = path.join(root, "policy");
+      try {
+        fs.mkdirSync(path.join(root, ".nemoclaw"));
+        fs.writeFileSync(
+          path.join(root, ".nemoclaw", "sandboxes.json"),
+          JSON.stringify({
+            sandboxes: {
+              "deepagents-sandbox": {
+                agent: "langchain-deepagents-code",
+                observabilityEnabled: true,
+              },
+            },
+          }),
+        );
+        fs.writeFileSync(callLog, "");
+        fs.writeFileSync(audit, "false");
+        fs.writeFileSync(policyState, "present");
+        fs.writeFileSync(
+          cli,
+          String.raw`const fs = require("node:fs");
+const path = require("node:path");
+const root = process.env.FIXTURE_ROOT;
+const args = process.argv.slice(2);
+const record = (value) => fs.appendFileSync(path.join(root, "calls"), value + "\n");
+if (args.includes("--dry-run")) { console.log("api.tavily.com"); process.exit(0); }
+switch (args.slice(0, 2).join(" ")) {
+  case "credentials add":
+    record("register");
+    if (process.env.FAILURE_STAGE === "register") process.exit(1);
+    fs.writeFileSync(path.join(root, "provider"), args[2]);
+    break;
+  case "credentials reset":
+    record("provider-reset");
+    fs.rmSync(path.join(root, "provider"), { force: true });
+    break;
+  case "deepagents-sandbox policy-add":
+    record("policy-add");
+    if (process.env.FAILURE_STAGE === "policy-add") process.exit(1);
+    fs.writeFileSync(path.join(root, "policy"), "present");
+    break;
+  case "deepagents-sandbox policy-remove":
+    record("policy-remove");
+    fs.writeFileSync(path.join(root, "policy"), "absent");
+    break;
+  default: process.exit(2);
+}
+`,
+        );
+        fs.writeFileSync(
+          path.join(root, "openshell"),
+          String.raw`#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const root = process.env.FIXTURE_ROOT;
+const args = process.argv.slice(2);
+const audit = path.join(root, "audit");
+const projectPython = "/sandbox/.nemoclaw-e2e-project-venv/bin/python3";
+switch (args.slice(0, 2).join(" ")) {
+  case "settings get":
+    console.log(JSON.stringify({ settings: { ocsf_json_enabled: fs.readFileSync(audit, "utf8") } }));
+    break;
+  case "settings set":
+    fs.writeFileSync(audit, args[args.indexOf("--value") + 1]);
+    break;
+  case "sandbox provider":
+    fs.appendFileSync(path.join(root, "calls"), "attach\n");
+    if (process.env.FAILURE_STAGE === "attach") process.exit(1);
+    break;
+  case "sandbox exec": {
+    const command = args.slice(args.indexOf("--") + 1);
+    if (command[0] === "sh") { console.log("1"); break; }
+    if (command[0] === "bash") {
+      console.log(command.join(" ").includes("/sandbox/.nemoclaw-e2e-project-venv")
+        ? projectPython : "/opt/venv/bin/python3");
+      break;
+    }
+    const permitted = fs.readFileSync(path.join(root, "policy"), "utf8") === "present";
+    if (process.env.FAILURE_STAGE === "probe" && permitted) process.exit(1);
+    console.log("PROBE_PID:4242");
+    console.log(permitted && command[0] !== "/usr/bin/python3" && command[0] !== projectPython
+      ? "REACHED:200" : "BLOCKED:policy denied");
+    break;
+  }
+  default: process.exit(2);
+}
+`,
+          { mode: 0o755 },
+        );
+        const result = spawnSync("bash", [dcodeTavilyCheck], {
+          encoding: "utf8",
+          env: {
+            PATH: `${root}:${DEFAULT_TEST_PATH}`,
+            HOME: root,
+            FIXTURE_ROOT: root,
+            FAILURE_STAGE: stage,
+            SANDBOX_NAME: "deepagents-sandbox",
+            NEMOCLAW_E2E_CLI: cli,
+            NEMOCLAW_E2E_POLICY_SETTLE_SECONDS: "0",
+            NEMOCLAW_E2E_TAVILY_AUTHENTICATED: "1",
+            TAVILY_API_KEY: "tavily-fixture-key",
+            NEMOCLAW_E2E_TAVILY_AUDIT_BEFORE_FIXTURE: "[100] old event",
+            NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE:
+              "[101] [sandbox] [OCSF] [ocsf] NET:OPEN [WARN] DENIED python3(4242) -> api.tavily.com:443",
+          },
+        });
+        expect(result.status, result.stdout + result.stderr).toBe(status);
+        expect(fs.readFileSync(policyState, "utf8")).toBe(policy);
+        expect(fs.readFileSync(callLog, "utf8").trim().split("\n")).toEqual(calls);
+        expect(fs.readFileSync(audit, "utf8")).toBe("false");
+        expect(fs.existsSync(path.join(root, "provider"))).toBe(false);
+      } finally {
+        fs.rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
+
   it("scopes authenticated Tavily credentials to its check environment (#13082)", () => {
     const base = { TAVILY_API_KEY: "ambient-key", OTHER_SECRET: "unrelated-key" };
     const ordinary = buildCloudExperimentalCommandEnv("sandbox", "inference-key", base);

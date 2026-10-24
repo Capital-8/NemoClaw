@@ -196,6 +196,7 @@ tavily_denied_audit() {
 
 AUDIT_SETTING_BEFORE=""
 TAVILY_PROVIDER=""
+TAVILY_PRESET_APPLIED=0
 
 capture_audit_setting() {
   openshell settings get "$SANDBOX_NAME" --json | node -e '
@@ -222,7 +223,9 @@ restore_audit_setting() {
 
 cleanup_tavily_check() {
   local status=0
-  restore_tavily_denial || status=1
+  if [ "$TAVILY_PRESET_APPLIED" = "1" ]; then
+    restore_tavily_denial || status=1
+  fi
   if [ -n "$TAVILY_PROVIDER" ]; then
     if ! nemoclaw_cli credentials reset "$TAVILY_PROVIDER" --yes >/dev/null 2>&1; then
       fail_test "could not remove disposable Tavily provider"
@@ -311,6 +314,7 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "audit-cleanup" ]; then
   openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value true
   AUDIT_RESTORING=1
   restore_tavily_denial() { return "${NEMOCLAW_E2E_REMOVE_STATUS:-0}"; }
+  TAVILY_PRESET_APPLIED=1
   cleanup_status=0
   cleanup_tavily_check || cleanup_status=1
   printf 'RESTORED:%s\n' "$(cat "$AUDIT_FIXTURE")"
@@ -401,6 +405,7 @@ APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   exit 1
 }
+TAVILY_PRESET_APPLIED=1
 pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"

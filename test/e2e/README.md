@@ -30,6 +30,8 @@ that OpenShell rewrites at egress. The check requires HTTP 200 before removal an
 `DENIED` audit event for `api.tavily.com:443` afterward.
 The audit event must follow the captured log cursor and identify the fresh managed-Python probe process.
 Cleanup removes the disposable provider and restores the prior `ocsf_json_enabled` setting, including its unset state.
+Cleanup removes the Tavily preset only after this invocation successfully applied it.
+Earlier setup failures preserve existing policy while disposable-provider removal and audit-setting restoration still run.
 Removal preserves shared gateway credentials and unrelated sandbox attachments.
 Adding the preset alone restores its direct network rule; provider access requires an explicit attachment.
 A raw OpenShell attachment is temporary: it leaves the saved opt-out unchanged, so rebuild omits Tavily again.
