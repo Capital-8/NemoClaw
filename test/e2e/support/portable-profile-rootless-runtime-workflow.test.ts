@@ -98,6 +98,7 @@ describe("portable profile rootless runtime workflow", () => {
     const actionlintLabels = actionlint["self-hosted-runner"]?.labels;
     const finalizationHelper =
       "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts";
+    const buildDiagnostics = "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts";
     const finalizationSources = [
       "src/lib/onboard/machine/final-flow-composition.ts",
       "src/lib/onboard/machine/finalization-deps.ts",
@@ -130,6 +131,8 @@ describe("portable profile rootless runtime workflow", () => {
     );
     expect(workflow.on.pull_request.paths).toContain(finalizationHelper);
     expect(workflow.on.push.paths).toContain(finalizationHelper);
+    expect(workflow.on.pull_request.paths).toContain(buildDiagnostics);
+    expect(workflow.on.push.paths).toContain(buildDiagnostics);
     expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(finalizationSources));
     expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(doctorSources));
     expect(Array.isArray(actionlintLabels)).toBe(true);
