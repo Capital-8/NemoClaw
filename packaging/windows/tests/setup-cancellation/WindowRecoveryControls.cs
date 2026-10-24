@@ -237,7 +237,9 @@ internal static class WindowRecoveryControls
                 if (enabled)
                 {
                     window.ShowConfiguredSuccess();
-                    if (!((TextBlock)window.FindName("SuccessTitle")).Text.EndsWith("settings are saved.", StringComparison.Ordinal)
+                    if (((TextBlock)window.FindName("SuccessStage")).Text != "04 / SETUP COMPLETE"
+                        || ((TextBlock)window.FindName("LaunchStageLabel")).Text != "Setup complete"
+                        || !((TextBlock)window.FindName("SuccessTitle")).Text.EndsWith("settings are saved.", StringComparison.Ordinal)
                         || ((Button)window.FindName("LaunchButton")).Visibility != Visibility.Visible
                         || ((TextBlock)window.FindName("SuccessDetail")).Text.StartsWith("Preview: full runtime checks are pending.", StringComparison.Ordinal) != (status == "unqualified"))
                         throw new InvalidOperationException("Saved settings changed preview qualification or lost the launch action.");
