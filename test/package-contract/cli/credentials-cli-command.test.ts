@@ -188,7 +188,10 @@ async function captureOutput(
   return { stdout, stderr };
 }
 
-async function expectExitCode(action: () => Promise<unknown>, expectedCode: number): Promise<void> {
+async function expectExitCode(
+  action: () => Promise<unknown>,
+  expectedCode: number | undefined,
+): Promise<void> {
   const originalExitCode = process.exitCode;
   process.exitCode = undefined;
   try {
@@ -846,6 +849,109 @@ describe("credentials oclif commands", () => {
       delete process.env.TAVILY_API_KEY;
     }
   });
+
+  it.each(
+    [
+      {
+        type: "tavily",
+        provider: "custom-provider",
+        metadata: {
+          status: 0,
+          stdout:
+            "Name: custom-provider\nType: tavily\nCredential keys: API_KEY\nConfig keys: <none>\n",
+        },
+        attach: true,
+        rebuild: false,
+        unknown: false,
+      },
+      {
+        type: "tavily-hermes-v1",
+        provider: "custom-provider",
+        metadata: {
+          status: 0,
+          stdout:
+            "Name: custom-provider\nType: tavily-hermes-v1\nCredential keys: API_KEY\nConfig keys: <none>\n",
+        },
+        attach: true,
+        rebuild: false,
+        unknown: false,
+      },
+      {
+        type: "generic",
+        provider: "tavily-search",
+        metadata: {
+          status: 0,
+          stdout:
+            "Name: tavily-search\nType: generic\nCredential keys: API_KEY\nConfig keys: <none>\n",
+        },
+        attach: false,
+        rebuild: true,
+        unknown: false,
+      },
+      {
+        type: "unavailable",
+        provider: "tavily-search",
+        metadata: { status: 1, stderr: "provider metadata unavailable" },
+        attach: false,
+        rebuild: false,
+        unknown: true,
+      },
+    ].flatMap((profile) =>
+      [
+        {
+          outcome: "removed",
+          finalDelete: { status: 0, stdout: "" },
+          exitCode: undefined,
+          stream: "stdout" as const,
+        },
+        {
+          outcome: "already-absent",
+          finalDelete: { status: 1, stderr: "provider not found" },
+          exitCode: undefined,
+          stream: "stdout" as const,
+        },
+        {
+          outcome: "partial",
+          finalDelete: { status: 1, stderr: "gateway unavailable" },
+          exitCode: 1,
+          stream: "stderr" as const,
+        },
+      ].map((outcome) => ({ ...profile, ...outcome })),
+    ),
+  )(
+    "credentials reset selects $type recovery after $outcome removal",
+    async ({ provider, metadata, attach, rebuild, unknown, finalDelete, exitCode, stream }) => {
+      const operations: string[] = [];
+      const responses: Record<string, SpawnLikeResult[]> = {
+        get: [metadata],
+        delete: [{ status: 1, stderr: "provider is attached to sandbox(es): alpha" }, finalDelete],
+        detach: [{ status: 0, stdout: "" }],
+      };
+      installRuntimeBridge({
+        runOpenshell: (args) => {
+          const operation = args.find((arg) => Object.hasOwn(responses, arg))!;
+          operations.push(operation);
+          return responses[operation]!.shift()!;
+        },
+      });
+      const { CredentialsResetCommand } = loadCommands();
+      const output = await captureOutput(() =>
+        expectExitCode(() => CredentialsResetCommand.run([provider, "--yes"]), exitCode),
+      );
+      const text = output[stream];
+      expect(text).toContain("detached from sandbox(es): alpha");
+      expect(
+        text.includes(`openshell sandbox provider attach -g nemoclaw <sandbox> ${provider}`),
+      ).toBe(attach);
+      expect(text.includes("openshell sandbox provider attach")).toBe(attach);
+      expect(text.includes("nemoclaw alpha rebuild")).toBe(rebuild);
+      expect(text.includes("rebuild")).toBe(rebuild);
+      expect(text.includes("Provider type could not be verified")).toBe(unknown);
+      expect(text.includes("nemoclaw credentials list")).toBe(unknown);
+      expect(text.includes("Tavily")).toBe(attach);
+      expect(operations).toEqual(["delete", "get", "detach", "delete"]);
+    },
+  );
 
   it("credentials reset redacts credential-shaped stderr from OpenShell failures", async () => {
     installRuntimeBridge({

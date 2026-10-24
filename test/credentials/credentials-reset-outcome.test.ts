@@ -35,7 +35,7 @@ describe("formatResetOutcome (#5560)", () => {
   it("reports every sandbox detached during a successful removal (#9806)", () => {
     const outcome = formatResetOutcome(
       "my-assistant-brave-search",
-      result({ ok: true, detachedSandboxes: ["alpha", "beta", "alpha"] }),
+      result({ ok: true, providerType: "brave", detachedSandboxes: ["alpha", "beta", "alpha"] }),
       "nemoclaw",
     );
 

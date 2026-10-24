@@ -33,6 +33,7 @@ import {
   listNativeNvidiaProviderAttachmentSandboxNames,
 } from "../../state/registry/native-provider-authority";
 import { forgetExtraProvider } from "../global";
+import { isTavilyProviderProfileId } from "../../inference/web-search/provider-profile";
 
 const PROVIDER_REGISTRATION_HINT = `  Rerun '${CLI_NAME} onboard' for onboarding-managed credentials, or '${CLI_NAME} credentials add' for manually registered providers.`;
 
@@ -59,6 +60,7 @@ export type CredentialsResetDeps = Readonly<
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
   ok: boolean;
   error?: OpenShellProviderError;
+  providerType?: string;
   detachedSandboxes: readonly string[];
   recoveryFailures: readonly Readonly<{
     sandbox: string;
@@ -95,20 +97,37 @@ function fail(failureLines: readonly string[]): CredentialsResetResult {
 
 function detachedSandboxGuidance(
   key: string,
-  sandboxes: readonly string[],
+  recovery: CredentialsProviderDeleteWithRecoveryResult,
   gatewayName: string,
 ): string[] {
-  const detachedSandboxes = [...new Set(sandboxes)];
-  return detachedSandboxes.length === 0
-    ? []
-    : [
-        "",
-        `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")} during removal.`,
-        "  After registering the replacement, explicitly attach Tavily providers to each detached sandbox:",
-        `    openshell sandbox provider attach -g ${gatewayName} <sandbox> ${key}`,
-        "  For other providers, rebuild each detached sandbox:",
-        ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
-      ];
+  const detachedSandboxes = [...new Set(recovery.detachedSandboxes)];
+  if (detachedSandboxes.length === 0) return [];
+  const removed =
+    recovery.ok || (recovery.error?.kind === "command" && recovery.error.reason === "not_found");
+  const lines = [
+    "",
+    removed
+      ? `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")} during removal.`
+      : `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")}, but provider removal was not confirmed.`,
+  ];
+  if (!removed)
+    lines.push(`  Rerun '${CLI_NAME} credentials reset ${key}' to complete provider removal.`);
+  if (recovery.providerType === undefined) {
+    lines.push(
+      `  Provider type could not be verified. Inspect it with '${CLI_NAME} credentials list' before restoring detached sandboxes.`,
+    );
+  } else if (isTavilyProviderProfileId(recovery.providerType)) {
+    lines.push(
+      "  Once the provider is registered, restore its Tavily attachments explicitly:",
+      `    openshell sandbox provider attach -g ${gatewayName} <sandbox> ${key}`,
+    );
+  } else {
+    lines.push(
+      "  Once the provider is registered, rebuild each detached sandbox:",
+      ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
+    );
+  }
+  return lines;
 }
 
 function nativeNvidiaResetBlockers(
@@ -222,7 +241,7 @@ export async function runCredentialsResetAction(
           ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
           : `  Provider '${key}' is already absent from the OpenShell gateway.`,
         PROVIDER_REGISTRATION_HINT,
-        ...detachedSandboxGuidance(key, recovery.detachedSandboxes, target.gatewayName),
+        ...detachedSandboxGuidance(key, recovery, target.gatewayName),
       ]);
     }
 
@@ -257,7 +276,7 @@ export function formatResetOutcome(
       lines: [
         `  Removed provider '${key}' from the OpenShell gateway.`,
         PROVIDER_REGISTRATION_HINT,
-        ...detachedSandboxGuidance(key, recovery.detachedSandboxes, gatewayName),
+        ...detachedSandboxGuidance(key, recovery, gatewayName),
       ],
     };
   }
@@ -307,18 +326,7 @@ export function formatResetOutcome(
       `  Then rerun '${CLI_NAME} credentials reset ${key}'.`,
     );
   }
-  const detachedSandboxes = [...new Set(recovery.detachedSandboxes)];
-  if (detachedSandboxes.length > 0) {
-    lines.push(
-      "",
-      `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")}, but provider removal was not confirmed.`,
-      `  Rerun '${CLI_NAME} credentials reset ${key}' to complete provider removal.`,
-      "  If the provider remains registered, restore its Tavily attachments explicitly:",
-      `    openshell sandbox provider attach -g ${gatewayName} <sandbox> ${key}`,
-      "  For other providers that remain registered, rebuild the detached sandbox(es):",
-      ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
-    );
-  }
+  lines.push(...detachedSandboxGuidance(key, recovery, gatewayName));
   if (recovery.error?.message) lines.push(`  ${recovery.error.message}`);
   return { ok: false, lines };
 }
@@ -351,6 +359,8 @@ async function deleteProviderWithRecovery(
     return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
   }
 
+  const provider = await providerAdapter.getProvider(request);
+  const providerType = provider.ok ? provider.value.type : undefined;
   for (const sandbox of attachedSandboxes) {
     const detach = await providerAdapter.detachProvider({ ...request, sandboxName: sandbox });
     if (detach.ok) detachedSandboxes.push(sandbox);
@@ -358,6 +368,6 @@ async function deleteProviderWithRecovery(
   }
   result = await providerAdapter.deleteProvider(request);
   return result.ok
-    ? { ok: true, detachedSandboxes: attachedSandboxes, recoveryFailures }
-    : { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
+    ? { ok: true, providerType, detachedSandboxes: attachedSandboxes, recoveryFailures }
+    : { ok: false, providerType, error: result.error, detachedSandboxes, recoveryFailures };
 }

@@ -1055,7 +1055,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.outputLines).toContain(
       "  Provider 'custom-provider' was detached from sandbox(es): alpha during removal.",
     );
-    expect(result.outputLines.join("\n")).toContain(
+    expect(result.outputLines.join("\n")).not.toContain(
       "openshell sandbox provider attach -g nemoclaw <sandbox> custom-provider",
     );
     expect(result.outputLines).toContain("    nemoclaw alpha rebuild");
@@ -1189,7 +1189,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(failure).toContain(
       "Rerun 'nemoclaw credentials reset custom-provider' to complete provider removal.",
     );
-    expect(failure).toContain(
+    expect(failure).not.toContain(
       "openshell sandbox provider attach -g nemoclaw <sandbox> custom-provider",
     );
     expect(failure).toContain("nemoclaw alpha rebuild");
