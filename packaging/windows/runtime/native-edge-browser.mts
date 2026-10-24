@@ -285,7 +285,26 @@ async function stopEdge(child: ChildProcess, endpoint?: { port: number; path: st
     throw new Error("The owned Microsoft Edge process did not close.");
 }
 
-export type NativeEdgeBrowserOwner = { close(): Promise<void> };
+type EdgeStartupState = {
+  elapsedMs: number;
+  endpointPublished: boolean;
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+};
+
+export type NativeEdgeBrowserOwner = {
+  close(): Promise<void>;
+  diagnostics(): {
+    identity: Awaited<ReturnType<typeof detectNativeEdge>>;
+    pid: number | null;
+    startup: EdgeStartupState | null;
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+    outputExceeded: boolean;
+  };
+};
 
 export async function startNativeEdgeBrowser(options: {
   profileRoot: string;
@@ -387,9 +406,27 @@ export async function startNativeEdgeBrowser(options: {
     void close().catch(() => {});
   };
   const active = path.join(options.profileRoot, "DevToolsActivePort");
-  const deadline = Date.now() + 15_000;
+  const started = Date.now();
+  const deadline = started + 15_000;
+  let startup: EdgeStartupState | null = null;
+  const startupState = () => ({
+    elapsedMs: Date.now() - started,
+    endpointPublished: endpoint !== undefined,
+    exitCode: child.exitCode,
+    signalCode: child.signalCode,
+  });
+  const diagnostics = () => ({
+    identity: { ...identity },
+    pid: child.pid ?? null,
+    startup: startup === null ? null : { ...startup },
+    exitCode: child.exitCode,
+    signalCode: child.signalCode,
+    stdout: output.stdout.toString("utf8"),
+    stderr: output.stderr.toString("utf8"),
+    outputExceeded: output.exceeded,
+  });
   try {
-    options.onOwner({ close });
+    options.onOwner({ close, diagnostics });
     while (Date.now() < deadline) {
       options.signal?.throwIfAborted();
       if (child.exitCode !== null || child.signalCode !== null)
@@ -425,6 +462,7 @@ export async function startNativeEdgeBrowser(options: {
       throw new Error("Microsoft Edge changed after startup.");
     options.signal?.throwIfAborted();
     options.signal?.addEventListener("abort", abort, { once: true });
+    startup = startupState();
     return {
       identity,
       process: { pid: child.pid!, creationTimeFileTime: generation.creationFiletime },
@@ -435,6 +473,8 @@ export async function startNativeEdgeBrowser(options: {
       close,
     };
   } catch (error) {
+    // Preserve the failure state before shutdown changes the child's exit status.
+    startup = startupState();
     try {
       await close();
     } catch (cleanupError) {

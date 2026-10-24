@@ -219,6 +219,8 @@ export async function startPersonalNativeBrowser(options: {
       await close();
     } catch (cleanup) {
       throw new AggregateError([error, cleanup], "Personal browser startup and cleanup failed.");
+    } finally {
+      if (edgeOwner) receipt.edgeDiagnostics = edgeOwner.diagnostics();
     }
     throw error;
   }

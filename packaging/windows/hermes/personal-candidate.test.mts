@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stripTypeScriptTypes } from "node:module";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -94,6 +95,60 @@ test("Personal browser selects only its owned stage, nonce page and contained pi
     { bootstrapSha256: "short" },
   ])
     assert.throws(() => personalBrowserEnvironment({ ...options, ...change }));
+});
+
+test("Personal retains Edge startup diagnostics after cleanup, including cleanup failure", async () => {
+  const source = fs.readFileSync(new URL("./personal-native-browser.mts", import.meta.url), "utf8");
+  const start = source.lastIndexOf("  } catch (error) {");
+  assert(start > 0);
+  const finish = new Function(
+    "receipt",
+    "error",
+    "errorDetail",
+    "close",
+    "edgeOwner",
+    "return " +
+      stripTypeScriptTypes(
+        `(async () => {${source.slice(start + "  } catch (error) {".length, source.lastIndexOf("\n  }"))}})();`,
+      ),
+  );
+  for (const cleanupFails of [false, true]) {
+    for (const hasOwner of [false, true]) {
+      const receipt: Record<string, unknown> = {};
+      const primary = new Error("Edge startup failed");
+      const cleanup = new Error("Edge cleanup failed");
+      let closed = false;
+      const diagnostics = { stderr: "bounded startup evidence", exitCode: cleanupFails ? null : 0 };
+      await assert.rejects(
+        finish(
+          receipt,
+          primary,
+          String,
+          async () => {
+            closed = true;
+            if (cleanupFails) throw cleanup;
+          },
+          hasOwner
+            ? {
+                diagnostics() {
+                  assert(closed);
+                  return diagnostics;
+                },
+              }
+            : undefined,
+        ),
+        (error: unknown) => {
+          if (cleanupFails) {
+            assert(error instanceof AggregateError);
+            assert.deepEqual(error.errors, [primary, cleanup]);
+          } else assert.equal(error, primary);
+          return true;
+        },
+      );
+      assert.equal(receipt.error, String(primary));
+      assert.equal(receipt.edgeDiagnostics, hasOwner ? diagnostics : undefined);
+    }
+  }
 });
 
 test("Personal closes the browser tunnel after success or component failure", async () => {

@@ -14,6 +14,7 @@ import {
   qualifyNativeTerminalAgent,
 } from "./run-installed-native-hermes-turn.mts";
 import type { NativeRuntimeSession } from "./native-runtime.mts";
+import type { NativeEdgeBrowserOwner } from "./native-edge-browser.mts";
 import { NativeGatewaySession } from "./native-gateway-session.mts";
 import { attemptNativeUiCleanup } from "./native-ui-lifecycle.mts";
 
@@ -568,6 +569,8 @@ for (const fault of [
   "identity-abort",
   "owner",
   "process-error",
+  "timeout",
+  "output-limit",
 ] as const) {
   test(`Edge startup cleanup retains an owner through failure: ${fault}`, async () => {
     const source = fs.readFileSync(new URL("./native-edge-browser.mts", import.meta.url), "utf8");
@@ -579,17 +582,22 @@ for (const fault of [
     const primary = new Error("owned startup failure");
     const cleanupError = new Error("owned cleanup failure");
     const abort = new AbortController();
-    let owner: { close(): Promise<void> } | undefined;
+    let owner: NativeEdgeBrowserOwner | undefined;
     let stops = 0;
+    let now = 0;
+    let kills = 0;
     const child = Object.assign(new EventEmitter(), {
       pid: 1234,
       exitCode: null as number | null,
       signalCode: null,
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
-      kill() {},
+      kill() {
+        kills++;
+      },
     });
     const context = {
+      Date: { now: () => now },
       detectNativeEdge: async () => ({ path: "sealed-edge", sha256: "fixture" }),
       spawn: () => child,
       fs: {
@@ -610,9 +618,14 @@ for (const fault of [
         events.push("stop");
         if (fault === "stop") throw cleanupError;
         child.exitCode = 0;
+        child.stderr.emit("data", Buffer.from("; shutdown"));
       },
       readNativeEdgeEndpoint: () => {
-        if (fault !== "success" && fault !== "identity-abort" && fault !== "process-error")
+        if (fault === "timeout") {
+          now = 15_000;
+          return null;
+        }
+        if (!["success", "identity-abort", "process-error", "output-limit"].includes(fault))
           throw primary;
         return { port: 12345, path: "/devtools/browser/fixture" };
       },
@@ -635,6 +648,9 @@ for (const fault of [
       onOwner: (value: typeof owner) => {
         owner = value;
         events.push("owner");
+        child.stdout.emit("data", Buffer.from("owned startup output"));
+        child.stderr.emit("data", Buffer.from("owned startup error"));
+        if (fault === "output-limit") child.stdout.emit("data", Buffer.alloc(70 * 1024, "x"));
         if (fault === "owner") throw primary;
       },
     });
@@ -660,7 +676,11 @@ for (const fault of [
           assert(error instanceof AggregateError);
           assert.deepEqual(error.errors, [primary, cleanupError]);
           assert.equal(error.cause, primary);
-        } else assert.equal(error, primary);
+        } else if (fault === "timeout")
+          assert.match(String(error), /did not become ready within its host startup bound/u);
+        else if (fault === "output-limit")
+          assert.match(String(error), /startup output exceeded its bound/u);
+        else assert.equal(error, primary);
         return true;
       });
       assert(owner, "Startup failure must not discard the cleanup owner.");
@@ -671,6 +691,26 @@ for (const fault of [
     assert.equal(present.has(profile), fault === "stop" || fault === "remove");
     assert.equal(events[0], "owner");
     assert.equal(events.includes("remove"), fault !== "stop");
+    const observed = owner.diagnostics();
+    assert.deepEqual(observed.identity, { path: "sealed-edge", sha256: "fixture" });
+    assert.equal(observed.pid, 1234);
+    assert.equal(observed.startup?.exitCode, null, "Keep the pre-cleanup process state.");
+    assert.equal(observed.startup?.elapsedMs, fault === "timeout" ? 15_000 : 0);
+    assert.equal(
+      observed.startup?.endpointPublished,
+      ["success", "identity-abort", "process-error", "output-limit"].includes(fault),
+    );
+    assert.equal(observed.exitCode, fault === "stop" ? null : 0);
+    assert.equal(observed.signalCode, null);
+    assert.equal(observed.outputExceeded, fault === "output-limit");
+    assert.equal(kills, fault === "output-limit" ? 1 : 0);
+    assert.equal(observed.stdout.length, fault === "output-limit" ? 64 * 1024 : 20);
+    assert.equal(observed.stderr, "owned startup error" + (fault === "stop" ? "" : "; shutdown"));
+    assert.deepEqual(JSON.parse(JSON.stringify(observed)), observed);
+    observed.startup!.exitCode = 99;
+    observed.identity.path = "changed snapshot";
+    assert.equal(owner.diagnostics().startup?.exitCode, null);
+    assert.equal(owner.diagnostics().identity.path, "sealed-edge");
   });
 }
 
