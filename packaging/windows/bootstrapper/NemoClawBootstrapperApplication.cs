@@ -90,7 +90,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
 
             if (this.command?.Display is Display.Full or Display.Passive)
             {
-                this.window = new MainWindow();
+                this.window = new MainWindow(() => this.cancellation.IsRequested);
                 this.ownerWindow = this.window;
                 this.window.InstallRequested += (_, _) => _ = this.upgrading
                     ? this.BeginMaintenanceAsync(LaunchAction.Install) : this.BeginPlanAsync(LaunchAction.Install);

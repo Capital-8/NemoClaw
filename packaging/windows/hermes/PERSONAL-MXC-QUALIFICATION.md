@@ -102,17 +102,18 @@ This direct-executor probe did not acquire the installed native private-state
 lease. Installed lease release, onboarding, dashboard interaction, NVIDIA
 inference, file/code/ripgrep tools, optional capability configuration, install
 under 30 seconds, cold/warm startup, idle resource use and uninstall remain
-unperformed for a Hermes installer. Tavily live lookup remains explicitly waived.
+unperformed by this probe. Tavily live lookup remains explicitly waived.
 
 The required canonical shell failed in the historical MXC probe described above.
 That result does not determine whether a current candidate includes Hermes.
-Normal Setup permits selection only when its embedded build input records reviewed
-qualification for that runtime. An included but unqualified Hermes runtime remains
-unavailable, as does an omitted runtime. Missing qualification metadata enables no
-agent choices.
+Normal Setup permits selection of an included OpenClaw or Hermes runtime when its
+embedded availability record marks it `qualified` or `unqualified`. An included
+`unqualified` runtime remains selectable as a preview with a pending-checks warning.
+An omitted runtime, or missing or invalid availability metadata, enables no choice
+for that runtime. Preview selection does not establish runtime qualification.
 
 The explicit `--qualification` runtime entry remains available for qualification
-work; it does not enable ordinary Setup selection or grant release approval. The
+work; it does not change the embedded availability status or grant release approval. The
 build adapter accepts a reviewed decision for either retained agent only when it
 names the assembled runtime tuple. It does not authenticate that decision or
 generate passing evidence. Normal installed onboarding must still be tested with

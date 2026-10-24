@@ -333,10 +333,8 @@ internal static class Program
         if (resetIndex < 0 || maintenanceIndex < resetIndex)
             throw new InvalidOperationException("The recoverable maintenance path no longer resets cancellation before restoring maintenance UI.");
 
-        var window = File.ReadAllText(Path.Combine(bootstrapperRoot, "MainWindow.xaml.cs"));
-        var showMaintenance = ProductionMethod(window, "public void ShowMaintenance()", "public void ShowProgress(");
-        if (!showMaintenance.Contains("this.cancellation.ResetForRetry();", StringComparison.Ordinal))
-            throw new InvalidOperationException("The maintenance UI no longer clears its cancellation latch for retry.");
+        if (!application.Contains("this.window = new MainWindow(() => this.cancellation.IsRequested);", StringComparison.Ordinal))
+            throw new InvalidOperationException("The maintenance UI no longer reads the controller's cancellation state.");
     }
 
     private static async Task<int> RunHelperFixtureAsync(string[] arguments)

@@ -17,6 +17,46 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal static class WindowRecoveryControls
 {
+    private static void AssertCancellationPresentation()
+    {
+        var type = typeof(MainWindow).Assembly.GetType("Nvidia.NemoClaw.Bootstrapper.NemoClawBootstrapperApplication")!;
+        var application = Activator.CreateInstance(type, nonPublic: true)!;
+        var cancellation = type.GetField("cancellation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(application)!;
+        var stateType = cancellation.GetType();
+        var request = stateType.GetMethod("Request", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Func<bool> requested = () => (bool)stateType.GetProperty("IsRequested", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(cancellation)!;
+        var window = (MainWindow)Activator.CreateInstance(typeof(MainWindow), BindingFlags.Instance | BindingFlags.NonPublic,
+            null, new object[] { requested }, null)!;
+        type.GetField("window", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(application, window);
+        using var active = new CancellationTokenSource();
+        window.CancelRequested += (_, _) => request.Invoke(cancellation, new object?[] { active });
+        try
+        {
+            window.ShowProgress("Installing", "Installation is active.");
+            Invoke(window, "CancelClicked", window, new RoutedEventArgs());
+            if (!requested() || !active.IsCancellationRequested)
+                throw new InvalidOperationException("The window's cancellation request did not reach the active controller.");
+            window.ShowMaintenance();
+            if (!requested())
+                throw new InvalidOperationException("Presenting maintenance reset controller-owned cancellation.");
+            window.ShowProgress("Finishing", "The controller is still canceling.");
+            if (((TextBlock)window.FindName("ProgressTitle")).Text != "Cancelling safely"
+                || ((Button)window.FindName("CancelButton")).IsEnabled)
+                throw new InvalidOperationException("Progress did not reflect controller-owned cancellation.");
+            type.GetMethod("ShowRecoverableMaintenanceError", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(application, new object[] { new IOException("The canceled action has stopped.") });
+            window.ShowProgress("Retrying", "The controller admitted a retry.");
+            if (requested() || ((TextBlock)window.FindName("ProgressTitle")).Text != "Retrying"
+                || !((Button)window.FindName("CancelButton")).IsEnabled)
+                throw new InvalidOperationException("Controller recovery did not clear the displayed cancellation state.");
+            request.Invoke(cancellation, new object?[] { null });
+            window.ShowProgress("Finishing", "Cancellation originated outside the window.");
+            if (((TextBlock)window.FindName("ProgressTitle")).Text != "Cancelling safely")
+                throw new InvalidOperationException("The window retained an independent cancellation latch.");
+        }
+        finally { window.ShowSuccess(WixToolset.BootstrapperApplicationApi.LaunchAction.Repair); window.Close(); }
+    }
+
     private static void AssertOnboardingAdmission()
     {
         var entry = typeof(MainWindow).Assembly.GetType("Nvidia.NemoClaw.Bootstrapper.Program")!
@@ -194,6 +234,14 @@ internal static class WindowRecoveryControls
                         || submitted.GetType().GetProperty("Model")!.GetValue(submitted) as string != "preview-selected-model"
                         || submitted.GetType().GetProperty("Endpoint")!.GetValue(submitted) as string != "http://127.0.0.1:12345/v1"))
                     throw new InvalidOperationException("Preview configuration lost the chosen model/endpoint or admitted an absent runtime.");
+                if (enabled)
+                {
+                    window.ShowConfiguredSuccess();
+                    if (!((TextBlock)window.FindName("SuccessTitle")).Text.EndsWith("settings are saved.", StringComparison.Ordinal)
+                        || ((Button)window.FindName("LaunchButton")).Visibility != Visibility.Visible
+                        || ((TextBlock)window.FindName("SuccessDetail")).Text.StartsWith("Preview: full runtime checks are pending.", StringComparison.Ordinal) != (status == "unqualified"))
+                        throw new InvalidOperationException("Saved settings changed preview qualification or lost the launch action.");
+                }
             }
         }
         finally { availability.SetValue(window, original); Invoke(window, "ApplyRuntimeAvailability"); }
@@ -738,6 +786,7 @@ internal static class WindowRecoveryControls
                     RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
                 AssertUpgradePresentation();
                 AssertSupersededBundleCallbacks();
+                AssertCancellationPresentation();
                 AssertOnboardingAdmission();
                 window = new MainWindow();
                 AssertCompletionPresentation(window);

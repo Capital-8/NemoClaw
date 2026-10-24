@@ -28,7 +28,7 @@ public partial class MainWindow : Window
     private readonly NativeRuntimeAvailability runtimeAvailability = NativeRuntimeAvailability.Load();
     private double? displayedPercentage;
     private readonly DispatcherTimer elapsedTimer;
-    private readonly NativeCancellationState cancellation = new();
+    private readonly Func<bool> isCancellationRequested;
     private readonly NativeSetupObservation configurationObservation = new();
     private readonly Dictionary<(string Agent, string Provider), (string Endpoint, string Model)> providerDrafts = new();
     private (string Agent, string Provider)? activeProviderDraft;
@@ -47,8 +47,11 @@ public partial class MainWindow : Window
     private readonly HashSet<string> replacementSetupAgents = new(StringComparer.Ordinal);
     internal bool ResumeSavedSetup { get; private set; }
 
-    public MainWindow()
+    public MainWindow() : this(() => false) { }
+
+    internal MainWindow(Func<bool> isCancellationRequested)
     {
+        this.isCancellationRequested = isCancellationRequested;
         this.InitializeComponent();
         this.ApplyRuntimeAvailability();
         this.elapsedTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Background, this.UpdateElapsed, this.Dispatcher);
@@ -169,7 +172,6 @@ public partial class MainWindow : Window
     {
         this.busy = false;
         this.canCancel = false;
-        this.cancellation.ResetForRetry();
         this.CancelButton.IsEnabled = false;
         this.StopElapsed();
         this.MaintenanceError.Visibility = Visibility.Collapsed;
@@ -185,11 +187,11 @@ public partial class MainWindow : Window
         this.SetJourneyStage(3);
         this.HidePanels();
         this.ProgressPanel.Visibility = Visibility.Visible;
-        this.ProgressTitle.Text = this.cancellation.IsRequested ? "Cancelling safely" : title;
-        this.ProgressDetail.Text = this.cancellation.IsRequested ? "Please keep this window open while Windows completes rollback." : detail;
-        this.progress.Report(this.cancellation.IsRequested ? "cancelling" : phase ?? title);
+        this.ProgressTitle.Text = this.isCancellationRequested() ? "Cancelling safely" : title;
+        this.ProgressDetail.Text = this.isCancellationRequested() ? "Please keep this window open while Windows completes rollback." : detail;
+        this.progress.Report(this.isCancellationRequested() ? "cancelling" : phase ?? title);
         this.ProgressLabel.Text = "CURRENT STEP";
-        this.CancelButton.IsEnabled = !this.cancellation.IsRequested;
+        this.CancelButton.IsEnabled = !this.isCancellationRequested();
         this.elapsedTimer.Start();
         this.RenderProgress();
     }
@@ -203,7 +205,7 @@ public partial class MainWindow : Window
 
     public void SetPackageProgress(int percentage)
     {
-        if (!this.busy || this.cancellation.IsRequested) return;
+        if (!this.busy || this.isCancellationRequested()) return;
         this.progress.Report(this.progress.Phase, NativeProgressMeasurement.Create(percentage, 100, "percent"));
         this.RenderProgress();
     }
@@ -211,7 +213,7 @@ public partial class MainWindow : Window
     public void ShowMeasuredProgress(string phase, string title, string detail, long completed, long total)
     {
         this.ShowProgress(title, detail, phase);
-        if (this.cancellation.IsRequested) return;
+        if (this.isCancellationRequested()) return;
         this.progress.Report(this.progress.Phase, NativeProgressMeasurement.Create(completed, total, "bytes"));
         this.RenderProgress();
     }
@@ -393,15 +395,16 @@ public partial class MainWindow : Window
         else
         {
             var agentName = AgentNames.GetValueOrDefault(this.SelectedAgent, "Your agent");
-            this.SuccessTitle.Text = this.configurationSaved ? $"{agentName} is ready." : "NemoClaw is installed.";
+            this.SuccessTitle.Text = this.configurationSaved ? $"{agentName} settings are saved." : "NemoClaw is installed.";
             this.SuccessDetail.Text = this.configurationSaved
                 ? "Setup is complete. Your settings are saved for your Windows account. Launch your agent when you are ready."
                 : "The native application is installed. Your agent configuration has not been saved.";
             if (this.configurationSaved && this.SelectedAgent == "openclaw")
             {
-                this.SuccessTitle.Text = "OpenClaw settings are saved.";
                 this.SuccessDetail.Text = "Launch OpenClaw to complete model setup and review requested plugin permissions. Setup does not accept plugin permissions for you.";
             }
+            if (this.configurationSaved && this.runtimeAvailability.IsUnqualified(this.SelectedAgent))
+                this.SuccessDetail.Text = this.runtimeAvailability.SelectionDetail(this.SelectedAgent) + " " + this.SuccessDetail.Text;
             this.LaunchButton.Content = $"Launch {agentName}";
         }
         this.CloseButton.Focus();
@@ -829,8 +832,7 @@ public partial class MainWindow : Window
             this.ProgressDetail.Text = "Waiting for the native model helper to stop safely.";
             return;
         }
-        if (!this.canCancel || this.cancellation.IsRequested) return;
-        this.cancellation.Request();
+        if (!this.canCancel || this.isCancellationRequested()) return;
         this.CancelButton.IsEnabled = false;
         this.CancelRequested?.Invoke(this, EventArgs.Empty);
         this.ProgressTitle.Text = "Cancelling safely";
