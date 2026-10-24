@@ -63,3 +63,47 @@ it("records a fixed Podman failure category without build output (#13482)", asyn
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+it("retains a build signal and allowlisted error code without error text (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));
+  const progress = startTestProgress(
+    "portable build diagnostics",
+    ["prepare build", "build sandbox image"],
+    {
+      logLine: () => undefined,
+    },
+  );
+  try {
+    const artifacts = createArtifactSink("portable-build", directory);
+    const status = await buildPortableSandboxImageWithEvidence(
+      ["build", "-t", "localhost/test:fixed", "."],
+      { env: {}, stdio: "inherit" },
+      artifacts,
+      progress,
+      vi.fn(async () => ({
+        status: null,
+        signal: "SIGTERM" as const,
+        diagnostic: "credential=private-build-token",
+        error: Object.assign(new Error("private error text"), { code: "EACCES" }),
+      })),
+    );
+
+    expect(status).toBeNull();
+    const published = fs.readFileSync(
+      artifacts.pathFor("portable-sandbox-image-build-failure.json"),
+      "utf8",
+    );
+    expect(JSON.parse(published)).toEqual({
+      schemaVersion: 1,
+      status: null,
+      signal: "SIGTERM",
+      errorCode: "EACCES",
+      category: "unclassified",
+    });
+    expect(published).not.toContain("private-build-token");
+    expect(published).not.toContain("private error text");
+  } finally {
+    progress.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

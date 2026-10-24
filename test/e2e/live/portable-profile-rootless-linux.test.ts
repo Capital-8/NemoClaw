@@ -1168,6 +1168,8 @@ async function main(
         sandboxName: HERMES_PORTABLE_E2E_SANDBOX_NAME,
         dockerDriverGateway: true,
         env: process.env,
+        buildImage: (args, options) =>
+          buildPortableSandboxImageWithEvidence(args, options, artifacts, progress),
         origin: "generated",
         log: console.log,
       });
