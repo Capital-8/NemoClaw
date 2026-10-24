@@ -1825,14 +1825,15 @@ nemo-deepagents <name> policy list
 ```
 
 If the preset is missing, apply it.
-Register the credential on the host and attach the provider to the sandbox:
+Use the sandbox's recorded `<gateway-port>` and `<gateway-name>` from [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress).
+Register the credential on that gateway and attach the provider to the sandbox:
 
 ```bash
 nemo-deepagents <name> policy add tavily --yes
 export TAVILY_API_KEY=tvly-...
-nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
+NEMOCLAW_GATEWAY_PORT=<gateway-port> nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 unset TAVILY_API_KEY
-openshell sandbox provider attach <name> tavily-search
+openshell sandbox provider attach -g <gateway-name> <name> tavily-search
 ```
 
 After removal, NemoClaw keeps the saved Tavily selection disabled.
