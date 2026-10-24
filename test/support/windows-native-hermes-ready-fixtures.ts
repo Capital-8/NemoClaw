@@ -38,7 +38,11 @@ function findNode(root: ts.Node, predicate: (node: ts.Node) => boolean): ts.Node
   if (!found) throw new Error("The actual contained dashboard implementation was not found.");
   return found;
 }
-const generators = ["nativeHermesMessagingArguments", "interactiveWorkloadSource"].map((name) =>
+const generators = [
+  "nativeConsoleFailureCode",
+  "nativeHermesMessagingArguments",
+  "interactiveWorkloadSource",
+].map((name) =>
   findNode(source, (node) => ts.isFunctionDeclaration(node) && node.name?.text === name)
     .getText(source)
     .replace(/^export\s+/, ""),

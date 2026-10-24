@@ -83,10 +83,10 @@ if (
   materialization.sourceRoot !== "node_modules/openclaw" ||
   materialization.dependencyLock?.path !== "runtime-package-lock.json" ||
   materialization.dependencyLock.sha256 !==
-    "b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633" ||
+    "4c14e6f08cafbe3309c4f2790812c7675c2b3836614463f1ee82a4d16d19fcc4" ||
   materialization.choiceDependencyLock?.path !== "choice-package-lock.json" ||
   materialization.choiceDependencyLock.sha256 !==
-    "8fb7adc7813b4262369d1a1e0efc9206a5fed880d00a32119c8eca132407872d" ||
+    "6b522789273625ef34286aef94f148127f54b1c32d423afb18b4e44716ba1fff" ||
   !Object.values(PREBUILT_CHOICE_PLUGINS).every((expected) =>
     materialization.additionalPackages?.some(
       (item) =>

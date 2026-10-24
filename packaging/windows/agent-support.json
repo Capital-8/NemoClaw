@@ -7,7 +7,7 @@
       "displayName": "OpenClaw",
       "version": "2026.9.2",
       "source": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
-      "lockSha256": "b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633",
+      "lockSha256": "4c14e6f08cafbe3309c4f2790812c7675c2b3836614463f1ee82a4d16d19fcc4",
       "interface": "OpenClaw Control UI",
       "status": "candidate",
       "selectable": true,
