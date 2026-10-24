@@ -23,6 +23,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { bootstrapInstallSudoArgs } from "../fixtures/bootstrap-install-command.ts";
 
 // This is intentionally a single live test instead of a new fixture
 // family: the contract is the real Ubuntu bootstrap path, so the test invokes
@@ -256,17 +257,12 @@ test(
     // inputs explicitly so it builds the preseeded candidate checkout.
     const install = await host.command(
       "sudo",
-      [
-        "-n",
-        "env",
-        `LAUNCH_LOG=${installLog}`,
-        `NEMOCLAW_CLONE_DIR=${cloneDir}`,
-        "NEMOCLAW_REF=main",
-        `SKIP_DOCKER_PULL=${process.env.SKIP_DOCKER_PULL ?? "1"}`,
-        `NEMOCLAW_OPENSHELL_CHANNEL=${process.env.NEMOCLAW_OPENSHELL_CHANNEL ?? "stable"}`,
-        "bash",
-        BOOTSTRAP_SCRIPT,
-      ],
+      bootstrapInstallSudoArgs({
+        script: BOOTSTRAP_SCRIPT,
+        cloneDir,
+        installLog,
+        env: process.env,
+      }),
       {
         artifactName: "phase-2-brev-bootstrap-script",
         env: runEnv({
