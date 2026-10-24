@@ -11,6 +11,8 @@ import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../../src/lib/sandbox/build-con
 import { prebuildSandboxImageIfEligible } from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
+  PORTABLE_IMAGE_COMMAND_TIMEOUT_MS,
+  PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
   buildPortableSandboxImageWithEvidence,
   publishPortableSandboxImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
@@ -48,7 +50,7 @@ it("records a fixed Podman failure category without build output (#13482)", asyn
       {
         NEMOCLAW_DIAGNOSTIC_TEST: "1",
       },
-      20 * 60_000,
+      PORTABLE_IMAGE_COMMAND_TIMEOUT_MS,
       progress,
     );
     const published = fs.readFileSync(
@@ -67,6 +69,68 @@ it("records a fixed Podman failure category without build output (#13482)", asyn
     progress.stop();
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+it("rejects an errored image build even when Podman reports exit zero (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));
+  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
+  const dockerfile = path.join(buildCtx, "Dockerfile");
+  fs.writeFileSync(dockerfile, "FROM scratch\n");
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const progress = startTestProgress("portable build diagnostics", ["prepare", "build"], {
+    logLine: () => undefined,
+  });
+  const fetchRegistry = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response("{}", { status: 200 }));
+  const runBuild = vi.fn(async () => ({
+    status: 0,
+    signal: null,
+    diagnostic: "",
+    error: Object.assign(new Error("private error text"), { code: "ETIMEDOUT" }),
+  }));
+
+  try {
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: "rootless-e2e",
+        createArgs: ["--from", dockerfile, "--name", "portable-e2e"],
+        sandboxName: "portable-e2e",
+        dockerDriverGateway: true,
+        env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable", NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        origin: "generated",
+        buildImage: (args, options) =>
+          buildPortableSandboxImageWithEvidence(args, options, artifacts, progress, runBuild),
+        log: () => undefined,
+      }),
+    ).rejects.toThrow("build failed without an exit status");
+
+    expect(runBuild).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(
+        fs.readFileSync(artifacts.pathFor("portable-sandbox-image-build-failure.json"), "utf8"),
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      status: 0,
+      signal: null,
+      errorCode: "ETIMEDOUT",
+      category: "unclassified",
+    });
+  } finally {
+    fetchRegistry.mockRestore();
+    progress.stop();
+    fs.rmSync(buildCtx, { recursive: true, force: true });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("reserves live-test time beyond both bounded image prebuilds for cleanup (#13482)", () => {
+  expect(
+    PORTABLE_PROFILE_LIVE_TIMEOUT_MS - 4 * PORTABLE_IMAGE_COMMAND_TIMEOUT_MS,
+  ).toBeGreaterThanOrEqual(6 * 60_000);
+  expect(PORTABLE_PROFILE_LIVE_TIMEOUT_MS).toBeLessThan(45 * 60_000);
 });
 
 it("retains a build signal and allowlisted error code without error text (#13482)", async () => {
@@ -162,7 +226,7 @@ it("keeps a failed registry push separate from build evidence (#13482)", async (
     expect(runBuild.mock.calls[0]?.[0]?.[0]).toBe("build");
     expect(runPublish).toHaveBeenCalledOnce();
     expect(runPublish.mock.calls[0]?.[0]?.[0]).toBe("push");
-    expect(runPublish.mock.calls[0]?.[2]).toBe(20 * 60_000);
+    expect(runPublish.mock.calls[0]?.[2]).toBe(PORTABLE_IMAGE_COMMAND_TIMEOUT_MS);
     expect(fs.existsSync(artifacts.pathFor("portable-sandbox-image-build-failure.json"))).toBe(
       false,
     );

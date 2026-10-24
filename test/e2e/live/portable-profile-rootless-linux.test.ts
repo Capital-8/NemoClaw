@@ -80,6 +80,7 @@ import {
   writePortableRegistry,
 } from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
 import {
+  PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
   buildPortableSandboxImageWithEvidence,
   publishPortableSandboxImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
@@ -1487,12 +1488,11 @@ async function main(
     await cleanupPortableProfileRootlessFixture(runtimeDir, root);
   }
 }
-
 test(
   "portable profile rootless environment completes authenticated routes and enforces the configured Hermes dashboard Host",
   {
     meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
-    timeout: 900_000,
+    timeout: PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
   },
   async ({ artifacts, progress, shellProbe }) => {
     await main(progress, artifacts, shellProbe);

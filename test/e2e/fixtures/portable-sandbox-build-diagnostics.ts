@@ -5,7 +5,9 @@ import type { ArtifactSink } from "./artifacts.ts";
 import { spawnObservedChild } from "./observed-child-process.ts";
 import type { TestProgress } from "./progress.ts";
 
-const BUILD_TIMEOUT_MS = 20 * 60_000;
+export const PORTABLE_IMAGE_COMMAND_TIMEOUT_MS = 6 * 60_000;
+// Two prebuilds each build and publish an image; reserve six minutes for assertions and cleanup.
+export const PORTABLE_PROFILE_LIVE_TIMEOUT_MS = 4 * PORTABLE_IMAGE_COMMAND_TIMEOUT_MS + 6 * 60_000;
 const DIAGNOSTIC_TAIL_CHARS = 8_192;
 const SAFE_ERROR_CODES = new Set(["EACCES", "ENOENT", "EPERM", "ETIMEDOUT"]);
 type BuildResult = {
@@ -109,7 +111,7 @@ export async function buildPortableSandboxImageWithEvidence(
   progress: TestProgress,
   runBuild: ImageCommandRunner = runPodmanBuild,
 ): Promise<number | null> {
-  const result = await runBuild(args, options.env, BUILD_TIMEOUT_MS, progress);
+  const result = await runBuild(args, options.env, PORTABLE_IMAGE_COMMAND_TIMEOUT_MS, progress);
   if (result.status !== 0 || result.error) {
     const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
     await artifacts.writeJson("portable-sandbox-image-build-failure.json", {
@@ -120,7 +122,7 @@ export async function buildPortableSandboxImageWithEvidence(
       category: failureCategory(result.diagnostic),
     });
   }
-  return result.status;
+  return result.error ? null : result.status;
 }
 
 /** Keep registry publication separate from build-failure evidence. */
@@ -130,6 +132,6 @@ export async function publishPortableSandboxImage(
   progress: TestProgress,
   runPublish: ImageCommandRunner = runPodmanBuild,
 ): Promise<number | null> {
-  const result = await runPublish(args, options.env, BUILD_TIMEOUT_MS, progress);
+  const result = await runPublish(args, options.env, PORTABLE_IMAGE_COMMAND_TIMEOUT_MS, progress);
   return result.error ? null : result.status;
 }
