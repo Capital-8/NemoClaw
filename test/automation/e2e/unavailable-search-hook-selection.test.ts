@@ -13,6 +13,7 @@ it.each([
   "nemoclaw/src/denied-search-state.ts",
   "nemoclaw/src/runtime-context.ts",
   "nemoclaw/src/search-config.ts",
+  "scripts/nemoclaw-start.sh",
 ])("selects installed unavailable-search acceptance when %s changes", (file) => {
   const plan = buildE2eWorkflowPlan({}, { changedFiles: [file] });
   expect(plan.coverageMatrix.map((row) => row.id)).toContain(

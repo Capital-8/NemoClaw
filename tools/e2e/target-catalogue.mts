@@ -663,6 +663,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "nemoclaw/src/runtime-context.ts",
       "nemoclaw/src/search-config.ts",
       "scripts/generate-openclaw-config.mts",
+      "scripts/nemoclaw-start.sh",
       "src/lib/openclaw/agent-json-provenance.ts",
     ],
   }),
