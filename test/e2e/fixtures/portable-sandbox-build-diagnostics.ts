@@ -6,8 +6,20 @@ import { spawnObservedChild } from "./observed-child-process.ts";
 import type { TestProgress } from "./progress.ts";
 
 export const PORTABLE_IMAGE_COMMAND_TIMEOUT_MS = 6 * 60_000;
-// Two prebuilds each build and publish an image; reserve six minutes for assertions and cleanup.
-export const PORTABLE_PROFILE_LIVE_TIMEOUT_MS = 4 * PORTABLE_IMAGE_COMMAND_TIMEOUT_MS + 6 * 60_000;
+export const PORTABLE_GATEWAY_STARTUP_BUDGET_MS = 15_000;
+export const PORTABLE_SANDBOX_CREATE_BUDGET_MS = 240_000;
+export const PORTABLE_HERMES_LIFECYCLE_BUDGET_MS = 2 * 240_000 + 2 * (60_000 + 30_000);
+export const PORTABLE_SANDBOX_DELETE_BUDGET_MS = 60_000;
+export const PORTABLE_ASSERTION_CLEANUP_RESERVE_MS = 6 * 60_000;
+// Two prebuilds each build and publish; preserve the existing gateway, create,
+// two public starts and stops, deletion, and assertion/cleanup allowances.
+export const PORTABLE_PROFILE_LIVE_TIMEOUT_MS =
+  4 * PORTABLE_IMAGE_COMMAND_TIMEOUT_MS +
+  PORTABLE_GATEWAY_STARTUP_BUDGET_MS +
+  PORTABLE_SANDBOX_CREATE_BUDGET_MS +
+  PORTABLE_HERMES_LIFECYCLE_BUDGET_MS +
+  PORTABLE_SANDBOX_DELETE_BUDGET_MS +
+  PORTABLE_ASSERTION_CLEANUP_RESERVE_MS;
 const DIAGNOSTIC_TAIL_CHARS = 8_192;
 const SAFE_ERROR_CODES = new Set(["EACCES", "ENOENT", "EPERM", "ETIMEDOUT"]);
 type BuildResult = {

@@ -11,8 +11,13 @@ import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../../src/lib/sandbox/build-con
 import { prebuildSandboxImageIfEligible } from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
+  PORTABLE_ASSERTION_CLEANUP_RESERVE_MS,
+  PORTABLE_GATEWAY_STARTUP_BUDGET_MS,
+  PORTABLE_HERMES_LIFECYCLE_BUDGET_MS,
   PORTABLE_IMAGE_COMMAND_TIMEOUT_MS,
   PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
+  PORTABLE_SANDBOX_CREATE_BUDGET_MS,
+  PORTABLE_SANDBOX_DELETE_BUDGET_MS,
   buildPortableSandboxImageWithEvidence,
   publishPortableSandboxImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
@@ -126,11 +131,24 @@ it("rejects an errored image build even when Podman reports exit zero (#13482)",
   }
 });
 
-it("reserves live-test time beyond both bounded image prebuilds for cleanup (#13482)", () => {
-  expect(
-    PORTABLE_PROFILE_LIVE_TIMEOUT_MS - 4 * PORTABLE_IMAGE_COMMAND_TIMEOUT_MS,
-  ).toBeGreaterThanOrEqual(6 * 60_000);
-  expect(PORTABLE_PROFILE_LIVE_TIMEOUT_MS).toBeLessThan(45 * 60_000);
+it("reserves live-test time for bounded image, gateway, create, lifecycle, and cleanup work (#13482)", () => {
+  expect(PORTABLE_GATEWAY_STARTUP_BUDGET_MS).toBeGreaterThanOrEqual(15_000);
+  expect(PORTABLE_SANDBOX_CREATE_BUDGET_MS).toBeGreaterThanOrEqual(240_000);
+  expect(PORTABLE_HERMES_LIFECYCLE_BUDGET_MS).toBeGreaterThanOrEqual(
+    2 * 240_000 + 2 * (60_000 + 30_000),
+  );
+  expect(PORTABLE_SANDBOX_DELETE_BUDGET_MS).toBeGreaterThanOrEqual(60_000);
+  expect(PORTABLE_ASSERTION_CLEANUP_RESERVE_MS).toBeGreaterThanOrEqual(6 * 60_000);
+  expect(PORTABLE_PROFILE_LIVE_TIMEOUT_MS).toBeGreaterThanOrEqual(
+    4 * PORTABLE_IMAGE_COMMAND_TIMEOUT_MS +
+      PORTABLE_GATEWAY_STARTUP_BUDGET_MS +
+      PORTABLE_SANDBOX_CREATE_BUDGET_MS +
+      PORTABLE_HERMES_LIFECYCLE_BUDGET_MS +
+      PORTABLE_SANDBOX_DELETE_BUDGET_MS +
+      PORTABLE_ASSERTION_CLEANUP_RESERVE_MS,
+  );
+  // Leave the 65-minute rootless job room for its 10-minute base build and artifact upload.
+  expect(PORTABLE_PROFILE_LIVE_TIMEOUT_MS).toBeLessThan(54 * 60_000);
 });
 
 it("retains a build signal and allowlisted error code without error text (#13482)", async () => {

@@ -159,7 +159,7 @@ concurrency:
 jobs:
   rootless-linux:
     runs-on: ubuntu-26.04
-    timeout-minutes: 45
+    timeout-minutes: 65
     env:
       E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
