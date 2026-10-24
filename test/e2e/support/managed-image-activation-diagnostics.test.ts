@@ -867,11 +867,22 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
     expect(ONBOARD_FAILURE_LOG_ARTIFACT_OPTIONS).toEqual({ persistArtifacts: true });
   });
 
-  it("redacts a copied failed-startup log before artifact publication", async () => {
+  it.each([
+    { state: "unchanged", beforeRead: (_filename: string) => {} },
+    {
+      state: "replaced",
+      beforeRead: (filename: string) => {
+        fs.renameSync(filename, `${filename}.original`);
+        fs.writeFileSync(filename, "replacement must not be published\n");
+      },
+    },
+  ])("redacts a copied failed-startup log when its pathname is $state", async ({ beforeRead }) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-diagnostics-"));
     const secret = "supplied-startup-diagnostic-secret";
     const containerId = "a".repeat(64);
     const artifacts = new ArtifactSink(directory);
+    const originalRead = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, "readFileSync");
     const command = vi.fn(async (executable: string, args: readonly string[]) => {
       switch (`${executable}:${String(args[0])}`) {
         case "docker:ps":
@@ -882,6 +893,10 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
           };
         case "docker:cp":
           fs.writeFileSync(String(args[2]), `startup log contains ${secret}\n`);
+          readSpy.mockImplementationOnce((source) => {
+            beforeRead(String(args[2]));
+            return originalRead(source, "utf8");
+          });
           break;
       }
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -905,7 +920,9 @@ ${adminApprovalConnectScript("nemoclaw", "fixture-sandbox", "managed-cron", outp
       );
       expect(published).toContain("[REDACTED]");
       expect(published).not.toContain(secret);
+      expect(published).not.toContain("replacement must not be published");
     } finally {
+      readSpy.mockRestore();
       fs.rmSync(directory, { force: true, recursive: true });
     }
   });

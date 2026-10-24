@@ -169,13 +169,18 @@ describe("OpenClaw managed plugin security overrides", () => {
   it("patches the reviewed workspace and remains idempotent", () => {
     const { owner, workspace } = workspaceFixture();
     patchOpenClawManagedPluginOverrides(owner);
-    const patched = readFileSync(workspace);
-    expect(createHash("sha256").update(patched).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
-    );
-    expect(fs.statSync(workspace).mode & 0o777).toBe(0o600);
-    patchOpenClawManagedPluginOverrides(owner);
-    expect(readFileSync(workspace)).toEqual(patched);
+    const descriptor = fs.openSync(workspace, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const patched = readFileSync(descriptor);
+      expect(createHash("sha256").update(patched).digest("hex")).toBe(
+        "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      );
+      expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+      patchOpenClawManagedPluginOverrides(owner);
+      expect(readFileSync(workspace)).toEqual(patched);
+    } finally {
+      fs.closeSync(descriptor);
+    }
   });
 
   it.skipIf(process.platform === "win32")("rejects a symlink without changing its target", () => {

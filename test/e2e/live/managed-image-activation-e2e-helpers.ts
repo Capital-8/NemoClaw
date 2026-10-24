@@ -877,12 +877,20 @@ export async function collectOnboardFailureRuntimeDiagnostics(
             },
           );
           if (copy.exitCode !== 0) return;
-          const stat = fs.lstatSync(copiedLog);
-          if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
-          await artifacts.writeText(
-            `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
-            fs.readFileSync(copiedLog, "utf8"),
+          const descriptor = fs.openSync(
+            copiedLog,
+            fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
           );
+          try {
+            const stat = fs.fstatSync(descriptor);
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
+            await artifacts.writeText(
+              `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
+              fs.readFileSync(descriptor, "utf8"),
+            );
+          } finally {
+            fs.closeSync(descriptor);
+          }
         } finally {
           fs.rmSync(copyRoot, { recursive: true, force: true });
         }

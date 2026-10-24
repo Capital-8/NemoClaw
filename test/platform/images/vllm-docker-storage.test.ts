@@ -237,7 +237,6 @@ realDockerTest(
     let installDockerCommands: string[] = [];
     let productionStatfsSamples: StatfsSample[] = [];
     let measuredPath = "";
-    let measuredAvailableBytes = 0n;
     try {
       fs.mkdirSync(blockedHome);
       fs.writeFileSync(path.join(blockedHome, ".cache"), "not a directory\n");
@@ -316,7 +315,8 @@ realDockerTest(
         .find((sample) => path.resolve(sample.path) === path.resolve(dockerRootDir));
       assert(dockerRootSample, `production did not sample Docker root ${dockerRootDir}`);
       measuredPath = dockerRootSample.path;
-      measuredAvailableBytes = BigInt(dockerRootSample.bavail) * BigInt(dockerRootSample.bsize);
+      const measuredAvailableBytes =
+        BigInt(dockerRootSample.bavail) * BigInt(dockerRootSample.bsize);
       expect(measuredAvailableBytes).toBeGreaterThan(0n);
       expect(measuredAvailableBytes).toBeGreaterThanOrEqual(requiredAvailableBytes);
 
