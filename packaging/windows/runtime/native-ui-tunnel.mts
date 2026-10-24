@@ -309,7 +309,7 @@ export async function startNativeUiTunnel({
           socket.on("drain", () => {
             state.blocked = false;
           });
-          socket.on("data", (chunk) => {
+          socket.on("data", (chunk: Buffer) => {
             if (finished) return;
             try {
               if (pipeAcceptance && !state.connected) {
