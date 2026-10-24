@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { createArtifactSink } from "../fixtures/artifacts.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildPortableSandboxImageWithEvidence } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
@@ -21,7 +21,7 @@ it("records a fixed Podman failure category without build output (#13482)", asyn
     },
   );
   try {
-    const artifacts = createArtifactSink("portable-build", directory);
+    const artifacts = new ArtifactSink(path.join(directory, "portable-build"));
     const runBuild = vi.fn(async () => ({
       status: 1,
       signal: null,
@@ -74,7 +74,7 @@ it("retains a build signal and allowlisted error code without error text (#13482
     },
   );
   try {
-    const artifacts = createArtifactSink("portable-build", directory);
+    const artifacts = new ArtifactSink(path.join(directory, "portable-build"));
     const status = await buildPortableSandboxImageWithEvidence(
       ["build", "-t", "localhost/test:fixed", "."],
       { env: {}, stdio: "inherit" },
