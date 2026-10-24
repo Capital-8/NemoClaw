@@ -20,6 +20,7 @@ vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOrigina
   assertHermesPortableCommandUnavailable: vi.fn(),
 }));
 
+import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
 import {
   baseSession,
@@ -109,6 +110,61 @@ describe("inference set telemetry for native NVIDIA selections (#13598)", () => 
       outcome: "completed",
       state: "applied",
     });
+  });
+
+  it("restarts Hermes on retry after an interrupted attachment repair", async () => {
+    const entry: SandboxEntry = {
+      name: "hermes",
+      agent: "hermes",
+      gatewayName: "nemoclaw",
+      provider: "nvidia-prod",
+      model: "nvidia/test-model",
+      nativeNvidiaProviderAttachment: AUTHORITY,
+    };
+    let registryWrites = 0;
+    let attached = false;
+    const deps = createDeps({
+      config: {},
+      entry,
+      // The second registry write follows the attachment commit; fail it like a stopped process.
+      updateSandbox: (_name, updates) => {
+        registryWrites += 1;
+        const interrupted = registryWrites === 2;
+        Object.assign(entry, interrupted ? {} : updates);
+        return !interrupted;
+      },
+      getNativeNvidiaProviderAuthority: () => AUTHORITY,
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    deps.providerAdapter = {
+      ...deps.providerAdapter,
+      listProviderAttachments: vi.fn(async () => ({
+        ok: true as const,
+        value: { names: attached ? [AUTHORITY.providerName] : [] },
+      })),
+      attachProvider: vi.fn(async () => {
+        attached = true;
+        return { ok: true as const };
+      }),
+    };
+    const request = {
+      provider: "nvidia-prod",
+      model: "nvidia/test-model",
+      sandboxName: "hermes",
+      noVerify: true,
+    };
+
+    await expect(runInferenceSet(request, deps)).rejects.toThrow(/registry/);
+    expect(attached).toBe(true);
+    expect(entry.hermesGatewayRestartPending).toBe(true);
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+
+    await runInferenceSet(request, deps);
+
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledTimes(1);
+    expect(entry.hermesGatewayRestartPending).toBeUndefined();
   });
 
   it("reports completed when a native selection changes the model", async () => {

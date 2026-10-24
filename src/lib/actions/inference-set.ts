@@ -1269,12 +1269,32 @@ function shouldRestartHermesGateway(input: {
   );
 }
 
+/**
+ * Record restart intent in the registry update that commits a Hermes native attachment change,
+ * so an interruption before the restart cannot leave a retry that sees nothing to do.
+ */
+function hermesAttachmentRestartRegistryFields(input: {
+  isHermes: boolean;
+  attachmentChanged: boolean;
+  localAttachmentChanged: boolean;
+  previousDetached: boolean;
+  previousLocalDetached: boolean;
+}): { hermesGatewayRestartPending?: true } {
+  const changed =
+    input.attachmentChanged ||
+    input.localAttachmentChanged ||
+    input.previousDetached ||
+    input.previousLocalDetached;
+  return input.isHermes && changed ? { hermesGatewayRestartPending: true } : {};
+}
+
 function markHermesGatewayRestartPending(
   required: boolean,
+  alreadyRecorded: boolean,
   sandboxName: string,
   deps: Pick<InferenceSetDeps, "updateSandbox">,
 ): void {
-  if (!required) return;
+  if (!required || alreadyRecorded) return;
   if (!deps.updateSandbox(sandboxName, { hermesGatewayRestartPending: true })) {
     throw new InferenceSetError(
       `Failed to record the pending Hermes gateway restart for sandbox '${sandboxName}'.`,
@@ -1888,6 +1908,13 @@ async function runInferenceSetWithoutHostLock(
       next: nativeLocalProviderAttachment,
     });
 
+    const hermesRestartFields = hermesAttachmentRestartRegistryFields({
+      isHermes: agentName === "hermes",
+      attachmentChanged: nativeAttachmentChanged,
+      localAttachmentChanged: nativeLocalAttachmentChanged,
+      previousDetached: previousNativeDetached,
+      previousLocalDetached: previousNativeLocalDetached,
+    });
     // Write minimal registry state before any sandbox-facing config read so the
     // gateway and registry cannot split if the in-sandbox layer is unavailable.
     const registryFields = (preferredInferenceApi: string | null) => ({
@@ -1919,6 +1946,7 @@ async function runInferenceSetWithoutHostLock(
       ),
       ...nativeSelectionRegistryFields(nativeProviderAttachment, previousNativeDetached),
       ...openClawLocalRegistryFields(localSwitch.selected, previousLocalDetached),
+      ...hermesRestartFields,
       ...(nativeLocalProviderAttachment?.endpointUrl
         ? { endpointUrl: nativeLocalProviderAttachment.endpointUrl }
         : (nativeSelection.endpointUrl ?? localSwitch.selected?.endpointUrl) &&
@@ -2049,7 +2077,12 @@ async function runInferenceSetWithoutHostLock(
       nativeAttachmentChanged,
       nativeLocalAttachmentChanged,
     });
-    markHermesGatewayRestartPending(hermesGatewayRestartRequired, sandboxName, deps);
+    markHermesGatewayRestartPending(
+      hermesGatewayRestartRequired,
+      Boolean(hermesRestartFields.hermesGatewayRestartPending),
+      sandboxName,
+      deps,
+    );
 
     deps.log(
       agentName === "hermes"
