@@ -204,7 +204,7 @@ describe("managed image activation failure diagnostics", () => {
     ) => void;
   }>([
     {
-      diagnostic: "selection-state-read",
+      diagnostic: "selection-state-permission",
       prepare: (env, _devices, secret) => {
         writeFileSync(
           env.NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER!,
@@ -212,6 +212,30 @@ describe("managed image activation failure diagnostics", () => {
         );
       },
     },
+    ...[
+      ["selection-state-busy", "OpenClawPairingStateBusyError", "database is busy"],
+      ["selection-state-changed", "OpenClawPairingStateRetryableError", "WAL changed"],
+      ["selection-state-missing", "FileNotFoundError", "missing state"],
+      ["selection-state-unsafe", "OSError", "unsafe canonical pairing-state SQLite entry"],
+      ["selection-state-schema", "ValueError", "unsupported canonical device state schema"],
+      [
+        "selection-state-identity",
+        "ValueError",
+        "canonical primary device identity is unavailable",
+      ],
+      ["selection-state-read", "ValueError", "invalid canonical pairing-state JSON column"],
+    ].map(([diagnostic, errorType, message]) => ({
+      diagnostic: diagnostic!,
+      prepare: (env: NodeJS.ProcessEnv, _devices: unknown, secret: string) => {
+        const declaration = errorType!.startsWith("OpenClaw")
+          ? `class ${errorType}(OSError): pass\n`
+          : "";
+        writeFileSync(
+          env.NEMOCLAW_OPENCLAW_PAIRING_STATE_HELPER!,
+          `${declaration}def read_openclaw_pairing_state(*args, **kwargs):\n    raise ${errorType}("${message}: ${secret}")\n`,
+        );
+      },
+    })),
     {
       diagnostic: "selection-request-binding",
       expectedRequestId: "a96ada31-9cf9-4d99-97cc-978dcbb9fc39",
