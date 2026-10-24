@@ -84,6 +84,10 @@ type SandboxExec = (
 
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
+// OpenClaw 2026.10.5's resolveGatewayStartupTiming allows 45s on Linux.
+// A safe restart acknowledges admission before the replacement starts.
+const OPENCLAW_RESTART_READINESS_SECONDS = 45;
+
 export type GatewayRestartDeps = {
   getSessionAgent: typeof agentRuntime.getSessionAgent;
   getSandbox: SandboxAgentLookup;
@@ -507,6 +511,7 @@ export async function restartSandboxGatewayWithDeps(
       managedProbeImpl: () => null,
       ...(agentName === "openclaw"
         ? {
+            timeoutSeconds: OPENCLAW_RESTART_READINESS_SECONDS,
             probeImpl: async (name: string) => {
               // Liveness stays green while OpenClaw refuses work during restart.
               // Readiness checks the same admission fence as user requests.

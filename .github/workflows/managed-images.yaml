@@ -703,23 +703,6 @@ jobs:
             sudo chmod 0600 "$swap_file"
             sudo mkswap "$swap_file"
             sudo swapon "$swap_file"
-            # Retain resource evidence before a runner can disappear during
-            # layer export. Sample only capacity counters, never credentials.
-            (
-              sample_sleep=''
-              trap 'if [ -n "$sample_sleep" ]; then kill "$sample_sleep" 2>/dev/null || true; wait "$sample_sleep" 2>/dev/null || true; fi; exit 0' TERM INT
-              while true; do
-                printf 'openclaw-build-resources %s\n' "$(date -u +%FT%TZ)"
-                free -m || true
-                df -Pk / /var/lib/docker /var/lib/containerd || true
-                cat /proc/pressure/memory /sys/fs/cgroup/memory.events 2>/dev/null || true
-                sleep 15 &
-                sample_sleep=$!
-                wait "$sample_sleep" || true
-              done
-            ) &
-            resource_monitor=$!
-            trap 'build_status=$?; kill "$resource_monitor" 2>/dev/null || true; wait "$resource_monitor" 2>/dev/null || true; exit "$build_status"' EXIT
             audit_options+=(
               --build-arg "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${MCPORTER_AUDIT_RECEIPT_SHA256}"
               --build-arg "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=${MCPORTER_AUDIT_POLICY_RESULT_SHA256}"

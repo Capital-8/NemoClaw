@@ -10,6 +10,7 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import { classifyGatewayRestartFailure } from "./gateway-restart";
 import { restartSandboxGateway, waitForRecoveredSandboxGateway } from "./process-recovery";
 import * as forwardRecovery from "./forward-recovery";
+import * as wait from "../../core/wait";
 
 const executeFile = promisify(execFile);
 
@@ -60,7 +61,7 @@ describe("restartSandboxGateway native lifecycle", () => {
       getSessionAgent: () => null,
       getSandbox: () => ({ name: "alpha", agent: "openclaw" }),
       resolveSandboxDashboardPort: () => 18789,
-      executeSandboxExecCommand: vi.fn(async () => ({
+      executeSandboxExecCommand: vi.fn(async (_sandboxName: string, _command: string) => ({
         status: 0,
         stdout: "",
         stderr: "",
@@ -114,6 +115,10 @@ describe("restartSandboxGateway native lifecycle", () => {
       "env -u OPENCLAW_HOME -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH NEMOCLAW_OPENCLAW_HOST_RESTART=1 openclaw gateway restart --safe --skip-deferral --json",
       210000,
     );
+    expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ timeoutSeconds: 45, initialManagedHealthPassed: false }),
+    );
   });
 
   it("asks Hermes to restart its gateway", async () => {
@@ -135,6 +140,37 @@ describe("restartSandboxGateway native lifecycle", () => {
       210000,
     );
   });
+
+  it.each([
+    { readyAt: 36, expected: true, elapsed: 61 },
+    { readyAt: 48, expected: false, elapsed: 45 },
+  ])(
+    "bounds native startup readiness at $readyAt seconds",
+    async ({ readyAt, expected, elapsed }) => {
+      silenceConsole();
+      let seconds = 0;
+      vi.spyOn(wait, "sleepSeconds").mockImplementation((delay) => {
+        seconds += delay;
+      });
+      vi.spyOn(forwardRecovery, "resolveSandboxHealthProbeUrl").mockReturnValue(
+        "http://127.0.0.1:18791/health",
+      );
+      const { waitForRecoveredSandboxGateway: _wait, ...deps } = baseDeps();
+      deps.executeSandboxExecCommand
+        .mockImplementation(async (_name, command) => {
+          expect(command).toContain("http://127.0.0.1:18791/readyz");
+          return seconds >= readyAt
+            ? { status: 0, stdout: '{"ready":true}\n200', stderr: "" }
+            : { status: 22, stdout: '{"ready":false}\n503', stderr: "" };
+        })
+        .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+
+      const result = await restartSandboxGateway("alpha", { quiet: true, deps });
+      expect(result.ok).toBe(expected);
+      expect(seconds).toBe(elapsed);
+      expect(deps.ensureSandboxPortForward).toHaveBeenCalledTimes(expected ? 1 : 0);
+    },
+  );
 
   it.each([
     { status: 200, body: '{"ready":true}', ready: true },
@@ -337,6 +373,7 @@ describe("restartSandboxGateway native lifecycle", () => {
       managedProbeImpl: expect.any(Function),
       probeImpl: expect.any(Function),
       quiet: true,
+      timeoutSeconds: 45,
     });
     expect(deps.printGatewayWedgeDiagnostics).toHaveBeenCalled();
   });

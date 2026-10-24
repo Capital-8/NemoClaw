@@ -1815,7 +1815,9 @@ export async function restartSandboxGateway(
           waitForRecoveredSandboxGateway(name, {
             ...options,
             runtimeSelection,
-            timeoutSeconds: gatewayRecoveryTimeoutSeconds(getRecoverySessionAgent(name)),
+            timeoutSeconds:
+              options?.timeoutSeconds ??
+              gatewayRecoveryTimeoutSeconds(getRecoverySessionAgent(name)),
           }),
         ensureSandboxPortForward: (name) => ensureSandboxPortForward(name, { runtimeSelection }),
         ensureHermesDashboardPortForwardIfEnabled: (name) =>
