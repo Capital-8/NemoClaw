@@ -44,7 +44,7 @@ const SANDBOX_NAME = "managed-podman";
 // Execute the shipped observer unchanged. Only the container account/root and
 // clock are substituted; SQLite queries and descriptor checks run against files.
 const OWNER_LEASE_FIXTURE = String.raw`
-import contextlib, json, os, pathlib, pwd, socket, sqlite3, sys, tempfile
+import contextlib, io, json, os, pathlib, pwd, socket, sqlite3, subprocess, sys, tempfile
 from unittest.mock import patch
 
 request = json.load(sys.stdin)
@@ -56,6 +56,8 @@ sleeps = []
 attempts = [0]
 real_open = os.open
 real_connect = sqlite3.connect
+real_file_open = open
+real_run = subprocess.run
 
 def sleep(seconds):
     assert 0 < seconds <= 1
@@ -128,9 +130,42 @@ with tempfile.TemporaryDirectory(prefix="nemoclaw-owner-lease-") as root:
             state.mkdir()
         return connection
 
+    def package_open(file, *args, **kwargs):
+        if file == "/usr/local/lib/node_modules/openclaw/package.json":
+            return io.StringIO(json.dumps({"name": "openclaw", "version": fixture.get("version", "2026.9.2")}))
+        return real_file_open(file, *args, **kwargs)
+
+    native_calls = []
+    native_root = pathlib.Path(root, "runtime")
+    native_root.mkdir()
+    (native_root / "package.json").write_text('{"name":"openclaw","version":"2026.10.5"}')
+    (native_root / "dist").mkdir()
+    (native_root / "dist/gateway-lock-test.mjs").write_text("function readActiveGatewayLockIdentity() {} export { readActiveGatewayLockIdentity };")
+    native_trace = native_root / "trace"
+    (native_root / "dist/gateway-owner-lease-test.mjs").write_text(
+        "import fs from 'node:fs'; import os from 'node:os'; let calls = 0; "
+        "function assertGatewayOwnerLeaseStopped(env) { calls++; "
+        "if (process.getuid() !== " + str(account.pw_uid) + " || process.env.HOME !== '/sandbox' || env !== process.env) throw new Error('wrong native context');"
+        "fs.appendFileSync(" + json.dumps(str(native_trace)) + ", String(calls)); "
+        "if (calls < 2) throw new Error('Another Gateway owner lease is still active for this state directory: ' + os.hostname()); }"
+        "export { assertGatewayOwnerLeaseStopped };"
+    )
+
+    def run_native(argv, **kwargs):
+        assert argv == ["/usr/local/bin/node", "--input-type=module", "-"]
+        assert kwargs["timeout"] == 315 and kwargs["check"] is True
+        assert kwargs["env"] == {"HOME": "/sandbox", "OPENCLAW_STATE_DIR": "/sandbox/.openclaw", "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+        # Substitute only the installed package and interpreter location.
+        kwargs["input"] = kwargs["input"].replace('"/usr/local/lib/node_modules/openclaw"', json.dumps(str(native_root)))
+        result = real_run([request["node"], *argv[1:]], **kwargs, capture_output=True)
+        native_calls.extend(native_trace.read_text())
+        return result
+
     error = None
     with contextlib.ExitStack() as stack:
         stack.enter_context(patch("pwd.getpwnam", return_value=account))
+        stack.enter_context(patch("builtins.open", side_effect=package_open))
+        stack.enter_context(patch("subprocess.run", side_effect=run_native))
         stack.enter_context(patch("os.open", side_effect=open_root))
         stack.enter_context(patch("os.stat", side_effect=stat_root))
         stack.enter_context(patch("time.monotonic", side_effect=lambda: clock[0]))
@@ -142,13 +177,17 @@ with tempfile.TemporaryDirectory(prefix="nemoclaw-owner-lease-") as root:
         except Exception as failure:
             error = str(failure)
     after = database_path.read_bytes() if database_path.exists() else None
-    print(json.dumps({"elapsedSeconds": clock[0], "sleptSeconds": sum(sleeps), "databaseUnchanged": before == after, "error": error}))
+    print(json.dumps({"elapsedSeconds": clock[0], "sleptSeconds": sum(sleeps), "databaseUnchanged": before == after, "error": error, "nativeCalls": native_calls}))
 sys.exit(1 if error is not None else 0)
 `;
 
 function observeOwnerLease(fixture: unknown) {
   const result = spawnSync("python3", ["-I", "-c", OWNER_LEASE_FIXTURE], {
-    input: JSON.stringify({ fixture, source: ownerLease.buildOpenClawOwnerLeaseObserver() }),
+    input: JSON.stringify({
+      fixture,
+      node: process.execPath,
+      source: ownerLease.buildOpenClawOwnerLeaseObserver(),
+    }),
     encoding: "utf8",
     timeout: 10_000,
     maxBuffer: 32 * 1_024,
@@ -158,7 +197,7 @@ function observeOwnerLease(fixture: unknown) {
   return { result, observation: JSON.parse(result.stdout) };
 }
 
-describe("native OpenClaw owner lease observation", () => {
+describe("legacy OpenClaw owner lease observation", () => {
   it.each([
     { name: "missing database", fixture: { database: false }, elapsed: 0, error: null },
     { name: "missing lease table", fixture: { table: false }, elapsed: 0, error: null },
@@ -176,10 +215,10 @@ describe("native OpenClaw owner lease observation", () => {
       error: null,
     },
     {
-      name: "local owner",
+      name: "local owner active beyond the native deadline",
       fixture: { row: { host: "local", expiry: 600_000 } },
-      elapsed: 0,
-      error: null,
+      elapsed: 300,
+      error: "OpenClaw owner lease remained active through its native expiry window",
     },
     {
       name: "expired foreign owner",
@@ -309,6 +348,31 @@ function createOwnerLeaseDeadlineFixture(expiry: number) {
 }
 
 describe("provider-owned managed startup root application", () => {
+  it("keeps a same-host live native owner held even after lease expiry", () => {
+    const { result, observation } = observeOwnerLease({
+      version: "2026.10.5",
+      row: { host: "local", expiry: -1 },
+    });
+    expect(result.status).toBe(0);
+    expect(observation.nativeCalls).toEqual(["1", "2"]);
+    expect(observation.databaseUnchanged).toBe(true);
+    const fixture = createDockerRootApplyFixture(() => ({ resourceHandle: CONTAINER_ID }));
+    fixture.execute
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "pending\n", stderr: "" })
+      .mockReturnValueOnce({ status: result.status!, stdout: "", stderr: "" });
+    const transaction = applyProviderManagedStartupRootRequest({
+      runtimeProvider: fixture.runtimeProvider,
+      sandboxName: SANDBOX_NAME,
+      sandboxId: SANDBOX_ID,
+      bootstrapIdentity: "c".repeat(64),
+      request: fixture.request,
+      environment: {},
+    });
+    expect(transaction?.containerId).toBe(CONTAINER_ID);
+    expect(fixture.execute.mock.calls).toHaveLength(3);
+  });
+
   it.each([
     { race: "replace-before-open", error: "unvalidated pairing-state file identity" },
     { race: "replace-and-restore", error: "unvalidated pairing-state file identity" },

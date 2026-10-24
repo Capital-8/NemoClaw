@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("native ownership before offline state writes", () => {
-  function runtime(body: string) {
+  function runtime(body: string, leaseBody = "return undefined;") {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-owner-probe-"));
     roots.push(root);
     fs.mkdirSync(path.join(root, "dist"));
@@ -44,8 +44,61 @@ describe("native ownership before offline state writes", () => {
         "export { readActiveGatewayLockIdentity as o };",
       ].join("\n"),
     );
+    fs.writeFileSync(
+      path.join(root, "dist/gateway-owner-lease-test.mjs"),
+      `import assert from "node:assert/strict";
+let calls = 0;
+function assertGatewayOwnerLeaseStopped(env) {
+  assert.equal(env, process.env); calls++; ${leaseBody}
+}
+export { assertGatewayOwnerLeaseStopped as n };`,
+    );
     return root;
   }
+
+  it.each([
+    'throw new Error("Another Gateway owner lease is still active for this state directory: live fixture");',
+    'const error = new Error("fresh foreign namespace"); error.name = "GatewayLockNamespaceError"; throw error;',
+  ])("keeps startup held while the native lease assertion refuses (%s)", async (body) => {
+    let clock = 0;
+    await expect(
+      waitForOpenClawGatewayOwner(runtime("return undefined;", body), {
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      }),
+    ).rejects.toThrow(/maintenance budget/);
+    expect(clock).toBe(120_000);
+  });
+
+  it("waits until native process inspection declares the lease owner stopped", async () => {
+    let clock = 0;
+    await waitForOpenClawGatewayOwner(
+      runtime(
+        "return undefined;",
+        'if (calls < 3) throw new Error("Another Gateway owner lease is still active for this state directory: fixture");',
+      ),
+      {
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      },
+    );
+    expect(clock).toBe(4_000);
+  });
+
+  it.each(['throw new Error("malformed lease payload");', 'throw new Error("unsafe state");'])(
+    "refuses invalid native lease inspection (%s)",
+    async (body) => {
+      const wait = vi.fn();
+      await expect(
+        waitForOpenClawGatewayOwner(runtime("return undefined;", body), { sleep: wait }),
+      ).rejects.toThrow();
+      expect(wait).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     "if (calls < 3) return { pid: 123 };",

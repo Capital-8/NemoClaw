@@ -509,6 +509,7 @@ function stageOptimizedSandboxBuildContext(
     "install-openclaw-migration-runtimes.sh",
     "install-openclaw-cli-wrapper.sh",
     "openclaw-legacy-session-admission.mts",
+    "openclaw-gateway-owner.mts",
   ]) {
     fs.copyFileSync(
       path.join(rootDir, "scripts", "lib", file),

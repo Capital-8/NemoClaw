@@ -7,7 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
-import { setTimeout as sleep } from "node:timers/promises";
+import { nativeFunction, waitForOpenClawGatewayOwner } from "./openclaw-gateway-owner.mts";
+export { waitForOpenClawGatewayOwner } from "./openclaw-gateway-owner.mts";
 import {
   assertLegacySessionSourcesPreserved,
   MixedLegacySessionsError,
@@ -19,52 +20,6 @@ const BRIDGES = [
   { version: "2026.9.7", schemas: { state: 19, agent: 24 }, migrationPrefix: "config-flow-steps-" },
 ] as const;
 type Bridge = (typeof BRIDGES)[number];
-type NativeFunction = (...args: unknown[]) => unknown;
-
-/** Wait for native ownership to end without reading config or changing any state. */
-export async function waitForOpenClawGatewayOwner(
-  root: string,
-  deps: { now?: () => number; sleep?: (milliseconds: number) => Promise<unknown> } = {},
-): Promise<void> {
-  if (manifest(root).version !== "2026.10.5") throw new Error("Unreviewed ownership inspector");
-  const readOwner = await nativeFunction(root, "gateway-lock-", "readActiveGatewayLockIdentity");
-  const now = deps.now ?? (() => performance.now());
-  const wait = deps.sleep ?? sleep;
-  // A stopped foreign owner expires after 90 seconds. Leave time for config
-  // generation inside the existing five-minute managed root-apply deadline.
-  const deadline = now() + 120_000;
-  let reported = false;
-  while (now() < deadline) {
-    try {
-      const owner = await readOwner({
-        env: process.env,
-        requireInspection: true,
-        includeEmbedded: true,
-        timeoutMs: Math.max(1, Math.min(5_000, deadline - now())),
-      });
-      if (owner === undefined) return;
-      if (!Number.isSafeInteger(object(owner).pid))
-        throw new Error("Invalid native owner identity");
-    } catch (error) {
-      // A foreign PID namespace cannot prove death while the native heartbeat
-      // is fresh. Retry only that refusal; malformed or unreadable locks fail.
-      if (
-        !(error instanceof Error) ||
-        error.name !== "GatewayLockError" ||
-        !(error.cause instanceof Error) ||
-        error.cause.name !== "GatewayLockNamespaceError"
-      )
-        throw error;
-    }
-    if (!reported) {
-      process.stderr.write("[setup] Waiting for OpenClaw native gateway ownership to end\n");
-      reported = true;
-    }
-    const remaining = deadline - now();
-    if (remaining > 0) await wait(Math.min(2_000, remaining));
-  }
-  throw new Error("OpenClaw gateway ownership did not end within the maintenance budget");
-}
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -96,33 +51,6 @@ function manifest(root: string): Record<string, unknown> {
   if (result.name !== "openclaw") throw new Error("Expected the installed OpenClaw runtime");
   versionParts(result.version);
   return result;
-}
-
-/** Resolve only the reviewed native module family, refusing missing/ambiguous exports. */
-async function nativeFunction(root: string, prefix: string, name: string): Promise<NativeFunction> {
-  const dist = path.join(root, "dist");
-  const candidates: { file: string; exported: string }[] = [];
-  for (const nameOnDisk of fs.readdirSync(dist)) {
-    if (!nameOnDisk.startsWith(prefix) || !/\.m?js$/.test(nameOnDisk)) continue;
-    const file = path.join(dist, nameOnDisk);
-    const source = fs.readFileSync(file, "utf8");
-    for (const declaration of source.matchAll(/export\s*\{([^}]+)\}/g)) {
-      for (const specifier of declaration[1]!.split(",")) {
-        const match = specifier.trim().match(/^([\w$]+)(?:\s+as\s+([\w$]+))?$/);
-        if (match?.[1] === name) candidates.push({ file, exported: match[2] ?? name });
-      }
-    }
-  }
-  // Prefer the public facade over the same implementation's minified export.
-  const facades = candidates.filter((candidate) => candidate.exported === name);
-  const selected = facades.length ? facades : candidates;
-  if (selected.length !== 1) throw new Error("Native migration export missing or ambiguous");
-  const candidate = selected[0]!;
-  const loaded = await import(pathToFileURL(candidate.file).href);
-  if (typeof loaded[candidate.exported] !== "function") {
-    throw new Error("Native migration export is not callable");
-  }
-  return loaded[candidate.exported] as NativeFunction;
 }
 
 async function sourceConfig(root: string): Promise<Record<string, unknown>> {

@@ -5,7 +5,6 @@
 
 import json
 import os
-import socket
 import sqlite3
 import stat
 import time
@@ -678,8 +677,6 @@ def wait_for_openclaw_owner_lease(state_dir):
             owner = json.loads(payload)["owner"]
             if not isinstance(owner.get("host"), str) or not owner["host"]:
                 raise RuntimeError("OpenClaw owner lease has no host identity")
-            if owner["host"] == socket.gethostname():
-                return
             if type(expires) is not int:
                 raise RuntimeError("OpenClaw owner lease has no bounded expiry")
             remaining = (expires - time.time() * 1000) / 1000

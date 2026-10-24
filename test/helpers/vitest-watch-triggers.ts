@@ -42,6 +42,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)scripts\/lib\/openclaw-gateway-owner\.mts$/,
+    testsToRun: runTests("src/lib/onboard/managed-startup/provider-root-apply.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)scripts\/lib\/openclaw_pairing_state\.py$/,
     testsToRun: runTests(
       "src/lib/actions/sandbox/auto-pair-approval-sqlite.test.ts",

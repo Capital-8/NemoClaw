@@ -201,7 +201,7 @@ describe("initial sandbox policy real preset merge", () => {
     );
   });
 
-  it.each(["startup", "coordinator", "sibling"] as const)(
+  it.each(["startup", "coordinator", "sibling", "ownership"] as const)(
     "allows the OpenClaw restore %s path as read-only code",
     (role) => {
       const source = fs.readFileSync(repoPath("scripts", "nemoclaw-start.sh"), "utf8");
@@ -225,6 +225,7 @@ describe("initial sandbox policy real preset merge", () => {
         startup: coordinator!,
         coordinator: path.posix.join(directory, "openclaw-legacy-migrations.mts"),
         sibling: path.posix.join(directory, "openclaw-legacy-session-admission.mts"),
+        ownership: path.posix.join(directory, "openclaw-gateway-owner.mts"),
       }[role];
       const ancestors = new Set([...filesystemPolicyAncestors(installed), installed]);
       expect(
