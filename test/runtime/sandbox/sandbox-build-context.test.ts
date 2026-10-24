@@ -291,6 +291,8 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "patch-openclaw-worker-proxy.mts"));
     for (const name of [
       "verify-openclaw-official-plugin.mts",
+      "patch-bundled-npm-undici.mts",
+      "remediate-openclaw-runtime-dependencies.mts",
       "openclaw-legacy-migrations.mts",
       "openclaw-legacy-session-admission.mts",
       "install-openclaw-optional-plugins.sh",
@@ -582,6 +584,8 @@ describe("sandbox build context staging", () => {
     const stagedLib = path.join(stagedScripts, "lib");
     for (const name of [
       "verify-openclaw-official-plugin.mts",
+      "patch-bundled-npm-undici.mts",
+      "remediate-openclaw-runtime-dependencies.mts",
       "openclaw-legacy-migrations.mts",
       "openclaw-legacy-session-admission.mts",
       "install-openclaw-optional-plugins.sh",
