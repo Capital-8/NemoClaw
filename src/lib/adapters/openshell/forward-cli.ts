@@ -1534,7 +1534,7 @@ export function createCliOpenShellForwardAdapter(
   async function observeForwards(
     request: ObserveOpenShellForwardsRequest,
   ): Promise<readonly OpenShellForwardObservation[]> {
-    return (await observeWithEvidence(request, request.acceptPreEndpoint === true)).observations;
+    return (await observeWithEvidence(request)).observations;
   }
 
   type ForwardReadiness =
@@ -1949,7 +1949,7 @@ export function createCliOpenShellForwardAdapter(
         timeoutMs: Math.min(remaining(deadline, now), OPENSHELL_PROBE_TIMEOUT_MS),
         assertCurrent,
       },
-      true,
+      !migrateToLoopback,
     );
     const [observed] = observedEvidence.observations;
     if (!observed) {
@@ -1982,7 +1982,7 @@ export function createCliOpenShellForwardAdapter(
         timeoutMs: Math.min(remaining(deadline, now), OPENSHELL_PROBE_TIMEOUT_MS),
         assertCurrent,
       },
-      true,
+      !migrateToLoopback,
     );
     const [confirmed] = confirmedEvidence.observations;
     if (!confirmed) {

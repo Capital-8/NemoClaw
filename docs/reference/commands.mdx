@@ -2137,7 +2137,11 @@ nemohermes my-assistant dashboard-url
 nemohermes my-assistant dashboard-url --quiet
 ```
 
-The Hermes OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`. Run `openshell forward list` to read the host bind for the dashboard and API forwards.
+The Hermes OpenAI-compatible API is separate and serves `/v1` on a per-sandbox port that defaults to `8642`.
+Read the allocated API port from the OpenAI-compatible API URL printed after onboarding.
+`openshell forward list` lists legacy and user-managed forwards; it can omit NemoClaw's receipt-owned API forward.
+Use `nemohermes my-assistant status` to check sandbox readiness.
+Use `nemohermes my-assistant recover` to verify or restore its required forwards.
 When onboarding records a non-loopback `CHAT_UI_URL`, `dashboard-url` returns that browser-facing URL.
 `NEMOCLAW_DASHBOARD_BIND` controls only the dashboard forward.
 The Hermes API forward always binds to `127.0.0.1`, including on WSL and when remote dashboard binding is enabled.

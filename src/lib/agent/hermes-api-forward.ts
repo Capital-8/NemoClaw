@@ -58,7 +58,6 @@ export function createHermesApiForwardMigration(options: {
       const wildcard = { ...forward, localHost: "0.0.0.0" as const };
       const [previous] = await adapter.observeForwards({
         forwards: [wildcard],
-        acceptPreEndpoint: true,
         assertCurrent,
       });
       if (previous?.state !== "owned" && previous?.state !== "stale") return null;

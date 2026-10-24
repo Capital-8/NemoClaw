@@ -601,15 +601,39 @@ describe("declared and cleanup forward sets", () => {
 it.each([
   {
     gateway: "nemoclaw",
+    endpoint: "https://127.0.0.1:8080",
     state: "started",
     signals: [[4_312, "SIGKILL"]],
     starts: 1,
     local: "127.0.0.1:8642",
   },
-  { gateway: "other", state: null, signals: [], starts: 0, local: "0.0.0.0:8642" },
+  {
+    gateway: "nemoclaw",
+    endpoint: null,
+    state: null,
+    signals: [],
+    starts: 0,
+    local: "0.0.0.0:8642",
+  },
+  {
+    gateway: "nemoclaw",
+    endpoint: "https://127.0.0.1:19080",
+    state: null,
+    signals: [],
+    starts: 0,
+    local: "0.0.0.0:8642",
+  },
+  {
+    gateway: "other",
+    endpoint: "https://127.0.0.1:8080",
+    state: null,
+    signals: [],
+    starts: 0,
+    local: "0.0.0.0:8642",
+  },
 ] as const)(
-  "checks pre-endpoint Hermes API command ownership for gateway $gateway through the CLI adapter",
-  async ({ gateway, state, signals, starts, local }) => {
+  "checks Hermes API command authority for gateway $gateway and endpoint $endpoint through the CLI adapter",
+  async ({ gateway, endpoint, state, signals, starts, local }) => {
     const fixture = createLinuxProcFixture({ pid: 4_312 });
     const tcpPath = path.join(fixture.procRoot, "net", "tcp");
     const originalTcp = readFileSync(tcpPath, "utf8");
@@ -624,7 +648,7 @@ it.each([
     };
     let command = [
       fixture.executable,
-      `--gateway ${gateway} --workspace default`,
+      `--gateway ${gateway}${endpoint === null ? "" : ` --gateway-endpoint ${endpoint}`} --workspace default`,
       "forward service demo --target-port 8642 --target-host 127.0.0.1 --local 0.0.0.0:8642",
     ].join(" ");
     let started = false;
@@ -658,7 +682,7 @@ it.each([
     try {
       const wildcard = { ...forward, localHost: "0.0.0.0" as const };
       await expect(adapter.observeForwards({ forwards: [wildcard] })).resolves.toEqual([
-        { state: "foreign", forward: wildcard },
+        { state: state === "started" ? "owned" : "foreign", forward: wildcard },
       ]);
       const migration = createHermesApiForwardMigration({
         forward,

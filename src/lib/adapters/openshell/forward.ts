@@ -215,8 +215,6 @@ export type OpenShellForwardReleaseResult =
     }>;
 
 export type ObserveOpenShellForwardsRequest = Readonly<{
-  /** Recognize proven pre-endpoint commands only when preparing legacy migration. */
-  acceptPreEndpoint?: boolean;
   forwards: readonly OpenShellForwardIdentity[];
   /** Require the listener on each keyed port to have this exact process identity. */
   expectedListenerPidsByPort?: ReadonlyMap<number, number>;
