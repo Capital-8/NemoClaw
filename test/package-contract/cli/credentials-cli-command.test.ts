@@ -496,7 +496,10 @@ describe("credentials oclif commands", () => {
       expect(calls[1]?.args).not.toContain("tvly-test-12345");
       expect(extraProviderCalls).toEqual(["tavily-search"]);
       expect(output.stdout).toContain("Registered provider 'tavily-search'");
-      expect(output.stdout).toContain("rebuild");
+      expect(output.stdout).toContain(
+        "openshell sandbox provider attach -g nemoclaw <sandbox> tavily-search",
+      );
+      expect(output.stdout).not.toContain("rebuild");
     } finally {
       delete process.env.TAVILY_API_KEY;
       delete process.env.UNRELATED_API_KEY;

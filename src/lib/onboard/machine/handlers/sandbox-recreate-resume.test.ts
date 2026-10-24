@@ -349,9 +349,10 @@ describe("handleSandboxState resume recreation", () => {
         sandboxName: "saved",
         recreateSandbox: () => true,
       });
-      expect(planner).toHaveBeenCalledWith("nemoclaw", { webSearchProvider: null });
+      expect(planner).toHaveBeenCalledExactlyOnceWith("nemoclaw", { webSearchProvider: null });
       expect((journal.completeCreate.mock.calls[0] as unknown[])[15]).toMatchObject({
         extraProviders: ["other"],
+        resolved: expect.objectContaining({ extraProviders: ["other"] }),
         recreate: true,
       });
     },

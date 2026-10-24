@@ -34,6 +34,8 @@ import {
 } from "../../state/registry/native-provider-authority";
 import { forgetExtraProvider } from "../global";
 
+const PROVIDER_REGISTRATION_HINT = `  Rerun '${CLI_NAME} onboard' for onboarding-managed credentials, or '${CLI_NAME} credentials add' for manually registered providers.`;
+
 export type CredentialsResetInput = {
   provider: string;
   confirmed: boolean;
@@ -91,14 +93,20 @@ function fail(failureLines: readonly string[]): CredentialsResetResult {
   return { exitCode: 1, outputLines: [], failureLines };
 }
 
-function detachedSandboxGuidance(key: string, sandboxes: readonly string[]): string[] {
+function detachedSandboxGuidance(
+  key: string,
+  sandboxes: readonly string[],
+  gatewayName: string,
+): string[] {
   const detachedSandboxes = [...new Set(sandboxes)];
   return detachedSandboxes.length === 0
     ? []
     : [
         "",
         `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")} during removal.`,
-        "  After registering the replacement provider, rebuild each detached sandbox:",
+        "  After registering the replacement, explicitly attach Tavily providers to each detached sandbox:",
+        `    openshell sandbox provider attach -g ${gatewayName} <sandbox> ${key}`,
+        "  For other providers, rebuild each detached sandbox:",
         ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
       ];
 }
@@ -213,8 +221,8 @@ export async function runCredentialsResetAction(
         removedLocal
           ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
           : `  Provider '${key}' is already absent from the OpenShell gateway.`,
-        `  Rerun '${CLI_NAME} onboard' to enter a new value.`,
-        ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
+        PROVIDER_REGISTRATION_HINT,
+        ...detachedSandboxGuidance(key, recovery.detachedSandboxes, target.gatewayName),
       ]);
     }
 
@@ -243,14 +251,13 @@ export function formatResetOutcome(
   recovery: CredentialsProviderDeleteWithRecoveryResult,
   gatewayName: string,
 ): { ok: boolean; lines: string[] } {
-  const onboardHint = `  Rerun '${CLI_NAME} onboard' to enter a new value.`;
   if (recovery.ok) {
     return {
       ok: true,
       lines: [
         `  Removed provider '${key}' from the OpenShell gateway.`,
-        onboardHint,
-        ...detachedSandboxGuidance(key, recovery.detachedSandboxes),
+        PROVIDER_REGISTRATION_HINT,
+        ...detachedSandboxGuidance(key, recovery.detachedSandboxes, gatewayName),
       ],
     };
   }
@@ -306,7 +313,9 @@ export function formatResetOutcome(
       "",
       `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")}, but provider removal was not confirmed.`,
       `  Rerun '${CLI_NAME} credentials reset ${key}' to complete provider removal.`,
-      "  If the provider remains registered, restore it by rebuilding the detached sandbox(es):",
+      "  If the provider remains registered, restore its Tavily attachments explicitly:",
+      `    openshell sandbox provider attach -g ${gatewayName} <sandbox> ${key}`,
+      "  For other providers that remain registered, rebuild the detached sandbox(es):",
       ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
     );
   }

@@ -4005,7 +4005,11 @@ $$nemoclaw credentials add tavily-search --type tavily --agent dcode --credentia
 
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
-Remove a provider credential from the OpenShell gateway by provider name. After removal, re-running `$$nemoclaw onboard` re-prompts for that provider's credential. Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
+Remove a provider credential from the OpenShell gateway by provider name.
+For providers managed by onboarding, rerun `$$nemoclaw onboard` to supply a replacement credential.
+For a manually registered Tavily provider, register the replacement on the host and explicitly attach it to each affected sandbox.
+Follow [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress) for the Deep Agents registration and attachment procedure.
+Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
 
 When a sandbox records an attachment to a native NVIDIA or supported fixed hosted provider, reset stops without detaching or deleting it.
 Rotate its credential in place by supplying the selected provider's credential through the host environment and rerunning `$$nemoclaw onboard --name <sandbox>`. Use `NVIDIA_INFERENCE_API_KEY` for NVIDIA Endpoints and the provider-specific variable documented under `onboard` for another selection.
