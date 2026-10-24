@@ -7,6 +7,9 @@
   "dependencies": {
     "@tencent-weixin/openclaw-weixin": "2.4.10"
   },
+  "overrides": {
+    "zod": "4.6.6"
+  },
   "engines": {
     "node": ">=22.16.0"
   },

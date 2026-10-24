@@ -37,14 +37,14 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 - Ordinary graph: `agents/openclaw/managed-image-messaging-runtime/package.json` overrides non-bundled `proxy-addr` resolutions to exact `2.0.8`. Its lock records npm integrity `sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==`, the unchanged `forwarded@0.2.0` and `ipaddr.js@1.9.1` dependencies, the MIT license, and the existing Node.js engine floor.
 - Production Slack graph: the selected `@openclaw/slack@2026.10.5` archive bundles `@slack/bolt@5.1.0` and `proxy-addr@2.0.8`. The managed-messaging lock records both bundled versions. This archive needs no Slack-specific proxy-address rewrite; the production archive audit uses its reviewed registry identity.
 - Legacy Slack graph: `src/lib/messaging/channels/slack/manifest.ts` retains the `2026.9.2` archive identity for existing sandboxes running that version. That archive bundles `@slack/bolt@5.0.0`, `express@5.2.1`, and `proxy-addr@2.0.7`. NemoClaw verifies OpenClaw's trusted official-install provenance before replacing only the nested vulnerable package with the reviewed `proxy-addr@2.0.8` archive. The replacement rejects changes to the reviewed Slack, Bolt, Express, source package, or replacement package contracts.
-- Legacy archive boundary: `scripts/lib/openclaw-npm-remediation.mts` selects the proxy-address rewrite only for `@openclaw/slack@2026.9.2`. Its archive-remediation path verifies the complete remediated tree digest. The selected `2026.10.5` archive has no entry in that remediation map and remains unchanged. The production audit inventory excludes the legacy `2026.9.2` archive.
+- Legacy archive boundary: `scripts/lib/openclaw-npm-remediation.mts` selects the proxy-address rewrite only for `@openclaw/slack@2026.9.2`. Its archive-remediation path verifies the complete remediated tree digest. The selected `2026.10.5` archive uses a separate recipe for its bundled HTTP client, Zod, and body parser. The production audit inventory excludes the legacy `2026.9.2` archive.
 - Lifecycle suppression: both the managed graph install and the replacement package retrieval keep lifecycle scripts disabled. The replacement package declares no lifecycle script.
 - Removal condition: retain the `2026.9.2` rewrite while supported installed-sandbox paths can select that archive. Remove it when those paths and their manifest identities are retired. The patched production `2026.10.5` archive alone does not establish that legacy removal condition. Keep the ordinary exact override until every supported managed-messaging path resolves outside the affected range and a regenerated lock plus reviewed audit proves the override unnecessary.
 - Regression evidence: `test/agents/openclaw/openclaw-npm-remediation.test.ts` guards the legacy source and replacement contracts. `test/runtime/messaging/messaging-build-applier-integrity.test.ts` exercises `2026.9.2` installation and rejects remediation without trusted provenance. `test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts` guards the ordinary graph. `test/agents/openclaw/openclaw-dependency-review.test.ts` checks that the production audit inventory matches the selected runtime lock and retains legacy remediation wiring.
 
 ## WeChat plugin runtime graph
 
-- Package: `@tencent-weixin/openclaw-weixin@2.4.10`. This version uses the OpenClaw 2026.10.5 channel-ingress, config-mutation, temp-path, and channel-outbound SDK exports. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.4.3`.
+- Package: `@tencent-weixin/openclaw-weixin@2.4.10`. This version uses the OpenClaw 2026.10.5 channel-ingress, config-mutation, temp-path, and channel-outbound SDK exports. The locked production dependencies remain `qrcode-terminal@0.12.0` and `zod@4.6.6`.
 - Locked graph: `agents/openclaw/wechat-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Installation boundary: the image materializes the reviewed lock into a root-owned dedicated npm cache and adds the exact package metadata needed by npm's offline resolver. Before that cache becomes immutable, the shared `scripts/lib/reviewed-npm-archive.mts` implementation re-packs every locked archive offline from the final cache and rejects registry-origin drift, metadata or packed-byte SRI drift, unsafe filenames, missing archives, and symlinks. The sandbox user copies that verified immutable source into a writable cache used for registry metadata lookup, archive packing, and the OpenClaw plugin install; no retrieval step falls back to `HOME/.npm`. The copy is deleted in the same image layer, and the trusted cache is never writable. The installer runs in offline, legacy-peer mode, then `verify-wechat-runtime-lock.mts` rejects integrity, version, dependency-set, or peer-range drift and refuses an image OpenClaw version below the plugin's locked peer minimum.
@@ -102,9 +102,20 @@ The runtime and messaging locks replace upstream's npm 12.2.0 dependency with np
 The aggregate archive audit applies the same replacement so it audits the shipped npm dependency tree.
 The audit regression test checks that the aggregate graph selects npm 12.2.1.
 
-WeChat uses its separately locked 2.4.10 plugin and Zod 4.4.3 graph.
+`remediate-openclaw-runtime-dependencies.mts` replaces npm's bundled Undici with 6.29.1 and the migration runtime's HTTP client with 8.12.3.
+The image builder applies the same npm repair to its global npm installation.
+OpenClaw's managed-project overrides select Undici 8.12.3, Zod 4.6.6, body-parser 2.4.0, and MSAL Node 7.1.0 for future plugin installs.
+Official plugin provenance is verified before bundled dependency replacement.
+The Discord, Google Chat, and Slack recipes verify source and replacement trees before replacing bundled dependencies.
+Slack's body parser keeps content-type 2.1.0 and qs 6.16.1 locally so ancestor packages cannot select incompatible versions.
+Discord's SDK retains its v3 API through `zod/v3` declarations and a bounded-collection backport in its embedded runtime.
+The backport rejects oversized bounded arrays and sets before parsing their members; it does not impose limits on unbounded schemas.
+Locks describe the repaired installed graph. Offline image builds apply the recipes before checking installed identities.
+Remove these recipes only when reviewed upstream artifacts contain the fixes and clean installation verifies every affected consumer.
+
+WeChat uses its separately locked 2.4.10 plugin and Zod 4.6.6 graph.
 Its offline install uses a disposable copy of the dedicated WeChat cache.
-Official plugins use a separate copy of the messaging cache, which contains Zod 4.6.5.
+Official plugins use a separate copy of the messaging cache, which contains the reviewed Zod 4.6.6 replacement.
 Both copies are removed after success or failure; neither install can write to a trusted cache.
 The messaging verifier checks nested overrides against their locked locations, including bundled descendants and hoisted aliases.
 

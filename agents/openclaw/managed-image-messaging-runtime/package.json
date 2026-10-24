@@ -24,10 +24,10 @@
     "nemoclaw-openclaw-override-ip-address": "npm:ip-address@10.7.2",
     "nemoclaw-openclaw-override-protobufjs": "npm:protobufjs@8.8.0",
     "nemoclaw-openclaw-override-proxy-addr": "npm:proxy-addr@2.0.8",
-    "nemoclaw-openclaw-override-qs": "npm:qs@6.16.0",
+    "nemoclaw-openclaw-override-qs": "npm:qs@6.16.1",
     "nemoclaw-openclaw-override-uuid": "npm:uuid@14.0.2",
     "openclaw": "2026.10.5",
-    "undici": "8.11.2"
+    "undici": "8.12.3"
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.0",
@@ -50,10 +50,17 @@
     "fast-uri": "3.1.8",
     "follow-redirects": "1.16.1",
     "hono": "4.13.11",
-    "npm": "12.2.1",
+    "npm": {
+      ".": "12.2.1",
+      "undici": "6.29.1"
+    },
     "proxy-addr": "2.0.8",
     "tar": "7.5.22",
-    "undici": "8.11.2"
+    "undici": "8.12.3",
+    "body-parser": "2.4.0",
+    "zod": "4.6.6",
+    "@azure/msal-node": "7.1.0",
+    "qs": "6.16.1"
   },
   "engines": {
     "node": ">=24.16.0 <25 || >=26.1.0"

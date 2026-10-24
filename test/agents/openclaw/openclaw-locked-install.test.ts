@@ -19,7 +19,7 @@ const PACKAGE_SPEC = "openclaw@2026.10.5";
 const INTEGRITY =
   "sha512-9rCuXMweqVKZIK3KBtGcLzesz9G6+FmQ30lvwomRhmcNWDcOtlBoqdLbPditoJMuTP55jPqXpt1AA0L8tSzFHg==";
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.5.tgz";
-const LOCK_SHA256 = "185c3ff754aa19630fd16784dab317e76bd5e3f93dfe14e3bc80cdd4112772d2";
+const LOCK_SHA256 = "02f1096028c223c17757b026c92e389a7904178995d588b3e3a4a5d8deb8d15f";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -170,7 +170,7 @@ afterEach(() => {
 describe("locked OpenClaw production installation (#5896)", () => {
   it("binds the reviewed root artifact to the complete committed closure", () => {
     const verified = verifyReviewedNpmLock(lockRequest(), reviewedMetadata);
-    expect(verified).toHaveLength(412);
+    expect(verified).toHaveLength(413);
     expect(verified).toContain(PACKAGE_SPEC);
     expect(verified).toContain("brace-expansion@5.0.12");
     expect(verified).toContain("fast-uri@3.1.8");
@@ -180,7 +180,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(verified).toContain("ip-address@10.7.4");
     expect(verified).toContain("tar@7.5.22");
     expect(verified).not.toContain("tar@7.5.19");
-    expect(verified).toContain("undici@8.11.2");
+    expect(verified).toContain("undici@8.12.3");
     expect(sha256(LOCKFILE)).toBe(LOCK_SHA256);
   });
 

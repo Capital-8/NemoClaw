@@ -201,6 +201,7 @@ if (args[0] === "ci") {
   }
 }
 if (args[0] === "install" && !fs.existsSync("package-lock.json")) {
+  fs.mkdirSync("node_modules", { recursive: true });
   const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
   fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
 }
@@ -538,7 +539,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "c5ccd6612ad7dbd3a56f425d04883b1571bb41293396addc78eb3d3de5ca6602",
+        lockSha256: "128880428a7929f4dccec034418ff4290513ad728f8af12fbf1d3536cb468803",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

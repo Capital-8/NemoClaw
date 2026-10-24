@@ -101,8 +101,12 @@ describe("OpenClaw managed messaging offline image build", () => {
       hono: "4.13.11",
       tar: "7.5.22",
       "fast-uri": "3.1.8",
-      undici: "8.11.2",
-      npm: "12.2.1",
+      undici: "8.12.3",
+      npm: { ".": "12.2.1", undici: "6.29.1" },
+      "@azure/msal-node": "7.1.0",
+      "body-parser": "2.4.0",
+      qs: "6.16.1",
+      zod: "4.6.6",
       "follow-redirects": "1.16.1",
       "@openclaw/googlechat@2026.10.5": {
         "google-auth-library@11.1.0": {
@@ -125,7 +129,7 @@ describe("OpenClaw managed messaging offline image build", () => {
         },
       },
     });
-    expect(nestedOverrideLocations).toHaveLength(4);
+    expect(nestedOverrideLocations).toHaveLength(5);
     nestedOverrideLocations.forEach((location) => {
       expect(runtimeLock.packages[location]?.version).toMatch(/^\d/u);
     });

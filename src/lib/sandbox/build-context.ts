@@ -503,6 +503,8 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "verify-openclaw-official-plugin.mts"),
   );
   for (const file of [
+    "patch-bundled-npm-undici.mts",
+    "remediate-openclaw-runtime-dependencies.mts",
     "install-openclaw-optional-plugins.sh",
     "install-openclaw-migration-runtimes.sh",
     "install-openclaw-cli-wrapper.sh",

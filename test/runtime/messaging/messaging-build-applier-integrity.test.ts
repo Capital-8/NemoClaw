@@ -1081,7 +1081,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       const expectedMessage =
         scenario === "untrusted provenance"
           ? "OpenClaw official npm plugin slack did not retain trusted exact registry provenance"
-          : "OpenClaw Slack remediation requires a valid managed npm package directory and reviewed dependency graph";
+          : "OpenClaw plugin remediation requires a valid managed npm package directory and reviewed dependency graph";
       expect(failure).toThrow(expect.objectContaining({ message: expectedMessage }));
 
       expect(fs.readFileSync(sentinel, "utf8")).toBe("original");

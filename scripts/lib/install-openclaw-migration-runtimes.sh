@@ -10,11 +10,11 @@ case "${1:-}" in
       migration_root="/usr/local/lib/nemoclaw/openclaw-migrations/$migration_version"
       case "$migration_version" in
         2026.9.5)
-          migration_lock=8017b062c11b252e28c39935818ff236db1d10bcd7f2e563dafe6a88ebc467f4
+          migration_lock=25a0e1b2128555dcac25c859e09069c34c99b9a0ab8a8ea950620bca24bf376b
           migration_integrity='sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w=='
           ;;
         2026.9.7)
-          migration_lock=2cac5d8e136f4dbfb919a52ed61d6cc153048a090ae3ef5c38dd225a685eb7db
+          migration_lock=b284dfe7296b48bf3dbae4593d8e9932182557df31123168e1922230e86cd073
           migration_integrity='sha512-/8N2LnfTFQPvnZizi8qKSFfnLQaPvSG3Cb4xo1YV7b4JhYiUc43ZNRpXJ01bWghLK0Ezk3HVeo/DGHcIRQwRWA=='
           ;;
       esac
@@ -26,6 +26,7 @@ case "${1:-}" in
         --label "OpenClaw migration $migration_version"
       npm --prefix "$migration_root" ci --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
         --userconfig /dev/null --registry https://registry.npmjs.org/
+      node /scripts/lib/remediate-openclaw-runtime-dependencies.mts --prefix "$migration_root"
     done
     ;;
   materialize)
@@ -33,8 +34,8 @@ case "${1:-}" in
     for migration_version in 2026.9.5 2026.9.7; do
       migration_root="/usr/local/lib/nemoclaw/openclaw-migrations/$migration_version"
       case "$migration_version" in
-        2026.9.5) migration_lock=8017b062c11b252e28c39935818ff236db1d10bcd7f2e563dafe6a88ebc467f4 ;;
-        2026.9.7) migration_lock=2cac5d8e136f4dbfb919a52ed61d6cc153048a090ae3ef5c38dd225a685eb7db ;;
+        2026.9.5) migration_lock=25a0e1b2128555dcac25c859e09069c34c99b9a0ab8a8ea950620bca24bf376b ;;
+        2026.9.7) migration_lock=b284dfe7296b48bf3dbae4593d8e9932182557df31123168e1922230e86cd073 ;;
       esac
       NPM_CONFIG_OFFLINE=true npm_config_offline=true \
         NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
