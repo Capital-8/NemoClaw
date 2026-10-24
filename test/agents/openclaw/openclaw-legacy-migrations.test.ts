@@ -628,6 +628,39 @@ describe("OpenClaw intermediate restore migrations", () => {
     expect(proof.run().status).not.toBe(0);
     expect(proof.calls()).toHaveLength(1);
   });
+  it.each([
+    ["io-fixture.mjs", "return {exists:true", "source config read"],
+    ["io.snapshot-fixture.mjs", "", "native migration export loading"],
+    ["legacy.roster-fixture.mjs", "return {config}", "agent roster normalization"],
+    ["io.snapshot-fixture.mjs", "return {next:config}", "core config migration"],
+    ["validation-core-fixture.mjs", "return {ok:", "config validation"],
+    ["targets-fixture.mjs", "return [{agentId:", "session source inventory"],
+  ])(
+    "identifies a failed preview without exposing native input (%s, %s)",
+    (file, needle, stage) => {
+      const proof = fixture();
+      const modulePath = path.join(
+        proof.migrationRoot,
+        "2026.9.5/node_modules/openclaw/dist",
+        file,
+      );
+      const original = fs.readFileSync(modulePath, "utf8");
+      const rejection = `throw new Error(${JSON.stringify(`fixture-secret-value ${proof.configPath}`)});`;
+      expect(original).toContain(needle);
+      fs.writeFileSync(
+        modulePath,
+        needle ? original.replace(needle, rejection + needle) : rejection + original,
+      );
+      const result = proof.run();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`Preview stage: ${stage}.`);
+      expect(result.stderr).not.toContain("fixture-secret-value");
+      expect(result.stderr).not.toContain(proof.configPath);
+      expect(result.stderr).not.toContain(modulePath);
+      expect(proof.calls()).toEqual([]);
+      expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
+    },
+  );
   it("refuses stranded Telegram state even when both older runtimes were skipped", () => {
     const proof = fixture({ writer: "2026.10.5", scenario: "retired-remains" });
     const result = proof.run();
@@ -643,7 +676,9 @@ describe("OpenClaw intermediate restore migrations", () => {
       path.join(proof.migrationRoot, "2026.9.5/node_modules/openclaw/package.json"),
       JSON.stringify({ name: "openclaw", version: "2026.9.6" }),
     );
-    expect(proof.run().status).not.toBe(0);
+    const result = proof.run();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Preview stage: runtime identity.");
     expect(proof.calls()).toEqual([]);
   });
 });

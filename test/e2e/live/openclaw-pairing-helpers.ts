@@ -698,7 +698,8 @@ export async function approveAndAssertPairing(options: {
   const repeat = await sandboxSh(
     options.sandbox,
     options.sandboxName,
-    buildPairingApproveCommand(options.channel, options.code),
+    // OpenClaw hides ordinary CLI error reasons unless diagnostics are enabled.
+    `OPENCLAW_DEBUG=1 ${buildPairingApproveCommand(options.channel, options.code)}`,
     { artifactName: `${options.channel}-repeat-approve`, redactionValues: options.redactions },
   );
   if (repeat.exitCode === 0 || !resultText(repeat).includes("No pending pairing request found")) {

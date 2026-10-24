@@ -177,29 +177,70 @@ export async function assertLegacyPluginIndexPreserved(targetRoot: string): Prom
   }
 }
 
+const PREVIEW_FAILURES = {
+  51: "runtime identity",
+  52: "source config read",
+  53: "native migration export loading",
+  54: "agent roster normalization",
+  55: "core config migration",
+  56: "config validation",
+  57: "session source inventory",
+} as const;
+
+class PreviewError extends Error {
+  status: keyof typeof PREVIEW_FAILURES;
+
+  constructor(status: keyof typeof PREVIEW_FAILURES) {
+    super("Intermediate config preview failed");
+    this.status = status;
+  }
+}
+
 async function previewBridgeConfig(
   root: string,
   bridge: Bridge,
 ): Promise<{ storePath: string; sqlitePath: string }[]> {
-  if (manifest(root).version !== bridge.version) throw new Error("Unexpected migration runtime");
-  const cfg = await sourceConfig(root);
-  const migrate = await nativeFunction(root, bridge.migrationPrefix, "applyLegacyDoctorMigrations");
-  const validate = await nativeFunction(root, "validation-core-", "validateConfigObjectRaw");
-  const normalizeRoster = await nativeFunction(
-    root,
-    "legacy.roster-",
-    "migratePersistedImplicitMainRoster",
-  );
-  const roster = object(await normalizeRoster(cfg));
-  // Core-only, state-free preview: do not load user plugins or strip unknown
-  // keys to make an older runtime accept config written by a newer runtime.
-  const preview = object(
-    await migrate(roster.config, { sourceConfigBeforeMigrations: cfg, pluginContracts: false }),
-  );
-  const checked = object(await validate(preview.next ?? roster.config));
-  if (checked.ok !== true)
-    throw new Error("Config cannot safely pass through the intermediate runtime");
-  return resolveLegacySessionSources(root, object(preview.next ?? roster.config), nativeFunction);
+  let stage: keyof typeof PREVIEW_FAILURES = 51;
+  try {
+    if (manifest(root).version !== bridge.version) throw new Error("Unexpected migration runtime");
+    stage = 52;
+    const cfg = await sourceConfig(root);
+    stage = 53;
+    const migrate = await nativeFunction(
+      root,
+      bridge.migrationPrefix,
+      "applyLegacyDoctorMigrations",
+    );
+    const validate = await nativeFunction(root, "validation-core-", "validateConfigObjectRaw");
+    const normalizeRoster = await nativeFunction(
+      root,
+      "legacy.roster-",
+      "migratePersistedImplicitMainRoster",
+    );
+    stage = 54;
+    const roster = object(await normalizeRoster(cfg));
+    // Core-only, state-free preview: do not load user plugins or strip unknown
+    // keys to make an older runtime accept config written by a newer runtime.
+    stage = 55;
+    const preview = object(
+      await migrate(roster.config, { sourceConfigBeforeMigrations: cfg, pluginContracts: false }),
+    );
+    stage = 56;
+    const checked = object(await validate(preview.next ?? roster.config));
+    if (checked.ok !== true)
+      throw new Error("Config cannot safely pass through the intermediate runtime");
+    stage = 57;
+    return await resolveLegacySessionSources(
+      root,
+      object(preview.next ?? roster.config),
+      nativeFunction,
+    );
+  } catch (error) {
+    if (error instanceof MixedLegacySessionsError) throw error;
+    // Only an owned stage code crosses the child boundary, never native errors
+    // or config values. Admission and preservation failures still stop startup.
+    throw new PreviewError(stage);
+  }
 }
 
 async function assertRetiredTelegramStateMigrated(root: string): Promise<void> {
@@ -337,7 +378,7 @@ export function archiveEmptyTelegramThreadBindings(stateDir: string): void {
 
 class DoctorExitError extends Error {}
 
-function reportInspectionFailure(args: string[], interrupted: boolean): void {
+function reportInspectionFailure(args: string[], interrupted: boolean, status?: number): void {
   // Neither native stderr nor runtime/config paths are safe to publish. These
   // fixed labels identify the failed gate without exposing its private input.
   const operations: Record<string, string> = {
@@ -352,6 +393,11 @@ function reportInspectionFailure(args: string[], interrupted: boolean): void {
   process.stderr.write(
     `[migration] OpenClaw ${bridge.version} ${operation} ${interrupted ? "did not complete" : "failed"}; native details withheld to protect restored state.\n`,
   );
+  if (!interrupted && args[1] === "--preview") {
+    for (const [code, label] of Object.entries(PREVIEW_FAILURES)) {
+      if (Number(code) === status) process.stderr.write(`[migration] Preview stage: ${label}.\n`);
+    }
+  }
 }
 
 function child(args: string[], timeout: number, inspect: boolean, input?: string): string {
@@ -392,7 +438,7 @@ function child(args: string[], timeout: number, inspect: boolean, input?: string
   }
   if (inspect && result.status === 42) throw new MixedLegacySessionsError();
   if (result.status !== 0) {
-    if (inspect) reportInspectionFailure(args, false);
+    if (inspect) reportInspectionFailure(args, false, result.status);
     throw new DoctorExitError("OpenClaw migration command failed");
   }
   return result.stdout ?? "";
@@ -516,6 +562,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         ? "[setup] OpenClaw gateway ownership could not be verified as stopped.\n"
         : "[migration] OpenClaw intermediate migration could not safely complete; gateway remains stopped.\n",
     );
-    process.exitCode = 1;
+    process.exitCode = error instanceof PreviewError ? error.status : 1;
   });
 }
