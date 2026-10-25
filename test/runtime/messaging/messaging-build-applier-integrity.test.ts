@@ -779,7 +779,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     try {
       [
         ...dockerfile.matchAll(
-          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:openclaw-npm-remediation|reviewed-npm-archive|verify-openclaw-official-plugin)\.mts) (\/\S+)$/gm,
+          /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:bundled-npm-package|openclaw-npm-remediation|reviewed-npm-archive|verify-openclaw-official-plugin)\.mts) (\/\S+)$/gm,
         ),
       ].forEach((copy) => {
         const source = copy[1] ?? "";

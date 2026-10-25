@@ -9,6 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { interruptMetadataWrite } from "../../support/metadata-write-faults";
 import { reviewedArchiveGraphManifest } from "../../../scripts/audit-reviewed-npm-graph.mts";
 
 import { patchOpenClawContainerRestart } from "../../../scripts/lib/patch-openclaw-container-restart.mts";
@@ -582,69 +583,95 @@ describe("OpenClaw real patched-dist materialization guard", () => {
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
   "OpenClaw real patched-dist harness",
   () => {
-    it("runs npm and messaging consumers after remediating the reviewed 2026.10.5 graph", () => {
-      const nodeRuntime = resolveRealOpenClawNodeRuntime();
-      const policy = JSON.parse(
-        fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
-      ) as {
-        archiveTarVersion: string;
-        archivePackages: Array<{ packageSpec: string; tarballUrl: string; integrity: string }>;
-      };
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw105-consumers-"));
-      try {
-        const archives = [
-          "openclaw@2026.10.5",
-          "@openclaw/discord@2026.10.5",
-          "@openclaw/googlechat@2026.10.5",
-          "@openclaw/slack@2026.10.5",
-        ].map((spec) => {
-          const reviewed = policy.archivePackages.filter((entry) => entry.packageSpec === spec);
-          requireRuntimeEqual(String(reviewed.length), "1", `unique reviewed archive for ${spec}`);
-          return materializeReviewedTarball(reviewed[0].tarballUrl, tmp, reviewed[0].integrity);
-        });
-        const runtime = path.join(tmp, "runtime");
-        fs.mkdirSync(runtime);
-        fs.writeFileSync(
-          path.join(runtime, "package.json"),
-          JSON.stringify(reviewedArchiveGraphManifest(policy.archiveTarVersion)),
-        );
-        const install = spawnSync(
-          "npm",
-          [
-            "install",
-            "--prefix",
-            runtime,
-            "--allow-file=all",
-            "--ignore-scripts",
-            "--omit=dev",
-            "--no-audit",
-            "--no-fund",
-            ...archives,
-          ],
-          { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(install, "install reviewed 2026.10.5 consumer graph without scripts");
-        remediateOpenClawRuntimeDependencies(runtime, { updateLock: true });
-        const npmResult = spawnSync(
-          nodeRuntime.executable,
-          [path.join(runtime, "node_modules/npm/bin/npm-cli.js"), "--version"],
-          { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(npmResult, "run remediated npm");
-        expect(npmResult.stdout.trim()).toBe("12.2.1");
-        const npxResult = spawnSync(
-          nodeRuntime.executable,
-          [path.join(runtime, "node_modules/npm/bin/npx-cli.js"), "--version"],
-          { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(npxResult, "run remediated npx");
-        expect(npxResult.stdout.trim()).toBe("12.2.1");
-        const consumer = spawnSync(
-          nodeRuntime.executable,
-          [
-            "--input-type=module",
-            "-e",
-            String.raw`
+    // source-shape-contract: compatibility -- Exact installed plugin manifest bytes must survive interrupted remediation before retrying the real messaging consumers.
+    it.each(["discord", "googlechat", "slack"])(
+      "runs npm and messaging consumers after retrying an interrupted %s manifest write",
+      (plugin) => {
+        const nodeRuntime = resolveRealOpenClawNodeRuntime();
+        const policy = JSON.parse(
+          fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+        ) as {
+          archiveTarVersion: string;
+          archivePackages: Array<{ packageSpec: string; tarballUrl: string; integrity: string }>;
+        };
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw105-consumers-"));
+        try {
+          const archives = [
+            "openclaw@2026.10.5",
+            "@openclaw/discord@2026.10.5",
+            "@openclaw/googlechat@2026.10.5",
+            "@openclaw/slack@2026.10.5",
+          ].map((spec) => {
+            const reviewed = policy.archivePackages.filter((entry) => entry.packageSpec === spec);
+            requireRuntimeEqual(
+              String(reviewed.length),
+              "1",
+              `unique reviewed archive for ${spec}`,
+            );
+            return materializeReviewedTarball(reviewed[0].tarballUrl, tmp, reviewed[0].integrity);
+          });
+          const runtime = path.join(tmp, "runtime");
+          fs.mkdirSync(runtime);
+          fs.writeFileSync(
+            path.join(runtime, "package.json"),
+            JSON.stringify(reviewedArchiveGraphManifest(policy.archiveTarVersion)),
+          );
+          const install = spawnSync(
+            "npm",
+            [
+              "install",
+              "--prefix",
+              runtime,
+              "--allow-file=all",
+              "--ignore-scripts",
+              "--omit=dev",
+              "--no-audit",
+              "--no-fund",
+              ...archives,
+            ],
+            { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(install, "install reviewed 2026.10.5 consumer graph without scripts");
+          const manifest = path.join(runtime, "node_modules", "@openclaw", plugin, "package.json");
+          const original = fs.readFileSync(manifest);
+          const failure = interruptMetadataWrite(
+            `"name": "@openclaw/${plugin}"`,
+            (contents) => contents.indexOf('"zod": "4.6.6"') + '"zod": "4.6.6"'.length,
+          );
+          try {
+            expect(() =>
+              remediateOpenClawRuntimeDependencies(runtime, { updateLock: true }),
+            ).toThrow("injected partial metadata write failure");
+            const observed = fs.openSync(manifest, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+            try {
+              expect(fs.readFileSync(observed)).toEqual(original);
+            } finally {
+              fs.closeSync(observed);
+            }
+          } finally {
+            failure.mockRestore();
+          }
+          remediateOpenClawRuntimeDependencies(runtime, { updateLock: true });
+          const npmResult = spawnSync(
+            nodeRuntime.executable,
+            [path.join(runtime, "node_modules/npm/bin/npm-cli.js"), "--version"],
+            { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(npmResult, "run remediated npm");
+          expect(npmResult.stdout.trim()).toBe("12.2.1");
+          const npxResult = spawnSync(
+            nodeRuntime.executable,
+            [path.join(runtime, "node_modules/npm/bin/npx-cli.js"), "--version"],
+            { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(npxResult, "run remediated npx");
+          expect(npxResult.stdout.trim()).toBe("12.2.1");
+          const consumer = spawnSync(
+            nodeRuntime.executable,
+            [
+              "--input-type=module",
+              "-e",
+              String.raw`
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -658,20 +685,20 @@ for (const sdk of [await import(pathToFileURL(path.join(sdkRoot, "output/index.m
   assert.deepEqual(sdk.Responses.OpenExternalLinkResponse.parse({ opened: true }), { opened: true });
 }
 `,
-            runtime,
-          ],
-          { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(
-          consumer,
-          "parse Discord SDK responses through remediated Zod in both module formats",
-        );
-        const messagingConsumer = spawnSync(
-          nodeRuntime.executable,
-          [
-            "--input-type=module",
-            "-e",
-            String.raw`
+              runtime,
+            ],
+            { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(
+            consumer,
+            "parse Discord SDK responses through remediated Zod in both module formats",
+          );
+          const messagingConsumer = spawnSync(
+            nodeRuntime.executable,
+            [
+              "--input-type=module",
+              "-e",
+              String.raw`
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
@@ -729,18 +756,20 @@ try {
   await new Promise((resolve) => server.close(resolve));
 }
 `,
-            runtime,
-          ],
-          { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
-        );
-        requireSpawnSuccess(
-          messagingConsumer,
-          "resolve Google Chat accounts and parse Slack Bolt requests through remediated dependencies",
-        );
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    }, 600000);
+              runtime,
+            ],
+            { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+          );
+          requireSpawnSuccess(
+            messagingConsumer,
+            "resolve Google Chat accounts and parse Slack Bolt requests through remediated dependencies",
+          );
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+      600000,
+    );
 
     it(
       "materializes the reviewed tarball and applies NemoClaw's Dockerfile OpenClaw patches",

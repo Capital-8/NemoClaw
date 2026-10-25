@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { syncBuiltinESMExports } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { interruptMetadataWrite, replaceAfterMetadataRead } from "../support/metadata-write-faults";
 import { OPENCLAW_MANAGED_PLUGIN_WORKSPACE } from "../fixtures/openclaw-managed-plugin-workspace";
 import {
   remediateOpenClawRuntimeDependencies,
@@ -209,9 +210,10 @@ describe("OpenClaw migration HTTP dependency remediation", () => {
     expect(readFileSync(join(outside, "sentinel"), "utf8")).toBe("preserved");
   });
 
-  it("updates the opened lock without overwriting a replacement pathname", () => {
+  it("rejects a replaced lock pathname without changing either file", () => {
     const target = fixture();
     const opened = join(target.root, "opened-lock.json");
+    const originalLock = readFileSync(target.lockfile);
     const originalRead = fs.readFileSync;
     vi.spyOn(fs, "readFileSync").mockImplementationOnce((descriptor) => {
       const contents = originalRead(descriptor, "utf8");
@@ -219,11 +221,11 @@ describe("OpenClaw migration HTTP dependency remediation", () => {
       writeFileSync(target.lockfile, "replacement must remain unchanged");
       return contents;
     });
-    remediateOpenClawRuntimeDependencies(target.root, { updateLock: true });
-    expect(readFileSync(target.lockfile, "utf8")).toBe("replacement must remain unchanged");
-    expect(JSON.parse(readFileSync(opened, "utf8")).packages["node_modules/undici"].version).toBe(
-      "8.12.3",
+    expect(() => remediateOpenClawRuntimeDependencies(target.root, { updateLock: true })).toThrow(
+      "changed before writing",
     );
+    expect(readFileSync(target.lockfile, "utf8")).toBe("replacement must remain unchanged");
+    expect(readFileSync(opened)).toEqual(originalLock);
   });
 
   it("rejects lock contents changed since the initial review", () => {
@@ -276,6 +278,117 @@ function readWorkspaceSnapshot(workspace: string) {
 }
 
 describe("OpenClaw managed plugin security overrides", () => {
+  it("preserves a workspace changed while replacement bytes are being staged", () => {
+    const { owner, workspace } = workspaceFixture();
+    const entries = fs.readdirSync(owner).sort();
+    const write = fs.writeSync;
+    vi.spyOn(fs, "writeSync").mockImplementationOnce((descriptor, bytes, ...args) => {
+      const written = write(descriptor, bytes, ...args);
+      writeFileSync(workspace, "concurrent owner data");
+      return written;
+    });
+    expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow("changed before writing");
+    expect(readFileSync(workspace, "utf8")).toBe("concurrent owner data");
+    expect(fs.readdirSync(owner).sort()).toEqual(entries);
+  });
+
+  it.each(["fchmodSync", "fsyncSync", "renameSync"] as const)(
+    "preserves the workspace when %s fails before replacement and permits retry",
+    (operation) => {
+      const { owner, workspace } = workspaceFixture();
+      const original = readWorkspaceSnapshot(workspace);
+      const entries = fs.readdirSync(owner).sort();
+      const failure = vi.spyOn(fs, operation).mockImplementationOnce(() => {
+        throw new Error("injected metadata publication failure");
+      });
+      expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow(
+        "injected metadata publication failure",
+      );
+      expect(readWorkspaceSnapshot(workspace)).toEqual(original);
+      expect(fs.readdirSync(owner).sort()).toEqual(entries);
+      failure.mockRestore();
+      patchOpenClawManagedPluginOverrides(owner);
+      expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
+        "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      );
+      expect(readWorkspaceSnapshot(workspace).mode).toBe(original.mode);
+    },
+  );
+
+  it("rejects corrupted staging bytes without replacing the workspace", () => {
+    const { owner, workspace } = workspaceFixture();
+    const original = readWorkspaceSnapshot(workspace);
+    const entries = fs.readdirSync(owner).sort();
+    const write = fs.writeSync;
+    vi.spyOn(fs, "writeSync").mockImplementationOnce((descriptor, bytes) =>
+      write(descriptor, Buffer.alloc(bytes.length)),
+    );
+    expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow(
+      "staged contents failed verification",
+    );
+    expect(readWorkspaceSnapshot(workspace)).toEqual(original);
+    expect(fs.readdirSync(owner).sort()).toEqual(entries);
+  });
+
+  // source-shape-contract: compatibility -- Exact runtime metadata bytes must survive interrupted remediation so the original package manager can retry safely.
+  it.each(["workspace", "manifest", "lock"] as const)(
+    "preserves %s metadata after a partial write failure and permits retry",
+    (kind) => {
+      const { root, owner, workspace } = workspaceFixture();
+      const manifest = join(owner, "package.json");
+      const lock = join(root, "package-lock.json");
+      writeFileSync(
+        manifest,
+        JSON.stringify({
+          name: "openclaw",
+          version: "2026.10.5",
+          dependencies: { undici: "8.11.2", npm: "12.2.0" },
+        }),
+      );
+      writeFileSync(
+        lock,
+        JSON.stringify({
+          lockfileVersion: 3,
+          packages: { "node_modules/openclaw": { version: "2026.10.5" } },
+        }),
+      );
+      const filename = { workspace, manifest, lock }[kind];
+      const original = readFileSync(filename);
+      const entries = fs.readdirSync(kind === "lock" ? root : owner).sort();
+      const marker = {
+        workspace: "overrides:\n",
+        manifest: '"name": "openclaw"',
+        lock: '"lockfileVersion"',
+      }[kind];
+      const prefixLength = {
+        workspace: (contents: string) => contents.indexOf("@azure/msal-node") + 10,
+        manifest: (_contents: string) => 7,
+        lock: (_contents: string) => 7,
+      }[kind];
+      const failure = interruptMetadataWrite(marker, prefixLength);
+      expect(() => remediateOpenClawRuntimeDependencies(root, { updateLock: true })).toThrow(
+        "injected partial metadata write failure",
+      );
+      expect(readWorkspaceSnapshot(filename).contents).toEqual(original);
+      expect(fs.readdirSync(kind === "lock" ? root : owner).sort()).toEqual(entries);
+      failure.mockRestore();
+      remediateOpenClawRuntimeDependencies(root, { updateLock: true });
+      expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
+        "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+      );
+      expect(JSON.parse(readFileSync(manifest, "utf8")).dependencies).toEqual({
+        undici: "8.12.3",
+        npm: "12.2.1",
+      });
+      expect(
+        JSON.parse(readFileSync(lock, "utf8")).packages["node_modules/openclaw"].dependencies,
+      ).toEqual({
+        undici: "8.12.3",
+        npm: "12.2.1",
+      });
+    },
+  );
+
   it("patches the reviewed workspace and remains idempotent", () => {
     const { owner, workspace } = workspaceFixture();
     patchOpenClawManagedPluginOverrides(owner);
@@ -307,11 +420,9 @@ describe("OpenClaw managed plugin security overrides", () => {
       writeFileSync(workspace, "replacement must remain unchanged");
       return contents;
     });
-    patchOpenClawManagedPluginOverrides(owner);
+    expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow("changed before writing");
     expect(readFileSync(workspace, "utf8")).toBe("replacement must remain unchanged");
-    expect(createHash("sha256").update(readFileSync(opened)).digest("hex")).toBe(
-      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
-    );
+    expect(readFileSync(opened, "utf8")).toBe(OPENCLAW_MANAGED_PLUGIN_WORKSPACE);
   });
 
   it("completes a short write at the correct offset", () => {
@@ -329,9 +440,13 @@ describe("OpenClaw managed plugin security overrides", () => {
   it("fails a stalled write and closes the opened file", () => {
     const { owner, workspace } = workspaceFixture();
     vi.spyOn(fs, "writeSync").mockReturnValueOnce(0);
-    const close = vi.spyOn(fs, "closeSync");
+    const opened = vi.spyOn(fs, "openSync");
     expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow("write made no progress");
-    expect(close).toHaveBeenCalledOnce();
+    expect(opened.mock.results).toHaveLength(2);
+    expect(opened.mock.results[0].type).toBe("return");
+    expect(opened.mock.results[1].type).toBe("return");
+    expect(() => fs.fstatSync(opened.mock.results[0].value)).toThrow();
+    expect(() => fs.fstatSync(opened.mock.results[1].value)).toThrow();
     expect(readFileSync(workspace, "utf8")).toBe(OPENCLAW_MANAGED_PLUGIN_WORKSPACE);
   });
 
@@ -342,7 +457,7 @@ describe("OpenClaw managed plugin security overrides", () => {
     expect(existsSync(workspace)).toBe(false);
   });
 
-  it("repairs the runtime manifest through the opened file", () => {
+  it("rejects a replaced runtime manifest without changing either file or the lock", () => {
     const { root, owner, workspace } = workspaceFixture();
     const ownerFile = join(owner, "package.json");
     writeFileSync(
@@ -362,27 +477,23 @@ describe("OpenClaw managed plugin security overrides", () => {
       }),
     );
     const opened = join(root, "opened-manifest.json");
-    const originalRead = fs.readFileSync;
-    vi.spyOn(fs, "readFileSync")
-      .mockImplementationOnce((descriptor) => originalRead(descriptor, "utf8"))
-      .mockImplementationOnce((descriptor) => {
-        const contents = originalRead(descriptor, "utf8");
-        fs.renameSync(ownerFile, opened);
-        writeFileSync(ownerFile, JSON.stringify({ name: "replacement", untouched: true }));
-        return contents;
-      });
-    remediateOpenClawRuntimeDependencies(root, { updateLock: true });
+    const originalLock = readFileSync(lockfile);
+    replaceAfterMetadataRead('"npm":"12.2.0"', () => {
+      fs.renameSync(ownerFile, opened);
+      writeFileSync(ownerFile, JSON.stringify({ name: "replacement", untouched: true }));
+    });
+    expect(() => remediateOpenClawRuntimeDependencies(root, { updateLock: true })).toThrow(
+      "changed before writing",
+    );
     expect(JSON.parse(readFileSync(ownerFile, "utf8"))).toEqual({
       name: "replacement",
       untouched: true,
     });
     expect(JSON.parse(readFileSync(opened, "utf8")).dependencies).toEqual({
-      undici: "8.12.3",
-      npm: "12.2.1",
+      undici: "8.11.2",
+      npm: "12.2.0",
     });
-    expect(
-      JSON.parse(readFileSync(lockfile, "utf8")).packages["node_modules/openclaw"].dependencies,
-    ).toEqual({ undici: "8.12.3", npm: "12.2.1" });
+    expect(readFileSync(lockfile)).toEqual(originalLock);
     expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
       "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
     );

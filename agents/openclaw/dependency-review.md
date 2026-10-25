@@ -150,6 +150,10 @@ Discord's SDK retains its v3 API through `zod/v3` declarations and a bounded-col
 The backport rejects oversized bounded arrays and sets before parsing their members; it does not impose limits on unbounded schemas.
 Locks describe the repaired installed graph. Offline image builds apply the recipes before checking installed identities.
 Ordinary audit installation leaves the reviewed lock unchanged; explicit `updateLock` mode updates metadata only when producing or regenerating a reviewed graph.
+The shared writer in `bundled-npm-package.mts` serves runtime workspaces, runtime and plugin manifests, and lock metadata.
+These updates stage and verify complete bytes in the same directory before an atomic rename.
+Staging failures preserve the original file and remove the attempt's temporary file; a later retry can resume.
+The writer preserves file permissions and ownership, rejects symlinks, and stops if it observes a replaced pathname or changed source before publication.
 The runtime helper verifies the original or patched managed-workspace digest before updating overrides.
 The shared `bundled-npm-package.mts` owns package replacement, rollback, archive-integrity checks, and backup cleanup for the ip-address and Undici repairs.
 Both entrypoints restore one verified affected backup when an interrupted replacement leaves the live package absent.

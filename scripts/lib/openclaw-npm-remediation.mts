@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { rewriteRegularFile } from "./bundled-npm-package.mts";
 import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
 type JsonObject = Record<string, any>;
@@ -1878,6 +1879,7 @@ export function patchOpenClaw105PluginDependencies(
 ): void {
   requireRealPackagePath(packageDirectory, "");
   const manifest = readSafeJson(join(packageDirectory, "package.json"), "OpenClaw plugin manifest");
+  const originalManifest = JSON.stringify(manifest);
   if (
     manifest.version !== "2026.10.5" ||
     !["@openclaw/discord", "@openclaw/googlechat", "@openclaw/slack"].includes(
@@ -1955,7 +1957,15 @@ export function patchOpenClaw105PluginDependencies(
     }
     dependencies.zod = "4.6.6";
     if (manifest.name !== "@openclaw/googlechat") dependencies.undici = "8.12.3";
-    writeJson(join(packageDirectory, "package.json"), manifest);
+    rewriteRegularFile(
+      join(packageDirectory, "package.json"),
+      "OpenClaw plugin manifest",
+      (original) => {
+        if (JSON.stringify(JSON.parse(original)) !== originalManifest)
+          throw new Error("OpenClaw plugin manifest changed before writing");
+        return `${JSON.stringify(manifest, null, 2)}\n`;
+      },
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
