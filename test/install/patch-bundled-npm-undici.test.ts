@@ -76,6 +76,78 @@ afterEach(() => {
 });
 
 describe("npm bundled undici remediation", () => {
+  it("rejects an unreviewed npm identity before restoring its missing package", () => {
+    const target = fixture(AFFECTED_UNDICI_VERSION);
+    const live = path.join(target.npmRoot, "node_modules", "undici");
+    const backup = `${live}.nemoclaw-backup-123-0123456789abcdef`;
+    fs.renameSync(live, backup);
+    writeJson(path.join(target.npmRoot, "package.json"), {
+      name: "other",
+      version: REVIEWED_NPM_VERSION,
+    });
+    expect(() => patchBundledNpmUndici(target)).toThrow("npm package identity has drifted");
+    expect(fs.existsSync(live)).toBe(false);
+    expect(fs.readFileSync(path.join(backup, "old.js"), "utf8")).toBe("old\n");
+  });
+
+  it.each([
+    { entrypoint: "direct", run: (target) => patchBundledNpmUndici(target) },
+    {
+      entrypoint: "registry",
+      run: (target) =>
+        patchBundledNpmUndiciFromRegistry(target.npmRoot, {
+          commandRunner: () => {},
+          prepareReplacement: () => ({
+            replacementRoot: target.replacementRoot,
+            cleanup: () => {},
+          }),
+        }),
+    },
+  ] satisfies Array<{
+    entrypoint: string;
+    run: (target: ReturnType<typeof fixture>) => { state: string };
+  }>)("recovers an interrupted missing live package through $entrypoint", ({ run }) => {
+    const target = fixture(AFFECTED_UNDICI_VERSION);
+    const live = path.join(target.npmRoot, "node_modules", "undici");
+    const backup = `${live}.nemoclaw-backup-123-0123456789abcdef`;
+    // State left after the backup copy and live removal, before replacement rename.
+    fs.cpSync(live, backup, { recursive: true });
+    fs.rmSync(live, { recursive: true });
+    const staging = path.join(target.npmRoot, "node_modules", ".undici.nemoclaw-stage-interrupted");
+    fs.mkdirSync(staging);
+    fs.writeFileSync(path.join(staging, "unverified"), "preserve\n");
+
+    expect(run(target).state).toBe("fixed");
+    expect(verifyBundledNpmUndici(target.npmRoot).state).toBe("fixed");
+    expect(fs.existsSync(backup)).toBe(false);
+    expect(fs.readFileSync(path.join(staging, "unverified"), "utf8")).toBe("preserve\n");
+  });
+
+  it("recovers the reviewed npm 12.2.1 backup before remediating it", () => {
+    const target = fixture("6.29.0");
+    writeJson(path.join(target.npmRoot, "package.json"), { name: "npm", version: "12.2.1" });
+    const live = path.join(target.npmRoot, "node_modules", "undici");
+    const backup = `${live}.nemoclaw-backup-123-0123456789abcdef`;
+    fs.renameSync(live, backup);
+    expect(patchBundledNpmUndici(target)).toEqual({
+      undiciVersion: FIXED_UNDICI_VERSION,
+      npmVersion: "12.2.1",
+      state: "fixed",
+    });
+    expect(fs.existsSync(backup)).toBe(false);
+  });
+
+  it("retains a missing-live backup from a different npm distribution", () => {
+    const target = fixture(AFFECTED_UNDICI_VERSION);
+    writeJson(path.join(target.npmRoot, "package.json"), { name: "npm", version: "12.2.1" });
+    const live = path.join(target.npmRoot, "node_modules", "undici");
+    const backup = `${live}.nemoclaw-backup-123-0123456789abcdef`;
+    fs.renameSync(live, backup);
+    expect(() => patchBundledNpmUndici(target)).toThrow("retained backup cannot be verified");
+    expect(fs.existsSync(live)).toBe(false);
+    expect(fs.readFileSync(path.join(backup, "old.js"), "utf8")).toBe("old\n");
+  });
+
   it("repairs the npm version bundled by OpenClaw without changing npm itself", () => {
     const target = fixture("6.29.0");
     writeJson(path.join(target.npmRoot, "package.json"), { name: "npm", version: "12.2.1" });

@@ -79,6 +79,57 @@ afterEach(() => {
 });
 
 describe("npm bundled ip-address remediation", () => {
+  it("rejects an unreviewed npm identity before restoring its missing package", () => {
+    const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
+    const live = path.join(target.npmRoot, "node_modules", "ip-address");
+    const backup = `${live}.nemoclaw-backup-123-0123456789abcdef`;
+    fs.renameSync(live, backup);
+    writeJson(path.join(target.npmRoot, "package.json"), {
+      name: "other",
+      version: REVIEWED_NPM_VERSION,
+    });
+    expect(() => patchBundledNpmIpAddress(target)).toThrow("npm package identity has drifted");
+    expect(fs.existsSync(live)).toBe(false);
+    expect(fs.readFileSync(path.join(backup, "old.js"), "utf8")).toBe("old\n");
+  });
+
+  it.each([
+    { entrypoint: "direct", run: (target) => patchBundledNpmIpAddress(target) },
+    {
+      entrypoint: "registry",
+      run: (target) =>
+        patchBundledNpmIpAddressFromRegistry(target.npmRoot, {
+          commandRunner: () => {},
+          prepareReplacement: () => ({
+            replacementRoot: target.replacementRoot,
+            cleanup: () => {},
+          }),
+        }),
+    },
+  ] satisfies Array<{
+    entrypoint: string;
+    run: (target: ReturnType<typeof fixture>) => { state: string };
+  }>)("recovers an interrupted missing live package through $entrypoint", ({ run }) => {
+    const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
+    const live = path.join(target.npmRoot, "node_modules", "ip-address");
+    const backup = `${live}.nemoclaw-backup-123-0123456789abcdef`;
+    // State left after the backup copy and live removal, before replacement rename.
+    fs.cpSync(live, backup, { recursive: true });
+    fs.rmSync(live, { recursive: true });
+    const staging = path.join(
+      target.npmRoot,
+      "node_modules",
+      ".ip-address.nemoclaw-stage-interrupted",
+    );
+    fs.mkdirSync(staging);
+    fs.writeFileSync(path.join(staging, "unverified"), "preserve\n");
+
+    expect(run(target).state).toBe("fixed");
+    expect(verifyBundledNpmIpAddress(target.npmRoot).state).toBe("fixed");
+    expect(fs.existsSync(backup)).toBe(false);
+    expect(fs.readFileSync(path.join(staging, "unverified"), "utf8")).toBe("preserve\n");
+  });
+
   it("replaces the complete affected private package tree", () => {
     const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
 

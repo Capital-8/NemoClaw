@@ -137,27 +137,23 @@ function removeBackup(backupPath: string): void {
   }
 }
 
-// A previous invocation may have installed the verified package but failed cleanup.
-// Only one recognized backup is eligible; ambiguous or unverifiable trees stay intact.
-export function reconcileBundledPackageBackup(options: {
+type RetainedBackupOptions = {
   npmRoot: string;
   packageName: "ip-address" | "undici";
-  fixed: boolean;
   verifyBackup: (manifest: JsonObject) => void;
-}): void {
+};
+
+// Only one recognized backup is eligible; ambiguous or unverifiable trees stay intact.
+function verifiedRetainedBackup(options: RetainedBackupOptions): string | undefined {
   const parent = requireRealDirectory(
     join(options.npmRoot, "node_modules"),
     "npm node_modules root",
   );
   const prefix = `${options.packageName}.nemoclaw-backup-`;
   const backups = readdirSync(parent).filter((entry) => entry.startsWith(prefix));
-  if (backups.length === 0) return;
+  if (backups.length === 0) return undefined;
   const backupPath = join(parent, backups[0]);
-  if (
-    !options.fixed ||
-    backups.length !== 1 ||
-    !/^[1-9][0-9]*-[a-f0-9]{16}$/.test(backups[0].slice(prefix.length))
-  ) {
+  if (backups.length !== 1 || !/^[1-9][0-9]*-[a-f0-9]{16}$/.test(backups[0].slice(prefix.length))) {
     throw new Error(
       `npm bundled ${options.packageName} has an ambiguous retained backup; inspect before retrying: ${backupPath}`,
     );
@@ -172,6 +168,35 @@ export function reconcileBundledPackageBackup(options: {
     throw new Error(
       `npm bundled ${options.packageName} retained backup cannot be verified; inspect before retrying: ${backupPath}`,
       { cause: error },
+    );
+  }
+  return backupPath;
+}
+
+// Callers validate npm identity first. Never replace an existing path, including a dangling link.
+// Unverified staging trees are not used or removed during recovery.
+export function restoreMissingBundledPackage(options: RetainedBackupOptions): void {
+  const parent = requireRealDirectory(
+    join(options.npmRoot, "node_modules"),
+    "npm node_modules root",
+  );
+  const livePath = join(parent, options.packageName);
+  if (lstatSync(livePath, { throwIfNoEntry: false })) return;
+  const backupPath = verifiedRetainedBackup(options);
+  if (backupPath) renameSync(backupPath, livePath);
+}
+
+// A previous invocation may have installed the verified package but failed cleanup.
+export function reconcileBundledPackageBackup(
+  options: RetainedBackupOptions & {
+    fixed: boolean;
+  },
+): void {
+  const backupPath = verifiedRetainedBackup(options);
+  if (!backupPath) return;
+  if (!options.fixed) {
+    throw new Error(
+      `npm bundled ${options.packageName} has an ambiguous retained backup; inspect before retrying: ${backupPath}`,
     );
   }
   removeBackup(backupPath);

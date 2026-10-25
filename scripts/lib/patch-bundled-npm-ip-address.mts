@@ -12,6 +12,7 @@ import {
   type PreparedBundledReplacement,
   replaceBundledPackage,
   reconcileBundledPackageBackup,
+  restoreMissingBundledPackage,
   prepareBundledPackageReplacement,
   remediateBundledPackageFromRegistry,
   runBundledNpmCommand,
@@ -70,12 +71,18 @@ export type BundledNpmIpAddressState = Readonly<{
   state: "affected" | "fixed";
 }>;
 
-export function inspectBundledNpmIpAddress(npmRoot: string): BundledNpmIpAddressState {
-  const root = realDirectory(npmRoot, "npm package root");
+function inspectNpmVersion(root: string): string {
   const npmManifest = readJson(join(root, "package.json"), "npm package manifest");
   if (npmManifest.name !== "npm" || npmManifest.version !== REVIEWED_NPM_VERSION) {
     throw new Error(`npm package identity has drifted; expected npm@${REVIEWED_NPM_VERSION}`);
   }
+
+  return REVIEWED_NPM_VERSION;
+}
+
+export function inspectBundledNpmIpAddress(npmRoot: string): BundledNpmIpAddressState {
+  const root = realDirectory(npmRoot, "npm package root");
+  const npmVersion = inspectNpmVersion(root);
 
   const version = verifyIpAddressManifest(
     readJson(
@@ -95,7 +102,7 @@ export function inspectBundledNpmIpAddress(npmRoot: string): BundledNpmIpAddress
 
   return {
     ipAddressVersion: version,
-    npmVersion: REVIEWED_NPM_VERSION,
+    npmVersion,
     state: version === FIXED_IP_ADDRESS_VERSION ? "fixed" : "affected",
   };
 }
@@ -124,8 +131,7 @@ export function patchBundledNpmIpAddress(options: {
     throw new Error(`replacement package must be ip-address@${FIXED_IP_ADDRESS_VERSION}`);
   }
 
-  const current = inspectBundledNpmIpAddress(npmRoot);
-  reconcileBackup(npmRoot, current);
+  const current = inspectForPatch(npmRoot);
   if (current.state === "fixed") return current;
 
   return replaceBundledPackage({
@@ -153,17 +159,22 @@ function prepareFixedIpAddressReplacement(
   });
 }
 
-function reconcileBackup(npmRoot: string, current: BundledNpmIpAddressState): void {
-  reconcileBundledPackageBackup({
-    npmRoot,
-    packageName: "ip-address",
-    fixed: current.state === "fixed",
-    verifyBackup(manifest) {
+function inspectForPatch(npmRoot: string): BundledNpmIpAddressState {
+  const root = realDirectory(npmRoot, "npm package root");
+  inspectNpmVersion(root);
+  const recovery = {
+    npmRoot: root,
+    packageName: "ip-address" as const,
+    verifyBackup(manifest: JsonObject) {
       const affectedVersion = AFFECTED_IP_ADDRESS_VERSION;
       if (verifyIpAddressManifest(manifest) !== affectedVersion)
         throw new Error("retained backup identity has drifted");
     },
-  });
+  };
+  restoreMissingBundledPackage(recovery);
+  const current = inspectBundledNpmIpAddress(root);
+  reconcileBundledPackageBackup({ ...recovery, fixed: current.state === "fixed" });
+  return current;
 }
 
 export type BundledNpmIpAddressRegistryDependencies = Readonly<{
@@ -175,8 +186,7 @@ export function patchBundledNpmIpAddressFromRegistry(
   npmRoot: string,
   dependencies: BundledNpmIpAddressRegistryDependencies = {},
 ): BundledNpmIpAddressState {
-  const current = inspectBundledNpmIpAddress(npmRoot);
-  reconcileBackup(npmRoot, current);
+  const current = inspectForPatch(npmRoot);
   return remediateBundledPackageFromRegistry({
     current,
     commandRunner: dependencies.commandRunner ?? runBundledNpmCommand,

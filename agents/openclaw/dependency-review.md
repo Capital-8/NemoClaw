@@ -152,12 +152,15 @@ Locks describe the repaired installed graph. Offline image builds apply the reci
 Ordinary audit installation leaves the reviewed lock unchanged; explicit `updateLock` mode updates metadata only when producing or regenerating a reviewed graph.
 The runtime helper verifies the original or patched managed-workspace digest before updating overrides.
 The shared `bundled-npm-package.mts` owns package replacement, rollback, archive-integrity checks, and backup cleanup for the ip-address and Undici repairs.
-After failed cleanup, both entrypoints verify the live replacement and one recognized affected backup before retrying deletion.
+Both entrypoints restore one verified affected backup when an interrupted replacement leaves the live package absent.
+They validate npm identity before restoration and preserve unverified staging trees.
+Cleanup retries remove one recognized affected backup only after verifying the live replacement.
 Ambiguous, unverifiable, or unsafe backups fail with an actionable path and remain intact.
 The migration runtime uses the same fail-closed recovery rule for its retained Undici backup.
 `test/install/bundled-npm-package.test.ts` covers shared archive and recovery failures; the package-specific suites retain identity and rollback coverage.
 `test/install/remediate-openclaw-runtime-dependencies.test.ts` covers migration cleanup and metadata boundaries.
 `test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` executes npm, npx, and Discord SDK response parsing after remediating actual reviewed 2026.10.5 packages.
+It also verifies Google Chat account parsing through patched Zod and Slack Bolt HTTP body parsing through its patched local parser dependencies.
 Remove these recipes only when reviewed upstream artifacts contain the fixes and clean installation verifies every affected consumer.
 
 WeChat uses its separately locked 2.4.10 plugin and Zod 4.6.6 graph.
