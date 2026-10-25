@@ -8,6 +8,18 @@ import { DatabaseSync } from "node:sqlite";
 type NativeFunction = (...args: unknown[]) => unknown;
 type NativeLoader = (root: string, prefix: string, name: string) => Promise<NativeFunction>;
 
+export type SessionInventoryStage =
+  | "candidateExport"
+  | "configuredExport"
+  | "sqliteExport"
+  | "stateExport"
+  | "candidates"
+  | "configured"
+  | "stateDirectory"
+  | "validation"
+  | "configuredPaths"
+  | "candidatePaths";
+
 export class MixedLegacySessionsError extends Error {}
 
 function record(value: unknown): Record<string, unknown> {
@@ -92,32 +104,42 @@ export async function resolveLegacySessionSources(
   bridgeRoot: string,
   config: Record<string, unknown>,
   loadNative: NativeLoader,
+  observeStage?: (stage: SessionInventoryStage) => void,
 ): Promise<{ storePath: string; sqlitePath: string }[]> {
   const version = record(
     JSON.parse(fs.readFileSync(path.join(bridgeRoot, "package.json"), "utf8")),
   ).version;
   if (version !== "2026.9.5" && version !== "2026.9.7")
     throw new Error("Unreviewed session migration runtime");
+  observeStage?.("candidateExport");
   const candidates = await loadNative(
     bridgeRoot,
     "targets-",
     "resolveAllAgentSessionStoreCandidateTargetsSync",
   );
+  observeStage?.("configuredExport");
   const configured = await loadNative(bridgeRoot, "targets-", "resolveSessionStoreTargets");
+  observeStage?.("sqliteExport");
   const resolveSqlite = await loadNative(
     bridgeRoot,
     version === "2026.9.5" ? "doctor-session-sqlite-readers-" : "session-sqlite-migration-readers-",
     "resolveTargetSqlitePath",
   );
+  observeStage?.("stateExport");
   const stateDir = await loadNative(bridgeRoot, "paths-", "resolveStateDir");
+  observeStage?.("candidates");
   const targets = candidates(config, { env: process.env });
+  observeStage?.("configured");
   const configuredTargets = configured(config, { allAgents: true }, { env: process.env });
+  observeStage?.("stateDirectory");
   const state = stateDir(process.env);
+  observeStage?.("validation");
   if (!Array.isArray(targets) || !Array.isArray(configuredTargets) || typeof state !== "string") {
     throw new Error("Invalid native session store inventory");
   }
   // Match both bridge Doctors' all-agent discovery, including the historical shared index.
   const sharedStore = path.join(state, "sessions", "sessions.json");
+  observeStage?.("configuredPaths");
   const stores = [
     ...targets,
     ...configuredTargets.map((target) => ({
@@ -126,6 +148,7 @@ export async function resolveLegacySessionSources(
       storePath: sharedStore,
     })),
   ];
+  observeStage?.("candidatePaths");
   return stores.map((value) => {
     const target = record(value);
     const sqlite = resolveSqlite(target, process.env);

@@ -13,6 +13,7 @@ import {
   assertLegacySessionSourcesPreserved,
   MixedLegacySessionsError,
   resolveLegacySessionSources,
+  type SessionInventoryStage,
 } from "./openclaw-legacy-session-admission.mts";
 
 const BRIDGES = [
@@ -185,7 +186,30 @@ const PREVIEW_FAILURES = {
   55: "core config migration",
   56: "config validation",
   57: "session source inventory",
+  58: "session candidate export loading",
+  59: "configured session export loading",
+  60: "session SQLite export loading",
+  61: "session state-directory export loading",
+  62: "session candidate discovery",
+  63: "configured session discovery",
+  64: "session state-directory resolution",
+  65: "session inventory result validation",
+  66: "configured session SQLite path resolution",
+  67: "candidate session SQLite path resolution",
 } as const;
+
+const SESSION_INVENTORY_FAILURE_CODES = {
+  candidateExport: 58,
+  configuredExport: 59,
+  sqliteExport: 60,
+  stateExport: 61,
+  candidates: 62,
+  configured: 63,
+  stateDirectory: 64,
+  validation: 65,
+  configuredPaths: 66,
+  candidatePaths: 67,
+} as const satisfies Record<SessionInventoryStage, keyof typeof PREVIEW_FAILURES>;
 
 class PreviewError extends Error {
   status: keyof typeof PREVIEW_FAILURES;
@@ -234,6 +258,9 @@ async function previewBridgeConfig(
       root,
       object(preview.next ?? roster.config),
       nativeFunction,
+      (inventoryStage) => {
+        stage = SESSION_INVENTORY_FAILURE_CODES[inventoryStage];
+      },
     );
   } catch (error) {
     if (error instanceof MixedLegacySessionsError) throw error;

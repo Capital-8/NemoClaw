@@ -634,7 +634,7 @@ describe("OpenClaw intermediate restore migrations", () => {
     ["legacy.roster-fixture.mjs", "return {config}", "agent roster normalization"],
     ["io.snapshot-fixture.mjs", "return {next:config}", "core config migration"],
     ["validation-core-fixture.mjs", "return {ok:", "config validation"],
-    ["targets-fixture.mjs", "return [{agentId:", "session source inventory"],
+    ["targets-fixture.mjs", "return [{agentId:", "session candidate discovery"],
   ])(
     "identifies a failed preview without exposing native input (%s, %s)",
     (file, needle, stage) => {
@@ -661,6 +661,96 @@ describe("OpenClaw intermediate restore migrations", () => {
       expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
     },
   );
+  describe.each(["2026.9.5", "2026.9.7"])("session inventory diagnostics for %s", (version) => {
+    it.each([
+      [
+        "targets-fixture.mjs",
+        "resolveAllAgentSessionStoreCandidateTargetsSync,",
+        "",
+        "session candidate export loading",
+      ],
+      [
+        "targets-fixture.mjs",
+        ",resolveSessionStoreTargets};",
+        "};",
+        "configured session export loading",
+      ],
+      ["sqlite", "export {resolveTargetSqlitePath};", "", "session SQLite export loading"],
+      [
+        "paths-fixture.mjs",
+        "export {resolveStateDir};",
+        "if(process.argv[2]==='--preview')resolveStateDir=undefined;export {resolveStateDir};",
+        "session state-directory export loading",
+      ],
+      [
+        "targets-fixture.mjs",
+        "return [{agentId:",
+        "REJECT;return [{agentId:",
+        "session candidate discovery",
+      ],
+      [
+        "targets-fixture.mjs",
+        "return resolveAllAgentSessionStoreCandidateTargetsSync();",
+        "REJECT;",
+        "configured session discovery",
+      ],
+      [
+        "paths-fixture.mjs",
+        "return process.env.OPENCLAW_STATE_DIR;",
+        "if(process.argv[2]==='--preview'){REJECT;}return process.env.OPENCLAW_STATE_DIR;",
+        "session state-directory resolution",
+      ],
+      [
+        "targets-fixture.mjs",
+        "return resolveAllAgentSessionStoreCandidateTargetsSync();",
+        "return undefined;",
+        "session inventory result validation",
+      ],
+      [
+        "sqlite",
+        "return target.sqlitePath??",
+        "REJECT;return target.sqlitePath??",
+        "configured session SQLite path resolution",
+      ],
+      [
+        "sqlite",
+        "return target.sqlitePath??",
+        "resolveTargetSqlitePath.calls=(resolveTargetSqlitePath.calls??0)+1;if(resolveTargetSqlitePath.calls===2){REJECT;}return target.sqlitePath??",
+        "candidate session SQLite path resolution",
+      ],
+    ])(
+      "refuses before Doctor and retains private inputs (%s, %s)",
+      (file, needle, replacement, stage) => {
+        const proof = fixture({ writer: version === "2026.9.7" ? "2026.9.6" : "2026.6.10" });
+        const modulePath = path.join(
+          proof.migrationRoot,
+          version,
+          "node_modules/openclaw/dist",
+          file === "sqlite"
+            ? version === "2026.9.5"
+              ? "doctor-session-sqlite-readers-fixture.mjs"
+              : "session-sqlite-migration-readers-fixture.mjs"
+            : file,
+        );
+        const original = fs.readFileSync(modulePath, "utf8");
+        const rejection = `throw new Error(${JSON.stringify(`fixture-secret-value ${proof.configPath}`)})`;
+        expect(original).toContain(needle);
+        fs.writeFileSync(
+          modulePath,
+          original.replace(needle, replacement.replace("REJECT", rejection)),
+        );
+        const result = proof.run();
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain(`OpenClaw ${version} config preview failed`);
+        expect(result.stderr).toContain(`Preview stage: ${stage}.`);
+        expect(result.stderr).not.toContain("fixture-secret-value");
+        expect(result.stderr).not.toContain(proof.configPath);
+        expect(result.stderr).not.toContain(modulePath);
+        expect(proof.calls()).toEqual([]);
+        expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
+      },
+    );
+  });
   it("refuses stranded Telegram state even when both older runtimes were skipped", () => {
     const proof = fixture({ writer: "2026.10.5", scenario: "retired-remains" });
     const result = proof.run();
