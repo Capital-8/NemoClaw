@@ -3,7 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import {
+import fs, {
   closeSync,
   constants,
   cpSync,
@@ -39,6 +39,70 @@ export function readJsonObject(file: string, label: string): JsonObject {
     throw new Error(`${label} is invalid: ${String(error)}`);
   } finally {
     closeSync(descriptor);
+  }
+}
+
+/** Publish complete verified metadata without modifying the source file in place. */
+export function rewriteRegularFile(
+  filename: string,
+  label: string,
+  transform: (original: string) => string,
+): void {
+  const descriptor = fs.openSync(
+    filename,
+    fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  let temporary: string | undefined;
+  try {
+    const initial = fs.fstatSync(descriptor);
+    if (!initial.isFile()) throw new Error(`${label} must be a real file`);
+    const original = fs.readFileSync(descriptor, "utf8");
+    const patched = transform(original);
+    if (patched === original) return;
+    const bytes = Buffer.from(patched);
+    const stagingPath = `${filename}.nemoclaw-${randomBytes(16).toString("hex")}.tmp`;
+    const staging = fs.openSync(
+      stagingPath,
+      fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    temporary = stagingPath;
+    try {
+      let offset = 0;
+      while (offset < bytes.length) {
+        const written = fs.writeSync(staging, bytes, offset, bytes.length - offset, offset);
+        if (!written) throw new Error(`${label} write made no progress`);
+        offset += written;
+      }
+      if (!fs.readFileSync(staging).equals(bytes))
+        throw new Error(`${label} staged contents failed verification`);
+      const staged = fs.fstatSync(staging);
+      if (staged.uid !== initial.uid || staged.gid !== initial.gid)
+        fs.fchownSync(staging, initial.uid, initial.gid);
+      fs.fchmodSync(staging, initial.mode & 0o777);
+      fs.fsyncSync(staging);
+      const current = fs.lstatSync(filename);
+      const observed = fs.fstatSync(descriptor);
+      if (
+        !current.isFile() ||
+        current.dev !== initial.dev ||
+        current.ino !== initial.ino ||
+        observed.size !== initial.size ||
+        observed.mtimeMs !== initial.mtimeMs ||
+        observed.ctimeMs !== initial.ctimeMs
+      )
+        throw new Error(`${label} changed before writing`);
+      fs.renameSync(stagingPath, filename);
+      temporary = undefined;
+    } finally {
+      fs.closeSync(staging);
+    }
+  } finally {
+    try {
+      if (temporary) fs.unlinkSync(temporary);
+    } finally {
+      fs.closeSync(descriptor);
+    }
   }
 }
 

@@ -4,11 +4,12 @@
 
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import fs, { existsSync, lstatSync, renameSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   readJsonObject,
+  rewriteRegularFile,
   rejectUnsafePackageTree,
   requireRealDirectory,
 } from "./bundled-npm-package.mts";
@@ -25,33 +26,6 @@ import {
 } from "./openclaw-npm-remediation.mts";
 
 type LockEntry = Record<string, unknown>;
-
-function rewriteRegularFile(
-  filename: string,
-  label: string,
-  transform: (original: string) => string,
-): void {
-  const descriptor = fs.openSync(
-    filename,
-    fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-  );
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) throw new Error(`${label} must be a real file`);
-    const original = fs.readFileSync(descriptor, "utf8");
-    const patched = transform(original);
-    if (patched === original) return;
-    const bytes = Buffer.from(patched);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const written = fs.writeSync(descriptor, bytes, offset, bytes.length - offset, offset);
-      if (!written) throw new Error(`${label} write made no progress`);
-      offset += written;
-    }
-    fs.ftruncateSync(descriptor, bytes.length);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-}
 
 function writeUnchangedJsonObject(filename: string, expected: string, updated: object): void {
   rewriteRegularFile(filename, "OpenClaw remediation metadata", (original) => {

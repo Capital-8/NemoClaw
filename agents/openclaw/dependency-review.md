@@ -92,6 +92,10 @@ Ambiguous or unsafe retained state fails without deletion.
 
 Ordinary audit installation leaves the reviewed lock unchanged.
 The explicit `updateLock` mode updates metadata when producing the aggregate archive graph or regenerating a reviewed lock.
+The shared writer in `bundled-npm-package.mts` serves runtime workspaces, runtime and plugin manifests, and lock metadata.
+These updates stage and verify complete bytes in the same directory before an atomic rename.
+Staging failures preserve the original file and remove the attempt's temporary file; a later retry can resume.
+The writer preserves file permissions and ownership, rejects symlinks, and stops if it observes a replaced pathname or changed source before publication.
 `test/install/remediate-openclaw-runtime-dependencies.test.ts` covers resolution, metadata writes, cleanup retries, unsafe state, and stale-lock rejection.
 `test/install/patch-bundled-npm-undici.test.ts` covers the bundled npm replacement, rollback, and cleanup failures.
 The shared `bundled-npm-package.mts` owns replacement, rollback, archive verification, and backup cleanup for ip-address and Undici.
