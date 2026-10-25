@@ -238,9 +238,10 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       await runner().runGatewayStop({}, {});
       config.tools.web.search.enabled = false;
       for (let index = 0; index < SEARCH_DENIAL_IDENTITY_LIMIT; index++) {
-        await admit({ runId: `capacity-${index}`, sessionKey: `capacity-session-${index}` });
+        const context = { runId: `capacity-${index}`, sessionKey: `capacity-session-${index}` };
+        await admit(context);
+        blocked(await call("web_search", context, `capacity-search-${index}`));
       }
-      blocked(await call("web_search", { runId: "capacity-0" }, "capacity-search"));
       const excess = await runner().runBeforeAgentRun(
         { prompt: "Read README.md.", messages: [] },
         { runId: "excess" },
@@ -251,8 +252,12 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "real gate refuses excess turn before inference",
       );
       blocked(await call("read", { runId: "excess" }, "excess-read"));
-      await call("read", { runId: "capacity-1" }, "ordinary-at-capacity");
-      assert.equal(sideEffects, 3, "admitted ordinary work remains available at capacity");
+      blocked(await call("read", { runId: "capacity-1" }, "denied-at-capacity"));
+      assert.equal(
+        sideEffects,
+        2,
+        "retained search denials block substitute execution at capacity",
+      );
       for (let index = 0; index < SEARCH_DENIAL_IDENTITY_LIMIT; index++) {
         await runner().runAgentEnd(
           { success: true, messages: [] },
@@ -263,7 +268,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       await call("read", { runId: "recovered" }, "recovered-read");
       assert.equal(
         sideEffects,
-        4,
+        3,
         "completion restores capacity without waiting for retention expiry",
       );
     } finally {

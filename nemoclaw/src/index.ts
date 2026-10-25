@@ -284,17 +284,13 @@ function blocksDisabledSearch(
   // Identity-less calls cannot safely correlate turns, so substitutes fail closed.
   const substituteTool =
     /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
-  return (
-    (!deniedSearchRuns.hasAdmission(event.runId, aliases) ||
-      deniedSearchRuns.blocks(event.runId)) &&
-    substituteTool.test(target)
-  );
+  return deniedSearchRuns.blocks(event.runId, aliases) && substituteTool.test(target);
 }
 
 export default function register(api: OpenClawPluginApi): void {
   const deniedSearchRuns = new DeniedSearchState(() => {
     api.logger.warn(
-      "Disabled-search identity capacity reached; new turns are refused until an active turn finishes or its deadline expires.",
+      "Disabled-search identity capacity reached; new turns are refused until retained restrictions clear.",
     );
   });
   // 1. Register /nemoclaw slash command (chat interface)
@@ -345,7 +341,7 @@ export default function register(api: OpenClawPluginApi): void {
               "This turn cannot start safely because OpenClaw did not provide a run or session identity. Check the gateway logs before retrying.",
           };
         }
-        if (deniedSearchRuns.admit(identity, identities)) return undefined;
+        if (deniedSearchRuns.canAdmit(identity, identities)) return undefined;
         return {
           outcome: "block",
           reason: "disabled-search turn admission unavailable",

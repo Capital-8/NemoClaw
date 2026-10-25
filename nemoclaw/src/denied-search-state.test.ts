@@ -17,24 +17,23 @@ describe("denied-search identity retention", () => {
     vi.useRealTimers();
   });
 
-  it("caps admitted identities and rejects excess turns", () => {
+  it("caps denied identities and rejects excess turns", () => {
     state.deny("run-first");
     state.deny("run-second");
-    state.deny("run-overflow");
     expect(state.size).toBe(2);
     expect(vi.getTimerCount()).toBe(1);
-    expect(warn).toHaveBeenCalledTimes(1);
     expect(state.blocks("run-first")).toBe(true);
-    expect(state.admit("run-overflow")).toBe(false);
-    expect(state.hasAdmission("run-overflow")).toBe(false);
+    expect(state.canAdmit("run-overflow")).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(state.blocks("run-overflow")).toBe(true);
     expect(state.blocks(undefined)).toBe(true);
     state.delete("run-first");
     expect(state.size).toBe(1);
     expect(state.blocks("run-first")).toBe(false);
-    expect(state.admit("run-overflow")).toBe(true);
+    expect(state.canAdmit("run-overflow")).toBe(true);
   });
 
-  it("releases capacity after retained and excess turns finish", () => {
+  it("keeps untracked denials blocked after retained turns finish", () => {
     state.deny("retained-first");
     state.deny("retained-second");
     state.deny("overflow-first");
@@ -43,12 +42,15 @@ describe("denied-search identity retention", () => {
     state.delete("overflow-first");
     state.delete("retained-second");
     state.delete("overflow-second");
-    expect(state.blocks("unrelated-run")).toBe(false);
+    expect(state.blocks("overflow-second")).toBe(true);
+    expect(state.canAdmit("unrelated-run")).toBe(false);
     expect(state.size).toBe(0);
+    vi.advanceTimersByTime(SEARCH_DENIAL_RETENTION_MS);
+    expect(state.blocks("unrelated-run")).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("expires abandoned admission slots without another tool call", () => {
+  it("expires abandoned denials without another tool call", () => {
     state.deny("run-first");
     state.deny("run-second");
     state.deny("run-overflow");
@@ -65,23 +67,25 @@ describe("denied-search identity retention", () => {
   });
 
   it("preserves active denial when admission repeats and releases capacity on completion", () => {
-    expect(state.admit("ordinary")).toBe(true);
+    expect(state.canAdmit("ordinary")).toBe(true);
     state.deny("denied");
-    expect(state.admit("denied")).toBe(true);
+    expect(state.canAdmit("denied")).toBe(true);
     expect(state.blocks("denied")).toBe(true);
     expect(state.blocks("ordinary")).toBe(false);
-    expect(state.admit("excess")).toBe(false);
-    state.delete("ordinary");
-    expect(state.admit("excess")).toBe(true);
+    expect(state.size).toBe(1);
+    state.deny("second-denied");
+    expect(state.canAdmit("excess")).toBe(false);
+    state.delete("second-denied");
+    expect(state.canAdmit("excess")).toBe(true);
     expect(state.blocks("denied")).toBe(true);
-    expect(state.size).toBe(2);
+    expect(state.size).toBe(1);
   });
 
   it("learns missing aliases from a known turn without losing its denial", () => {
-    state.admit("runId:known");
-    expect(
-      state.hasAdmission("runId:known", ["runId:known", "sessionKey:session", "sessionId:id"]),
-    ).toBe(true);
+    state.deny("runId:known");
+    expect(state.blocks("runId:known", ["runId:known", "sessionKey:session", "sessionId:id"])).toBe(
+      true,
+    );
     state.deny("sessionKey:session");
     expect(state.blocks("runId:known")).toBe(true);
     state.delete(["sessionId:id"]);

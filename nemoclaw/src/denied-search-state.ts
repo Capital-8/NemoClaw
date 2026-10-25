@@ -6,16 +6,16 @@ const MAX_TURN_TIMEOUT_MS = 2_147_483_647;
 export const SEARCH_DENIAL_RETENTION_MS = MAX_TURN_TIMEOUT_MS + 60_000;
 export const SEARCH_DENIAL_IDENTITY_LIMIT = 1024;
 
-interface AdmittedSearchTurn {
+interface DeniedSearchTurn {
   expiresAt: number;
-  denied: boolean;
   aliases: Set<string>;
 }
 
-/** Reserve bounded turn ownership before inference so no active denial can overflow. */
+/** Retain only denied turns; ordinary admission never consumes an identity slot. */
 export class DeniedSearchState {
-  private readonly identities = new Map<string, AdmittedSearchTurn>();
+  private readonly identities = new Map<string, DeniedSearchTurn>();
   private capacityWarning = false;
+  private overflowExpiresAt = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   private readonly capacity: number;
@@ -31,7 +31,7 @@ export class DeniedSearchState {
     return this.identities.size;
   }
 
-  admit(identity: string, aliases: readonly string[] = []): boolean {
+  canAdmit(identity: string, aliases: readonly string[] = []): boolean {
     this.expire();
     const existing = this.owner(identity);
     if (existing) {
@@ -39,45 +39,39 @@ export class DeniedSearchState {
       return true;
     }
     if (this.knownAlias(identity)) return false;
-    if (this.size >= this.capacity) {
+    if (this.size >= this.capacity || this.overflowExpiresAt > 0) {
       if (!this.capacityWarning) this.onCapacity();
       this.capacityWarning = true;
       return false;
     }
-    const turn: AdmittedSearchTurn = {
-      expiresAt: Date.now() + SEARCH_DENIAL_RETENTION_MS,
-      denied: false,
-      aliases: new Set([identity]),
-    };
-    this.rememberAliases(turn, aliases);
-    this.identities.set(identity, turn);
-    this.schedule();
-    return true;
-  }
-
-  hasAdmission(identity: string | undefined, aliases: readonly string[] = []): boolean {
-    this.expire();
-    const found = identity ? this.owner(identity) : undefined;
-    if (!found) return false;
-    this.rememberAliases(found[1], aliases);
     return true;
   }
 
   deny(identity: string, aliases: readonly string[] = []): void {
-    if (!this.admit(identity, aliases)) return;
-    const turn = this.owner(identity)?.[1];
-    if (!turn) return;
-    turn.denied = true;
+    if (!this.canAdmit(identity, aliases)) {
+      // Concurrent ordinary turns can deny search after the table fills. Keep
+      // untracked denials fail closed even if another retained turn finishes.
+      this.overflowExpiresAt = Date.now() + SEARCH_DENIAL_RETENTION_MS;
+      this.schedule();
+      return;
+    }
+    const turn = this.owner(identity)?.[1] ?? { expiresAt: 0, aliases: new Set([identity]) };
+    this.rememberAliases(turn, aliases);
     turn.expiresAt = Date.now() + SEARCH_DENIAL_RETENTION_MS;
+    if (!this.owner(identity)) this.identities.set(identity, turn);
     this.schedule();
   }
 
-  blocks(identity: string | undefined): boolean {
+  blocks(identity: string | undefined, aliases: readonly string[] = []): boolean {
     this.expire();
     this.schedule();
     if (!identity) return true;
     const found = this.owner(identity);
-    return found ? found[1].denied : this.knownAlias(identity);
+    if (found) {
+      this.rememberAliases(found[1], aliases);
+      return true;
+    }
+    return !this.canAdmit(identity, aliases);
   }
 
   delete(identity: string | readonly string[]): void {
@@ -98,7 +92,7 @@ export class DeniedSearchState {
     this.schedule();
   }
 
-  private owner(identity: string): [string, AdmittedSearchTurn] | undefined {
+  private owner(identity: string): [string, DeniedSearchTurn] | undefined {
     const matches = [...this.identities].filter(([, turn]) => turn.aliases.has(identity));
     return matches.length === 1 ? matches[0] : undefined;
   }
@@ -107,7 +101,7 @@ export class DeniedSearchState {
     return [...this.identities.values()].some((turn) => turn.aliases.has(identity));
   }
 
-  private rememberAliases(turn: AdmittedSearchTurn, aliases: readonly string[]): void {
+  private rememberAliases(turn: DeniedSearchTurn, aliases: readonly string[]): void {
     const fields = new Set([...turn.aliases].map((key) => key.split(":")[0]));
     for (const alias of aliases.slice(0, 3)) {
       const field = alias.split(":")[0];
@@ -121,6 +115,7 @@ export class DeniedSearchState {
   clear(): void {
     this.identities.clear();
     this.capacityWarning = false;
+    this.overflowExpiresAt = 0;
     this.schedule();
   }
 
@@ -129,7 +124,8 @@ export class DeniedSearchState {
     for (const [identity, { expiresAt }] of this.identities) {
       if (expiresAt <= now) this.identities.delete(identity);
     }
-    if (this.size < this.capacity) this.capacityWarning = false;
+    if (this.overflowExpiresAt <= now) this.overflowExpiresAt = 0;
+    if (this.size < this.capacity && this.overflowExpiresAt === 0) this.capacityWarning = false;
   }
 
   private schedule(): void {
@@ -137,6 +133,7 @@ export class DeniedSearchState {
     this.timer = undefined;
     const nextExpiry = Math.min(
       ...Array.from(this.identities.values(), ({ expiresAt }) => expiresAt),
+      this.overflowExpiresAt || Infinity,
     );
     if (!Number.isFinite(nextExpiry)) return;
     // Retention includes cleanup grace beyond Node's largest timer delay.

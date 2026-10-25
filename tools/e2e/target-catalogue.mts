@@ -334,6 +334,7 @@ function commonEgressTarget(options: {
   hermes?: boolean;
   owningPaths?: readonly string[];
   profile?: E2eExecutionProfile;
+  prAdvisorSelectable?: boolean;
   runnerComparison?: boolean;
   selector: string;
   shard: string;
@@ -344,6 +345,7 @@ function commonEgressTarget(options: {
     agentRuntime: options.hermes ? "hermes" : "openclaw",
     environmentOrInferenceEndpoint: options.environmentOrInferenceEndpoint,
     profile: options.profile ?? "nvidia-inference",
+    prAdvisorSelectable: options.prAdvisorSelectable,
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -653,6 +655,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     displayName: "Networking: OpenClaw answers through balanced egress",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
+    prAdvisorSelectable: true,
     selector: "^common-egress.+C1.+$",
     owningPaths: [
       "agents/openclaw/manifest.yaml",
