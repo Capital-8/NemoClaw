@@ -88,7 +88,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
-      new Error("Tavily E2E requires the trusted main workflow with authorized credentials"),
+      null,
     ],
     [
       "branch workflow",
@@ -97,7 +97,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
-      new Error("Tavily E2E requires the trusted main workflow with authorized credentials"),
+      null,
     ],
     [
       "fork",
@@ -106,7 +106,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
-      new Error("Tavily E2E requires the trusted main workflow with authorized credentials"),
+      null,
     ],
     [
       "pull request",
@@ -115,7 +115,7 @@ describe("trusted E2E planning boundary", () => {
       "false",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "",
-      new Error("Tavily E2E requires the trusted main workflow with authorized credentials"),
+      null,
     ],
     [
       "admitted candidate",

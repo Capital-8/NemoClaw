@@ -667,18 +667,20 @@ switch (args.slice(0, 2).join(" ")) {
       canonicalTargets().find(
         (target) => target.id === "ubuntu-repo-cloud-langchain-deepagents-code",
       )?.requiredSecrets,
-    ).toEqual(["NVIDIA_INFERENCE_API_KEY", "TAVILY_API_KEY"]);
+    ).toEqual(["NVIDIA_INFERENCE_API_KEY"]);
   });
 
-  it("passes the required Tavily secret only to its live check (#13082)", async () => {
+  it("passes the optional Tavily secret only to its live check (#13082)", async () => {
     const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-caller-"));
-    const run = vi.fn(async () => shellResult(0, ""));
+    const run = vi.fn(async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
+      shellResult(0, ""),
+    );
     const script = "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh";
     try {
       await runE2eCloudExperimentalChecks(
         "ubuntu-repo-cloud-langchain-deepagents-code",
         "sandbox",
-        [script],
+        [script, DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS[0]],
         {
           artifacts: new ArtifactSink(artifactRoot),
           cleanup: new CleanupRegistry(),
@@ -699,6 +701,82 @@ switch (args.slice(0, 2).join(" ")) {
           redactionValues: expect.arrayContaining(["tavily-fixture-key"]),
         }),
       );
+      expect(run).toHaveBeenCalledTimes(3);
+      expect(run.mock.calls[0]?.[1]?.env).not.toHaveProperty("TAVILY_API_KEY");
+      expect(run.mock.calls[2]?.[1]?.env).not.toHaveProperty("TAVILY_API_KEY");
+    } finally {
+      fs.rmSync(artifactRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([shellResult(1, "Tavily denial failed"), shellResult(0, "SKIP: Tavily unavailable")])(
+    "rejects an authenticated Tavily check that fails or skips (%j)",
+    async (result) => {
+      const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-failure-"));
+      const run = vi.fn().mockResolvedValueOnce(shellResult(0, "")).mockResolvedValueOnce(result);
+      try {
+        await expect(
+          runE2eCloudExperimentalChecks(
+            "ubuntu-repo-cloud-langchain-deepagents-code",
+            "sandbox",
+            ["test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh"],
+            {
+              artifacts: new ArtifactSink(artifactRoot),
+              cleanup: new CleanupRegistry(),
+              host: new HostCliClient({ run }),
+              secrets: new SecretStore({ TAVILY_API_KEY: "tavily-fixture-key" }, (note) => {
+                throw new Error(note);
+              }),
+            },
+          ),
+        ).rejects.toThrow();
+      } finally {
+        fs.rmSync(artifactRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([undefined, ""])("skips only Tavily when its optional key is %s", async (tavilyKey) => {
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-optional-"));
+    const run = vi.fn(async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
+      shellResult(0, ""),
+    );
+    const tavilyScript =
+      "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh";
+    const nextScript = "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh";
+    try {
+      await runE2eCloudExperimentalChecks(
+        "ubuntu-repo-cloud-langchain-deepagents-code",
+        "sandbox",
+        [tavilyScript, nextScript],
+        {
+          artifacts: new ArtifactSink(artifactRoot),
+          cleanup: new CleanupRegistry(),
+          host: new HostCliClient({ run }),
+          secrets: new SecretStore({ TAVILY_API_KEY: tavilyKey }, (note) => {
+            throw new Error(note);
+          }),
+        },
+      );
+      expect(run.mock.calls.map(([command]) => command)).toEqual([
+        expect.objectContaining({ command: "openshell" }),
+        expect.objectContaining({ command: "bash", args: [path.join(process.cwd(), nextScript)] }),
+      ]);
+      expect(
+        JSON.parse(
+          fs.readFileSync(
+            path.join(
+              artifactRoot,
+              "actions/cloud-experimental-09-deepagents-code-tavily-opt-in-skipped.json",
+            ),
+            "utf8",
+          ),
+        ),
+      ).toEqual({
+        scriptPath: tavilyScript,
+        status: "skipped",
+        reason: "TAVILY_API_KEY is not available",
+      });
     } finally {
       fs.rmSync(artifactRoot, { recursive: true, force: true });
     }
