@@ -3353,7 +3353,7 @@
           "pattern": "^ssh://",
           "type": "string"
         },
-        "networkCidr": {
+        "networkCIDR": {
           "description": "Canonical private IPv4 /24 on the selected Docker engine.",
           "pattern": "/24$",
           "type": "string"
@@ -3361,7 +3361,7 @@
       },
       "required": [
         "engine",
-        "networkCidr"
+        "networkCIDR"
       ],
       "type": "object"
     },
@@ -3781,7 +3781,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:nemoclaw:config:v1alpha1:sha256:5af430541d0e5241ec8a5ebf362b5aac40be2abc14d434aeb3d677195ece659c",
+  "$id": "urn:nemoclaw:config:v1alpha1:sha256:b8dad9d01ab8d8daef3a27b219c2207119ab1bacfd40878ce77180fbdf54b6f3",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "allOf": [
