@@ -46,12 +46,35 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 
 The reviewed archive audit and image build use the package identities in `ci/reviewed-npm-audit.json`. They verify registry integrity before replacing bundled packages. Official plugin installs also require OpenClaw's trusted install record. A changed source package, replacement identity, dependency layout, or patched tree stops remediation.
 
+The following recipes apply to the retained 2026.9.2 and 2026.9.5 archives.
+They do not describe the separate 2026.10.5 replacements.
+
 - Discord, Slack, and Google Chat: the reviewed 2026.9.2 and 2026.9.5 archives listed in `scripts/lib/openclaw-npm-remediation.mts` replace affected bundled Zod copies with `zod@4.6.6`. The Discord SDK wrapper also receives a digest-checked compatibility update. Remove each rewrite only when a reviewed upstream archive ships patched Zod and `scripts/audit-reviewed-npm-graph.mts` confirms its graph. `test/agents/openclaw/openclaw-zod-runtime.test.ts` supplies Discord runtime evidence. Require plugin-specific runtime evidence for Slack and Google Chat before removing their rewrites.
 - Discord and Slack: the reviewed 2026.9.2 and 2026.9.5 archives replace bundled Undici with `8.12.2` for Discord and `7.30.1` for Slack. The replacement checks the plugin manifest, bundled package, and reviewed registry package. Remove each rewrite when the reviewed upstream archive ships a patched Undici and passes the real patched distribution and plugin runtime probes.
 - Slack: the official 2026.9.2 install and reviewed 2026.9.5 archive replace bundled `body-parser@2.3.0` with `2.4.0` and affected `qs` copies with `6.16.1`. The replacement checks the Slack, Bolt, Express, parser, and `qs` identities. A retry verifies completed replacements before resuming. Remove this rewrite when the reviewed Slack archives ship patched parser and `qs` versions. The failure-and-retry test is in `test/runtime/messaging/messaging-build-applier-integrity.test.ts`; the process probe is in `test/agents/openclaw/openclaw-body-parser-runtime.test.ts`.
 - Microsoft Teams: the official 2026.9.2 install updates its npm project to `@azure/msal-node@7.1.0`, `@azure/msal-common@16.14.2`, and `zod@4.6.6` after source and install-path checks. Remove this update when a reviewed upstream plugin install resolves those patched versions without it. `test/agents/openclaw/openclaw-msal-runtime.test.ts` probes the token manager and Azure identity constructors.
 
 The PR and main `real-openclaw-dist-harness` jobs run those three runtime probes with scripts disabled during package installation. Their historical archive identities are pinned in `test/fixtures/openclaw/reviewed-legacy-plugin-archives.json`, independently of the selected production version. The audit still verifies the final production graph separately.
+
+### OpenClaw 2026.10.5 plugins
+
+The audit inventory also includes the reviewed `@openclaw/discord`, `@openclaw/googlechat`, and `@openclaw/slack` 2026.10.5 archives.
+`patchOpenClaw105PluginDependencies` in `scripts/lib/openclaw-npm-remediation.mts` owns their installed-tree remediation.
+It checks each plugin's name, version, dependency declarations, and affected dependency tree before replacement.
+Each replacement must match both its registry archive integrity and its reviewed extracted-tree digest.
+A completed replacement must match the same final tree before a retry can reuse it.
+
+| Plugin | Reviewed replacement |
+|---|---|
+| Discord | Zod 4.6.6 and Undici 8.12.3. The embedded Discord SDK retains its `zod/v3` API and receives the digest-checked bounded-collection repair. |
+| Google Chat | Zod 4.6.6. This recipe does not replace its HTTP client. |
+| Slack | Zod 4.6.6, Undici 8.12.3, and body-parser 2.4.0. The parser retains local content-type 2.1.0 and qs 6.16.1 so incompatible ancestor copies cannot satisfy its imports. |
+
+The archive audit verifies the final remediated plugin tree before installation.
+The official-install path verifies OpenClaw's trusted provenance record before invoking the same recipe.
+`test/agents/openclaw/openclaw-npm-remediation.test.ts` covers source drift, replacement integrity, and rejection paths.
+Remove a recipe only when a newly reviewed upstream archive contains the replacements and real plugin consumers pass without the recipe.
+Retain historical recipes while supported installed sandboxes can still select their archives.
 
 ## WeChat plugin runtime graph
 
@@ -104,6 +127,10 @@ The lock records the exact version, registry URL, and integrity for every transi
 
 ## OpenClaw 2026.10.5 runtime and restoration
 
+[PR #13697](https://github.com/NVIDIA/NemoClaw/pull/13697) supplies the trusted audit identities and target-specific Python setup needed by full PR E2E from main.
+It retains main's production runtime selection; this PR owns the cutover below.
+Candidate CI cannot authorize its own policy changes, and independent prerequisite review and landing remain necessary before full default qualification.
+
 The production runtime and eight official plugins select OpenClaw 2026.10.5.
 The runtime lock is the primary audit identity. The archive inventory contains the selected runtime and official plugins.
 Separate locked graphs audit the 2026.9.5 and 2026.9.7 runtimes used only for legacy-state migration.
@@ -122,6 +149,15 @@ Slack's body parser keeps content-type 2.1.0 and qs 6.16.1 locally so ancestor p
 Discord's SDK retains its v3 API through `zod/v3` declarations and a bounded-collection backport in its embedded runtime.
 The backport rejects oversized bounded arrays and sets before parsing their members; it does not impose limits on unbounded schemas.
 Locks describe the repaired installed graph. Offline image builds apply the recipes before checking installed identities.
+Ordinary audit installation leaves the reviewed lock unchanged; explicit `updateLock` mode updates metadata only when producing or regenerating a reviewed graph.
+The runtime helper verifies the original or patched managed-workspace digest before updating overrides.
+The shared `bundled-npm-package.mts` owns package replacement, rollback, archive-integrity checks, and backup cleanup for the ip-address and Undici repairs.
+After failed cleanup, both entrypoints verify the live replacement and one recognized affected backup before retrying deletion.
+Ambiguous, unverifiable, or unsafe backups fail with an actionable path and remain intact.
+The migration runtime uses the same fail-closed recovery rule for its retained Undici backup.
+`test/install/bundled-npm-package.test.ts` covers shared archive and recovery failures; the package-specific suites retain identity and rollback coverage.
+`test/install/remediate-openclaw-runtime-dependencies.test.ts` covers migration cleanup and metadata boundaries.
+`test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` executes npm, npx, and Discord SDK response parsing after remediating actual reviewed 2026.10.5 packages.
 Remove these recipes only when reviewed upstream artifacts contain the fixes and clean installation verifies every affected consumer.
 
 WeChat uses its separately locked 2.4.10 plugin and Zod 4.6.6 graph.

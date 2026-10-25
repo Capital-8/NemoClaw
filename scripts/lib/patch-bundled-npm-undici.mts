@@ -3,26 +3,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  cpSync,
-  fstatSync,
-  mkdirSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   type JsonObject,
+  type BundledNpmCommandRunner,
+  type PreparedBundledReplacement,
+  replaceBundledPackage,
+  reconcileBundledPackageBackup,
+  prepareBundledPackageReplacement,
+  remediateBundledPackageFromRegistry,
+  runBundledNpmCommand,
   collectBundledPackageVersions,
   jsonObject as record,
   readJsonObject as readJson,
@@ -40,21 +32,6 @@ export const FIXED_UNDICI_INTEGRITY =
 export const FIXED_UNDICI_TARBALL = "https://registry.npmjs.org/undici/-/undici-6.29.1.tgz";
 
 const REVIEWED_UNDICI_VERSIONS = new Set([AFFECTED_UNDICI_VERSION, "6.29.0", FIXED_UNDICI_VERSION]);
-
-function removeBackup(backupPath: string): void {
-  try {
-    rmSync(backupPath, { force: true, recursive: true });
-  } catch (cleanupError) {
-    try {
-      rmSync(backupPath, { force: true, recursive: true });
-    } catch (retryError) {
-      throw new AggregateError(
-        [cleanupError, retryError],
-        `verified replacement retained but affected backup cleanup failed: ${backupPath}`,
-      );
-    }
-  }
-}
 
 function verifyUndiciManifest(manifest: JsonObject): string {
   const version = manifest.version;
@@ -151,134 +128,45 @@ export function patchBundledNpmUndici(options: {
   }
 
   const current = inspectBundledNpmUndici(npmRoot);
+  reconcileBackup(npmRoot, current);
   if (current.state === "fixed") return current;
 
-  const livePath = join(npmRoot, "node_modules", "undici");
-  const transactionId = `${process.pid}-${randomBytes(8).toString("hex")}`;
-  const stagingRoot = mkdtempSync(join(dirname(livePath), ".undici.nemoclaw-stage-"));
-  const stagedPath = join(stagingRoot, "replacement");
-  const backupPath = `${livePath}.nemoclaw-backup-${transactionId}`;
-  let rollbackRequired = false;
-  try {
-    cpSync(replacementRoot, stagedPath, { dereference: false, recursive: true });
-    cpSync(livePath, backupPath, {
-      dereference: false,
-      errorOnExist: true,
-      force: false,
-      preserveTimestamps: true,
-      recursive: true,
-    });
-    rollbackRequired = true;
-    rmSync(livePath, { recursive: true });
-    renameSync(stagedPath, livePath);
-    const fixed = verifyBundledNpmUndici(npmRoot);
-    rollbackRequired = false;
-    removeBackup(backupPath);
-    return fixed;
-  } catch (error) {
-    if (rollbackRequired) {
-      try {
-        rmSync(livePath, { force: true, recursive: true });
-        renameSync(backupPath, livePath);
-      } catch (rollbackError) {
-        throw new AggregateError(
-          [error, rollbackError],
-          `npm bundled undici rollback failed; ${backupPath} retains the original tree`,
-        );
-      }
-    }
-    throw error;
-  } finally {
-    rmSync(stagingRoot, { force: true, recursive: true });
-  }
-}
-
-export type BundledNpmUndiciCommandRunner = (command: string, args: readonly string[]) => void;
-
-function run(command: string, args: readonly string[]): void {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 60_000,
+  return replaceBundledPackage({
+    npmRoot,
+    packageName: "undici",
+    replacementRoot,
+    verify: verifyBundledNpmUndici,
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${command} failed: ${`${result.stdout ?? ""}${result.stderr ?? ""}`.trim()}`);
-  }
 }
 
-type PreparedReplacement = Readonly<{
-  cleanup: () => void;
-  replacementRoot: string;
-}>;
+export type BundledNpmUndiciCommandRunner = BundledNpmCommandRunner;
+
+type PreparedReplacement = PreparedBundledReplacement;
 
 function prepareFixedUndiciReplacement(
   commandRunner: BundledNpmUndiciCommandRunner,
 ): PreparedReplacement {
-  const rootDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-npm-undici-"));
-  const archivePath = join(rootDirectory, `undici-${FIXED_UNDICI_VERSION}.tgz`);
-  const replacementRoot = join(rootDirectory, "replacement");
-  try {
-    if (process.env.NPM_CONFIG_OFFLINE === "true" || process.env.npm_config_offline === "true") {
-      commandRunner("npm", [
-        "pack",
-        `undici@${FIXED_UNDICI_VERSION}`,
-        "--registry=https://registry.npmjs.org/",
-        "--offline",
-        "--ignore-scripts",
-        "--pack-destination",
-        rootDirectory,
-      ]);
-    } else {
-      commandRunner("curl", [
-        "--proto",
-        "=https",
-        "--tlsv1.2",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--output",
-        archivePath,
-        FIXED_UNDICI_TARBALL,
-      ]);
-    }
-    const descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    let archiveBytes: Buffer;
-    try {
-      if (!fstatSync(descriptor).isFile()) {
-        throw new Error("undici replacement download must be a real file");
-      }
-      archiveBytes = readFileSync(descriptor);
-    } finally {
-      closeSync(descriptor);
-    }
-    const actualIntegrity = `sha512-${createHash("sha512").update(archiveBytes).digest("base64")}`;
-    if (actualIntegrity !== FIXED_UNDICI_INTEGRITY) {
-      throw new Error(
-        `undici replacement integrity mismatch\nExpected: ${FIXED_UNDICI_INTEGRITY}\nActual:   ${actualIntegrity}`,
-      );
-    }
+  return prepareBundledPackageReplacement({
+    packageName: "undici",
+    version: FIXED_UNDICI_VERSION,
+    integrity: FIXED_UNDICI_INTEGRITY,
+    tarball: FIXED_UNDICI_TARBALL,
+    offline: process.env.NPM_CONFIG_OFFLINE === "true" || process.env.npm_config_offline === "true",
+    commandRunner,
+  });
+}
 
-    mkdirSync(replacementRoot, { mode: 0o700 });
-    commandRunner("tar", [
-      "--extract",
-      "--gzip",
-      "--file",
-      archivePath,
-      "--directory",
-      replacementRoot,
-      "--strip-components=1",
-      "--no-same-owner",
-      "--no-same-permissions",
-    ]);
-    return {
-      cleanup: () => rmSync(rootDirectory, { force: true, recursive: true }),
-      replacementRoot,
-    };
-  } catch (error) {
-    rmSync(rootDirectory, { force: true, recursive: true });
-    throw error;
-  }
+function reconcileBackup(npmRoot: string, current: BundledNpmUndiciState): void {
+  reconcileBundledPackageBackup({
+    npmRoot,
+    packageName: "undici",
+    fixed: current.state === "fixed",
+    verifyBackup(manifest) {
+      const affectedVersion = current.npmVersion === "12.2.1" ? "6.29.0" : AFFECTED_UNDICI_VERSION;
+      if (verifyUndiciManifest(manifest) !== affectedVersion)
+        throw new Error("retained backup identity has drifted");
+    },
+  });
 }
 
 export type BundledNpmUndiciRegistryDependencies = Readonly<{
@@ -290,27 +178,18 @@ export function patchBundledNpmUndiciFromRegistry(
   npmRoot: string,
   dependencies: BundledNpmUndiciRegistryDependencies = {},
 ): BundledNpmUndiciState {
-  const commandRunner = dependencies.commandRunner ?? run;
   const current = inspectBundledNpmUndici(npmRoot);
-  if (current.state === "fixed") {
-    commandRunner(process.execPath, [join(npmRoot, "bin", "npm-cli.js"), "--version"]);
-    commandRunner(process.execPath, [join(npmRoot, "bin", "npx-cli.js"), "--version"]);
-    return current;
-  }
-  const prepared = (dependencies.prepareReplacement ?? prepareFixedUndiciReplacement)(
-    commandRunner,
-  );
-  try {
-    const result = patchBundledNpmUndici({
-      npmRoot,
-      replacementRoot: prepared.replacementRoot,
-    });
-    commandRunner(process.execPath, [join(npmRoot, "bin", "npm-cli.js"), "--version"]);
-    commandRunner(process.execPath, [join(npmRoot, "bin", "npx-cli.js"), "--version"]);
-    return result;
-  } finally {
-    prepared.cleanup();
-  }
+  reconcileBackup(npmRoot, current);
+  return remediateBundledPackageFromRegistry({
+    current,
+    commandRunner: dependencies.commandRunner ?? runBundledNpmCommand,
+    prepareReplacement: dependencies.prepareReplacement ?? prepareFixedUndiciReplacement,
+    patch: (replacementRoot) => patchBundledNpmUndici({ npmRoot, replacementRoot }),
+    verifyCommands(runner) {
+      runner(process.execPath, [join(npmRoot, "bin", "npm-cli.js"), "--version"]);
+      runner(process.execPath, [join(npmRoot, "bin", "npx-cli.js"), "--version"]);
+    },
+  });
 }
 
 function argument(name: string): string {

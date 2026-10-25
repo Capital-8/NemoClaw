@@ -760,6 +760,55 @@ describe("OpenClaw intermediate restore migrations", () => {
     expect(proof.calls()).toEqual([]);
     expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
   });
+  it.each([
+    {
+      sourceRemains: false,
+      prepareSource: (_source: string, _bytes: string) => {},
+      verifySource: (source: string, _bytes: string) => expect(fs.existsSync(source)).toBe(false),
+    },
+    {
+      sourceRemains: true,
+      prepareSource: (source: string, bytes: string) => fs.writeFileSync(source, bytes),
+      verifySource: (source: string, bytes: string) =>
+        expect(fs.readFileSync(source, "utf8")).toBe(bytes),
+    },
+  ])(
+    "reports retained incomplete Telegram archival on every retry (source remains: $sourceRemains)",
+    ({ sourceRemains, prepareSource, verifySource }) => {
+      const proof = fixture({ writer: "2026.9.6" });
+      const directory = path.join(proof.state, "telegram");
+      const pending = path.join(directory, ".nemoclaw-telegram-empty-fixture-secret-value");
+      fs.mkdirSync(pending, { recursive: true });
+      const retained = path.join(pending, "thread-bindings-private.json");
+      const bytes = '{"version":1,"bindings":[{"chatId":"retained-telegram-secret"}]}';
+      fs.writeFileSync(retained, bytes);
+      const source = path.join(directory, "thread-bindings-default.json");
+      prepareSource(source, bytes);
+      const entries = fs.readdirSync(directory).sort();
+      const verifyAttempt = () => {
+        const result = proof.run();
+        expect(result.error).toBeUndefined();
+        expect(result.status, result.stderr).toBe(43);
+        expect(result.stderr).toContain("Incomplete Telegram archival");
+        expect(result.stderr).toContain("telegram/.nemoclaw-telegram-empty-*");
+        expect(result.stderr).toContain("without a .migrated suffix");
+        expect(result.stderr).toContain("Restore a consistent backup before retrying");
+        expect(result.stderr).toContain("gateway remains stopped");
+        expect(result.stdout).toBe("");
+        expect(result.stderr).not.toContain("fixture-secret-value");
+        expect(result.stderr).not.toContain("retained-telegram-secret");
+        expect(result.stderr).not.toContain(proof.state);
+        expect(proof.calls()).toEqual([]);
+        expect(fs.readFileSync(proof.configPath)).toEqual(proof.before);
+        expect(fs.readFileSync(retained, "utf8")).toBe(bytes);
+        expect(fs.readdirSync(directory).sort()).toEqual(entries);
+        expect(fs.existsSync(source)).toBe(sourceRemains);
+        verifySource(source, bytes);
+      };
+      verifyAttempt();
+      verifyAttempt();
+    },
+  );
   it("refuses a missing or drifted intermediate runtime before Doctor", () => {
     const proof = fixture();
     fs.writeFileSync(

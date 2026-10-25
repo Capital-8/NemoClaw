@@ -315,6 +315,12 @@ const EMPTY_THREAD_BINDINGS = [
 ];
 const EMPTY_ARCHIVE_PREFIX = ".nemoclaw-telegram-empty-";
 
+class IncompleteTelegramArchiveError extends Error {
+  constructor() {
+    super("Incomplete empty Telegram state archival");
+  }
+}
+
 function emptyThreadBindings(bytes: Buffer): boolean {
   const raw = bytes.toString("utf8");
   try {
@@ -340,7 +346,7 @@ export function archiveEmptyTelegramThreadBindings(stateDir: string): void {
   if (
     entries.some((name) => name.startsWith(EMPTY_ARCHIVE_PREFIX) && !name.endsWith(".migrated"))
   ) {
-    throw new Error("Incomplete empty Telegram state archival");
+    throw new IncompleteTelegramArchiveError();
   }
   for (const name of entries) {
     if (!/^thread-bindings-.+\.json$/.test(name)) continue;
@@ -464,6 +470,9 @@ function child(args: string[], timeout: number, inspect: boolean, input?: string
     throw new Error("OpenClaw migration command did not complete");
   }
   if (inspect && result.status === 42) throw new MixedLegacySessionsError();
+  if (inspect && args[1] === "--retired" && result.status === 43) {
+    throw new IncompleteTelegramArchiveError();
+  }
   if (result.status !== 0) {
     if (inspect) reportInspectionFailure(args, false, result.status);
     throw new DoctorExitError("OpenClaw migration command failed");
@@ -576,6 +585,13 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch((error: unknown) => {
+    if (error instanceof IncompleteTelegramArchiveError) {
+      process.stderr.write(
+        "[migration] Incomplete Telegram archival. Preserve the retained telegram/.nemoclaw-telegram-empty-* directory without a .migrated suffix in the OpenClaw state directory and the original backup. Restore a consistent backup before retrying; gateway remains stopped.\n",
+      );
+      process.exitCode = 43;
+      return;
+    }
     if (error instanceof MixedLegacySessionsError) {
       process.stderr.write(
         "[migration] Legacy session JSON and populated SQLite sessions coexist. Restore a consistent backup or reconcile the session histories before retrying; gateway remains stopped.\n",

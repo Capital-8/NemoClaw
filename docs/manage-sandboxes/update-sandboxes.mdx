@@ -35,6 +35,7 @@ Incompatible retained Telegram state also stops restoration.
 The original backup remains available for recovery.
 Restore a consistent backup or reconcile the incompatible state before retrying.
 Keep the original host backup until you verify the restored sandbox.
+For an `Incomplete Telegram archival` error, follow [Recover Interrupted Telegram Archival](../state-and-backups/create-and-restore-snapshots#recover-interrupted-telegram-archival) before retrying.
 
 The OpenClaw runtime build target is declared by `OPENCLAW_VERSION` in the NemoClaw Dockerfiles.
 The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` is the compatibility floor for direct blueprint consumers, so it can be lower than the Dockerfile target.
