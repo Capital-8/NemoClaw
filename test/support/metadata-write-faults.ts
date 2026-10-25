@@ -32,3 +32,12 @@ export function replaceAfterMetadataRead(marker: string, replace: () => void) {
     return contents;
   });
 }
+
+/** Fail directory publication while allowing staged file contents to sync. */
+export function failMetadataDirectorySync() {
+  const sync = fs.fsyncSync;
+  return vi.spyOn(fs, "fsyncSync").mockImplementation((descriptor) => {
+    if (fs.fstatSync(descriptor).isDirectory()) throw new Error("directory sync failed");
+    sync(descriptor);
+  });
+}

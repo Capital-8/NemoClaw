@@ -77,7 +77,8 @@ Retain historical recipes while supported installed sandboxes can still select t
 
 ### Runtime and managed-plugin overrides
 
-`scripts/lib/remediate-openclaw-runtime-dependencies.mts` runs after controlled installation and before the installed-lock check.
+The prerequisite audit invokes `scripts/lib/remediate-openclaw-runtime-dependencies.mts` after controlled installation and before the installed-lock check.
+Production remains on 2026.9.2 with its existing remediation; the separate 10.5 upgrade wires this helper into its image builds.
 For OpenClaw 2026.10.5, it verifies the runtime identity and updates its npm and Undici declarations to 12.2.1 and 8.12.3.
 The managed-plugin workspace must match the reviewed original or patched SHA-256 digest.
 The patched workspace selects MSAL Node 7.1.0, body-parser 2.4.0, Undici 8.12.3, Zod 4.6.6, and qs 6.16.1 for future official-plugin projects.
@@ -95,6 +96,8 @@ The explicit `updateLock` mode updates metadata when producing the aggregate arc
 The shared writer in `bundled-npm-package.mts` serves runtime workspaces, runtime and plugin manifests, and lock metadata.
 These updates stage and verify complete bytes in the same directory before an atomic rename.
 Staging failures preserve the original file and remove the attempt's temporary file; a later retry can resume.
+After publication, the writer syncs the parent directory and reports any sync failure.
+A retry syncs the directory even when the metadata already contains the verified replacement.
 The writer preserves file permissions and ownership, rejects symlinks, and stops if it observes a replaced pathname or changed source before publication.
 `test/install/remediate-openclaw-runtime-dependencies.test.ts` covers resolution, metadata writes, cleanup retries, unsafe state, and stale-lock rejection.
 `test/install/patch-bundled-npm-undici.test.ts` covers the bundled npm replacement, rollback, and cleanup failures.
