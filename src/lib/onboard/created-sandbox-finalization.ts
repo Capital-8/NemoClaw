@@ -4,6 +4,8 @@
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import type { retireUnselectedNativeLocalProviders } from "../inference/native-local/selection";
+
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
 import {
   hermesDashboardStateMigrationRecoveryGuidance,
@@ -28,6 +30,7 @@ import {
   type RestoreResult,
 } from "../state/sandbox";
 import { cliName } from "./branding";
+import { retireUnselectedCreatedSandboxProviders } from "./sandbox-create/provider-retirement";
 import { writeRestoredOpenclawInferenceRoute } from "./openclaw/initial-inference-route";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
@@ -55,13 +58,17 @@ import {
 import type { SelectionDrift } from "./selection-drift";
 import type { VerifiedSandboxCreateBoundary } from "./types";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
-import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
+import {
+  OnboardRestoreSnapshotDriftError,
+  preserveRestoredModelSelections,
+} from "./session-bootstrap";
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
   gatewayName?: string;
   restoreBackupPath: string | null;
   preUpgradeBackup: boolean;
+  previousEntry?: SandboxEntry | null;
   targetAgentType: string;
   customImage?: boolean;
   reconcileOpenClawInference?: boolean;
@@ -70,6 +77,7 @@ export type CreatedSandboxFinalizationOptions = {
   model: string;
   preferredInferenceApi: string | null;
   endpointUrl?: string | null;
+  nativeProvider?: boolean;
 };
 
 export type CreatedSandboxFinalizationDeps = {
@@ -90,6 +98,7 @@ export type CreatedSandboxFinalizationDeps = {
     model: string,
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
+    nativeProvider: boolean,
   ): Promise<SelectionDrift>;
   prepareRegistration?(): SandboxEntry | Promise<SandboxEntry>;
   revalidatePreparedRegistration?(prepared: SandboxEntry): SandboxEntry | Promise<SandboxEntry>;
@@ -168,6 +177,7 @@ export interface CreatedSandboxCompletionDeps extends Omit<
   CreatedSandboxFinalizationDeps,
   "prepareRegistration" | "register" | "revalidatePreparedRegistration"
 > {
+  readonly retireNativeLocalProviders?: typeof retireUnselectedNativeLocalProviders;
   readonly prepareCreatedSandboxRegistration?: typeof prepareCreatedSandboxRegistration;
   readonly registerCreatedSandbox?: typeof registerCreatedSandbox;
   readonly registerPreparedCreatedSandbox?: typeof registerPreparedCreatedSandbox;
@@ -547,12 +557,23 @@ export function createCreatedSandboxCompletionActions(
             )(await registrationInput(true), prepared),
           register: async (prepared) => {
             const input = await registrationInput(prepared !== undefined);
-            return prepared
+            const registered = prepared
               ? (deps.registerPreparedCreatedSandbox ?? registerPreparedCreatedSandbox)(
                   input,
                   prepared,
                 )
               : (deps.registerCreatedSandbox ?? registerCreatedSandbox)(input);
+            // Reservation is too early: the former sandbox may still need its provider.
+            // Retirement failure retains the committed selection and cleanup authority.
+            await retireUnselectedCreatedSandboxProviders(
+              {
+                sandboxName: input.sandboxName,
+                gatewayName: input.gatewayName,
+                selected: registered.nativeLocalProviderAttachment,
+              },
+              deps.retireNativeLocalProviders,
+            );
+            return registered;
           },
         },
       );
@@ -599,6 +620,9 @@ type OnboardCreateIntent = {
   readonly observabilityEnabled?: boolean;
 } | null;
 type OnboardResolvedCreateIntent = {
+  readonly nativeLocalProviderAttachment?: SandboxEntry["nativeLocalProviderAttachment"];
+  readonly nativeHostedProviderAttachment?: SandboxEntry["nativeHostedProviderAttachment"];
+  readonly nativeNvidiaProviderAttachment?: SandboxEntry["nativeNvidiaProviderAttachment"];
   readonly policy: {
     readonly options: object;
   };
@@ -725,6 +749,7 @@ export function createOnboardCreatedSandboxCompletion(
   note: (message: string) => void,
   commandExecutor: OpenShellSandboxBufferedCommandExecutor,
   resolveOpenShellGpuDiagnostics: CreatedSandboxCompletionOptions["gpu"]["resolveOpenShellGpuDiagnostics"],
+  previousEntry?: SandboxEntry | null,
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -742,6 +767,7 @@ export function createOnboardCreatedSandboxCompletion(
         sandboxName,
         restoreBackupPath,
         preUpgradeBackup: pendingStateRestoreBackupPath !== null,
+        previousEntry,
         targetAgentType: agent?.name ?? "openclaw",
         customImage: Boolean(fromDockerfile) || agentFlags.externalImage === true,
         reconcileOpenClawInference: createContext.reconcileOpenClawInference,
@@ -749,7 +775,12 @@ export function createOnboardCreatedSandboxCompletion(
         provider,
         model,
         preferredInferenceApi,
-        endpointUrl,
+        endpointUrl: resolvedCreateIntent.nativeLocalProviderAttachment?.endpointUrl ?? endpointUrl,
+        nativeProvider: Boolean(
+          resolvedCreateIntent.nativeLocalProviderAttachment ||
+          resolvedCreateIntent.nativeHostedProviderAttachment ||
+          resolvedCreateIntent.nativeNvidiaProviderAttachment,
+        ),
       },
       registration: {
         sandboxName,
@@ -998,6 +1029,7 @@ export async function finalizeCreatedSandbox(
           options.preferredInferenceApi,
           options.gatewayName,
           deps.revalidateSandboxIdentity,
+          { endpointUrl: options.endpointUrl, nativeProvider: options.nativeProvider ?? false },
         );
       } catch (error) {
         await abortOpenClawRestoreWindow();
@@ -1030,6 +1062,7 @@ export async function finalizeCreatedSandbox(
       options.model,
       options.preferredInferenceApi,
       options.endpointUrl ?? null,
+      options.nativeProvider ?? false,
     );
     if (finalSelection.changed || finalSelection.unknown) {
       deps.error(
@@ -1051,5 +1084,15 @@ export async function finalizeCreatedSandbox(
   if (preparedRegistration) {
     preparedRegistration = await deps.revalidatePreparedRegistration!(preparedRegistration);
   }
-  return preparedRegistration ? deps.register(preparedRegistration) : deps.register();
+  const registration = await (preparedRegistration
+    ? deps.register(preparedRegistration)
+    : deps.register());
+  if (options.restoreBackupPath && options.previousEntry && options.gatewayName) {
+    await preserveRestoredModelSelections(
+      options.sandboxName,
+      options.gatewayName,
+      options.previousEntry,
+    );
+  }
+  return registration;
 }

@@ -15,13 +15,12 @@ import {
 } from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as sandboxVersion from "../../sandbox/version";
 import { inspectMutableHermesConfigPerms } from "../../sandbox/mutable-config-perms";
-import { escapeTerminalText } from "../../policy/preset-scope-render";
 import * as registry from "../../state/registry";
 import { settlePortableOpenClawPairing } from "./launch-readiness";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import { redactBoundedRebuildFailure } from "./rebuild-preflight-confirmation";
+import { redactBoundedRebuildTerminalDiagnostic } from "./rebuild-preflight-confirmation";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -29,6 +28,7 @@ import {
   isHermesCronRestoreDrainMarkerRollbackFailure,
   printHermesGatewayRestoreRecovery,
   restartHermesGatewayAfterStateRestore,
+  refreshRestoredHermesInferenceRoute,
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
@@ -104,6 +104,7 @@ export interface RebuildPostRestorePhaseInput {
 }
 
 export interface RebuildPostRestoreVerification {
+  readonly complete: boolean;
   readonly mutableConfigPermissionsVerified: boolean;
 }
 
@@ -358,6 +359,32 @@ export async function runRebuildPostRestorePhase(
       return;
     }
 
+    if (targetAgentName === "hermes") {
+      try {
+        await refreshRestoredHermesInferenceRoute(
+          sandboxName,
+          mcpRuntimeSelection,
+          registry.getSandbox,
+          buildSandboxCommandEnvironment(mcpRuntimeSelection),
+        );
+      } catch {
+        // Config parser failures can contain credentials or restored user content.
+        const message = "Hermes inference configuration could not be rebound after state restore.";
+        if (hermesCronRestoreIdentity) {
+          return bailAfterHermesCronRestoreFailure(
+            sandboxName,
+            backupManifest,
+            "Hermes cron dispatch remains drained because inference configuration was not rebound.",
+            message,
+            bail,
+          );
+        }
+        if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+        bail(message);
+        return;
+      }
+    }
+
     // Recreation starts Hermes before restore replaces its durable home. Rebind
     // every Hermes gateway to that restored state before MCP restoration; the
     // cron-gated path additionally proves the replacement process identity.
@@ -473,9 +500,9 @@ export async function runRebuildPostRestorePhase(
     if (mutableConfigPermissionsVerified) {
       log("Verified the rebuilt Hermes mutable config posture");
     } else {
-      const detail = escapeTerminalText(
-        redactBoundedRebuildFailure(mutableConfigVerification.errors.join("; ")),
-      ).slice(0, 4096);
+      const detail = redactBoundedRebuildTerminalDiagnostic(
+        mutableConfigVerification.errors.join("; "),
+      );
       log(`Hermes mutable config posture was not verified: ${detail}`);
       console.error(
         `  Hermes config write permissions could not be verified: ${detail || "No diagnostic was returned."}`,
@@ -680,5 +707,7 @@ export async function runRebuildPostRestorePhase(
     return;
   }
   printHermesApiTokenChangeNotice(sandboxName, targetAgentName);
-  return { mutableConfigPermissionsVerified };
+  return { complete: postRestoreComplete, mutableConfigPermissionsVerified };
 }
+
+export { recordRebuildCompletion } from "../telemetry/upgrade";
