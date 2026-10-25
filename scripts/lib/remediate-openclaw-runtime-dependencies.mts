@@ -175,6 +175,23 @@ function verifyMigrationHttpClient(root: string): void {
   }
 }
 
+function removeMigrationHttpClientBackup(backup: string): void {
+  requireRealDirectory(dirname(backup), "OpenClaw bundled dependency directory");
+  requireRealDirectory(backup, "OpenClaw migration HTTP client backup");
+  const manifest = readJsonObject(join(backup, "package.json"), "OpenClaw HTTP client backup");
+  if (manifest.name !== "undici" || manifest.version !== "8.10.2") {
+    throw new Error(`OpenClaw HTTP client backup identity has drifted: ${backup}`);
+  }
+  rejectUnsafePackageTree(backup, "OpenClaw migration HTTP client backup");
+  try {
+    rmSync(backup, { recursive: true });
+  } catch (error) {
+    throw new Error(`OpenClaw HTTP client backup cleanup failed; retained at ${backup}`, {
+      cause: error,
+    });
+  }
+}
+
 /** Apply the reviewed runtime recipe before checking the final installed lock. */
 export function remediateOpenClawRuntimeDependencies(
   directory: string,
@@ -228,6 +245,7 @@ export function remediateOpenClawRuntimeDependencies(
     if (owner.name !== "openclaw" || owner.version !== "2026.9.7") {
       throw new Error("OpenClaw migration package identity has drifted");
     }
+    const backup = join(dirname(destination), ".undici-security-remediation-backup");
     if (existsSync(destination) || lstatSync(destination, { throwIfNoEntry: false })) {
       requireRealDirectory(destination, "OpenClaw bundled undici");
       const bundled = readJsonObject(join(destination, "package.json"), "OpenClaw bundled undici");
@@ -235,9 +253,8 @@ export function remediateOpenClawRuntimeDependencies(
         throw new Error("OpenClaw migration bundled undici identity has drifted");
       }
       rejectUnsafePackageTree(destination, "OpenClaw migration bundled HTTP client");
-      const backup = join(dirname(destination), ".undici-security-remediation-backup");
       if (lstatSync(backup, { throwIfNoEntry: false })) {
-        throw new Error("OpenClaw migration undici recovery directory already exists");
+        throw new Error(`OpenClaw migration undici recovery directory already exists: ${backup}`);
       }
       renameSync(destination, backup);
       try {
@@ -253,9 +270,10 @@ export function remediateOpenClawRuntimeDependencies(
         }
         throw error;
       }
-      rmSync(backup, { recursive: true });
+      removeMigrationHttpClientBackup(backup);
     } else {
       verifyMigrationHttpClient(root);
+      if (lstatSync(backup, { throwIfNoEntry: false })) removeMigrationHttpClientBackup(backup);
     }
     if (options.updateLock) delete packages[legacyUndiciLocation];
   }

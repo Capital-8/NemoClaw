@@ -45,12 +45,61 @@ The reviewed audit wrapper reports lower-severity production findings and blocks
 
 The reviewed archive audit and image build use the package identities in `ci/reviewed-npm-audit.json`. They verify registry integrity before replacing bundled packages. Official plugin installs also require OpenClaw's trusted install record. A changed source package, replacement identity, dependency layout, or patched tree stops remediation.
 
+The following recipes apply to the retained 2026.9.2 and 2026.9.5 archives.
+They do not describe the separate 2026.10.5 replacements.
+
 - Discord, Slack, and Google Chat: the reviewed 2026.9.2 and 2026.9.5 archives listed in `scripts/lib/openclaw-npm-remediation.mts` replace affected bundled Zod copies with `zod@4.6.6`. The Discord SDK wrapper also receives a digest-checked compatibility update. Remove each rewrite only when a reviewed upstream archive ships patched Zod and `scripts/audit-reviewed-npm-graph.mts` confirms its graph. `test/agents/openclaw/openclaw-zod-runtime.test.ts` supplies Discord runtime evidence. Require plugin-specific runtime evidence for Slack and Google Chat before removing their rewrites.
 - Discord and Slack: the reviewed 2026.9.2 and 2026.9.5 archives replace bundled Undici with `8.12.2` for Discord and `7.30.1` for Slack. The replacement checks the plugin manifest, bundled package, and reviewed registry package. Remove each rewrite when the reviewed upstream archive ships a patched Undici and passes the real patched distribution and plugin runtime probes.
 - Slack: the official 2026.9.2 install and reviewed 2026.9.5 archive replace bundled `body-parser@2.3.0` with `2.4.0` and affected `qs` copies with `6.16.1`. The replacement checks the Slack, Bolt, Express, parser, and `qs` identities. A retry verifies completed replacements before resuming. Remove this rewrite when the reviewed Slack archives ship patched parser and `qs` versions. The failure-and-retry test is in `test/runtime/messaging/messaging-build-applier-integrity.test.ts`; the process probe is in `test/agents/openclaw/openclaw-body-parser-runtime.test.ts`.
 - Microsoft Teams: the official 2026.9.2 install updates its npm project to `@azure/msal-node@7.1.0`, `@azure/msal-common@16.14.2`, and `zod@4.6.6` after source and install-path checks. Remove this update when a reviewed upstream plugin install resolves those patched versions without it. `test/agents/openclaw/openclaw-msal-runtime.test.ts` probes the token manager and Azure identity constructors.
 
 The PR and main `real-openclaw-dist-harness` jobs run those three runtime probes with scripts disabled during package installation. The audit still verifies the final production graph separately.
+
+### OpenClaw 2026.10.5 plugins
+
+The audit inventory also includes the reviewed `@openclaw/discord`, `@openclaw/googlechat`, and `@openclaw/slack` 2026.10.5 archives.
+`patchOpenClaw105PluginDependencies` in `scripts/lib/openclaw-npm-remediation.mts` owns their installed-tree remediation.
+It checks each plugin's name, version, dependency declarations, and affected dependency tree before replacement.
+Each replacement must match both its registry archive integrity and its reviewed extracted-tree digest.
+A completed replacement must match the same final tree before a retry can reuse it.
+
+| Plugin | Reviewed replacement |
+|---|---|
+| Discord | Zod 4.6.6 and Undici 8.12.3. The embedded Discord SDK retains its `zod/v3` API and receives the digest-checked bounded-collection repair. |
+| Google Chat | Zod 4.6.6. This recipe does not replace its HTTP client. |
+| Slack | Zod 4.6.6, Undici 8.12.3, and body-parser 2.4.0. The parser retains local content-type 2.1.0 and qs 6.16.1 so incompatible ancestor copies cannot satisfy its imports. |
+
+The archive audit verifies the final remediated plugin tree before installation.
+The official-install path verifies OpenClaw's trusted provenance record before invoking the same recipe.
+`test/agents/openclaw/openclaw-npm-remediation.test.ts` covers source drift, replacement integrity, and rejection paths.
+Remove a recipe only when a newly reviewed upstream archive contains the replacements and real plugin consumers pass without the recipe.
+Retain historical recipes while supported installed sandboxes can still select their archives.
+
+### Runtime and managed-plugin overrides
+
+`scripts/lib/remediate-openclaw-runtime-dependencies.mts` runs after controlled installation and before the installed-lock check.
+For OpenClaw 2026.10.5, it verifies the runtime identity and updates its npm and Undici declarations to 12.2.1 and 8.12.3.
+The managed-plugin workspace must match the reviewed original or patched SHA-256 digest.
+The patched workspace selects MSAL Node 7.1.0, body-parser 2.4.0, Undici 8.12.3, Zod 4.6.6, and qs 6.16.1 for future official-plugin projects.
+The helper also applies the plugin recipes above when those plugins occur in the installed graph.
+
+npm 12.2.1's bundled Undici 6.29.0 is replaced with reviewed 6.29.1 without changing npm's identity.
+`patch-bundled-npm-undici.mts` validates the package contract and layout, verifies the archive integrity, and checks the installed npm and npx entrypoints.
+The separate OpenClaw 2026.9.7 migration graph removes its bundled Undici 8.10.2 only after resolution selects reviewed top-level 8.12.3.
+Failed verification restores the original tree.
+After interrupted cleanup, a retry verifies the replacement and the retained backup before removing that backup.
+Ambiguous or unsafe retained state fails without deletion.
+
+Ordinary audit installation leaves the reviewed lock unchanged.
+The explicit `updateLock` mode updates metadata when producing the aggregate archive graph or regenerating a reviewed lock.
+`test/install/remediate-openclaw-runtime-dependencies.test.ts` covers resolution, metadata writes, cleanup retries, unsafe state, and stale-lock rejection.
+`test/install/patch-bundled-npm-undici.test.ts` covers the bundled npm replacement, rollback, and cleanup failures.
+The shared `bundled-npm-package.mts` owns replacement, rollback, archive verification, and backup cleanup for ip-address and Undici.
+Both entrypoints retry cleanup only for one recognized affected backup after verifying the live replacement.
+Unrecognized names, multiple backups, missing identity, or unsafe trees fail without deletion.
+`test/install/bundled-npm-package.test.ts` covers shared archive and recovery failures; package-specific suites retain identity and rollback coverage.
+`test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` materializes reviewed 2026.10.5 archives and runs npm, npx, and the Discord SDK through the repaired dependencies.
+Remove these repairs only after reviewed upstream packages resolve the required versions without mutation and the audit and real consumers pass.
 
 ## WeChat plugin runtime graph
 
@@ -101,46 +150,23 @@ The lock records the exact version, registry URL, and integrity for every transi
   `test/automation/releases/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
 
-## OpenClaw 2026.9.5 staged transition
+## OpenClaw 2026.10.5 qualification prerequisites
 
-[PR #12380](https://github.com/NVIDIA/NemoClaw/pull/12380) prepares trusted audit policy for
-[PR #12382](https://github.com/NVIDIA/NemoClaw/pull/12382), which updates the runtime.
-The CI and managed-image PR audits load their action, policy, and dependency inputs from the
-candidate checkout. A passing audit checks that candidate's declared policy; independent review
-of the package identities and policy changes remains necessary.
-The two stages separate that review from the production runtime cutover.
+[PR #13697](https://github.com/NVIDIA/NemoClaw/pull/13697) prepares trusted audit and E2E controls for
+[PR #12382](https://github.com/NVIDIA/NemoClaw/pull/12382), which owns the runtime upgrade.
+This prerequisite retains production OpenClaw 2026.9.2 and WeChat 2.4.9.
+Their existing locks remain the primary audit identities.
+The replacement records admit only the reviewed OpenClaw 2026.10.5 and WeChat 2.4.10 lock digests, package integrities, and registry URLs.
+They do not select another production runtime or admit arbitrary locks.
+The 2026.9.5 and 2026.9.7 migration graphs are separate audit inputs; this prerequisite does not activate them on main.
 
-During the trust stage, production manifests, locks, lifecycle approvals, and image archives remain
-on OpenClaw 2026.9.2. The existing locked graph remains the primary audit identity.
-The replacement admits only the reviewed 2026.9.5 lock digest, package integrity, and registry URL.
-It does not select a second runtime or permit an arbitrary lock.
-The compressed 2026.9.5 lock fixture records the migration input without changing production selection.
-The replacement audit test consumes that fixture and the checked-in policy, then verifies the emitted
-provenance and npm identity requests.
+The archive inventory retains the versions needed by main and the upgrade.
+The audit materializes the selected graphs, applies the reviewed recipes, verifies installed-lock identity, checks advisory policy, and verifies registry signatures.
+A passing candidate audit does not approve changes to its own policy.
+Independent review must inspect those changes and the receipts for each selected lock.
 
-The trust-stage audit checks the selected 2026.9.2 production lock. It does not qualify the staged
-2026.9.5 lock. Before approving the trust stage, reviewers must also inspect the runtime PR's retained
-audit evidence and match its `packageLockSha256` to the replacement identity and decompressed fixture.
-[CI run 37677060608](https://github.com/NVIDIA/NemoClaw/actions/runs/37677060608/job/112983299250)
-audited the 2026.9.5 graph at commit `754d187fa833f6198e7a3d808ddf88dc2944025d`.
-Its [reviewed-npm-audit artifact](https://github.com/NVIDIA/NemoClaw/actions/runs/37677060608/artifacts/11507039810)
-contains the receipt, raw report, and scanner provenance for lock SHA-256
-`b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7`.
-The receipt reports no blocking advisories at the `high` threshold; the policy report records three
-moderate advisories. The audit job also completed signature verification before emitting the receipt.
-This evidence qualifies those lock bytes, not a different lock or a future advisory database.
-Require a fresh matching audit when its receipt expires.
-
-The audit workflow, action, and implementation are unchanged from the trust PR's base,
-`b430d4d2495de65cbd1151d8fd6bff3def0cd58a`. Their candidate-checkout execution is existing repository
-behavior. Reviewers must independently inspect this PR's policy diff; a passing candidate audit does
-not authorize changes to its own policy.
-
-The runtime stage completes the transition by moving all production version owners to 2026.9.5,
-promoting its lock identity to primary, and removing the replacement and superseded archive records.
-For these two PRs, the maintainer requested green CI and managed-image checks, PR Advisor clearance,
-and full E2E qualification. These are acceptance criteria for this upgrade; full E2E is manually
-dispatched and is not an automatically enforced PR check. The runtime CI also executes the
-actual-package patch harness.
-Prekshi Vyas owns completion of these two PRs. Retain the old archive records only while production
-still selects them; remove this transition section when the runtime cutover is complete.
+Full PR E2E uses trusted main for these controls.
+The Model Router target also needs the target-specific Python 3.13 setup in this prerequisite.
+The runtime upgrade still requires successful CI, managed-image activation, automated review, and full default E2E qualification.
+Retain draft status until the applicable qualification and independent review requirements pass.
+Retire superseded archive identities only when their runtime consumers and historical qualification obligations are retired.

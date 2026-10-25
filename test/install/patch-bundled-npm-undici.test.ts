@@ -288,6 +288,60 @@ describe("npm bundled undici remediation", () => {
         .readdirSync(path.join(target.npmRoot, "node_modules"))
         .some((entry) => entry.startsWith("undici.nemoclaw-backup-")),
     ).toBe(true);
+    expect(
+      patchBundledNpmUndiciFromRegistry(target.npmRoot, {
+        commandRunner: () => {},
+        prepareReplacement: () => {
+          throw new Error("unexpected download");
+        },
+      }),
+    ).toMatchObject({ state: "fixed" });
+    expect(
+      fs
+        .readdirSync(path.join(target.npmRoot, "node_modules"))
+        .some((entry) => entry.startsWith("undici.nemoclaw-backup-")),
+    ).toBe(false);
+  });
+
+  it("refuses an unrecognized retained backup before commands or package mutation", () => {
+    const target = fixture(FIXED_UNDICI_VERSION);
+    const backup = path.join(
+      target.npmRoot,
+      "node_modules",
+      "undici.nemoclaw-backup-123-0123456789abcdef",
+    );
+    writeJson(path.join(backup, "package.json"), packageManifest(FIXED_UNDICI_VERSION));
+    const commandRunner = vi.fn();
+    expect(() => patchBundledNpmUndiciFromRegistry(target.npmRoot, { commandRunner })).toThrow(
+      "retained backup cannot be verified",
+    );
+    expect(() => patchBundledNpmUndici(target)).toThrow("retained backup cannot be verified");
+    expect(commandRunner).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(backup, "package.json"))).toBe(true);
+    expectAffectedTreeUnchanged(target);
+    writeJson(path.join(backup, "package.json"), packageManifest(AFFECTED_UNDICI_VERSION));
+    expect(patchBundledNpmUndici(target)).toMatchObject({ state: "fixed" });
+    expect(fs.existsSync(backup)).toBe(false);
+  });
+
+  it("uses cached npm pack for Undici in offline environments", () => {
+    vi.stubEnv("NPM_CONFIG_OFFLINE", "true");
+    const target = fixture(AFFECTED_UNDICI_VERSION);
+    const commands: string[] = [];
+    expect(() =>
+      patchBundledNpmUndiciFromRegistry(target.npmRoot, {
+        commandRunner(command, args) {
+          commands.push(command);
+          const archive = path.join(
+            String(args[args.indexOf("--pack-destination") + 1]),
+            "undici-6.29.1.tgz",
+          );
+          fs.writeFileSync(archive, "tampered archive");
+        },
+      }),
+    ).toThrow("undici replacement integrity mismatch");
+    expect(commands).toEqual(["npm"]);
+    expectAffectedTreeUnchanged(target);
   });
 
   it("reports the original patch failure when rollback also fails", () => {

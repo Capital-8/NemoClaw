@@ -263,6 +263,57 @@ describe("npm bundled ip-address remediation", () => {
         .readdirSync(path.join(target.npmRoot, "node_modules"))
         .some((entry) => entry.startsWith("ip-address.nemoclaw-backup-")),
     ).toBe(true);
+    expect(
+      patchBundledNpmIpAddressFromRegistry(target.npmRoot, {
+        commandRunner: () => {},
+        prepareReplacement: () => {
+          throw new Error("unexpected download");
+        },
+      }),
+    ).toMatchObject({ state: "fixed" });
+    expect(
+      fs
+        .readdirSync(path.join(target.npmRoot, "node_modules"))
+        .some((entry) => entry.startsWith("ip-address.nemoclaw-backup-")),
+    ).toBe(false);
+  });
+
+  it("refuses an unrecognized retained backup before commands or package mutation", () => {
+    const target = fixture(FIXED_IP_ADDRESS_VERSION);
+    const backup = path.join(
+      target.npmRoot,
+      "node_modules",
+      "ip-address.nemoclaw-backup-123-0123456789abcdef",
+    );
+    writeJson(path.join(backup, "package.json"), packageManifest(FIXED_IP_ADDRESS_VERSION));
+    const commandRunner = vi.fn();
+    expect(() => patchBundledNpmIpAddressFromRegistry(target.npmRoot, { commandRunner })).toThrow(
+      "retained backup cannot be verified",
+    );
+    expect(() => patchBundledNpmIpAddress(target)).toThrow("retained backup cannot be verified");
+    expect(commandRunner).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(backup, "package.json"))).toBe(true);
+    expectAffectedTreeUnchanged(target);
+    writeJson(path.join(backup, "package.json"), packageManifest(AFFECTED_IP_ADDRESS_VERSION));
+    expect(patchBundledNpmIpAddress(target)).toMatchObject({ state: "fixed" });
+    expect(fs.existsSync(backup)).toBe(false);
+  });
+
+  it("retains HTTPS download for ip-address in offline environments", () => {
+    vi.stubEnv("NPM_CONFIG_OFFLINE", "true");
+    const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
+    const commands: string[] = [];
+    expect(() =>
+      patchBundledNpmIpAddressFromRegistry(target.npmRoot, {
+        commandRunner(command, args) {
+          commands.push(command);
+          const archive = String(args[args.indexOf("--output") + 1]);
+          fs.writeFileSync(archive, "tampered archive");
+        },
+      }),
+    ).toThrow("ip-address replacement integrity mismatch");
+    expect(commands).toEqual(["curl"]);
+    expectAffectedTreeUnchanged(target);
   });
 
   it("reports the original patch failure when rollback also fails", () => {

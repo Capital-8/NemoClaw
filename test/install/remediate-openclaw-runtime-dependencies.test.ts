@@ -13,6 +13,7 @@ import fs, {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OPENCLAW_MANAGED_PLUGIN_WORKSPACE } from "../fixtures/openclaw-managed-plugin-workspace";
 import {
@@ -53,10 +54,21 @@ function fixture(installedVersion = "8.12.3") {
       },
     }),
   );
-  return { root, legacy, replacement, lockfile };
+  return {
+    root,
+    legacy,
+    replacement,
+    lockfile,
+    replacementManifest: join(replacement, "package.json"),
+    backupManifest: join(
+      root,
+      "node_modules/openclaw/node_modules/.undici-security-remediation-backup/package.json",
+    ),
+  };
 }
 afterEach(() => {
   vi.restoreAllMocks();
+  syncBuiltinESMExports();
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
@@ -83,6 +95,95 @@ describe("OpenClaw migration HTTP dependency remediation", () => {
       "HTTP client identity mismatch",
     );
     expect(existsSync(target.legacy)).toBe(false);
+  });
+
+  it("retries retained backup cleanup after verifying the replacement", () => {
+    const target = fixture();
+    const backup = join(
+      fs.realpathSync(target.root),
+      "node_modules/openclaw/node_modules/.undici-security-remediation-backup",
+    );
+    const originalLock = readFileSync(target.lockfile);
+    const replacement = readFileSync(target.replacementManifest);
+    const failure = vi.spyOn(fs, "rmSync").mockImplementation((filename) => {
+      expect(filename).toBe(backup);
+      throw new Error("injected backup cleanup failure");
+    });
+    syncBuiltinESMExports();
+    expect(() => remediateOpenClawRuntimeDependencies(target.root)).toThrow(/cleanup/);
+    expect(existsSync(target.legacy)).toBe(false);
+    expect(readFileSync(join(backup, "original.js"), "utf8")).toBe("original");
+    expect(() => remediateOpenClawRuntimeDependencies(target.root)).toThrow(backup);
+    expect(readFileSync(join(backup, "original.js"), "utf8")).toBe("original");
+    failure.mockRestore();
+    syncBuiltinESMExports();
+
+    remediateOpenClawRuntimeDependencies(target.root);
+    expect(existsSync(backup)).toBe(false);
+    expect(existsSync(target.legacy)).toBe(false);
+    expect(readFileSync(target.replacementManifest)).toEqual(replacement);
+    expect(readFileSync(target.lockfile)).toEqual(originalLock);
+  });
+
+  it.each([
+    {
+      condition: "wrong identity",
+      mutate: (target: ReturnType<typeof fixture>, backup: string) =>
+        writeFileSync(
+          join(backup, "package.json"),
+          JSON.stringify({ name: "other", version: "8.10.2" }),
+        ),
+    },
+    {
+      condition: "unsafe member",
+      mutate: (target: ReturnType<typeof fixture>, backup: string) =>
+        symlinkSync(target.replacement, join(backup, "unsafe")),
+    },
+    {
+      condition: "linked backup",
+      mutate: (target: ReturnType<typeof fixture>, backup: string) => {
+        const retained = join(target.root, "retained");
+        fs.renameSync(backup, retained);
+        symlinkSync(retained, backup);
+      },
+    },
+    {
+      condition: "linked parent",
+      mutate: (target: ReturnType<typeof fixture>) => {
+        const parent = join(target.root, "node_modules/openclaw/node_modules");
+        const retained = join(target.root, "retained-dependencies");
+        fs.renameSync(parent, retained);
+        symlinkSync(retained, parent);
+      },
+    },
+    {
+      condition: "invalid replacement",
+      mutate: (target: ReturnType<typeof fixture>) =>
+        writeFileSync(
+          target.replacementManifest,
+          JSON.stringify({ name: "undici", version: "8.10.2" }),
+        ),
+    },
+    {
+      condition: "both copies",
+      mutate: (target: ReturnType<typeof fixture>, backup: string) =>
+        fs.cpSync(backup, target.legacy, { recursive: true }),
+    },
+  ])("preserves a retained backup when recovery finds $condition", ({ condition, mutate }) => {
+    const target = fixture();
+    const backup = join(
+      fs.realpathSync(target.root),
+      "node_modules/openclaw/node_modules/.undici-security-remediation-backup",
+    );
+    const originalLock = readFileSync(target.lockfile);
+    fs.renameSync(target.legacy, backup);
+    mutate(target, backup);
+    const before = readFileSync(target.backupManifest);
+    expect(() => remediateOpenClawRuntimeDependencies(target.root)).toThrow();
+    expect(readFileSync(join(backup, "original.js"), "utf8")).toBe("original");
+    expect(readFileSync(target.backupManifest)).toEqual(before);
+    expect(readFileSync(target.lockfile)).toEqual(originalLock);
+    expect(existsSync(target.legacy)).toBe(condition === "both copies");
   });
 
   it("restores the original copy when replacement verification fails", () => {
