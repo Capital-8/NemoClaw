@@ -12,6 +12,7 @@ import {
   type PreparedBundledReplacement,
   replaceBundledPackage,
   reconcileBundledPackageBackup,
+  restoreMissingBundledPackage,
   prepareBundledPackageReplacement,
   remediateBundledPackageFromRegistry,
   runBundledNpmCommand,
@@ -66,8 +67,7 @@ export type BundledNpmUndiciState = Readonly<{
   state: "affected" | "fixed";
 }>;
 
-export function inspectBundledNpmUndici(npmRoot: string): BundledNpmUndiciState {
-  const root = realDirectory(npmRoot, "npm package root");
+function inspectNpmVersion(root: string): string {
   const npmManifest = readJson(join(root, "package.json"), "npm package manifest");
   const npmVersion = npmManifest.version;
   if (
@@ -78,6 +78,13 @@ export function inspectBundledNpmUndici(npmRoot: string): BundledNpmUndiciState 
       `npm package identity has drifted; expected npm@${REVIEWED_NPM_VERSION} or npm@12.2.1`,
     );
   }
+
+  return npmVersion;
+}
+
+export function inspectBundledNpmUndici(npmRoot: string): BundledNpmUndiciState {
+  const root = realDirectory(npmRoot, "npm package root");
+  const npmVersion = inspectNpmVersion(root);
 
   const version = verifyUndiciManifest(
     readJson(join(root, "node_modules", "undici", "package.json"), "npm bundled undici manifest"),
@@ -127,8 +134,7 @@ export function patchBundledNpmUndici(options: {
     throw new Error(`replacement package must be undici@${FIXED_UNDICI_VERSION}`);
   }
 
-  const current = inspectBundledNpmUndici(npmRoot);
-  reconcileBackup(npmRoot, current);
+  const current = inspectForPatch(npmRoot);
   if (current.state === "fixed") return current;
 
   return replaceBundledPackage({
@@ -156,17 +162,22 @@ function prepareFixedUndiciReplacement(
   });
 }
 
-function reconcileBackup(npmRoot: string, current: BundledNpmUndiciState): void {
-  reconcileBundledPackageBackup({
-    npmRoot,
-    packageName: "undici",
-    fixed: current.state === "fixed",
-    verifyBackup(manifest) {
-      const affectedVersion = current.npmVersion === "12.2.1" ? "6.29.0" : AFFECTED_UNDICI_VERSION;
+function inspectForPatch(npmRoot: string): BundledNpmUndiciState {
+  const root = realDirectory(npmRoot, "npm package root");
+  const npmVersion = inspectNpmVersion(root);
+  const recovery = {
+    npmRoot: root,
+    packageName: "undici" as const,
+    verifyBackup(manifest: JsonObject) {
+      const affectedVersion = npmVersion === "12.2.1" ? "6.29.0" : AFFECTED_UNDICI_VERSION;
       if (verifyUndiciManifest(manifest) !== affectedVersion)
         throw new Error("retained backup identity has drifted");
     },
-  });
+  };
+  restoreMissingBundledPackage(recovery);
+  const current = inspectBundledNpmUndici(root);
+  reconcileBundledPackageBackup({ ...recovery, fixed: current.state === "fixed" });
+  return current;
 }
 
 export type BundledNpmUndiciRegistryDependencies = Readonly<{
@@ -178,8 +189,7 @@ export function patchBundledNpmUndiciFromRegistry(
   npmRoot: string,
   dependencies: BundledNpmUndiciRegistryDependencies = {},
 ): BundledNpmUndiciState {
-  const current = inspectBundledNpmUndici(npmRoot);
-  reconcileBackup(npmRoot, current);
+  const current = inspectForPatch(npmRoot);
   return remediateBundledPackageFromRegistry({
     current,
     commandRunner: dependencies.commandRunner ?? runBundledNpmCommand,

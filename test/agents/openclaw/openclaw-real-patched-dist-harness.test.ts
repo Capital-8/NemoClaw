@@ -555,7 +555,7 @@ describe("OpenClaw real patched-dist materialization guard", () => {
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
   "OpenClaw real patched-dist harness",
   () => {
-    it("runs npm and the Discord SDK after remediating the reviewed 2026.10.5 graph", () => {
+    it("runs npm and messaging consumers after remediating the reviewed 2026.10.5 graph", () => {
       const nodeRuntime = resolveRealOpenClawNodeRuntime();
       const policy = JSON.parse(
         fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
@@ -565,7 +565,12 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
       };
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw105-consumers-"));
       try {
-        const archives = ["openclaw@2026.10.5", "@openclaw/discord@2026.10.5"].map((spec) => {
+        const archives = [
+          "openclaw@2026.10.5",
+          "@openclaw/discord@2026.10.5",
+          "@openclaw/googlechat@2026.10.5",
+          "@openclaw/slack@2026.10.5",
+        ].map((spec) => {
           const reviewed = policy.archivePackages.filter((entry) => entry.packageSpec === spec);
           requireRuntimeEqual(String(reviewed.length), "1", `unique reviewed archive for ${spec}`);
           return materializeReviewedTarball(reviewed[0].tarballUrl, tmp, reviewed[0].integrity);
@@ -633,6 +638,77 @@ for (const sdk of [await import(pathToFileURL(path.join(sdkRoot, "output/index.m
         requireSpawnSuccess(
           consumer,
           "parse Discord SDK responses through remediated Zod in both module formats",
+        );
+        const messagingConsumer = spawnSync(
+          nodeRuntime.executable,
+          [
+            "--input-type=module",
+            "-e",
+            String.raw`
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { createServer } from "node:http";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+const pluginRoot = path.join(process.argv[1], "node_modules/@openclaw");
+const googleRoot = path.join(pluginRoot, "googlechat");
+const googleRequire = createRequire(path.join(googleRoot, "package.json"));
+assert.equal(googleRequire.resolve("zod/package.json"), path.join(googleRoot, "node_modules/zod/package.json"));
+assert.equal(googleRequire("zod/package.json").version, "4.6.6");
+const { googlechatPlugin } = await import(pathToFileURL(path.join(googleRoot, "dist/channel-plugin-api.js")).href);
+const syntheticAccount = { client_email: "fixture@example.invalid", project_id: "fixture-project" };
+const account = googlechatPlugin.config.resolveAccount({ channels: { googlechat: { serviceAccount: JSON.stringify(syntheticAccount) } } }, "default");
+assert.deepEqual(account.credentials, syntheticAccount);
+assert.equal(account.credentialSource, "inline");
+const invalid = googlechatPlugin.config.resolveAccount({ channels: { googlechat: { serviceAccount: "[]" } } }, "default");
+assert.equal(invalid.credentials, undefined);
+assert.equal(invalid.credentialSource, "none");
+const slackRoot = path.join(pluginRoot, "slack");
+const slackRequire = createRequire(path.join(slackRoot, "package.json"));
+assert.equal(slackRequire("zod/package.json").version, "4.6.6");
+assert.equal(slackRequire("undici/package.json").version, "8.12.3");
+const boltRoot = path.join(slackRoot, "node_modules/@slack/bolt");
+const boltRequire = createRequire(path.join(boltRoot, "package.json"));
+const expressRequire = createRequire(boltRequire.resolve("express"));
+const bodyManifest = expressRequire.resolve("body-parser/package.json");
+assert.equal(bodyManifest, path.join(boltRoot, "node_modules/body-parser/package.json"));
+assert.equal(expressRequire("body-parser/package.json").version, "2.4.0");
+const bodyRequire = createRequire(bodyManifest);
+assert.equal(bodyRequire("qs/package.json").version, "6.16.1");
+const contentTypeRoot = path.join(path.dirname(bodyManifest), "node_modules/content-type");
+assert.equal(bodyRequire.resolve("content-type"), path.join(contentTypeRoot, "dist/index.js"));
+assert.equal(bodyRequire(path.join(contentTypeRoot, "package.json")).version, "2.1.0");
+const { ExpressReceiver } = slackRequire("@slack/bolt");
+const receiver = new ExpressReceiver({ signingSecret: "synthetic-local-test-secret" });
+const express = boltRequire("express");
+receiver.app.post("/parser-proof", express.urlencoded({ extended: true }), (req, res) => res.json(req.body));
+receiver.app.post("/json-proof", express.json(), (req, res) => res.json(req.body));
+receiver.app.use((error, _req, res, _next) => res.status(error.status).json({ type: error.type }));
+const server = createServer(receiver.app);
+try {
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const form = await fetch(origin + "/parser-proof", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "event[type]=message&event[text]=hello+world" });
+  assert.equal(form.status, 200);
+  assert.deepEqual(await form.json(), { event: { type: "message", text: "hello world" } });
+  const json = await fetch(origin + "/json-proof", { method: "POST", headers: { "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ text: "hello" }) });
+  assert.equal(json.status, 200);
+  assert.deepEqual(await json.json(), { text: "hello" });
+  const invalidJson = await fetch(origin + "/json-proof", { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+  assert.equal(invalidJson.status, 400);
+  assert.deepEqual(await invalidJson.json(), { type: "entity.parse.failed" });
+} finally {
+  server.closeAllConnections();
+  await new Promise((resolve) => server.close(resolve));
+}
+`,
+            runtime,
+          ],
+          { encoding: "utf8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(
+          messagingConsumer,
+          "resolve Google Chat accounts and parse Slack Bolt requests through remediated dependencies",
         );
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });

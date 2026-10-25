@@ -95,10 +95,13 @@ The explicit `updateLock` mode updates metadata when producing the aggregate arc
 `test/install/remediate-openclaw-runtime-dependencies.test.ts` covers resolution, metadata writes, cleanup retries, unsafe state, and stale-lock rejection.
 `test/install/patch-bundled-npm-undici.test.ts` covers the bundled npm replacement, rollback, and cleanup failures.
 The shared `bundled-npm-package.mts` owns replacement, rollback, archive verification, and backup cleanup for ip-address and Undici.
-Both entrypoints retry cleanup only for one recognized affected backup after verifying the live replacement.
+Both entrypoints restore one verified affected backup when an interrupted replacement leaves the live package absent.
+They validate npm identity before restoration and preserve unverified staging trees.
+Cleanup retries remove one recognized affected backup only after verifying the live replacement.
 Unrecognized names, multiple backups, missing identity, or unsafe trees fail without deletion.
 `test/install/bundled-npm-package.test.ts` covers shared archive and recovery failures; package-specific suites retain identity and rollback coverage.
 `test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` materializes reviewed 2026.10.5 archives and runs npm, npx, and the Discord SDK through the repaired dependencies.
+It also verifies Google Chat account parsing through patched Zod and Slack Bolt HTTP body parsing through its patched local parser dependencies.
 Remove these repairs only after reviewed upstream packages resolve the required versions without mutation and the audit and real consumers pass.
 
 ## WeChat plugin runtime graph

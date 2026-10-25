@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   jsonObject,
   reconcileBundledPackageBackup,
+  restoreMissingBundledPackage,
   prepareBundledPackageReplacement,
   runBundledNpmCommand,
   readJsonObject,
@@ -88,6 +89,54 @@ function retainedBackupFixture() {
 }
 
 describe("retained npm dependency backup recovery", () => {
+  it("preserves a missing live package and its backup when restore is interrupted", () => {
+    const { backup, options, originalPath } = retainedBackupFixture();
+    const live = path.join(options.npmRoot, "node_modules", "undici");
+    const spy = vi.spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("rename denied");
+    });
+    syncBuiltinESMExports();
+    try {
+      expect(() => restoreMissingBundledPackage(options)).toThrow("rename denied");
+      expect(fs.existsSync(live)).toBe(false);
+      expect(fs.readFileSync(originalPath, "utf8")).toBe("original bytes\n");
+    } finally {
+      spy.mockRestore();
+      syncBuiltinESMExports();
+    }
+    restoreMissingBundledPackage(options);
+    expect(fs.readFileSync(path.join(live, "original.js"), "utf8")).toBe("original bytes\n");
+    expect(fs.existsSync(backup)).toBe(false);
+  });
+
+  it("does not overwrite a dangling live symlink with the retained tree", () => {
+    const { options, originalPath } = retainedBackupFixture();
+    const live = path.join(options.npmRoot, "node_modules", "undici");
+    fs.symlinkSync("absent-target", live);
+    restoreMissingBundledPackage(options);
+    expect(fs.readlinkSync(live)).toBe("absent-target");
+    expect(fs.readFileSync(originalPath, "utf8")).toBe("original bytes\n");
+  });
+
+  it.each([
+    {
+      scenario: "wrong identity",
+      mutate: (backup: string) =>
+        fs.writeFileSync(path.join(backup, "package.json"), '{"name":"other"}'),
+    },
+    { scenario: "multiple backups", mutate: (backup: string) => fs.mkdirSync(`${backup}0`) },
+    {
+      scenario: "unsafe member",
+      mutate: (backup: string) => fs.symlinkSync("original.js", path.join(backup, "unsafe")),
+    },
+  ])("refuses missing-live recovery with $scenario", ({ mutate }) => {
+    const { backup, options, originalPath } = retainedBackupFixture();
+    mutate(backup);
+    expect(() => restoreMissingBundledPackage(options)).toThrow();
+    expect(fs.existsSync(path.join(options.npmRoot, "node_modules", "undici"))).toBe(false);
+    expect(fs.readFileSync(originalPath, "utf8")).toBe("original bytes\n");
+  });
+
   it("removes only the recognized backup after a verified replacement", () => {
     const { backup, options } = retainedBackupFixture();
     const unrelated = path.join(options.npmRoot, "node_modules", "unrelated");
