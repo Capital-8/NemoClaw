@@ -7,7 +7,7 @@ This crate provides the terminal questionnaire used by `nemoclaw onboard` and th
 It is a trial authoring flow over `nemoclaw-authoring`.
 The [authoring domain model](../../docs/design/authoring-domain.md) explains the shared resolver and the state this frontend consumes.
 It writes validated YAML and can read target observations through a verified native bundle.
-Credential availability appears as information while answering and reviewing. Interactive `nemoclaw plan` prompts for missing values; set the referenced variables first for a non-interactive run. Onboarding retains no credential values.
+A credential that is not set does not block saving: interactive `nemoclaw plan` asks for it; set it first for a non-interactive run. Onboarding retains no credential values.
 Onboarding does not create deployment state or apply resources.
 
 With the [build prerequisites](../../docs/build.md) available, run from the repository root in a terminal:

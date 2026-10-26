@@ -123,6 +123,7 @@ impl<'a> QuestionResolver<'a> {
             },
             warnings: work.warnings,
             information: self.catalog_information(),
+            credentials: Vec::new(),
             unverified: work.unverified,
             assessment,
             target_required: !self.definition.target_prerequisites.is_empty(),

@@ -130,6 +130,11 @@ impl JourneyWizard {
         Ok(self.resolution()?.next_question().cloned())
     }
 
+    /// Every question is answered and the review is open.
+    pub(super) fn reviewing(&self) -> bool {
+        self.started && matches!(self.question(), Ok(None))
+    }
+
     pub(super) fn choice_index(&self, question: &JourneyQuestion) -> usize {
         if self.selection_changed {
             return self.selected;

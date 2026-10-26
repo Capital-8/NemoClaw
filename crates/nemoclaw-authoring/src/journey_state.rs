@@ -182,6 +182,7 @@ pub struct JourneyResolution {
     kept: Vec<(String, Value)>,
     warnings: Vec<String>,
     information: Vec<String>,
+    credentials: Vec<String>,
     unverified: Vec<String>,
     assessment: PartialAssessment,
     target_required: bool,
@@ -211,6 +212,11 @@ impl JourneyResolution {
     /// Informational authoring notes; these do not establish compatibility.
     pub fn information(&self) -> &[String] {
         &self.information
+    }
+    /// The availability of each credential reference checked here, for review.
+    /// A reference that was never checked has no entry.
+    pub fn credentials(&self) -> &[String] {
+        &self.credentials
     }
     pub fn unverified(&self) -> &[String] {
         &self.unverified
