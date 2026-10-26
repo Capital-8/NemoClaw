@@ -12,14 +12,14 @@ fn suite(root: &Path) -> PathBuf {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("hcl");
     for name in [
         "verifier/main.tf",
-        "suites/openclaw/main.tf",
-        "suites/openclaw/integration.tftest.hcl",
+        "suites/docker-openclaw-nvidia/main.tf",
+        "suites/docker-openclaw-nvidia/integration.tftest.hcl",
     ] {
         let destination = root.join(name);
         fs::create_dir_all(destination.parent().unwrap()).unwrap();
         fs::copy(source.join(name), destination).unwrap();
     }
-    root.join("suites/openclaw")
+    root.join("suites/docker-openclaw-nvidia")
 }
 
 fn script(root: &Path, name: &str, body: &str) -> PathBuf {
