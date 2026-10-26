@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -39,6 +40,67 @@ function sandboxGatewayStateDirWithMalformedKey(): string {
   const stateDir = sandboxGatewayStateDir();
   fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.key"), "not a key\n", { mode: 0o600 });
   return stateDir;
+}
+
+function replaceCertificateWithInvalidDates(
+  stateDir: string,
+  certificate: "CA" | "client",
+  validity: "expired" | "future",
+): void {
+  const tlsDir = path.join(stateDir, "tls");
+  const signingDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-invalid-cert-"));
+  try {
+    const key = path.join(tlsDir, "client", "tls.key");
+    const csr = path.join(signingDir, "cert.csr");
+    execFileSync(
+      "openssl",
+      ["req", "-new", "-key", key, "-subj", "/CN=nemoclaw-test", "-out", csr],
+      { stdio: "ignore" },
+    );
+    fs.writeFileSync(path.join(signingDir, "index.txt"), "");
+    fs.writeFileSync(path.join(signingDir, "serial"), "01\n");
+    const config = path.join(signingDir, "openssl.cnf");
+    fs.writeFileSync(
+      config,
+      [
+        "[ ca ]",
+        "default_ca = CA_default",
+        "[ CA_default ]",
+        `database = ${path.join(signingDir, "index.txt")}`,
+        `serial = ${path.join(signingDir, "serial")}`,
+        `new_certs_dir = ${signingDir}`,
+        `private_key = ${key}`,
+        `certificate = ${path.join(signingDir, "unused.pem")}`,
+        "default_md = sha256",
+        "policy = policy_any",
+        "[ policy_any ]",
+        "commonName = supplied",
+      ].join("\n"),
+    );
+    execFileSync(
+      "openssl",
+      [
+        "ca",
+        "-selfsign",
+        "-batch",
+        "-config",
+        config,
+        "-in",
+        csr,
+        "-keyfile",
+        key,
+        "-startdate",
+        validity === "expired" ? "20200101000000Z" : "20990101000000Z",
+        "-enddate",
+        validity === "expired" ? "20200102000000Z" : "20990102000000Z",
+        "-out",
+        path.join(tlsDir, certificate === "CA" ? "ca.crt" : "client/tls.crt"),
+      ],
+      { stdio: "ignore" },
+    );
+  } finally {
+    fs.rmSync(signingDir, { recursive: true, force: true });
+  }
 }
 
 describe("rebuild gateway state directory preflight (#13330)", () => {
@@ -121,6 +183,35 @@ describe("rebuild gateway state directory preflight (#13330)", () => {
       restoreEnv();
     }
   });
+
+  it.each([
+    ["CA", "expired"],
+    ["CA", "future"],
+    ["client", "expired"],
+    ["client", "future"],
+  ] as const)(
+    "stops before backup or delete when the %s certificate is %s",
+    async (certificate, validity) => {
+      const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+      const stateDir = sandboxGatewayStateDir();
+      replaceCertificateWithInvalidDates(stateDir, certificate, validity);
+      process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
+      try {
+        const harness = createRebuildFlowHarness();
+
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).rejects.toThrow(/Configured OpenShell gateway state directory is unusable/u);
+
+        const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+        expect(errors).toContain(`Gateway ${certificate} certificate is expired or not yet valid`);
+        expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+        expect(harness.onboardSpy).not.toHaveBeenCalled();
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
 
   it("does not suggest unsetting the override when the recorded state directory is unusable", async () => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);

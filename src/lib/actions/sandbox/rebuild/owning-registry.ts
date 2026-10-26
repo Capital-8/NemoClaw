@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { X509Certificate } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import tls from "node:tls";
@@ -102,11 +103,34 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_OPENSHELL_BIN",
   "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
   "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
+  "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
+  "NEMOCLAW_GATEWAY_MANAGEMENT",
   "NEMOCLAW_REBUILD_VERBOSE",
   "NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH",
   "NEMOCLAW_TELEMETRY_CONTEXT_DIR",
   "NEMOCLAW_DISABLE_TELEMETRY",
 ] as const;
+
+function assertCertificatesCurrentlyValid(pem: Buffer, label: string): void {
+  const blocks = pem
+    .toString("utf8")
+    .match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/gu);
+  if (!blocks?.length) throw new Error(`${label} has no PEM certificate`);
+  const now = Date.now();
+  for (const block of blocks) {
+    const certificate = new X509Certificate(block);
+    const validFrom = Date.parse(certificate.validFrom);
+    const validTo = Date.parse(certificate.validTo);
+    if (
+      !Number.isFinite(validFrom) ||
+      !Number.isFinite(validTo) ||
+      now < validFrom ||
+      now >= validTo
+    ) {
+      throw new Error(`${label} certificate is expired or not yet valid`);
+    }
+  }
+}
 
 /**
  * Validate a configured gateway state location before rebuild changes anything.
@@ -137,6 +161,8 @@ export function rebuildGatewayStateDirIssue(
     try {
       // The SDK hands these to Node TLS; reject malformed or mismatched material here.
       const credentials = readManagedOpenShellSdkTls(stateDir);
+      assertCertificatesCurrentlyValid(credentials.caCert, "Gateway CA");
+      assertCertificatesCurrentlyValid(credentials.clientCert, "Gateway client");
       tls.createSecureContext({
         ca: credentials.caCert,
         cert: credentials.clientCert,
@@ -144,7 +170,7 @@ export function rebuildGatewayStateDirIssue(
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      return `The gateway TLS credentials in ${stateDir}/tls are missing or unreadable: ${detail}`;
+      return `The gateway TLS credentials in ${stateDir}/tls are unusable: ${detail}`;
     }
     return null;
   } catch (error) {
