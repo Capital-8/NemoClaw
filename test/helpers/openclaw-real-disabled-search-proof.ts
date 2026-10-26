@@ -188,7 +188,12 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       );
       config.tools.web.search.enabled = false;
       let sideEffects = 0;
-      async function call(name: string, ctx: ToolContext, id: string): Promise<ToolResult> {
+      async function call(
+        name: string,
+        ctx: ToolContext,
+        id: string,
+        params?: object,
+      ): Promise<ToolResult> {
         const tool = wrap(
           {
             name,
@@ -202,7 +207,10 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
           { ...ctx, config },
           { emitDiagnostics: false },
         );
-        return tool.execute(id, name === "read" ? { file_path: "/sandbox/README.md" } : {});
+        return tool.execute(
+          id,
+          params ?? (name === "read" ? { file_path: "/sandbox/README.md" } : {}),
+        );
       }
       function blocked(result: ToolResult): void {
         assert.equal(result.details?.status, "blocked");
@@ -222,6 +230,13 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       await admit({ runId: "denied-run" });
       blocked(await call("web_search", { runId: "denied-run" }, "search-1"));
       blocked(await call("read", { runId: "denied-run" }, "read-1"));
+      await admit({ runId: "provider-probe" });
+      blocked(
+        await call("web_fetch", { runId: "provider-probe" }, "provider-probe-1", {
+          url: "https://api.tavily.com./search",
+        }),
+      );
+      blocked(await call("read", { runId: "provider-probe" }, "provider-read-1"));
       assert.equal(sideEffects, 0, "real caller stops search and substitute execution");
       await admit({ runId: "other-run" });
       await call("read", { runId: "other-run" }, "read-2");

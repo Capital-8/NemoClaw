@@ -251,6 +251,29 @@ export { getPluginConfig };
 /** Tool names that can write/modify files and should be scanned for secrets. */
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
 
+function hasSearchProviderUrl(value: PluginValue): boolean {
+  if (typeof value === "string") {
+    // Commands can embed URLs; inspect original strings before JSON encoding.
+    const urls = [value, ...(value.match(/\bhttps?:[\\/]{2,}[^\s"'`<>]+/giu) ?? [])];
+    return urls.some((candidate) => {
+      try {
+        const url = new URL(candidate);
+        return (
+          /^https?:$/u.test(url.protocol) &&
+          ["api.tavily.com", "api.search.brave.com", "search.brave.com"].includes(
+            url.hostname.replace(/\.$/u, ""),
+          )
+        );
+      } catch {
+        return false;
+      }
+    });
+  }
+  return (
+    value !== null && typeof value === "object" && Object.values(value).some(hasSearchProviderUrl)
+  );
+}
+
 function blocksDisabledSearch(
   config: OpenClawConfig,
   event: BeforeToolCallEvent,
@@ -274,7 +297,7 @@ function blocksDisabledSearch(
     /\b(?:brave|tavily|search|web[_ -]?search)\b/iu.test(probe);
   const providerProbe =
     /^(?:exec|execute|shell|web_fetch|browser)$/u.test(effectiveTarget) &&
-    /https?:\/\/(?:api\.tavily\.com|(?:api\.)?search\.brave\.com)(?:[/:?"\s]|$)/iu.test(probe);
+    hasSearchProviderUrl(event.params);
   if (searchTool || searchDiscovery || providerProbe) {
     if (event.runId) deniedSearchRuns.deny(event.runId, aliases);
     return true;

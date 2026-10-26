@@ -497,9 +497,38 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     },
     { toolName: "exec", params: { command: "curl https://api.tavily.com/search" } },
     { toolName: "web_fetch", params: { url: "https://api.search.brave.com/res/v1/web/search" } },
+    { toolName: "web_fetch", params: { url: "https://api.tavily.com./search" } },
+    {
+      toolName: "exec",
+      params: { command: "curl https://api.search.brave.com./res/v1/web/search" },
+    },
+    { toolName: "browser", params: { url: "https://search.brave.com./search" } },
+    { toolName: "execute", params: { command: "curl https://API.TAVILY.COM.:443/search" } },
+    { toolName: "shell", params: { command: "curl https://api%2Etavily%2Ecom./search" } },
+    { toolName: "web_fetch", params: { url: "https://api.ta\tvily.com./search" } },
+    { toolName: "web_fetch", params: { url: String.raw`https:\\api.tavily.com.\search` } },
+    { toolName: "web_fetch", params: { url: "https://api\u3002tavily\uff0ecom\uff61/search" } },
+    {
+      toolName: "tool_call",
+      params: {
+        id: "openclaw:core:web_fetch",
+        args: { url: "https://api.search.brave.com./res/v1/web/search" },
+      },
+    },
+    {
+      toolName: "tool_call",
+      params: {
+        id: "openclaw:core:exec",
+        args: { command: "curl https://user:password@api.tavily.com.:443/search" },
+      },
+    },
+    {
+      toolName: "browser",
+      params: { urls: ["https://example.com/", "https://search.brave.com./search"] },
+    },
   ])("blocks disabled search and provider probing: $toolName $params", (event) => {
     const { handler } = searchHook(false);
-    expect(handler(event)).toMatchObject({
+    expect(handler(event, { runId: "provider-probe" })).toMatchObject({
       block: true,
       blockReason: expect.stringContaining("Web search is unavailable in this sandbox"),
     });
@@ -549,6 +578,14 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       toolName: "web_fetch",
       params: { url: "https://docs.nvidia.com/nemoclaw/latest/get-started" },
     },
+    { toolName: "web_fetch", params: { url: "https://api.tavily.com.example.org/search" } },
+    { toolName: "web_fetch", params: { url: "https://api.tavily.com@docs.nvidia.com/nemoclaw/" } },
+    {
+      toolName: "web_fetch",
+      params: { url: "https://docs.nvidia.com/?example=https://api.tavily.com/search" },
+    },
+    { toolName: "browser", params: { url: "https://docs.nvidia.com/api.tavily.com./search" } },
+    { toolName: "web_fetch", params: { url: "https://[" } },
   ])(
     "allows ordinary local and direct-fetch work before search is attempted: $toolName $params",
     (event) => {
@@ -560,6 +597,12 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   it.each([true, undefined])("allows search when enabled is %s", (enabled) => {
     const { handler } = searchHook(enabled);
     expect(handler({ toolName: "web_search", params: { query: "NemoClaw" } })).toBeUndefined();
+    expect(
+      handler(
+        { toolName: "web_fetch", params: { url: "https://api.tavily.com./search" } },
+        { runId: "enabled-provider-probe" },
+      ),
+    ).toBeUndefined();
   });
 
   it.each([
