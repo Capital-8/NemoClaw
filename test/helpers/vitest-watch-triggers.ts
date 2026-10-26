@@ -234,6 +234,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/start\.sh$/,
+    testsToRun: runTests("test/agents/hermes/hermes-env-secret-boundary-hardening.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)scripts\/lib\/refresh-openclaw-wechat-placeholder\.py$/,
     testsToRun: runTests("test/agents/openclaw/runtime/nemoclaw-start-wechat-placeholder.test.ts"),
   },
