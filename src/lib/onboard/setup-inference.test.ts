@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../inference/native-nvidia/contract";
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
 import {
   createProviderReviewDeps,
@@ -422,6 +423,7 @@ describe("native NVIDIA onboarding", () => {
       expect.objectContaining({
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: NVIDIA_HOSTED_NATIVE_ENDPOINT,
         nativeNvidiaProviderAttachment: {
           schemaVersion: 1,
           profileId: "nemoclaw-nvidia-inference-v1",
