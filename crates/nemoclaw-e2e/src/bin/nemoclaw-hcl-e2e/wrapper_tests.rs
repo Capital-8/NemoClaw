@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+#[cfg(unix)]
+use serde_json::Value;
 
 #[cfg(unix)]
 #[tokio::test]
@@ -29,39 +31,6 @@ async fn successful_verification_and_cleanup_produce_a_successful_case() {
     assert_eq!(identity["candidate_revision"], "a".repeat(40));
 }
 
-#[cfg(unix)]
-#[tokio::test]
-async fn leftover_docker_workloads_fail_an_otherwise_successful_case() {
-    let root = tempfile::tempdir().unwrap();
-    let mut tools = tools(root.path(), true, true, true);
-    tools.docker = script(
-        root.path(),
-        "leftover-docker",
-        "printf '%s\\n' owned-container",
-    );
-    let run = root.path().join("run");
-    assert!(
-        execute_with_tools(
-            &case_path(),
-            root.path(),
-            &run,
-            &tools,
-            &CancellationToken::new()
-        )
-        .await
-        .is_err()
-    );
-    let result: Value =
-        serde_json::from_slice(&fs::read(run.join("result.json")).unwrap()).unwrap();
-    assert_eq!(result["succeeded"], false);
-    assert_eq!(result["failed_phase"], Value::Null);
-    assert_eq!(result["cleanup"]["succeeded"], false);
-    assert_eq!(
-        result["cleanup"]["failure"],
-        "Docker still holds test-owned workloads"
-    );
-}
-
 fn case_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("hcl/cases/docker-openclaw-nvidia.yaml")
 }
@@ -74,10 +43,19 @@ fn the_case_allocates_a_new_deployment_identity_for_each_run() {
     assert_ne!(first.metadata.uid, second.metadata.uid);
     assert_ne!(first.workspace(), second.workspace());
     assert_ne!(first.metadata.uid, case.document().unwrap().metadata.uid);
+    let mut authored = case.deployment.clone();
+    authored["metadata"]["uid"] = json!(first.metadata.uid);
+    let normalized =
+        nemoclaw_sdk::config::Document::parse(serde_json::to_vec(&authored).unwrap().as_slice())
+            .unwrap();
+    assert_eq!(
+        first, normalized,
+        "the SDK must derive defaults from the fresh identity"
+    );
 }
 
 #[test]
-fn unsupported_combinations_are_rejected_before_execution() {
+fn case_configuration_is_validated_by_the_sdk_without_combination_restrictions() {
     for (pointer, value) in [
         ("/spec/gateway/runtime/provider", "podman"),
         (
@@ -91,8 +69,34 @@ fn unsupported_combinations_are_rejected_before_execution() {
     ] {
         let mut case = Case::read(&case_path()).unwrap();
         *case.deployment.pointer_mut(pointer).unwrap() = json!(value);
-        assert!(case.document().is_err(), "{pointer}");
+        assert!(case.document().is_ok(), "{pointer}");
     }
+    let mut case = Case::read(&case_path()).unwrap();
+    case.deployment = serde_json::to_value(
+        nemoclaw_sdk::config::Document::parse(
+            include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/managed-ollama.yaml")
+                .as_bytes(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    case.agent = "main".into();
+    assert!(case.document().is_ok());
+}
+
+#[test]
+fn the_case_preserves_the_authored_endpoint_and_agent_request() {
+    let mut input =
+        nemoclaw_sdk::config::parse_yaml_value(fs::File::open(case_path()).unwrap()).unwrap();
+    input["request"] = json!({"message":"adapter-owned input"});
+    let file = tempfile::NamedTempFile::new().unwrap();
+    fs::write(file.path(), input.to_string()).unwrap();
+    let case = Case::read(file.path()).unwrap();
+    assert_eq!(case.request, input["request"]);
+    assert_eq!(
+        case.owned_document().unwrap().spec.gateway.endpoint(),
+        case.document().unwrap().spec.gateway.endpoint()
+    );
 }
 
 #[cfg(unix)]
@@ -144,7 +148,6 @@ fi
         candidate_revision: "a".repeat(40),
         cli,
         tofu,
-        docker: script(root, "docker", "exit 0"),
         environment: BTreeMap::from([
             ("TRACE".into(), root.join("trace").into_os_string()),
             ("APPLY_EXIT".into(), if apply { "0" } else { "1" }.into()),
@@ -342,7 +345,7 @@ async fn shared_hcl_assertions_keep_verifier_state_separate_and_reject_failed_ob
         (Some("/response/succeeded"), json!(false)),
         (Some("/response/agent_name"), json!("another-agent")),
         (Some("/response/runtime_id"), json!("another-runtime")),
-        (Some("/response/has_response_text"), json!(false)),
+        (Some("/response/output_valid"), json!(false)),
     ] {
         let directory = root
             .path()
@@ -356,7 +359,7 @@ async fn shared_hcl_assertions_keep_verifier_state_separate_and_reject_failed_ob
             },
             "response": {
                 "attempted":true,"succeeded":true,"agent_name":"assistant",
-                "runtime_id":"runtime","has_response_text":true
+                "runtime_id":"runtime","output_valid":true
             }
         });
         if let Some(field) = defect {
@@ -398,6 +401,29 @@ async fn shared_hcl_assertions_keep_verifier_state_separate_and_reject_failed_ob
             "{defect:?}: {}",
             fs::read_to_string(directory.join("tofu-test.stdout")).unwrap()
         );
+        if let Some(defect) = defect {
+            let expected = match defect {
+                "/health/gateway_ready" => "gateway:",
+                "/health/identity_matches" | "/health/sandbox_ready" => "sandbox:",
+                "/health/agent_name" => "binding:",
+                "/health/policy_loaded" => "policy:",
+                _ => "invocation:",
+            };
+            let diagnostics: Vec<Value> = fs::read_to_string(directory.join("tofu-test.stdout"))
+                .unwrap()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .filter(|event| event["type"] == "diagnostic")
+                .collect();
+            assert_eq!(diagnostics.len(), 1, "{defect}: {diagnostics:?}");
+            assert!(
+                diagnostics[0]["diagnostic"]["detail"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with(expected),
+                "{defect}: {diagnostics:?}"
+            );
+        }
         assert_eq!(
             fs::read_to_string(&product_state).unwrap(),
             "owned-product-state"

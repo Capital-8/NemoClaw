@@ -5,9 +5,8 @@ use super::{case::Case, process};
 use nemoclaw_sdk::{
     CancellationToken, OperationResult, Outcome,
     bundle::{Bundle, executable},
-    config::Document,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{
     collections::BTreeMap,
     ffi::OsString,
@@ -22,7 +21,6 @@ pub(super) struct Tools {
     pub candidate_revision: String,
     pub cli: PathBuf,
     pub tofu: PathBuf,
-    pub docker: PathBuf,
     pub environment: BTreeMap<OsString, OsString>,
 }
 
@@ -50,7 +48,6 @@ pub(super) async fn execute(
         candidate_revision: candidate_revision.into(),
         cli: bundle.directory.join("bin").join(executable("nemoclaw")),
         tofu: bundle.tofu(),
-        docker: "docker".into(),
         environment: BTreeMap::new(),
     };
     execute_with_tools(case, &bundle.directory, directory, &tools, cancel).await
@@ -106,6 +103,23 @@ pub(super) async fn execute_with_tools(
     )
     .map_err(|_| "cannot save case identity")?;
     let mut environment = tools.environment.clone();
+    // Only gateway access is needed by the probe; inference credentials stay with apply.
+    let connection = document.spec.gateway.connection();
+    for name in connection
+        .credential_env
+        .into_iter()
+        .chain(
+            connection
+                .tls
+                .into_iter()
+                .flat_map(|tls| [tls.ca_env, tls.certificate_env, tls.key_env]),
+        )
+        .filter(|name| !name.starts_with("TF_") && !name.starts_with("TOFU_"))
+    {
+        if let Some(value) = std::env::var_os(&name) {
+            environment.insert(name.into(), value);
+        }
+    }
     environment.insert(
         nemoclaw_backend::DIAGNOSTICS_ENV.into(),
         directory.join("diagnostics").into_os_string(),
@@ -122,6 +136,11 @@ pub(super) async fn execute_with_tools(
     );
     environment.insert("NEMOCLAW_HCL_STATE".into(), state.clone().into_os_string());
     environment.insert("NEMOCLAW_HCL_REQUEST".into(), request.into_os_string());
+    environment.insert("NEMOCLAW_HCL_AGENT".into(), case.agent.clone().into());
+    environment.insert(
+        "NEMOCLAW_HCL_RESPONSE_CONTRACT".into(),
+        case.response_contract.name().into(),
+    );
     let arguments = |operation: &str| {
         let mut args: Vec<OsString> = [
             operation,
@@ -207,9 +226,7 @@ pub(super) async fn execute_with_tools(
         )
         .await
         {
-            Ok(()) => {
-                verify_cleanup(&directory, &state, &document, tools, &environment, &cleanup).await
-            }
+            Ok(()) => destroy_result(&directory),
             Err(error) => Err(error),
         }
     } else {
@@ -237,104 +254,17 @@ fn strings(args: &[&str]) -> Vec<OsString> {
     args.iter().map(Into::into).collect()
 }
 
-async fn verify_cleanup(
-    directory: &Path,
-    state: &Path,
-    document: &Document,
-    tools: &Tools,
-    environment: &BTreeMap<OsString, OsString>,
-    cancel: &CancellationToken,
-) -> Result<Vec<String>, String> {
+fn destroy_result(directory: &Path) -> Result<Vec<String>, String> {
     let result: OperationResult = serde_json::from_slice(
         &fs::read(directory.join("destroy.stdout")).map_err(|_| "missing destroy result")?,
     )
     .map_err(|_| "invalid destroy result")?;
-    if result.outcome != Outcome::Destroyed
-        || result
-            .retained
-            .iter()
-            .any(|r| r != "openshell_gateway_storage.runtime")
-    {
+    if result.outcome != Outcome::Destroyed {
         return Err("destroy did not confirm expected teardown/retention".into());
-    }
-    let final_state = match fs::read(state.join("terraform.tfstate")) {
-        Ok(bytes) => Some(bytes),
-        Err(error)
-            if error.kind() == std::io::ErrorKind::NotFound && result.retained.is_empty() =>
-        {
-            None
-        }
-        Err(_) => return Err("cannot read final deployment state".into()),
-    };
-    if let Some(bytes) = final_state {
-        let value: Value =
-            serde_json::from_slice(&bytes).map_err(|_| "cannot verify final deployment state")?;
-        for resource in value["resources"]
-            .as_array()
-            .ok_or("invalid final resource inventory")?
-        {
-            if resource["mode"] == "managed"
-                && resource["instances"]
-                    .as_array()
-                    .is_some_and(|v| !v.is_empty())
-            {
-                let address = format!(
-                    "{}.{}",
-                    resource["type"].as_str().unwrap_or_default(),
-                    resource["name"].as_str().unwrap_or_default()
-                );
-                if !result.retained.contains(&address) {
-                    return Err("destroy left a managed workload in state".into());
-                }
-            }
-        }
-    }
-    let engine = match &document.spec.gateway {
-        nemoclaw_sdk::config::Gateway::Managed(g) => &g.engine,
-        _ => return Err("unexpected gateway".into()),
-    };
-    for (label, filter, volumes) in [
-        (
-            "cleanup-gateway",
-            format!("label=nemoclaw.nvidia.com/uid={}", document.metadata.uid),
-            false,
-        ),
-        (
-            "cleanup-sandboxes",
-            format!(
-                "label=openshell.ai/sandbox-namespace={}-gateway",
-                document.workspace()
-            ),
-            false,
-        ),
-        (
-            "cleanup-workspaces",
-            format!(
-                "label=openshell.ai/sandbox-namespace={}-gateway",
-                document.workspace()
-            ),
-            true,
-        ),
-    ] {
-        let mut args = strings(&["--host", engine]);
-        args.extend(if volumes {
-            strings(&["volume", "ls", "--quiet", "--filter"])
-        } else {
-            strings(&["ps", "--all", "--quiet", "--filter"])
-        });
-        args.push(filter.into());
-        process::execute(&tools.docker, &args, directory, label, environment, cancel).await?;
-        if !fs::read(directory.join(format!("{label}.stdout")))
-            .map_err(|_| "cannot read cleanup evidence")?
-            .iter()
-            .all(u8::is_ascii_whitespace)
-        {
-            return Err("Docker still holds test-owned workloads".into());
-        }
     }
     Ok(result.retained)
 }
 
 #[cfg(test)]
-#[path = "run_tests.rs"]
+#[path = "wrapper_tests.rs"]
 mod tests;

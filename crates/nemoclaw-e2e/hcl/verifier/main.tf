@@ -7,7 +7,15 @@ terraform {
 
 resource "terraform_data" "probe" {
   provisioner "local-exec" {
-    command     = "\"$NEMOCLAW_HCL_E2E\" probe"
+    command     = <<-EOT
+      "$NEMOCLAW_HCL_E2E" probe \
+        --config "$NEMOCLAW_HCL_CONFIG" \
+        --state-dir "$NEMOCLAW_HCL_STATE" \
+        --agent "$NEMOCLAW_HCL_AGENT" \
+        --request "$NEMOCLAW_HCL_REQUEST" \
+        --response-contract "$NEMOCLAW_HCL_RESPONSE_CONTRACT" \
+        --report "$NEMOCLAW_HCL_REPORT"
+    EOT
     interpreter = ["/bin/sh", "-c"]
     environment = {
       NEMOCLAW_HCL_REPORT = "${path.cwd}/reports/${self.id}.json"
@@ -23,7 +31,7 @@ locals {
 output "health" {
   value = merge(local.report.health, {
     binding_matches = (
-      local.report.health.identity_matches &&
+      local.report.health.agent_name != null &&
       local.report.health.agent_name == local.report.expected.agent_name
     )
   })
@@ -39,7 +47,7 @@ output "response" {
       local.report.response.succeeded &&
       local.report.response.agent_name == local.report.expected.agent_name &&
       local.report.response.runtime_id == local.report.expected.runtime_id &&
-      local.report.response.has_response_text
+      local.report.response.output_valid
     )
   })
 }

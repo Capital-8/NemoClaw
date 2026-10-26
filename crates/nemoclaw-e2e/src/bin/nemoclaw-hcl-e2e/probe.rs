@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use fabric_provider::AgentBridge as _;
-use nemoclaw_sdk::{EnvironmentSecrets, backend::Row, config::Document};
+use nemoclaw_sdk::{
+    EnvironmentSecrets,
+    backend::Row,
+    config::{Document, NamedSandbox},
+};
 use openshell_provider::{OpenShell, SandboxPhase, verify_identity};
 use serde_json::{Value, json};
 use std::{
@@ -12,11 +16,32 @@ use std::{
     time::Duration,
 };
 
-fn path(key: &str) -> Result<PathBuf, String> {
-    std::env::var_os(key)
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .ok_or_else(|| format!("missing absolute {key}"))
+#[derive(clap::Args)]
+pub(super) struct Inputs {
+    #[arg(long)]
+    pub config: PathBuf,
+    #[arg(long)]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub agent: String,
+    #[arg(long)]
+    pub request: PathBuf,
+    #[arg(long, value_enum)]
+    pub response_contract: super::response::Contract,
+    #[arg(long)]
+    pub report: PathBuf,
+}
+
+pub(super) fn target_agent<'a>(
+    document: &'a Document,
+    agent: &str,
+) -> Result<NamedSandbox<'a>, String> {
+    let mut matches = document.sandboxes().filter(|s| s.agent.name == agent);
+    let sandbox = matches.next().ok_or("target agent is not configured")?;
+    if matches.next().is_some() {
+        return Err("target agent is ambiguous".into());
+    }
+    Ok(sandbox)
 }
 
 fn resource(state: &Value, kind: &str, name: &str) -> Result<Value, String> {
@@ -41,45 +66,36 @@ fn initial_report() -> Value {
     json!({
         "expected": {"agent_name": null, "runtime_id": null},
         "health": {"gateway_ready": false, "sandbox_ready": false, "identity_matches": false, "agent_name": null, "policy_loaded": false},
-        "response": {"attempted": false, "succeeded": false, "agent_name": null, "runtime_id": null, "has_response_text": false},
+        "response": {"attempted": false, "succeeded": false, "agent_name": null, "runtime_id": null, "output_valid": false},
         "failure": {"observed_at": "probe", "attributed_to": "unknown", "code": "incomplete"}
     })
 }
 
-pub(super) async fn execute() -> Result<(), String> {
-    let report_path = path("NEMOCLAW_HCL_REPORT")?;
+pub(super) async fn execute(inputs: &Inputs) -> Result<(), String> {
+    let report_path = &inputs.report;
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&report_path)
+        .open(report_path)
         .map_err(|_| "probe requires a new report file")?;
     let mut report = initial_report();
-    save(&report_path, &report)?;
-    let result = async {
-        observe(
-            &report_path,
-            &mut report,
-            &path("NEMOCLAW_HCL_CONFIG")?,
-            &path("NEMOCLAW_HCL_STATE")?,
-            &path("NEMOCLAW_HCL_REQUEST")?,
-        )
-        .await
-    }
-    .await;
+    save(report_path, &report)?;
+    let result = observe(inputs, &mut report).await;
     if result.is_err() {
         // Backend text and response payloads can contain credentials or private prompts.
         report["failure"]["code"] = json!("observation_failed");
     }
-    save(&report_path, &report)
+    save(report_path, &report)
 }
 
-async fn observe(
-    report_path: &Path,
-    report: &mut Value,
-    config: &Path,
-    state_path: &Path,
-    request: &Path,
-) -> Result<(), String> {
+async fn observe(inputs: &Inputs, report: &mut Value) -> Result<(), String> {
+    let Inputs {
+        config,
+        state_dir: state_path,
+        request,
+        report: report_path,
+        ..
+    } = inputs;
     let document =
         Document::parse(fs::File::open(config).map_err(|_| "cannot read configuration")?)
             .map_err(|_| "invalid configuration")?;
@@ -88,7 +104,7 @@ async fn observe(
             .map_err(|_| "cannot read deployment state")?,
     )
     .map_err(|_| "invalid deployment state")?;
-    let sandbox = document.sandboxes().next().ok_or("missing sandbox")?;
+    let sandbox = target_agent(&document, &inputs.agent)?;
     let mut attributes = resource(&state, "openshell_sandbox", sandbox.name)?;
     nemoclaw_openshell::flatten("openshell_sandbox", &mut attributes);
     let expected: Row = attributes
@@ -163,7 +179,7 @@ async fn observe(
         .invoke_agent(&binding, runtime, &input)
         .await
         .map_err(|_| "invocation failed")?;
-    report["response"] = super::response_observations(&response);
+    report["response"] = super::response::observations(&response, inputs.response_contract);
     report["failure"]["code"] = json!("none");
     Ok(())
 }
@@ -227,6 +243,10 @@ mod tests {
         let config = root.path().join("deployment.yaml");
         let request = root.path().join("request.json");
         let report_path = root.path().join("report.json");
+        // The requested agent is deliberately not the first sandbox in the YAML.
+        let mut other = document.spec.sandboxes["assistant"].clone();
+        other.agent.name = "another-agent".into();
+        document.spec.sandboxes.insert("aaa".into(), other);
         fs::write(&config, document.yaml().unwrap()).unwrap();
         fs::write(&request, json!("test question").to_string()).unwrap();
         let mut state = json!({"resources":[
@@ -236,10 +256,16 @@ mod tests {
             {"mode":"managed","type":"fabric_agent","name":"assistant","instances":[{"attributes":{"runtime_id":runtime}}]}
         ]});
         fs::write(root.path().join("terraform.tfstate"), state.to_string()).unwrap();
+        let inputs = Inputs {
+            config,
+            state_dir: root.path().into(),
+            request,
+            agent: bound["agent_name"].clone(),
+            response_contract: crate::response::Contract::Openclaw,
+            report: report_path.clone(),
+        };
         let mut report = initial_report();
-        observe(&report_path, &mut report, &config, root.path(), &request)
-            .await
-            .unwrap();
+        observe(&inputs, &mut report).await.unwrap();
         assert_eq!(
             report["health"],
             json!({
@@ -255,18 +281,14 @@ mod tests {
             report["response"],
             json!({
                 "attempted":true,"succeeded":true,"agent_name":bound["agent_name"],
-                "runtime_id":runtime,"has_response_text":true
+                "runtime_id":runtime,"output_valid":true
             })
         );
         let calls = fixture.state.lock().unwrap().exec_calls.len();
         state["resources"][0]["instances"][0]["attributes"]["id"] = json!("another-sandbox");
         fs::write(root.path().join("terraform.tfstate"), state.to_string()).unwrap();
         let mut rejected = initial_report();
-        assert!(
-            observe(&report_path, &mut rejected, &config, root.path(), &request)
-                .await
-                .is_err()
-        );
+        assert!(observe(&inputs, &mut rejected).await.is_err());
         assert_eq!(rejected["response"]["attempted"], false);
         assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), calls);
     }
