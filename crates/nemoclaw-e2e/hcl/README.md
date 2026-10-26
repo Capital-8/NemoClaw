@@ -1,0 +1,142 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# HCL E2E proof of concept
+
+One opt-in case deploys Docker + OpenClaw + NVIDIA hosted inference.
+It uses the candidate bundle's public NemoClaw CLI and existing
+[Fabric invocation bridge](../../fabric-provider/src/bridge.rs).
+Runner provisioning, other runtimes, export/reapply, model quality, and GPU qualification are outside this POC.
+
+The case contains ordinary v1 deployment configuration and a text request.
+Runtime, harness, inference endpoint, model, and credential reference come from that configuration.
+The POC rejects combinations outside its scope before deployment.
+
+~~~mermaid
+flowchart LR
+    A["1. Case YAML<br/>Deployment combination + request"]
+    B["2. NemoClaw CLI<br/>plan → apply"]
+    C["3. Dedicated verifier<br/>tofu test + HCL assertions<br/>Health checks + Fabric invoke"]
+    A --> B --> C
+~~~
+
+## Run the live case
+
+Use a Linux Docker host, a candidate bundle from the tested commit, and its required images.
+The Docker CLI must be on PATH.
+The case uses the local engine at unix:///var/run/docker.sock.
+Provide NVIDIA_INFERENCE_API_KEY through the caller's secret environment; do not put its value in YAML or arguments.
+
+Build the helper from the same checkout as the candidate bundle:
+
+~~~sh
+cargo build --locked -p nemoclaw-e2e --bin nemoclaw-hcl-e2e
+target/debug/nemoclaw-hcl-e2e run \
+  --case crates/nemoclaw-e2e/hcl/cases/docker-openclaw-nvidia.yaml \
+  --bundle /absolute/path/to/candidate/bundle \
+  --run-dir /absolute/path/to/new-private-run
+~~~
+
+The parent of the run directory must exist. The run directory itself must not exist.
+Each run allocates a fresh deployment UUID and loopback gateway endpoint.
+The checked-in UUID is a template, never the identity used for deployment.
+
+The helper runs these stages:
+
+1. Resolve and validate the case. Write the resolved deployment and request into a private directory.
+2. Run nemoclaw plan and nemoclaw apply with noninteractive JSON output.
+3. Initialize a separate verifier directory and run tofu test.
+4. Let the verifier's apply-time local-exec resource run the same helper in probe mode.
+5. Collect observations, invoke the agent once through AgentBridge::invoke_agent, and evaluate the HCL assertions.
+6. Run nemoclaw destroy after every started apply, including partial failures and cancellation.
+7. Verify final state and Docker workload absence. Write the combined test/cleanup outcome.
+
+Each subprocess has a ten-minute deadline.
+SIGINT and SIGTERM cancel the active process group before cleanup starts.
+Cleanup uses a fresh cancellation token. Failed cleanup makes the run fail without replacing the original test failure.
+SIGKILL, host loss, and an unavailable Docker engine can prevent cleanup; the retained state supports recovery.
+
+## Assertion and state boundaries
+
+[The shared HCL file](verifier/integration.tftest.hcl) owns two live assertions:
+
+- Required gateway/sandbox readiness, expected Fabric binding, and loaded policy.
+- A successful Fabric response from the expected agent/runtime, containing nonempty OpenClaw response text.
+
+Health probes reuse OpenShell capability, sandbox observation, identity, and readiness operations.
+Fabric does not expose an independent runtime-status API at the pinned version.
+Binding validation therefore does not claim that an agent process is healthy; the real invocation proves it responds.
+The response check follows the pinned OpenClaw adapter's output.response contract.
+It does not assert exact generated wording or benchmark model quality.
+
+The verifier uses only the built-in terraform_data resource.
+Its newly allocated resource ID determines the report filename.
+That ID stays unknown during planning, so file evaluation waits for the apply-time probe.
+Invocation never runs from a refresh-time data source, and ambiguous invocations are never retried.
+
+The directories have separate owners:
+
+- deployment/ contains NemoClaw's generated graph and product state.
+- verifier/ contains the fixed verifier module, temporary test state, and probe reports.
+
+OpenTofu's test cleanup owns only its verifier resource.
+Only nemoclaw destroy owns product teardown.
+Ambient OpenTofu argument and state overrides are removed from child commands.
+The verifier receives an explicit environment without the hosted inference credential.
+
+## Evidence and cleanup
+
+The run directory is created with mode 0700 on Unix.
+It retains result.json, resolved inputs, command stdout/stderr, HCL JSON output,
+probe observations, and private Fabric diagnostics.
+Backend messages, requests, and response text are excluded from the normalized probe report.
+Raw command logs and Fabric diagnostics remain private; do not upload the complete run directory.
+
+Probe failures identify the observation phase and preserve unknown attribution.
+A failed Fabric invoke does not establish a Fabric defect.
+The case result records the original failed phase and a separate cleanup outcome.
+
+Cleanup checks the destroy result, remaining managed state, and Docker containers/volumes
+selected by this run's fresh deployment UID or sandbox namespace.
+It preserves NemoClaw's intentional gateway-storage retention and reports that resource explicitly.
+It does not remove shared resources, unrelated deployments, or retained gateway data.
+
+If cleanup fails, inspect the private evidence and recover using the same bundle and state:
+
+~~~sh
+/absolute/path/to/candidate/bundle/bin/nemoclaw destroy \
+  --bundle /absolute/path/to/candidate/bundle \
+  --state-dir /absolute/path/to/new-private-run/deployment \
+  --output json
+~~~
+
+Do not start another test in the existing run directory.
+
+## Validation and live evidence
+
+Run focused harness tests:
+
+~~~sh
+cargo test --locked -p nemoclaw-e2e --bin nemoclaw-hcl-e2e
+~~~
+
+The ignored HCL contract test runs the actual pinned OpenTofu with fixture observations:
+
+~~~sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/candidate/bundle \
+  cargo test --locked -p nemoclaw-e2e --bin nemoclaw-hcl-e2e \
+  shared_hcl_assertions -- --ignored
+~~~
+
+Alternatively, set NEMOCLAW_HCL_TOFU to an absolute pinned OpenTofu executable.
+The lifecycle nextest profile selects this contract test.
+It proves that healthy observations pass, failed health/response observations fail,
+and verifier execution leaves product state unchanged.
+It does not deploy Docker workloads or call hosted inference.
+
+The fast tests own case validation, response classification, state-directory isolation,
+partial-apply failure, cancellation, and preservation of original failures during cleanup.
+A gateway-fixture test exercises the actual health/Fabric probe and blocks invocation after a binding mismatch.
+The canonical live owner is the single YAML case run through the helper above.
+Its distinct boundary is real deployment-to-Fabric-to-hosted-inference integration evaluated by HCL.
+A passing fixture contract test does not establish a passing live E2E case.

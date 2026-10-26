@@ -21,6 +21,7 @@ path = "tests/brev.rs"
 rcgen = "0.14.10"
 rustls.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+nemoclaw-backend = { path = "../nemoclaw-backend" }
 nemoclaw-runtime = { path = "../nemoclaw-runtime" }
 nemoclaw-provider = { path = "../nemoclaw-provider" }
 nemoclaw-tofu = { path = "../nemoclaw-tofu" }
@@ -33,7 +34,7 @@ serde_json.workspace = true
 serde.workspace = true
 sha2.workspace = true
 tf-provider.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "signal"] }
 tempfile.workspace = true
 openshell-core.workspace = true
 tonic.workspace = true
@@ -43,6 +44,9 @@ tower.workspace = true
 http.workspace = true
 tokio-stream.workspace = true
 tar.workspace = true
+process-wrap.workspace = true
+getrandom.workspace = true
+clap.workspace = true
 
 [dev-dependencies]
 base64 = "0.22.1"
@@ -53,7 +57,6 @@ kube.workspace = true
 time.workspace = true
 url.workspace = true
 serde-saphyr.workspace = true
-getrandom.workspace = true
 reqwest.workspace = true
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
