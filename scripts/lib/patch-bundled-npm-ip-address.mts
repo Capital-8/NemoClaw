@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { chmodSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -138,7 +139,7 @@ export function patchBundledNpmIpAddress(options: {
     npmRoot,
     packageName: "ip-address",
     replacementRoot,
-    verify: verifyBundledNpmIpAddress,
+    verify: verifyReadableBundledNpmIpAddress,
   });
 }
 
@@ -159,6 +160,16 @@ function prepareFixedIpAddressReplacement(
   });
 }
 
+function verifyReadableBundledNpmIpAddress(npmRoot: string): BundledNpmIpAddressState {
+  const fixed = verifyBundledNpmIpAddress(npmRoot);
+  // Keep the installed package readable while the replacement transaction stays private.
+  chmodSync(
+    realDirectory(join(npmRoot, "node_modules", "ip-address"), "npm bundled ip-address root"),
+    0o755,
+  );
+  return fixed;
+}
+
 function inspectForPatch(npmRoot: string): BundledNpmIpAddressState {
   const root = realDirectory(npmRoot, "npm package root");
   inspectNpmVersion(root);
@@ -174,6 +185,7 @@ function inspectForPatch(npmRoot: string): BundledNpmIpAddressState {
   restoreMissingBundledPackage(recovery);
   const current = inspectBundledNpmIpAddress(root);
   reconcileBundledPackageBackup({ ...recovery, fixed: current.state === "fixed" });
+  if (current.state === "fixed") return verifyReadableBundledNpmIpAddress(root);
   return current;
 }
 
