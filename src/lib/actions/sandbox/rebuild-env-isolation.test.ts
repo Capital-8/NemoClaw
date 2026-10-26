@@ -109,6 +109,31 @@ describe("describeIgnoredDashboardOriginsEnv (#13177)", () => {
     });
     expect(first).not.toMatch(/[\n\u001b]/);
   });
+
+  it("names an invalid value by a placeholder so credentials never reach the warning", () => {
+    const [first] = describeIgnoredDashboardOriginsEnv({
+      sandboxName: "alpha",
+      cliName: "nemoclaw",
+      recordedOrigins: recorded,
+      env: { NEMOCLAW_DASHBOARD_ORIGINS: "https://user:s3cret@launchpad.example.test:8443" },
+    });
+
+    expect(first).toContain("Ignoring NEMOCLAW_DASHBOARD_ORIGINS=(not a valid origin list)");
+    expect(first).not.toContain("s3cret");
+  });
+
+  it("shows the normalized origins rather than the raw value", () => {
+    const [first] = describeIgnoredDashboardOriginsEnv({
+      sandboxName: "alpha",
+      cliName: "nemoclaw",
+      recordedOrigins: recorded,
+      env: { NEMOCLAW_DASHBOARD_ORIGINS: " HTTPS://Other.Example.Test:9443/ " },
+    });
+
+    expect(first).toContain(
+      "Ignoring NEMOCLAW_DASHBOARD_ORIGINS='https://other.example.test:9443'",
+    );
+  });
 });
 
 describe("sanitizeEnvValueForDisplay PRA-7 (#5735)", () => {

@@ -198,8 +198,11 @@ export function describeIgnoredDashboardOriginsEnv(input: {
     requestedOrigins.every((origin) => input.recordedOrigins.includes(origin));
   if (sameOrigins) return [];
   const recorded = input.recordedOrigins.length > 0 ? input.recordedOrigins.join(", ") : "none";
+  // Never echo the raw value: an invalid entry can carry user information.
+  const shown =
+    requestedOrigins === null ? "(not a valid origin list)" : `'${requestedOrigins.join(",")}'`;
   return [
-    `Ignoring ${DASHBOARD_ORIGINS_ENV}='${sanitizeEnvValueForDisplay(requested)}' — rebuilding '${input.sandboxName}' with its recorded dashboard origins '${recorded}'.`,
+    `Ignoring ${DASHBOARD_ORIGINS_ENV}=${shown} — rebuilding '${input.sandboxName}' with its recorded dashboard origins '${recorded}'.`,
     `To change the dashboard origins, run: ${input.cliName} onboard --name ${input.sandboxName} --dashboard-origin <origin>, then ${input.cliName} ${input.sandboxName} rebuild.`,
   ];
 }

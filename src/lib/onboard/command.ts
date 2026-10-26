@@ -519,6 +519,26 @@ function resolveExternalImageReference(
   }
 }
 
+/** Refuse conflicting image sources before any onboarding phase runs. */
+function validateImageSourceFlags(
+  flags: OnboardFlags,
+  dashboardOrigins: readonly string[],
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  const fromDockerfile = flags.from !== undefined;
+  const fromImage = flags["from-image"] !== undefined;
+  if (fromDockerfile && fromImage) {
+    fail(deps, "  --from and --from-image cannot both be set.");
+  }
+  // Only a managed OpenClaw image applies extra dashboard origins (#13177).
+  if (dashboardOrigins.length > 0 && (fromDockerfile || fromImage)) {
+    fail(
+      deps,
+      "  --dashboard-origin requires a managed OpenClaw image. Remove --dashboard-origin (or NEMOCLAW_DASHBOARD_ORIGINS), or onboard without --from or --from-image.",
+    );
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
@@ -532,9 +552,7 @@ export function resolveOnboardOptions(
   const toolDisclosure = resolveOnboardToolDisclosure(flags, experimentalProfile, resume, deps);
   const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
   const dashboardOrigins = resolveDashboardOrigins(flags["dashboard-origin"], agent, deps);
-  if (flags.from !== undefined && flags["from-image"] !== undefined) {
-    fail(deps, "  --from and --from-image cannot both be set.");
-  }
+  validateImageSourceFlags(flags, dashboardOrigins, deps);
   const fromImage = resolveExternalImageReference(flags["from-image"], deps);
   if (experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE && fromImage) {
     fail(deps, "  --from-image cannot be used with the Portable profile.");
