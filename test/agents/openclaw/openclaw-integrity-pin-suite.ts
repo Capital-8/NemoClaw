@@ -205,7 +205,6 @@ function runInstallBlock(
     codexAcpPackIntegrity?: string;
     packFilename?: string | null;
     allowLegacyFixture?: boolean;
-    blueprintMinimum?: string;
     installedOpenClawVersion?: string;
     installedOpenClawVersionPrefix?: string;
     installedOpenClawVersionSuffix?: string;
@@ -233,7 +232,6 @@ function runInstallBlock(
     codexAcpPackIntegrity = codexAcpCommittedIntegrity,
     packFilename,
     allowLegacyFixture = false,
-    blueprintMinimum,
     installedOpenClawVersion = LEGACY_REBUILD_OPENCLAW_VERSION,
     installedOpenClawVersionPrefix = "openclaw ",
     installedOpenClawVersionSuffix = "",
@@ -282,12 +280,7 @@ function runInstallBlock(
   fs.copyFileSync(OPENCLAW_VERSION_EXTRACTOR, openclawVersionExtractor);
   fs.chmodSync(openclawVersionExtractor, 0o755);
   fs.copyFileSync(MCPORTER_LOCKFILE, path.join(mcporterRuntime, "package-lock.json"));
-  fs.writeFileSync(
-    blueprint,
-    blueprintMinimum
-      ? `min_openclaw_version: "${blueprintMinimum}"\n`
-      : fs.readFileSync(BLUEPRINT, "utf-8"),
-  );
+  fs.copyFileSync(BLUEPRINT, blueprint);
   fs.writeFileSync(auditExceptionFile, auditExceptionPolicy);
   fs.writeFileSync(
     reviewedNpmExecutable,
@@ -454,6 +447,7 @@ function runInstallBlock(
     "}",
     "pip3() { return 0; }",
     command
+      .replaceAll("$(mktemp)", '$(mktemp "$TMPDIR/provenance.XXXXXX")')
       .replaceAll("/opt/nemoclaw-blueprint/blueprint.yaml", blueprint)
       .replaceAll("/tmp/blueprint.yaml", blueprint)
       .replaceAll(OPENCLAW_BASE_PROVENANCE_PATH, provenancePath)
@@ -473,12 +467,18 @@ function runInstallBlock(
         `node --experimental-strip-types ${auditHelper} --directory ${mcporterRuntime} --exceptions ${auditExceptionFile} --graph mcporter-runtime --threshold high --report /tmp/mcporter-npm-audit.json --result /tmp/mcporter-npm-audit-policy.json`,
       )
       .replaceAll("/scripts/lib/reviewed-npm-audit.mts", auditHelper)
-      .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile),
+      .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile)
+      .replaceAll("/tmp/mcporter-npm-audit.json", path.join(tmp, "mcporter-npm-audit.json"))
+      .replaceAll(
+        "/tmp/mcporter-npm-audit-policy.json",
+        path.join(tmp, "mcporter-npm-audit-policy.json"),
+      ),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   const result = spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
+    env: { ...process.env, TMPDIR: tmp, NODE_OPTIONS: "" },
     timeout: 10000,
   });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
@@ -660,6 +660,7 @@ function runOptionalOpenClawPluginBlock(
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
   const result = spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
+    env: { ...process.env, TMPDIR: tmp, NODE_OPTIONS: "" },
     timeout: 10000,
   });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
@@ -1353,7 +1354,6 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
             packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
             allowLegacyFixture: true,
-            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
             packFilename: "../openclaw-2026.4.24.tgz",
           },
         );
@@ -1399,7 +1399,6 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
             packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
             allowLegacyFixture: true,
-            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
             packFilename: null,
           },
         );
@@ -1417,7 +1416,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
     if (group === "contract") {
       it.each(["final", "base"] as const)(
-        "rejects runtimes below the shipped blueprint minimum even in legacy fixture mode: %s",
+        "rejects non-fixture runtimes below the shipped blueprint minimum in fixture mode: %s",
         (image) => {
           const command =
             image === "final"
@@ -1432,7 +1431,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
                   "# Baseline health check.",
                 );
           const rejected = runInstallBlock(command, {
-            openclawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
+            openclawVersion: "2026.9.1",
             allowLegacyFixture: true,
           });
           expect(rejected.result.status).not.toBe(0);
@@ -1442,99 +1441,65 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         },
       );
 
-      it("rejects legacy fixture pins unless stale-upgrade fixture mode is explicit", () => {
-        const production = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE,
-            "# OPENCLAW_VERSION is the NemoClaw runtime build target",
-            "# Patch OpenClaw media fetch",
-          ),
-          {
-            openclawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
-            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
-            registryIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
-            registryTarball: LEGACY_REBUILD_OPENCLAW_TARBALL,
-            packIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
-          },
-        );
-        const base = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE_BASE,
-            "# Install OpenClaw CLI + PyYAML.",
-            "# Baseline health check.",
-          ),
-          {
-            openclawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
-            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
-            registryIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
-            registryTarball: LEGACY_REBUILD_OPENCLAW_TARBALL,
-            packIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
-          },
-        );
-        const fixtureBase = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE_BASE,
-            "# Install OpenClaw CLI + PyYAML.",
-            "# Baseline health check.",
-          ),
-          {
-            openclawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
-            registryIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
-            registryTarball: LEGACY_REBUILD_OPENCLAW_TARBALL,
-            packIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
-            allowLegacyFixture: true,
-            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
-          },
-        );
-        const gatewayFixtureBase = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE_BASE,
-            "# Install OpenClaw CLI + PyYAML.",
-            "# Baseline health check.",
-          ),
-          {
-            openclawVersion: LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION,
-            registryIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
-            registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
-            packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
-            allowLegacyFixture: true,
-            blueprintMinimum: LEGACY_REBUILD_OPENCLAW_VERSION,
-          },
-        );
-
-        for (const rejected of [production, base]) {
-          expect(rejected.result.status).not.toBe(0);
-          expect(`${rejected.result.stdout}${rejected.result.stderr}`).toContain(
-            `OpenClaw ${LEGACY_REBUILD_OPENCLAW_VERSION} is a legacy E2E fixture pin`,
+      it.each(
+        (["final", "base"] as const).flatMap((image) =>
+          [
+            {
+              openclawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
+              registryIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
+              registryTarball: LEGACY_REBUILD_OPENCLAW_TARBALL,
+              packIntegrity: LEGACY_REBUILD_OPENCLAW_INTEGRITY,
+            },
+            {
+              openclawVersion: LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION,
+              registryIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
+              registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
+              packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
+            },
+          ].map((options) => ({ image, ...options })),
+        ),
+      )(
+        "requires explicit legacy fixture mode with the shipped blueprint: $image $openclawVersion",
+        ({ image, ...options }) => {
+          const command =
+            image === "final"
+              ? extractRunBlock(
+                  DOCKERFILE,
+                  "# OPENCLAW_VERSION is the NemoClaw runtime build target",
+                  "# Patch OpenClaw media fetch",
+                )
+              : extractRunBlock(
+                  DOCKERFILE_BASE,
+                  "# Install OpenClaw CLI + PyYAML.",
+                  "# Baseline health check.",
+                );
+          const production = runInstallBlock(command, options);
+          const fixture = runInstallBlock(command, { ...options, allowLegacyFixture: true });
+          expect(fixture.result.status, `${fixture.result.stdout}${fixture.result.stderr}`).toBe(0);
+          expect(production.result.status).not.toBe(0);
+          expect(`${production.result.stdout}${production.result.stderr}`).toContain(
+            `OpenClaw ${options.openclawVersion} is a legacy E2E fixture pin`,
           );
-          expect(rejected.calls).not.toContain("npm install -g");
-        }
-        expect(fixtureBase.result.status).toBe(0);
-        expect(fixtureBase.calls).toContain(
-          `npm view openclaw@${LEGACY_REBUILD_OPENCLAW_VERSION} version`,
-        );
-        expect(fixtureBase.calls).toContain(
-          `npm view openclaw@${LEGACY_REBUILD_OPENCLAW_VERSION} dist.integrity`,
-        );
-        expect(fixtureBase.calls).toContain(
-          `npm view openclaw@${LEGACY_REBUILD_OPENCLAW_VERSION} dist.tarball`,
-        );
-        expect(fixtureBase.calls).toContain(
-          `npm pack openclaw@${LEGACY_REBUILD_OPENCLAW_VERSION} --pack-destination`,
-        );
-        expect(fixtureBase.calls).toContain("npm install -g --ignore-scripts --allow-git=root ");
-        expect(fixtureBase.calls).toContain("openclaw-remediated.tgz");
-        expect(fixtureBase.calls).not.toContain('"archivePath"');
-        expect(fixtureBase.calls).toMatch(
-          /npm install -g --ignore-scripts --allow-git=root \S+\/openclaw-remediated\.tgz/u,
-        );
-        expect(fixtureBase.calls).not.toContain("postinstall-bundled-plugins.mjs");
-        expect(gatewayFixtureBase.result.status).toBe(0);
-        expect(gatewayFixtureBase.calls).toContain(
-          "npm install -g --ignore-scripts --allow-git=root ",
-        );
-        expect(gatewayFixtureBase.calls).toContain("postinstall-bundled-plugins.mjs");
-      });
+          expect(production.calls).not.toContain("npm view");
+          expect(production.calls).not.toContain("npm install");
+          expect(fixture.calls).toContain(
+            `npm view openclaw@${options.openclawVersion} dist.integrity`,
+          );
+          expect(fixture.calls).toContain(
+            `npm view openclaw@${options.openclawVersion} dist.tarball`,
+          );
+          expect(fixture.calls).toContain(
+            `npm pack openclaw@${options.openclawVersion} --pack-destination`,
+          );
+          expect(fixture.calls).toMatch(
+            /npm install -g (?:--no-audit --no-fund --no-progress )?--ignore-scripts --allow-git=root \S+\/openclaw-(?:remediated|2026\.4\.24)\.tgz/u,
+          );
+          expect(fixture.calls).not.toContain('"archivePath"');
+          expect(fixture.calls.includes("postinstall-bundled-plugins.mjs")).toBe(
+            options.openclawVersion === LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION,
+          );
+        },
+      );
 
       it("guards production Docker build args from legacy OpenClaw fixture inputs", () => {
         expect(runProductionBuildArgGuard(["--build-arg", "BASE_IMAGE=base"]).status).toBe(0);
