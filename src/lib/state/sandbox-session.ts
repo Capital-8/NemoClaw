@@ -106,7 +106,6 @@ export function parseSshProcesses(
     sandboxId && sandboxId.trim()
       ? new RegExp(`--sandbox-id[=\\s]+${escapeRegExp(sandboxId.trim())}(?:\\s|$)`)
       : null;
-  const execNamePattern = new RegExp(`--name(?:=|\\s+)${escapeRegExp(sandboxName)}(?:\\s|$)`);
   const sessions: SandboxSession[] = [];
   const lines = processOutput.split("\n").filter(Boolean);
 
@@ -136,17 +135,27 @@ export function parseSshProcesses(
     // Require the interactive shell command and exact sandbox name; ordinary
     // exec commands and dashboard forwards must not be reported as sessions.
     if (
-      /^(?:\S*\/)?openshell\s+sandbox\s+exec\b/.test(command) &&
-      execNamePattern.test(command) &&
-      matchesNativeExecGateway(command, gatewayName, gatewayEvidence.get(pid)) &&
-      /(?:^|\s)--tty(?:\s|$)/.test(command) &&
-      /(?:^|\s)--\s+\/bin\/bash\s+-i(?:\s|$)/.test(command)
+      matchesInteractiveNativeExec(command, sandboxName) &&
+      matchesNativeExecGateway(command, gatewayName, gatewayEvidence.get(pid))
     ) {
       sessions.push({ sandboxName, pid, transport: "openshell-exec" });
     }
   }
 
   return sessions;
+}
+
+/** Match the target and TTY only in OpenShell arguments, never in the shell command. */
+function matchesInteractiveNativeExec(command: string, sandboxName: string): boolean {
+  if (!/^(?:\S*\/)?openshell\s+sandbox\s+exec\b/.test(command)) return false;
+  const cliArguments = command.split(/\s--\s/, 1)[0] ?? command;
+  const names = [...cliArguments.matchAll(/(?:^|\s)--name(?:=|\s+)([^\s]+)/g)];
+  return (
+    names.length === 1 &&
+    names[0]?.[1] === sandboxName &&
+    /(?:^|\s)--tty(?:\s|$)/.test(cliArguments) &&
+    /(?:^|\s)--\s+\/bin\/bash\s+-i(?:\s|$)/.test(command)
+  );
 }
 
 /** Match one gateway selector before `--`; multiple selectors fail closed. */
@@ -264,10 +273,7 @@ export function getActiveSandboxSessions(
       const command = line.slice(pidMatch[0].length);
       let resolvedGateway: string | null = null;
       if (
-        /^(?:\S*\/)?openshell\s+sandbox\s+exec\b/.test(command) &&
-        new RegExp(`--name(?:=|\\s+)${escapeRegExp(sandboxName)}(?:\\s|$)`).test(command) &&
-        /(?:^|\s)--tty(?:\s|$)/.test(command) &&
-        /(?:^|\s)--\s+\/bin\/bash\s+-i(?:\s|$)/.test(command) &&
+        matchesInteractiveNativeExec(command, sandboxName) &&
         nativeGatewaySelectors(command.split(/\s--\s/, 1)[0] ?? command).length === 0
       ) {
         resolvedGateway = deps.resolveNativeExecGateway?.(pid, command) ?? null;
@@ -479,8 +485,11 @@ function readNemoClawAcpSshGateway(processLine: string): string | null {
       return null;
     }
 
-    const descriptorRoot = process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
-    configFile = openRegularFileNoFollow(`${descriptorRoot}/${String(directoryFd)}/ssh_config`);
+    // macOS /dev/fd does not support opening a child through a directory fd.
+    // The owner-private directory is checked again after the file read below.
+    const checkedConfigPath =
+      process.platform === "linux" ? `/proc/self/fd/${String(directoryFd)}/ssh_config` : configPath;
+    configFile = openRegularFileNoFollow(checkedConfigPath);
     const fileStats = configFile.stat();
     if (
       fileStats.uid !== process.getuid() ||
