@@ -2978,6 +2978,29 @@ wsl -d Ubuntu
 docker info
 ```
 
+### Ollama installer download fails
+
+When the wizard installs Ollama on Linux, the system path downloads a pinned snapshot of the official installer from `raw.githubusercontent.com` and the user-local path downloads the release tarball from `ollama.com`.
+If the endpoint cannot be reached, onboarding stops with `Ollama installer download failed after bounded retries (exit N)`.
+
+The failure names the URL, host, and underlying curl error, and tells you which host to allow before rerunning.
+The pinned installer snapshot lives on `raw.githubusercontent.com`; the user-local release tarball lives on `ollama.com`.
+
+Verify each host from the same network path onboarding uses:
+
+```bash
+curl -fsSI https://raw.githubusercontent.com/
+curl -fsSI https://ollama.com/download/
+```
+
+Allow outbound HTTPS (port 443) to the failing host on your firewall or proxy.
+If the host requires a proxy, export `HTTPS_PROXY` before rerunning onboarding.
+Then rerun onboarding; resumable sessions continue from the failed step:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
 ### Windows-host Ollama is installed but not shown during onboarding
 
 When NemoClaw runs inside WSL, it checks the Windows-host Ollama HTTP endpoint, the Windows `ollama.exe` process, the listener address, and HTTP `Host` validation.
