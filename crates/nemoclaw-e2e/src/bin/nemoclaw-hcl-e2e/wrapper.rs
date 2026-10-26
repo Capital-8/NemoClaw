@@ -118,8 +118,18 @@ pub(super) async fn execute_with_tools(
     fs::create_dir(&verification).map_err(|_| "cannot create verifier directory")?;
     let reports = verification.join("reports");
     fs::create_dir(&reports).map_err(|_| "cannot create probe evidence directory")?;
-    fs::write(verification.join("cli.tfrc"), "disable_checkpoint = true\n")
-        .map_err(|_| "cannot write verifier CLI configuration")?;
+    let mirror = bundle
+        .join("providers")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let quoted = serde_json::to_string(&mirror).map_err(|_| "cannot encode provider mirror")?;
+    fs::write(
+        verification.join("cli.tfrc"),
+        format!(
+            "disable_checkpoint = true\nprovider_installation {{\n filesystem_mirror {{ path = {quoted} }}\n}}\n"
+        ),
+    )
+    .map_err(|_| "cannot write verifier CLI configuration")?;
     let config = directory.join("deployment.yaml");
     fs::write(
         &config,
