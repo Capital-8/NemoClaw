@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { resolveVllmModelAlias, vllmModelMatchesAlias } from "../inference/vllm-models";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   hasInvalidSessionHostMounts,
@@ -9,6 +10,10 @@ import {
 } from "../state/onboard-session";
 import type { SandboxHostMount } from "../state/registry/types";
 import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
+import {
+  isValidStationExpressProviderState,
+  parseStationExpressResumeIntent,
+} from "./station-express-resume";
 import { preflightVllmModelEnvOrExit } from "./vllm-model-preflight";
 
 const onboardProviders = require("./providers");
@@ -18,6 +23,7 @@ export interface ResumeSessionLike {
   provider?: string | null;
   model?: string | null;
   vllmInstallModel?: string | null;
+  stationExpressIntent?: unknown;
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
@@ -26,7 +32,10 @@ export interface ResumeSessionLike {
     fromImage?: string | null;
     hostMounts?: SandboxHostMount[];
   } | null;
-  steps?: { sandbox?: { status?: string | null } | null } | null;
+  steps?: {
+    sandbox?: { status?: string | null } | null;
+    provider_selection?: { status?: string | null } | null;
+  } | null;
   checkpoint?: {
     sandboxIdentity?: import("../state/onboard-checkpoint-types").CheckpointDecision<
       import("../state/onboard-checkpoint-types").CheckpointSandboxIdentity
@@ -98,13 +107,8 @@ export function getResumeSandboxConflict(
 export function getRequestedProviderHint(
   nonInteractive = false,
   allowHostedInferenceStaging = true,
-  agentName: string | null = null,
 ): string | null {
-  return onboardProviders.getRequestedProviderHint(
-    nonInteractive,
-    allowHostedInferenceStaging,
-    agentName,
-  );
+  return onboardProviders.getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
 }
 
 /**
@@ -135,13 +139,8 @@ export function preflightEarlyOnboardEnvForResume(
 export function getRequestedModelHint(
   nonInteractive = false,
   allowHostedInferenceStaging = true,
-  agentName: string | null = null,
 ): string | null {
-  return onboardProviders.getRequestedModelHint(
-    nonInteractive,
-    allowHostedInferenceStaging,
-    agentName,
-  );
+  return onboardProviders.getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
 }
 
 export function getResumeConfigConflicts(
@@ -166,7 +165,6 @@ export function getResumeConfigConflicts(
   const conflicts: ResumeConfigConflict[] = [];
   const nonInteractive = opts.nonInteractive ?? false;
   const allowHostedInferenceStaging = opts.authoritativeResumeConfig !== true;
-  const agentName = opts.agent ?? null;
 
   const sandboxConflict = getResumeSandboxConflict(session, { sandboxName: opts.sandboxName });
   if (sandboxConflict) {
@@ -177,13 +175,23 @@ export function getResumeConfigConflicts(
     });
   }
 
-  const requestedProvider = getRequestedProviderHint(
-    nonInteractive,
-    allowHostedInferenceStaging,
-    agentName,
-  );
+  const requestedProvider = getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
+  const stationIntent = parseStationExpressResumeIntent(session?.stationExpressIntent);
+  const providerStepStatus = session?.steps?.provider_selection?.status;
+  // Express replays install-vllm until provider selection completes, including
+  // retries that already selected an owned vLLM server without installing it.
+  const retryingStationProvider =
+    stationIntent?.kind !== "spark" &&
+    stationIntent !== null &&
+    ["pending", "in_progress", "failed"].includes(providerStepStatus ?? "") &&
+    isValidStationExpressProviderState(
+      stationIntent,
+      providerStepStatus,
+      session?.provider,
+      session?.model,
+    );
   const effectiveRequestedProvider =
-    session?.vllmInstallModel && requestedProvider === "install-vllm"
+    (session?.vllmInstallModel || retryingStationProvider) && requestedProvider === "install-vllm"
       ? "vllm-local"
       : onboardProviders.getEffectiveProviderName(requestedProvider);
   const recordedProvider = session?.vllmInstallModel ? "vllm-local" : session?.provider;
@@ -203,12 +211,16 @@ export function getResumeConfigConflicts(
   const requestedModel =
     session?.vllmInstallModel && requestedVllmModel
       ? requestedVllmModel
-      : getRequestedModelHint(nonInteractive, allowHostedInferenceStaging, agentName);
+      : getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
   const recordedModel = session?.vllmInstallModel ?? session?.model;
+  const recordedVllmModel = session?.vllmInstallModel
+    ? resolveVllmModelAlias(session.vllmInstallModel)
+    : null;
   if (
     requestedModel &&
     recordedModel &&
-    requestedModel.toLowerCase() !== recordedModel.toLowerCase()
+    requestedModel.toLowerCase() !== recordedModel.toLowerCase() &&
+    !(recordedVllmModel && vllmModelMatchesAlias(recordedVllmModel, requestedModel))
   ) {
     conflicts.push({
       field: "model",
