@@ -132,6 +132,36 @@ describe("rebuildSandbox flow: lifecycle", () => {
     },
   );
 
+  it("restores the caller Hermes port when replacement onboarding fails after publication (#13628)", async () => {
+    const restoreEnv = snapshotEnv([HERMES_API_PORT_ENV]);
+    try {
+      delete process.env[HERMES_API_PORT_ENV];
+      const ports = { alpha: 8642, beta: 8643 } as Record<string, number>;
+      const getSandbox = (name: string) => ({ name, hermesApiPort: ports[name] });
+      let publishedPort: number | undefined;
+      const harness = createRebuildFlowHarness({
+        onboard: () => {
+          publishedPort = resolveOnboardHermesApiPort("alpha", {
+            getSandbox,
+            allowRegisteredOverride: true,
+          });
+          throw new Error("injected post-publication onboarding failure");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed (sandbox destroyed)");
+      expect(publishedPort).toBe(8642);
+      expect(process.env[HERMES_API_PORT_ENV]).toBeUndefined();
+      expect(
+        resolveOnboardHermesApiPort("beta", { getSandbox, allowRegisteredOverride: true }),
+      ).toBe(8643);
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it.each(["relative/gateway", "/"])(
     "rejects an unsafe recorded gateway directory before rebuild effects (%s)",
     async (openshellGatewayStateDir) => {
