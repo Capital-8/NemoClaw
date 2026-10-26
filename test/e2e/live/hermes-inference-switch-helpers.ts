@@ -12,6 +12,7 @@ import {
   resolveAgentInferenceApi,
 } from "../../../src/lib/inference/config.ts";
 import { NVIDIA_HOSTED_NATIVE_ENDPOINT } from "../../../src/lib/inference/native-nvidia/index.ts";
+import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../../src/lib/inference/probe/transient-http-policy.ts";
 import { NATIVE_NVIDIA_AUTH_HEADER_SCRIPT } from "../../../src/lib/inference/native-nvidia/contract.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -353,6 +354,27 @@ const TERMINAL_HERMES_PROBE_RE =
 const TRANSIENT_HERMES_PROBE_RE =
   /ECONNREFUSED|EAI_AGAIN|ECONNRESET|ETIMEDOUT|timed? out|gateway unavailable|network connection error|DNS error|fetch failed|inference service unavailable|rawError=503/iu;
 
+function hasNvidiaCompletionFailure(stdout: string): boolean {
+  try {
+    const response = JSON.parse(stdout) as {
+      code?: unknown;
+      type?: unknown;
+      message?: unknown;
+      choices?: unknown;
+      content?: unknown;
+    } | null;
+    return (
+      response?.code === 500 &&
+      response.type === "Internal Server Error" &&
+      response.message === "Failed to generate completions" &&
+      response.choices === undefined &&
+      response.content === undefined
+    );
+  } catch {
+    return false;
+  }
+}
+
 function hermesProbeFailureClass(result: ShellProbeResult): RetryFailureClass {
   const output = resultText(result);
   if (
@@ -373,6 +395,21 @@ function hermesProbeFailureClass(result: ShellProbeResult): RetryFailureClass {
     return "policy-denial";
   }
   if (/malformed|invalid (?:request|json)/iu.test(output)) return "malformed-input";
+  const httpStatus = Number(result.stderr.match(/^__NEMOCLAW_HTTP_STATUS__=([0-9]{3})$/mu)?.[1]);
+  if (httpStatus >= 400 && httpStatus < 600) {
+    // The read-only probe also covers the observed NVIDIA completion failures.
+    return httpStatus === 500 || RETRIABLE_HTTP_PROBE_STATUSES.has(httpStatus)
+      ? "transient-external"
+      : "deterministic";
+  }
+  // Earlier probes retained this error envelope without an HTTP status.
+  if (
+    result.exitCode === 0 &&
+    (Number.isNaN(httpStatus) || httpStatus === 200) &&
+    hasNvidiaCompletionFailure(result.stdout)
+  ) {
+    return "transient-external";
+  }
   if (
     result.exitCode !== 0 &&
     !TERMINAL_HERMES_PROBE_RE.test(output) &&
@@ -886,20 +923,23 @@ function quotePayload(payload: string): string {
   return payload.replace(/'/gu, `'\\''`);
 }
 
+const HERMES_HTTP_PROBE_OPTIONS =
+  "--fail-with-body --write-out '%{stderr}\\n__NEMOCLAW_HTTP_STATUS__=%{http_code}\\n'";
+
 export function sandboxInferenceCommand(payload: string): string {
   if (SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER) {
     // The upstream URL is the managed route for an attached OpenShell
     // provider. OpenShell authorizes this profile-scoped request and replaces
     // the placeholder without exposing the provider credential to the sandbox.
-    return `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; curl -sS --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d '${quotePayload(payload)}'`;
+    return `${NATIVE_NVIDIA_AUTH_HEADER_SCRIPT}; curl -sS ${HERMES_HTTP_PROBE_OPTIONS} --max-time 90 ${NVIDIA_HOSTED_NATIVE_ENDPOINT}/chat/completions -H 'Content-Type: application/json' -H "$AUTH_HEADER" -d '${quotePayload(payload)}'`;
   }
   return RUNTIME_SWITCH_API === "anthropic-messages"
-    ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`
-    : `curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${quotePayload(payload)}'`;
+    ? `curl -sS ${HERMES_HTTP_PROBE_OPTIONS} --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`
+    : `curl -sS ${HERMES_HTTP_PROBE_OPTIONS} --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${quotePayload(payload)}'`;
 }
 
 export function hermesApiCommand(payload: string): string {
-  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; curl -sS --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${quotePayload(payload)}'`;
+  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; curl -sS ${HERMES_HTTP_PROBE_OPTIONS} --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY:-}" -d '${quotePayload(payload)}'`;
 }
 
 /** Prove that a native NVIDIA rebuild retains Discord settings and agent inference. */

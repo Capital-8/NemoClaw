@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -10,7 +14,11 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { compatibleAnthropicSwitchBinding } from "../fixtures/compatible-anthropic-switch.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { closeServer, listenServer, writeJsonResponse } from "../fixtures/http-protocol.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
+import { redactString } from "../fixtures/redaction.ts";
+import { ShellProbe, trustedShellCommand, type ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   API_KEY_SHAPE_PATTERN,
   NVIDIA_API_KEY_SHAPE_PATTERN,
@@ -20,6 +28,7 @@ import {
   expectAuthenticatedBaselineInventoryRequest,
   expectAuthenticatedProxyResolutionRequests,
   hasAuthenticatedProxyResolutionRequest,
+  hermesApiCommand,
   hermesGatewayPid,
   hostedInstallModel,
   parseHermesGatewayPid,
@@ -518,6 +527,153 @@ describe("Hermes inference switch command shape", () => {
       }),
     );
   });
+
+  it.each([429, 500, 502, 503, 504])("retries a Hermes HTTP %i response", async (status) => {
+    const transient = {
+      exitCode: 22,
+      stdout: "upstream unavailable",
+      stderr: `__NEMOCLAW_HTTP_STATUS__=${status}\n`,
+    } as ShellProbeResult;
+    const passed = {
+      exitCode: 0,
+      stdout: '{"model":"target-model","choices":[{"message":{"content":"PONG"}}]}',
+      stderr: "__NEMOCLAW_HTTP_STATUS__=200\n",
+    } as ShellProbeResult;
+    const run = vi.fn().mockResolvedValueOnce(transient).mockResolvedValueOnce(passed);
+    const onEvidence = vi.fn();
+
+    await expect(
+      runHermesPongWithRetry({
+        expectedModel: "target-model",
+        run,
+        delay: vi.fn().mockResolvedValue(undefined),
+        onEvidence,
+      }),
+    ).resolves.toBe(passed);
+    expect(run.mock.calls).toEqual([[1], [2]]);
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "passed-after-retry" }),
+    );
+  });
+
+  it.each([
+    ["sandbox inference", sandboxInferenceCommand],
+    ["Hermes API", hermesApiCommand],
+  ] as const)(
+    "retries a real HTTP 500 from %s without changing JSON stdout",
+    async (_name, build) => {
+      const directory = mkdtempSync(path.join(tmpdir(), "hermes-http-retry-"));
+      const progress = startTestProgress("Hermes HTTP retry", ["run probe", "inspect response"], {
+        logLine: () => {},
+      });
+      const failure = {
+        message: "Failed to generate completions",
+        type: "Internal Server Error",
+        code: 500,
+      };
+      const success = { model: "target-model", choices: [{ message: { content: "PONG" } }] };
+      let requests = 0;
+      const server = createServer((_request, response) => {
+        requests += 1;
+        writeJsonResponse(response, requests === 1 ? 500 : 200, requests === 1 ? failure : success);
+      });
+      const shell = new ShellProbe({
+        artifacts: new ArtifactSink(directory),
+        progress,
+        redact: redactString,
+        signal: new AbortController().signal,
+      });
+      try {
+        const port = await listenServer(server, 0, "127.0.0.1");
+        const endpoint = `http://127.0.0.1:${port}`;
+        // Substitute only external endpoint and environment-file inputs.
+        const script = build('{"model":"target-model"}')
+          .replaceAll("https://integrate.api.nvidia.com", endpoint)
+          .replaceAll("https://inference.local", endpoint)
+          .replaceAll("http://localhost:8642", endpoint)
+          .replaceAll("/sandbox/.hermes/.env", path.join(directory, "absent.env"));
+        const results: ShellProbeResult[] = [];
+        const onEvidence = vi.fn();
+        progress.phase("run probe");
+        const result = await runHermesPongWithRetry({
+          expectedModel: "target-model",
+          delay: vi.fn().mockResolvedValue(undefined),
+          onEvidence,
+          run: async () => {
+            const response = await shell.run(
+              trustedShellCommand({
+                command: "sh",
+                args: ["-c", script],
+                reason: "probe local HTTP fixture",
+              }),
+              {
+                env: { NVIDIA_INFERENCE_API_KEY: "openshell:resolve:env:NVIDIA_INFERENCE_API_KEY" },
+                timeoutMs: 5_000,
+                persistArtifacts: false,
+              },
+            );
+            results.push(response);
+            return response;
+          },
+        });
+        progress.phase("inspect response");
+        expect(requests).toBe(2);
+        expect(results[0]).toMatchObject({ exitCode: 22, stdout: JSON.stringify(failure) });
+        expect(results[0]?.stderr).toContain("__NEMOCLAW_HTTP_STATUS__=500");
+        expect(result).toMatchObject({ exitCode: 0, stdout: JSON.stringify(success) });
+        expect(result.stderr).toContain("__NEMOCLAW_HTTP_STATUS__=200");
+        expect(onEvidence).toHaveBeenCalledWith(
+          expect.objectContaining({ outcome: "passed-after-retry" }),
+        );
+      } finally {
+        progress.stop();
+        server.closeAllConnections();
+        server.listening && (await closeServer(server));
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["", "__NEMOCLAW_HTTP_STATUS__=200\n"])(
+    "bounds retries for the observed NVIDIA error envelope with status evidence %j",
+    async (stderr) => {
+      const failure = {
+        exitCode: 0,
+        stdout:
+          '{"message":"Failed to generate completions","type":"Internal Server Error","code":500}',
+        stderr,
+      } as ShellProbeResult;
+      const run = vi.fn().mockResolvedValue(failure);
+      const delay = vi.fn().mockResolvedValue(undefined);
+      const onEvidence = vi.fn();
+
+      await expect(
+        runHermesPongWithRetry({ expectedModel: "target-model", run, delay, onEvidence }),
+      ).resolves.toBe(failure);
+      expect(run.mock.calls).toEqual([[1], [2], [3]]);
+      expect(delay.mock.calls).toEqual([[5_000], [5_000]]);
+      expect(onEvidence).toHaveBeenCalledWith(expect.objectContaining({ outcome: "exhausted" }));
+    },
+  );
+
+  it.each([400, 401, 403, 404, 422, 501])(
+    "does not retry Hermes HTTP %i despite transient words in the body",
+    async (status) => {
+      const failure = {
+        exitCode: 22,
+        stdout: "request timed out",
+        stderr: `__NEMOCLAW_HTTP_STATUS__=${status}\n`,
+      } as ShellProbeResult;
+      const run = vi.fn().mockResolvedValue(failure);
+      const delay = vi.fn().mockResolvedValue(undefined);
+
+      await expect(
+        runHermesPongWithRetry({ expectedModel: "target-model", run, delay }),
+      ).resolves.toBe(failure);
+      expect(run).toHaveBeenCalledOnce();
+      expect(delay).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not retry mixed Hermes authentication and transport evidence", async () => {
     const terminal = {
