@@ -16,6 +16,8 @@ Repository writers are trusted to populate the compiled cache before their chang
 
 Before dispatch, read [Push and Manual PR E2E](../../../../test/e2e/README.md#push-and-manual-pr-e2e)
 for the selected jobs' credential locations, access, lifetimes, and removal or cleanup boundaries.
+Require authorization for the selected credentials, hardware, staging deployment, and resource owner.
+Technical permission to dispatch does not grant that authority. Preserve existing authorization within unchanged boundaries.
 
 An empty-selector same-repository PR run can expose these values to candidate-controlled jobs:
 
@@ -62,8 +64,9 @@ HEAD_OWNER_TYPE="$(jq -r .head.repo.owner.type <<<"$PR_JSON")"
 [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
 ```
 
-A same-repository PR can use the full candidate plan and credential profiles.
-Empty selectors run every default-enabled E2E. Any supported job or target selector is allowed.
+A same-repository PR is eligible for the full candidate plan and credential profiles.
+Empty selectors run every default-enabled E2E. The workflow accepts any supported job or target selector.
+Select only execution covered by the existing authorization.
 
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in
@@ -96,8 +99,8 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${HEAD_CORRELATION_ID}"
 ```
 
-GitHub's permission to dispatch the workflow authorizes the actor. The workflow does not repeat that
-repository-role check. The trusted pre-checkout step validates:
+GitHub checks the actor's technical permission to dispatch. The workflow does not repeat that
+repository-role check or grant execution authority. The trusted pre-checkout step validates:
 
 - the open PR;
 - the target repository and branch;
@@ -129,7 +132,22 @@ for POLL_INDEX in $(seq 1 30); do
 done
 test "$(jq 'length' <<<"$MATCHES")" -eq 1
 RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")"
-gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status || true
+HEAD_RUN_ID="$RUN_ID"
+HEAD_RUN_URL="$(jq -r '.[0].url' <<<"$MATCHES")"
+```
+
+Poll this run's status every 30 seconds for at most 10 minutes:
+
+```bash
+gh run view "$RUN_ID" --repo NVIDIA/NemoClaw --json status,conclusion,url,attempt
+```
+
+Run the completion checks below only after the workflow completes.
+At the monitoring deadline, report `pending` with the run ID, URL, correlation ID, and latest observed attempt.
+Keep the PR draft and stop this invocation. A later invocation resumes the same run without another dispatch.
+Preserve the candidate, base, selectors, and runtime coverage with that record.
+
+```bash
 RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
 jq -e --arg sha "$WORKFLOW_SHA" '
   .run_attempt >= 1 and .head_sha == $sha and
@@ -194,7 +212,7 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${BASE_CORRELATION_ID}"
 ```
 
-Find the base run with the same bounded lookup used above and this exact title:
+Find and monitor the base run with the same lookup and monitoring limits and this exact title:
 
 ```bash
 RUN_TITLE="E2E PR #${PR_NUMBER} (${BASE_CORRELATION_ID})"
