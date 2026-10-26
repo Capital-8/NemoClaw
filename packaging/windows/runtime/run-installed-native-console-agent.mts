@@ -4,7 +4,7 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets } from "./native-assets.mts";
-import { NativeGatewaySession } from "./native-gateway-session.mts";
+import { openInstalledRuntimeSession } from "./installed-runtime-provider.mts";
 import {
   openNativeConsoleAttachment,
   reconcileNativeConsoleExit,
@@ -27,11 +27,7 @@ import { hermesPipeLoopPythonSource } from "./native-hermes-pipe-loop.mts";
 import { openNativeUiFileOwner } from "./native-ui-file-owner.mts";
 import { startFileTcpRelay } from "./native-ui-relay.mts";
 import { openNativeWebSession } from "./native-web-session.mts";
-import {
-  confirmNativeUiRegistryEmpty,
-  requestNativeUiSandboxDeletion,
-  waitForNativeMxcCompletion,
-} from "./native-ui-lifecycle.mts";
+import { waitForNativeMxcCompletion } from "./native-ui-lifecycle.mts";
 import {
   createNativeSessionDiagnostics,
   NativeSessionFailure,
@@ -688,10 +684,6 @@ async function runNativeConsoleAgentInternal(
   const launcher = requiredFile(path.join(binRoot, "NemoClaw.exe"), "NemoClaw launcher");
   const installedNode = requiredFile(runtimeLease.node, "sealed Node.js runtime");
   const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
-  const gatewayExecutable = requiredFile(
-    path.join(binRoot, "openshell-gateway.exe"),
-    "OpenShell gateway",
-  );
   const installedRuntime = requiredDirectory(
     runtimeLease.agentRoot,
     `${adapter.displayName} sealed runtime`,
@@ -747,7 +739,7 @@ async function runNativeConsoleAgentInternal(
   let statusRoot;
   let statusFiles;
   let dashboardGatewayStopped = false;
-  let gatewaySession: NativeGatewaySession | undefined;
+  let gatewaySession: ReturnType<typeof openInstalledRuntimeSession> | undefined;
   let consoleAttachment: ReturnType<typeof openNativeConsoleAttachment> | undefined;
   try {
     stateSession.assertHeld();
@@ -885,7 +877,7 @@ async function runNativeConsoleAgentInternal(
       }
       diagnostics.stage("runtime");
     }
-    gatewaySession = new NativeGatewaySession(installRoot, runRoot);
+    gatewaySession = openInstalledRuntimeSession(installRoot, runRoot);
     const gatewayConfig = await writeNativeGatewayConfig(
       installRoot,
       runRoot,
@@ -946,33 +938,20 @@ async function runNativeConsoleAgentInternal(
     const gatewayName = `nemoclaw-${agentId}-${runId}`;
     stateSession.assertHeld();
     await gatewaySession.prepare();
-    const gatewayEnvironment = allowlistedWindowsEnvironment({
+    const gatewayEnvironment = gatewaySession.gatewayEnvironment(gatewayConfig, {
       ...(agentId === "hermes"
         ? { NEMOCLAW_MSYS_TOKEN_INSPECTION: "hermes-query", NEMOCLAW_HERMES_PRIVATE_DESKTOP: "1" }
         : {}),
-      OPENSHELL_DRIVERS: "mxc",
-      OPENSHELL_GATEWAY_CONFIG: gatewayConfig,
-      ...gatewaySession.environment,
     });
     diagnostics.stage("gateway");
-    const gateway = gatewaySession.spawnGateway(
-      gatewayExecutable,
-      [
-        "--port",
-        String(gatewayPort),
-        "--enable-mtls-auth",
-        "true",
-        "--db-url",
-        "sqlite::memory:",
-        "--log-level",
-        "warn",
-      ],
-      {
-        env: gatewayEnvironment,
-        stdio: dashboard ? ["ignore", "pipe", "pipe"] : "inherit",
-        windowsHide: dashboard,
-      },
-    );
+    const gateway = gatewaySession.startGateway({
+      port: gatewayPort,
+      environment: gatewayEnvironment,
+      stdio: dashboard ? ["ignore", "pipe", "pipe"] : "inherit",
+      windowsHide: dashboard,
+      logLevel: "warn",
+      explicitMtlsValue: true,
+    });
     gateway.stdout?.on("data", (chunk) => diagnostics.capture("gateway.stdout", chunk));
     gateway.stderr?.on("data", (chunk) => diagnostics.capture("gateway.stderr", chunk));
     let cliEnvironment = allowlistedWindowsEnvironment({
@@ -995,23 +974,12 @@ async function runNativeConsoleAgentInternal(
             }
           : {}),
       });
-      await run(
-        openshell,
-        ["gateway", "add", `https://127.0.0.1:${gatewayPort}`, "--local", "--name", gatewayName],
+      await gatewaySession.registerGateway(
+        gatewayPort,
+        gatewayName,
         cliEnvironment,
-        "Registering the native gateway",
-        undefined,
+        ["Registering the native gateway", "Selecting the native gateway"],
         diagnostics,
-        gatewaySession.ownCommandProcess,
-      );
-      await run(
-        openshell,
-        ["gateway", "select", gatewayName],
-        cliEnvironment,
-        "Selecting the native gateway",
-        undefined,
-        diagnostics,
-        gatewaySession.ownCommandProcess,
       );
       const environment = {
         ...worker.environment,
@@ -1081,31 +1049,15 @@ async function runNativeConsoleAgentInternal(
           .map(([, value]) => String(value)),
       );
       const workloadCommand = nativeRuntimeWorkerCommand(runtimeLease, workload);
-      const createArgs = [
-        "sandbox",
-        "create",
-        "--name",
-        sandboxName,
-        "--policy",
-        policyPath,
-        "--driver-config-json",
-        JSON.stringify({
-          mxc: {
-            command: workloadCommand,
-            cwd: agentRuntimeRoot,
-            loopback_pipe_ports: [
-              inferencePipePort,
-              browserPipePort,
-              ...(dashboard ? [dashboardPipePort] : []),
-            ],
-          },
-        }),
-        "--detach",
-        dashboard ? "--no-tty" : "--tty",
-      ];
-      for (const [name, value] of Object.entries(environment))
-        createArgs.push("--env", `${name}=${value}`);
-      createArgs.push("--", ...workloadCommand);
+      const workloadRequest = {
+        name: sandboxName,
+        policy: policyPath,
+        command: workloadCommand,
+        directory: agentRuntimeRoot,
+        ports: [inferencePipePort, browserPipePort, ...(dashboard ? [dashboardPipePort] : [])],
+        terminal: !dashboard,
+        environment: environment,
+      };
       console.log(`Opening the authentic ${adapter.displayName} terminal inside native MXC…\n`);
       if (consoleEvidenceRoot !== null) {
         fs.writeFileSync(
@@ -1235,14 +1187,11 @@ async function runNativeConsoleAgentInternal(
       webSession?.progress("sandbox");
       try {
         sandboxAbsentFromRegistry = false;
-        await run(
-          openshell,
-          createArgs,
+        await gatewaySession.createWorkload(
+          workloadRequest,
           cliEnvironment,
           "Creating the native console workload",
-          undefined,
           diagnostics,
-          gatewaySession.ownCommandProcess,
         );
       } catch (error) {
         const bootstrap = await publishBootstrap(false);
@@ -1388,25 +1337,18 @@ async function runNativeConsoleAgentInternal(
       }
       if (exitCode !== 0) fail(`${adapter.displayName} exited with status ${exitCode}`);
       diagnostics.stage("cleanup");
-      await run(
-        openshell,
-        ["sandbox", "delete", sandboxName],
+      await gatewaySession.deleteWorkload(
+        sandboxName,
         cliEnvironment,
         "Deleting the native agent sandbox",
         undefined,
         undefined,
-        gatewaySession.ownCommandProcess,
       );
-      await confirmNativeUiRegistryEmpty(
-        openshell,
-        cliEnvironment,
-        {
-          sandboxName,
-          gateway,
-          stateSession,
-        },
-        gatewaySession.ownCommandProcess,
-      );
+      await gatewaySession.confirmRegistryEmpty(cliEnvironment, {
+        sandboxName,
+        gateway,
+        stateSession,
+      });
       passed = true;
       sandboxAbsentFromRegistry = true;
       sessionPassed = true;
@@ -1442,28 +1384,18 @@ async function runNativeConsoleAgentInternal(
           if (browserRelay) await browserRelay.close();
         });
         await cleanup("native sandbox deletion", () =>
-          requestNativeUiSandboxDeletion(
-            openshell,
-            cliEnvironment,
-            {
-              sandboxName,
-              gateway,
-              stateSession,
-            },
-            gatewaySession.ownCommandProcess,
-          ),
+          gatewaySession.requestWorkloadDeletion(cliEnvironment, {
+            sandboxName,
+            gateway,
+            stateSession,
+          }),
         );
         await cleanup("native sandbox registry", async () => {
-          await confirmNativeUiRegistryEmpty(
-            openshell,
-            cliEnvironment,
-            {
-              sandboxName,
-              gateway,
-              stateSession,
-            },
-            gatewaySession.ownCommandProcess,
-          );
+          await gatewaySession.confirmRegistryEmpty(cliEnvironment, {
+            sandboxName,
+            gateway,
+            stateSession,
+          });
           sandboxAbsentFromRegistry = true;
         });
       }

@@ -69,6 +69,22 @@ export function prepareRuntimeSource(source: string) {
     )
       throw new Error("The explicit diagnostic entry inventory changed.");
     verifyNativeEndpointPolicy(runtime, source);
+    const sharedInputs = ["installed-session.ts", "mxc-installed.ts"].map((name) => {
+      const file = path.join("src", "lib", "onboard", "runtime-provider", name);
+      const original = path.resolve(source, "../../..", file);
+      const descriptor = fs.openSync(original, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        if (!fs.fstatSync(descriptor).isFile())
+          throw new Error("The shared runtime source is not a regular file.");
+        const bytes = fs.readFileSync(descriptor);
+        const target = path.join(work, file);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, bytes, { flag: "wx" });
+        return { file: file.split(path.sep).join("/"), sha256: hash(bytes) };
+      } finally {
+        fs.closeSync(descriptor);
+      }
+    });
     return {
       runtime,
       receipt: {
@@ -78,6 +94,7 @@ export function prepareRuntimeSource(source: string) {
         patchContextLines: 0,
         preimagesVerified: 0,
         inputs,
+        sharedInputs,
         removedDiagnosticGuards,
       },
       close: () => fs.rmSync(work, { recursive: true, force: true }),

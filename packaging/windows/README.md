@@ -29,7 +29,7 @@ does not wait for installed acceptance, does not use provider credentials, and
 is not a GitHub release. Full qualification and qualified publication retain
 their separate protected workflow and approval gates.
 
-## Windows-tip migration in progress
+## Windows Preview and Remaining Qualification
 
 The finished-host build now pins OpenShell
 `624f55b3c6affedd4f2757c7eb32132196b4c3e8` from the current `windows` branch
@@ -54,11 +54,16 @@ requires both its patch digest and source-tree identity; the old unpatched recei
 is not accepted. Local real-provider, restart and web-worker evidence does not
 qualify a newly built installer or establish outer-network-fence enforcement.
 
-The launcher migration is not complete. The older launcher behavior below
-still depends on settings absent from the pinned OpenShell source. Do not
-publish this intermediate state as a usable installer. Required work includes
-OpenShell authorization and supervisor lifecycle validation, network-profile
-compatibility, and the prepared Hermes PTY runtime.
+The compiled launcher supports the OpenClaw Control UI and Hermes dashboard,
+including the prepared Hermes PTY runtime. Installed sessions use authenticated
+OpenShell gateways and job-owned supervisor cleanup. The installer may publish
+these paths as unqualified previews, as described above.
+
+Functional evidence remains specific to the tested revision and artifact.
+A passing preview journey does not establish protected provider qualification,
+network-policy enforcement, or release readiness. New runtime changes require
+new installed lifecycle evidence; earlier OpenClaw or Hermes results cannot
+qualify a replacement package.
 
 The retained launchers provision fresh TLS and JWT keys through a shared gateway
 session owner. Its sibling session directory permits access only to the Windows

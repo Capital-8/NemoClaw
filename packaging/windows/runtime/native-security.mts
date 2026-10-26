@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { nativeHermesCompatibility, type NativeRuntimeLaunchLease } from "./native-runtime.mts";
-import type { NativeGatewaySession } from "./native-gateway-session.mts";
+import type { InstalledRuntimeSession } from "../../../src/lib/onboard/runtime-provider/installed-session.ts";
 import { PROVIDER_CONFIGURATION } from "./native-provider-policy.mts";
 
 type ReadOpenedRegularFileOptions = {
@@ -330,7 +330,7 @@ export async function writeNativeGatewayConfig(
   runRoot: string,
   hermesRuntime?: NativeRuntimeLaunchLease,
   options: NativeGatewayOptions | (() => Promise<NativeGatewayOptions>) = {},
-  gatewaySession?: NativeGatewaySession,
+  gatewaySession?: Pick<InstalledRuntimeSession, "configuration" | "preflightConfiguration">,
 ): Promise<string> {
   const installation = path.resolve(installRoot);
   if (Buffer.from(installation, "utf8").toString("utf8") !== installation)

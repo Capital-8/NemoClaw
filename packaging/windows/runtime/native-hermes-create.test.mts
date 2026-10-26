@@ -5,12 +5,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
+import { installedMxcWorkloadArguments } from "./mxc-installed-session.mts";
 
 const workerCommand = ["C:\\Program Files\\NemoClaw\\worker.exe", "--hermes", "saved & state"];
 const environment = { FIXTURE: "value with spaces", OPTION: "--tty" };
 const cases = [
-  ["./run-installed-native-hermes-turn.mts", "createArgs", "    console.log("],
-  ["./run-installed-native-console-agent.mts", "createArgs", "      console.log("],
+  ["./run-installed-native-hermes-turn.mts", "workloadRequest", "    console.log("],
+  ["./run-installed-native-console-agent.mts", "workloadRequest", "      console.log("],
   ["../hermes/probe-official-components.mts", "args", "    const createFailure:"],
   ["../performance/probe-installed-readonly.mts", "args", "    const createFailure:"],
 ] as const;
@@ -20,7 +21,7 @@ for (const [file, variable, endMarker] of cases) {
     test(`${file} submits its exact worker as the detached main process: ${variant}`, () => {
       const source = fs.readFileSync(new URL(file, import.meta.url), "utf8");
       const arrayStart = source.indexOf(
-        `const ${variable} = [`,
+        `const ${variable} = ${variable === "workloadRequest" ? "{" : "["}`,
         source.indexOf("sandboxEnvironment"),
       );
       const commandStart = source.lastIndexOf("const workloadCommand =", arrayStart);
@@ -64,7 +65,9 @@ for (const [file, variable, endMarker] of cases) {
         `(() => { const {${Object.keys(context).join(",")}} = context;\n${source.slice(start, end)}\nreturn ${variable}; })()`,
         { mode: "strip" },
       );
-      const args: string[] = new Function("context", `return ${code}`)(context);
+      const request = new Function("context", `return ${code}`)(context);
+      const args: string[] =
+        variable === "workloadRequest" ? installedMxcWorkloadArguments(request) : request;
       const boundary = args.indexOf("--");
       assert(boundary > 0, "The driver command is not the main-process command.");
       assert.equal(args.indexOf("--", boundary + 1), -1);
@@ -72,7 +75,7 @@ for (const [file, variable, endMarker] of cases) {
       assert.equal(options.filter((arg) => arg === "--detach").length, 1);
       const configured = JSON.parse(options[options.indexOf("--driver-config-json") + 1]).mxc;
       const expected =
-        variable === "createArgs"
+        variable === "workloadRequest"
           ? workerCommand
           : [
               "owned-node.exe",
@@ -110,7 +113,7 @@ for (const [file, variable, endMarker] of cases) {
             (arg, index) => arg === "--env" && options[index + 1] === `${name}=${value}`,
           ),
         );
-      if (variable === "createArgs") assert.equal(leaseChecks, 1);
+      if (variable === "workloadRequest") assert.equal(leaseChecks, 1);
     });
   }
 }

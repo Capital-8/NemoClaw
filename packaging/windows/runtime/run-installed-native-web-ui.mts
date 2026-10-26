@@ -4,16 +4,10 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets, nativeDistributionAsset } from "./native-assets.mts";
-import { NativeGatewaySession } from "./native-gateway-session.mts";
+import { openInstalledRuntimeSession } from "./installed-runtime-provider.mts";
 import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
 import { Readable } from "node:stream";
-import {
-  watchNativeUiSandbox,
-  attemptNativeUiCleanup,
-  requestNativeUiSandboxDeletion,
-  observeNativeSandboxCreation,
-  confirmNativeUiRegistryEmpty,
-} from "./native-ui-lifecycle.mts";
+import { attemptNativeUiCleanup, observeNativeSandboxCreation } from "./native-ui-lifecycle.mts";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:http";
@@ -70,7 +64,6 @@ import {
   removeDirectory,
   requiredDirectory,
   requiredFile,
-  run,
   stopChild,
   waitForPort,
 } from "./run-installed-native-turn.mts";
@@ -1080,7 +1073,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     let brokerRelay: Awaited<ReturnType<typeof startNativeBrokerRelay>> | null = null;
     let uiRelay: Awaited<ReturnType<typeof startFileTcpRelay>> | null = null;
     let gateway: ChildProcess | null = null;
-    let gatewaySession: NativeGatewaySession | undefined;
+    let gatewaySession: ReturnType<typeof openInstalledRuntimeSession> | undefined;
     let create: ChildProcessByStdio<null, Readable, Readable> | null = null;
     let onboarding: Awaited<ReturnType<typeof startOnboardingServer>> | null = null;
     let cliEnvironment: NodeJS.ProcessEnv;
@@ -1139,17 +1132,12 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
           "sandbox deletion",
           async () => {
             if (create)
-              await requestNativeUiSandboxDeletion(
-                openshell,
-                cliEnvironment,
-                {
-                  sandboxName,
-                  gateway,
-                  stateSession,
-                  creationRejected: creation?.wasRejected(),
-                },
-                gatewaySession!.ownCommandProcess,
-              );
+              await gatewaySession!.requestWorkloadDeletion(cliEnvironment, {
+                sandboxName,
+                gateway,
+                stateSession,
+                creationRejected: creation?.wasRejected(),
+              });
           },
         ],
         [
@@ -1163,16 +1151,11 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
           "sandbox registry",
           async () => {
             if (create)
-              await confirmNativeUiRegistryEmpty(
-                openshell,
-                cliEnvironment,
-                {
-                  sandboxName,
-                  gateway,
-                  stateSession,
-                },
-                gatewaySession!.ownCommandProcess,
-              );
+              await gatewaySession!.confirmRegistryEmpty(cliEnvironment, {
+                sandboxName,
+                gateway,
+                stateSession,
+              });
             sandboxAbsentFromRegistry = true;
           },
         ],
@@ -1376,7 +1359,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       const openShellPort = await freePort();
       const uiPort = await freePort();
       const modelPort = uiPort === 65535 ? 1 : uiPort + 1;
-      gatewaySession = new NativeGatewaySession(installRoot, runRoot);
+      gatewaySession = openInstalledRuntimeSession(installRoot, runRoot);
       const gatewayConfig = await writeNativeGatewayConfig(
         installRoot,
         runRoot,
@@ -1447,33 +1430,19 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       const gatewayError = fs.openSync(gatewayErrorPath, "w");
       ownedLogs.push(gatewayError);
       await gatewaySession.prepare();
-      const gatewayEnvironment = allowlistedWindowsEnvironment({
-        OPENSHELL_DRIVERS: "mxc",
-        OPENSHELL_GATEWAY_CONFIG: gatewayConfig,
-        ...gatewaySession.environment,
-      });
+      const gatewayEnvironment = gatewaySession.gatewayEnvironment(gatewayConfig);
       webSession?.assertRunning();
       stateSession?.assertHeld();
       webSession?.progress("gateway");
       diagnostics.stage("gateway");
-      gateway = gatewaySession.spawnGateway(
-        gatewayExecutable,
-        [
-          "--port",
-          String(openShellPort),
-          "--enable-mtls-auth",
-          "true",
-          "--db-url",
-          "sqlite::memory:",
-          "--log-level",
-          "info",
-        ],
-        {
-          env: gatewayEnvironment,
-          stdio: ["ignore", gatewayLog, gatewayError],
-          windowsHide: true,
-        },
-      );
+      gateway = gatewaySession.startGateway({
+        port: openShellPort,
+        environment: gatewayEnvironment,
+        stdio: ["ignore", gatewayLog, gatewayError],
+        windowsHide: true,
+        logLevel: "info",
+        explicitMtlsValue: true,
+      });
       cliEnvironment = gatewayEnvironment;
       const startedGateway = gateway;
       const gatewayFailure = new Promise((_, reject) => {
@@ -1491,23 +1460,12 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         ...gatewayEnvironment,
         OPENSHELL_GATEWAY: undefined,
       });
-      await run(
-        openshell,
-        ["gateway", "add", `https://127.0.0.1:${openShellPort}`, "--local", "--name", gatewayName],
+      await gatewaySession.registerGateway(
+        openShellPort,
+        gatewayName,
         cliEnvironment,
-        "Registering the native UI gateway",
-        undefined,
+        ["Registering the native UI gateway", "Selecting the native UI gateway"],
         diagnostics,
-        gatewaySession.ownCommandProcess,
-      );
-      await run(
-        openshell,
-        ["gateway", "select", gatewayName],
-        cliEnvironment,
-        "Selecting the native UI gateway",
-        undefined,
-        diagnostics,
-        gatewaySession.ownCommandProcess,
       );
       const sandboxEnvironment = {
         ...worker.environment,
@@ -1553,34 +1511,23 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         USERPROFILE: home,
         WINDIR: systemRoot,
       };
-      const createArgs = [
-        "sandbox",
-        "create",
-        "--name",
-        sandboxName,
-        "--policy",
-        policyPath,
-        "--driver-config-json",
-        JSON.stringify({
-          mxc: {
-            command: nativeRuntimeWorkerCommand(runtimeLease, gatewayScript),
-            cwd: shareRoot,
-            loopback_pipe_ports: [uiPort],
-          },
-        }),
-        "--no-tty",
-      ];
-      for (const [name, value] of Object.entries(sandboxEnvironment))
-        createArgs.push("--env", `${name}=${value}`);
-      createArgs.push("--detach", "--", ...nativeRuntimeWorkerCommand(runtimeLease, gatewayScript));
+      const workloadRequest = {
+        name: sandboxName,
+        policy: policyPath,
+        command: nativeRuntimeWorkerCommand(runtimeLease, gatewayScript),
+        directory: shareRoot,
+        ports: [uiPort],
+        terminal: false,
+        environment: sandboxEnvironment,
+      };
       webSession?.progress("sandbox");
       console.log("WEB UI> Creating the native MXC OpenClaw Control UI sandbox");
       diagnostics.stage("sandbox");
-      create = spawn(openshell, createArgs, {
-        env: cliEnvironment,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
+      create = gatewaySession.startWorkload(workloadRequest, cliEnvironment, [
+        "ignore",
+        "pipe",
+        "pipe",
+      ]);
       creation = observeNativeSandboxCreation(create);
       create.stdout.on("data", (chunk) => {
         diagnostics.capture("create.stdout", chunk);
@@ -1607,14 +1554,12 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         180_000,
         "MXC file UI relay",
       );
-      monitor = watchNativeUiSandbox(
-        openshell,
+      monitor = gatewaySession!.watchWorkload(
         cliEnvironment,
         sandboxName,
         gateway,
         stateSession,
         monitoring.signal,
-        gatewaySession!.ownCommandProcess,
       );
       void monitor.catch(() => {});
       const uiUrl = `http://127.0.0.1:${uiRelay.browserPort}`;

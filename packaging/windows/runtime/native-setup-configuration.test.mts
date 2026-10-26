@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { installedMxcWorkloadArguments, InstalledMxcSession } from "./mxc-installed-session.mts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -232,6 +233,13 @@ test("compiled native workers expose only retained agent modes", async (t) => {
   assert.equal(staged.receipt.adapterSha256, null);
   assert.equal(staged.receipt.preimagesVerified, 0);
   assert.equal(staged.receipt.removedDiagnosticGuards.length, 6);
+  assert.deepEqual(
+    staged.receipt.sharedInputs.map(({ file }) => file),
+    [
+      "src/lib/onboard/runtime-provider/installed-session.ts",
+      "src/lib/onboard/runtime-provider/mxc-installed.ts",
+    ],
+  );
   const output = path.join(root, "compiled");
   const report = await buildNativeWorkers(staged.runtime, output, undefined, {
     sourceRevision: "a".repeat(40),
@@ -392,12 +400,12 @@ test("OpenClaw startup passes the held worker as the canonical sandbox command",
     new URL("./run-installed-native-turn.mts", import.meta.url),
     "utf8",
   );
-  const start = source.indexOf("    const createArgs = [");
+  const start = source.indexOf("    const workloadRequest = {");
   const end = source.indexOf("    console.log(", start);
   assert(start >= 0 && end > start);
   const runtimeLease = heldHermesRuntime("openclaw");
   const probePath = path.win32.join(runtimeLease.runtimeRoot, "workers", "native-runtime.cjs");
-  const args = runInNewContext(`${source.slice(start, end)} createArgs;`, {
+  const request = runInNewContext(`${source.slice(start, end)} workloadRequest;`, {
     runtimeLease,
     probePath,
     nativeRuntimeWorkerCommand,
@@ -405,7 +413,8 @@ test("OpenClaw startup passes the held worker as the canonical sandbox command",
     policyPath: "owned-policy",
     shareRoot: "owned-share",
     sandboxEnvironment: { NEMOCLAW_WORKER_MODE: "openclaw-turn" },
-  }) as string[];
+  });
+  const args = installedMxcWorkloadArguments(request);
   const command = nativeRuntimeWorkerCommand(runtimeLease, probePath);
   assert.deepEqual(Array.from(args.slice(args.indexOf("--") + 1)), command);
   assert(args.includes("--detach"));
@@ -551,8 +560,8 @@ test("actual console and turn driver configs prefix Hermes only and retain their
         sandboxEnvironment: environment,
         gatewaySession: { kind: "owned-session-fixture" },
       };
-      runInNewContext(source.slice(start, end) + "\nresult = createArgs;", context);
-      const args = context.result as string[];
+      runInNewContext(source.slice(start, end) + "\nresult = workloadRequest;", context);
+      const args = installedMxcWorkloadArguments(context.result);
       if (file.includes("console")) {
         assert(args.includes("--detach"));
         assert(args.includes("--tty"));
@@ -583,7 +592,8 @@ test("actual console and turn driver configs prefix Hermes only and retain their
       for (const dashboard of [false, true]) {
         if (file.includes("console")) {
           const selected = { ...context, dashboard };
-          runInNewContext(source.slice(start, end) + "\nresult = createArgs;", selected);
+          runInNewContext(source.slice(start, end) + "\nresult = workloadRequest;", selected);
+          selected.result = installedMxcWorkloadArguments(selected.result);
           assert.equal(selected.result.includes("--tty"), !dashboard);
           assert.equal(selected.result.includes("--no-tty"), dashboard);
         }
@@ -694,7 +704,7 @@ test("installed Hermes query modes bind both held owners and remain host or gues
   const guestStart = source.indexOf("const environment = {");
   const guestEnd = source.indexOf("      diagnostics.secret(", guestStart);
   const cliStart = source.indexOf("      cliEnvironment = allowlistedWindowsEnvironment({");
-  const cliEnd = source.indexOf("      await run(", cliStart);
+  const cliEnd = source.indexOf("      await gatewaySession.registerGateway(", cliStart);
   assert(
     gatewayStart >= 0 && gatewayEnd > gatewayStart && guestStart >= 0 && guestEnd > guestStart,
   );
@@ -720,6 +730,8 @@ test("installed Hermes query modes bind both held owners and remain host or gues
       agentId,
       stateSession,
       gatewaySession: {
+        gatewayEnvironment: InstalledMxcSession.prototype.gatewayEnvironment,
+        providerId: "mxc",
         async prepare() {
           prepared++;
         },

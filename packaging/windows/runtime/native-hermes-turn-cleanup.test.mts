@@ -28,15 +28,12 @@ function between(startMarker: string, endMarker: string) {
   return source.slice(start, end);
 }
 
-test("Hermes registration, completion and successful deletion pass the gateway process owner", async () => {
-  const owner = () => {};
-  const commands: unknown[][] = [];
-  const lifecycle: string[] = [];
+test("Hermes registration and cleanup use the selected provider session", async () => {
+  const operations: string[] = [];
   const environment = {};
   const gateway = {};
   const lease = {};
   const context = {
-    openshell: "owned-openshell",
     openShellPort: 1234,
     gatewayName: "owned-gateway",
     sandboxName: "owned-sandbox",
@@ -44,65 +41,69 @@ test("Hermes registration, completion and successful deletion pass the gateway p
     agentLabel: "Hermes",
     gateway,
     runtimeLease: lease,
-    gatewaySession: { ownCommandProcess: owner },
     sandboxAbsentFromRegistry: false,
     create: { pid: 1 },
     fail: (message: string) => {
       throw new Error(message);
     },
-    run: async (...args: unknown[]) => {
-      assert.equal(args[0], "owned-openshell");
-      assert.equal(args[2], environment);
-      assert.equal(args[4], undefined, "Keep the shared default timeout");
-      assert.equal(args[5], undefined);
-      assert.equal(args[6], owner);
-      commands.push(args);
-    },
-    waitForNativeMxcCompletion: async (...args: unknown[]) => {
-      assert.deepEqual(args, [
-        "owned-openshell",
-        environment,
-        "owned-sandbox",
-        gateway,
-        lease,
-        undefined,
-        owner,
-      ]);
-      lifecycle.push("completion");
-      return "Exited";
-    },
     stopChild: async () => {
-      lifecycle.push("request-stop");
+      operations.push("request-stop");
       return true;
     },
-    confirmNativeUiRegistryEmpty: async (...args: unknown[]) => {
-      assert.deepEqual(args, [
-        "owned-openshell",
-        environment,
-        { sandboxName: "owned-sandbox", gateway, stateSession: lease },
-        owner,
-      ]);
-      lifecycle.push("registry");
+    gatewaySession: {
+      async registerGateway(...args: unknown[]) {
+        assert.deepEqual(args, [
+          1234,
+          "owned-gateway",
+          environment,
+          ["Registering the native Hermes gateway", "Selecting the native Hermes gateway"],
+          undefined,
+        ]);
+        operations.push("registration");
+      },
+      async waitForCompletion(...args: unknown[]) {
+        assert.deepEqual(args, [environment, "owned-sandbox", gateway, lease, undefined]);
+        operations.push("completion");
+        return "AgentCompleted";
+      },
+      async deleteWorkload(...args: unknown[]) {
+        assert.deepEqual(args, [
+          "owned-sandbox",
+          environment,
+          "Deleting the native Hermes sandbox",
+          undefined,
+          undefined,
+        ]);
+        operations.push("deletion");
+      },
+      async confirmRegistryEmpty(...args: unknown[]) {
+        assert.deepEqual(args, [
+          environment,
+          { sandboxName: "owned-sandbox", gateway, stateSession: lease },
+        ]);
+        operations.push("registry");
+      },
     },
   };
-  await execute(between("    await run(\n", "    const sandboxEnvironment ="), context);
+  await execute(
+    between("    await gatewaySession.registerGateway(", "    const sandboxEnvironment ="),
+    context,
+  );
   const absent = await execute(
     between(
-      "    const completion = await waitForNativeMxcCompletion(",
+      "    const completion = await gatewaySession.waitForCompletion(",
       "    if (!(await gatewaySession.stopGateway()))",
     ) + "\nreturn sandboxAbsentFromRegistry;",
     context,
   );
   assert.equal(absent, true);
-  assert.deepEqual(
-    commands.map((args) => args[1]),
-    [
-      ["gateway", "add", "https://127.0.0.1:1234", "--local", "--name", "owned-gateway"],
-      ["gateway", "select", "owned-gateway"],
-      ["sandbox", "delete", "owned-sandbox"],
-    ],
-  );
-  assert.deepEqual(lifecycle, ["completion", "request-stop", "registry"]);
+  assert.deepEqual(operations, [
+    "registration",
+    "completion",
+    "deletion",
+    "request-stop",
+    "registry",
+  ]);
 });
 
 async function cleanup(scenario: string, primaryFailed = true) {
@@ -150,6 +151,25 @@ async function cleanup(scenario: string, primaryFailed = true) {
     runtimeLease: lease,
     gatewaySession: {
       root: "owned-gateway",
+      deleteWorkload: async (...args: unknown[]) => {
+        assert.deepEqual(args, [
+          "owned-sandbox",
+          environment,
+          "Failure cleanup native Hermes sandbox",
+          30_000,
+          undefined,
+        ]);
+        operations.push("sandbox-delete");
+      },
+      confirmRegistryEmpty: async (...args: unknown[]) => {
+        assert.deepEqual(args, [
+          environment,
+          { sandboxName: "owned-sandbox", gateway, stateSession: lease },
+        ]);
+        operations.push("registry");
+        if (scenario === "registry") throw new Error("registry unavailable");
+      },
+
       ownCommandProcess: owner,
       async stopGateway() {
         operations.push("gateway-stop");
@@ -161,28 +181,6 @@ async function cleanup(scenario: string, primaryFailed = true) {
           throw new Error("unconfirmed gateway");
         present.delete("owned-gateway");
       },
-    },
-    run: async (...args: unknown[]) => {
-      assert.deepEqual(args, [
-        "owned-openshell",
-        ["sandbox", "delete", "owned-sandbox"],
-        environment,
-        "Failure cleanup native Hermes sandbox",
-        30_000,
-        undefined,
-        owner,
-      ]);
-      operations.push("sandbox-delete");
-    },
-    confirmNativeUiRegistryEmpty: async (...args: unknown[]) => {
-      assert.deepEqual(args, [
-        "owned-openshell",
-        environment,
-        { sandboxName: "owned-sandbox", gateway, stateSession: lease },
-        owner,
-      ]);
-      operations.push("registry");
-      if (scenario === "registry") throw new Error("registry unavailable");
     },
     ownedLogs: logs,
     fs: {

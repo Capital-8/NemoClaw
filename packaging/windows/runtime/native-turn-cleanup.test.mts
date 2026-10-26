@@ -34,10 +34,7 @@ function openClawCleanupController() {
     "passed",
     "sandboxAbsentFromRegistry",
     "cliEnvironment",
-    "run",
-    "openshell",
     "sandboxName",
-    "confirmNativeUiRegistryEmpty",
     "gateway",
     "runtimeLease",
     "gatewaySession",
@@ -84,18 +81,17 @@ for (const failure of [
       false,
       ["before-create", "already-absent"].includes(failure),
       {},
-      async () => {
-        assert.notEqual(failure, "already-absent", "Confirmed removal must not be repeated");
-      },
-      "owned-openshell",
       "owned-sandbox",
-      async () => {
-        assert.notEqual(failure, "already-absent", "Confirmed absence survives gateway shutdown");
-        if (failure === "registry") throw new Error("unconfirmed registry");
-      },
       gateway,
       {},
       {
+        async deleteWorkload() {
+          assert.notEqual(failure, "already-absent", "Confirmed removal must not be repeated");
+        },
+        async confirmRegistryEmpty() {
+          assert.notEqual(failure, "already-absent", "Confirmed absence survives gateway shutdown");
+          if (failure === "registry") throw new Error("unconfirmed registry");
+        },
         async stopGateway() {
           return failure !== "gateway-stop";
         },
@@ -195,16 +191,16 @@ for (const failure of [
         create: failure === "before-create" ? undefined : { pid: 5678 },
         gateway: { pid: 1234 },
         gatewaySession: {
+          async requestWorkloadDeletion() {},
+          async confirmRegistryEmpty() {
+            if (failure === "registry") throw new Error("unconfirmed registry");
+          },
           async stopGateway() {
             return failure !== "gateway-cleanup";
           },
           async dispose() {
             if (failure === "gateway-cleanup") throw new Error("unconfirmed gateway");
           },
-        },
-        requestNativeUiSandboxDeletion: async () => {},
-        confirmNativeUiRegistryEmpty: async () => {
-          if (failure === "registry") throw new Error("unconfirmed registry");
         },
         stopChild: async () => failure !== "request-stop",
         openshell: "fixture",
@@ -277,10 +273,11 @@ for (const registryFails of [false, true]) {
         cliEnvironment: {},
         gateway: {},
         stateSession: {},
-        gatewaySession: { ownCommandProcess() {} },
-        requestNativeUiSandboxDeletion: async () => {},
-        confirmNativeUiRegistryEmpty: async () => {
-          if (registryFails) throw new Error("registry unavailable");
+        gatewaySession: {
+          async requestWorkloadDeletion() {},
+          async confirmRegistryEmpty() {
+            if (registryFails) throw new Error("registry unavailable");
+          },
         },
       },
       "sandboxAbsentFromRegistry",

@@ -98,7 +98,7 @@ test("OpenClaw allows the bound browser relay origin, not its private gateway pi
     "utf8",
   );
   const start = host.indexOf("      const sandboxEnvironment = {");
-  const end = host.indexOf("      const createArgs = [", start);
+  const end = host.indexOf("      const workloadRequest = {", start);
   assert(start >= 0 && end > start);
   const worker = gatewaySource();
   const declarations = worker.indexOf("const required = ");

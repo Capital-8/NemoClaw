@@ -4,7 +4,7 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets } from "./native-assets.mts";
-import { NativeGatewaySession } from "./native-gateway-session.mts";
+import { openInstalledRuntimeSession } from "./installed-runtime-provider.mts";
 import {
   withNativeRuntimeSession,
   nativeRuntimeWorkerCommand,
@@ -22,11 +22,7 @@ import {
   readOpenedRegularFile,
   writeNativeGatewayConfig,
 } from "./native-security.mts";
-import {
-  attemptNativeUiCleanup,
-  confirmNativeUiRegistryEmpty,
-  waitForNativeMxcCompletion,
-} from "./native-ui-lifecycle.mts";
+import { attemptNativeUiCleanup } from "./native-ui-lifecycle.mts";
 import { nativeDiagnosticTail } from "./native-session-diagnostics.mts";
 
 const TIMEOUT_MS = 300_000;
@@ -471,13 +467,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
     process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
     "NemoClaw installation root",
   );
-  const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
   requiredFile(runtimeLease.node, "sealed Node.js runtime");
-  const openshell = requiredFile(path.join(binRoot, "openshell.exe"), "OpenShell CLI");
-  const gatewayExecutable = requiredFile(
-    path.join(binRoot, "openshell-gateway.exe"),
-    "OpenShell gateway",
-  );
   const installedOpenClawRoot = requiredDirectory(
     runtimeLease.agentRoot ?? fail("sealed OpenClaw runtime is missing"),
     "sealed OpenClaw runtime",
@@ -519,7 +509,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
   const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");
   const ownedRoots: string[] = [];
   const ownedLogs = new Set<number>();
-  const gatewaySession = new NativeGatewaySession(installRoot, runRoot);
+  const gatewaySession = openInstalledRuntimeSession(installRoot, runRoot);
   let gateway: ChildProcess | undefined;
   let create: ChildProcess | null = null;
   let cliEnvironment: NodeJS.ProcessEnv | undefined;
@@ -579,29 +569,15 @@ async function main(runtimeLease: NativeRuntimeSession) {
     const gatewayError = fs.openSync(gatewayErrorPath, "w");
     ownedLogs.add(gatewayError);
     await gatewaySession.prepare();
-    const gatewayEnvironment = allowlistedWindowsEnvironment({
-      OPENSHELL_DRIVERS: "mxc",
-      OPENSHELL_GATEWAY_CONFIG: gatewayConfig,
-      ...gatewaySession.environment,
+    const gatewayEnvironment = gatewaySession.gatewayEnvironment(gatewayConfig);
+    gateway = gatewaySession.startGateway({
+      port: gatewayPort,
+      environment: gatewayEnvironment,
+      stdio: ["ignore", gatewayLog, gatewayError],
+      windowsHide: true,
+      logLevel: "info",
+      explicitMtlsValue: true,
     });
-    gateway = gatewaySession.spawnGateway(
-      gatewayExecutable,
-      [
-        "--port",
-        String(gatewayPort),
-        "--enable-mtls-auth",
-        "true",
-        "--db-url",
-        "sqlite::memory:",
-        "--log-level",
-        "info",
-      ],
-      {
-        env: gatewayEnvironment,
-        stdio: ["ignore", gatewayLog, gatewayError],
-        windowsHide: true,
-      },
-    );
     const gatewayFailure = new Promise<never>((_, reject) => gateway!.once("error", reject));
     void gatewayFailure.catch(() => {});
     let result = null;
@@ -613,23 +589,12 @@ async function main(runtimeLease: NativeRuntimeSession) {
       ...gatewayEnvironment,
       OPENSHELL_GATEWAY: undefined,
     });
-    await run(
-      openshell,
-      ["gateway", "add", `https://127.0.0.1:${gatewayPort}`, "--local", "--name", gatewayName],
+    await gatewaySession.registerGateway(
+      gatewayPort,
+      gatewayName,
       cliEnvironment,
-      "Registering qualification gateway",
+      ["Registering qualification gateway", "Selecting qualification gateway"],
       undefined,
-      undefined,
-      gatewaySession.ownCommandProcess,
-    );
-    await run(
-      openshell,
-      ["gateway", "select", gatewayName],
-      cliEnvironment,
-      "Selecting qualification gateway",
-      undefined,
-      undefined,
-      gatewaySession.ownCommandProcess,
     );
     const sandboxEnvironment = {
       ...worker.environment,
@@ -652,32 +617,18 @@ async function main(runtimeLease: NativeRuntimeSession) {
       USERPROFILE: home,
       WINDIR: systemRoot,
     };
-    const createArgs = [
-      "sandbox",
-      "create",
-      "--name",
-      sandboxName,
-      "--policy",
-      policyPath,
-      "--driver-config-json",
-      JSON.stringify({
-        mxc: {
-          command: nativeRuntimeWorkerCommand(runtimeLease, probePath),
-          cwd: shareRoot,
-        },
-      }),
-      "--no-tty",
-    ];
-    for (const [name, value] of Object.entries(sandboxEnvironment))
-      createArgs.push("--env", `${name}=${value}`);
-    createArgs.push("--detach", "--", ...nativeRuntimeWorkerCommand(runtimeLease, probePath));
+    const workloadRequest = {
+      name: sandboxName,
+      policy: policyPath,
+      command: nativeRuntimeWorkerCommand(runtimeLease, probePath),
+      directory: shareRoot,
+      ports: undefined,
+      terminal: false,
+      environment: sandboxEnvironment,
+    };
     console.log("NEMOCLAW> Creating native MXC OpenClaw sandbox");
     const createFailure: { error: Error | null } = { error: null };
-    create = spawn(openshell, createArgs, {
-      env: cliEnvironment,
-      stdio: "ignore",
-      windowsHide: true,
-    });
+    create = gatewaySession.startWorkload(workloadRequest, cliEnvironment, "ignore");
     sandboxAbsentFromRegistry = false;
     create.once("error", (error) => {
       createFailure.error = error;
@@ -709,37 +660,28 @@ async function main(runtimeLease: NativeRuntimeSession) {
       console.error(`NEMOCLAW> Failed sandbox probe result ${failedProbe}`);
       fail("installed OpenClaw turn result was not exact");
     }
-    const completion = await waitForNativeMxcCompletion(
-      openshell,
+    const completion = await gatewaySession.waitForCompletion(
       cliEnvironment,
       sandboxName,
       gateway,
       runtimeLease,
       undefined,
-      gatewaySession.ownCommandProcess,
     );
     if (completion === "ExecFailed" || completion === "MainProcessFailed")
       fail("OpenShell reported failed MXC workload termination");
     console.log("AGENT> CHAT_OK");
-    await run(
-      openshell,
-      ["sandbox", "delete", sandboxName],
+    await gatewaySession.deleteWorkload(
+      sandboxName,
       cliEnvironment,
       "Deleting native MXC sandbox",
       undefined,
       undefined,
-      gatewaySession.ownCommandProcess,
     );
-    await confirmNativeUiRegistryEmpty(
-      openshell,
-      cliEnvironment,
-      {
-        sandboxName,
-        gateway,
-        stateSession: runtimeLease,
-      },
-      gatewaySession.ownCommandProcess,
-    );
+    await gatewaySession.confirmRegistryEmpty(cliEnvironment, {
+      sandboxName,
+      gateway,
+      stateSession: runtimeLease,
+    });
     sandboxAbsentFromRegistry = true;
     if (!(await gatewaySession.stopGateway())) fail("OpenShell MXC gateway did not stop");
     await gatewaySession.dispose();
@@ -791,14 +733,12 @@ async function main(runtimeLease: NativeRuntimeSession) {
         "sandbox removal",
         async () => {
           if (!sandboxAbsentFromRegistry && create && cliEnvironment)
-            await run(
-              openshell,
-              ["sandbox", "delete", sandboxName],
+            await gatewaySession.deleteWorkload(
+              sandboxName,
               cliEnvironment,
               "Failure cleanup sandbox delete",
               30_000,
               undefined,
-              gatewaySession.ownCommandProcess,
             );
         },
       ],
@@ -806,16 +746,11 @@ async function main(runtimeLease: NativeRuntimeSession) {
         "sandbox registry verification",
         async () => {
           if (!sandboxAbsentFromRegistry && create && cliEnvironment) {
-            await confirmNativeUiRegistryEmpty(
-              openshell,
-              cliEnvironment,
-              {
-                sandboxName,
-                gateway,
-                stateSession: runtimeLease,
-              },
-              gatewaySession.ownCommandProcess,
-            );
+            await gatewaySession.confirmRegistryEmpty(cliEnvironment, {
+              sandboxName,
+              gateway,
+              stateSession: runtimeLease,
+            });
             sandboxAbsentFromRegistry = true;
           }
         },
