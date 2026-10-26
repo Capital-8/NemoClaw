@@ -28,6 +28,19 @@ export class NativeProviderError extends Error {
   }
 }
 
+/** Refuse a provider that has no NemoClaw receipt, and name the command that clears it. */
+export function unownedNativeProviderMessage(
+  providerName: string,
+  target: OpenShellGatewayTarget,
+): string {
+  const gatewayFlag = target.kind === "named" ? ` -g ${target.gatewayName}` : "";
+  return [
+    `OpenShell provider '${providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
+    "Check whether any sandbox on this gateway uses this provider.",
+    `If none does, remove it with 'openshell provider delete${gatewayFlag} ${providerName}', then run onboarding again.`,
+  ].join(" ");
+}
+
 export class NativeProviderCredentialExpiredError extends NativeProviderError {
   constructor() {
     super("Native provider credential is expired.");
@@ -230,9 +243,7 @@ export async function ensureNativeProvider(input: {
   if (before) {
     const receipt = nativeProviderAttachmentFromMetadata(before, profile);
     if (!input.expected) {
-      throw new NativeProviderError(
-        `OpenShell provider '${profile.providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
-      );
+      throw new NativeProviderError(unownedNativeProviderMessage(profile.providerName, target));
     }
     if (input.expected && input.expected.providerId !== receipt.providerId) {
       throw new NativeProviderError(
