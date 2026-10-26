@@ -68,8 +68,10 @@ Rerunning without a change hits the same conflict.
 2. Check the conflicting text against current source and tests, then choose the accurate wording.
 3. Choose one recovery path:
    - To keep automation ownership, open a PR that updates the conflicting `main` text so it
-     merges cleanly with the draft. Confirm with `git merge-tree` against the draft head. The next
-     qualifying push to `main` refreshes the draft.
+     merges cleanly with the draft. Confirm with `git merge-tree` against the draft head.
+     The workflow ignores pushes that change only `docs/**`, `fern/docs.yml`, or `fern/assets/**`,
+     so a documentation-only fix does not start a run. The draft refreshes on the next push to
+     `main` that changes anything else, and stays conflicted until then.
    - To take ownership, mark the draft PR ready for review and resolve the conflict on its branch.
      Later workflow runs leave the PR unchanged.
 
