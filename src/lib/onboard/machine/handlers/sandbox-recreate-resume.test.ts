@@ -15,6 +15,7 @@ import {
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
 const GPU_PROOF = {
@@ -115,7 +116,7 @@ describe("handleSandboxState resume recreation", () => {
     },
   );
 
-  it("recreates a ready sandbox when its baked reasoning capability drifted (#7570)", async () => {
+  it("reuses a ready sandbox when its baked reasoning capability drifted without an explicit recreate (#13732)", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
     const journal = bindJournaledRecreate(session);
@@ -148,42 +149,14 @@ describe("handleSandboxState resume recreation", () => {
       compatibleEndpointReasoning: "true",
     });
 
-    expect(calls.note).toHaveBeenCalledWith(
+    // A plain resume must not delete a Ready sandbox to bake the reasoning
+    // capability; the recorded value wins and only an explicit
+    // --recreate-sandbox changes it (#13732).
+    expect(calls.note).not.toHaveBeenCalledWith(
       "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
     );
-    expect(calls.recordSkip).not.toHaveBeenCalled();
-    expect(journal.completeCreate).toHaveBeenCalledWith(
-      expect.anything(),
-      "model",
-      "compatible-endpoint",
-      "openai-completions",
-      "saved",
-      null,
-      [],
-      null,
-      null,
-      null,
-      expect.anything(),
-      null,
-      [],
-      null,
-      {
-        sessionId: session.sessionId,
-        selection: {
-          provider: "compatible-endpoint",
-          model: "model",
-          endpointUrl: "https://chat.example",
-          endpointSource: null,
-          credentialEnv: "COMPATIBLE_API_KEY",
-          preferredInferenceApi: "openai-completions",
-          compatibleEndpointReasoning: "true",
-          compatibleEndpointReasoningEffort: null,
-          nimContainer: null,
-        },
-      },
-      expect.objectContaining({ compatibleEndpointReasoning: "true", recreate: true }),
-      undefined,
-    );
+    expect(calls.recordSkip).toHaveBeenCalled();
+    expect(journal.completeCreate).not.toHaveBeenCalled();
   });
 
   it("honors explicit recreate requests for completed ready sandboxes", async () => {

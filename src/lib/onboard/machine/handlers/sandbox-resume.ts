@@ -189,7 +189,10 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
   return (
     !signals.resumeAgentChanged &&
     !signals.inferenceRouteConfigChanged &&
-    !signals.compatibleEndpointReasoningChanged &&
+    // `compatibleEndpointReasoningChanged` is intentionally absent: baking the
+    // reasoning capability is a build-time value that a plain resume must not
+    // change, so a Ready sandbox is reused with its recorded value instead of
+    // being deleted. Only an explicit --recreate-sandbox changes it (#13732).
     !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
@@ -228,13 +231,12 @@ function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxRes
 }
 
 function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
-  if (signals.compatibleEndpointReasoningChanged && signals.sandboxReuseState === "ready") {
-    return {
-      kind: "recreate",
-      note: "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
-      removeRegistryEntry: false,
-    };
-  }
+  // A Ready sandbox's baked reasoning capability is deliberately NOT recreated
+  // here: the recorded value wins on a plain resume, and any drifted input is
+  // reported instead of applied. Recreating requires an explicit
+  // --recreate-sandbox, which runtimeConfigurationResumeDecision handles
+  // lower in the decision order (#13732). Not-ready sandboxes still fall
+  // through to repair.
   if (signals.inferenceSelectionChanged) {
     return {
       kind: "recreate",
