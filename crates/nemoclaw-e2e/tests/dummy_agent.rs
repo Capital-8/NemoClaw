@@ -16,7 +16,7 @@ use nemoclaw_sdk::{
 };
 use openshell_provider::{EnvironmentSecrets, OpenShell};
 use serde_json::Value;
-use std::{fs, process::Command, sync::Arc};
+use std::{collections::BTreeSet, fs, process::Command, sync::Arc};
 
 fn required(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("{name} is required"))
@@ -47,6 +47,36 @@ fn docker_objects(engine: &str, kind: &str, filter: &str) -> Vec<String> {
         .lines()
         .map(str::to_owned)
         .collect()
+}
+
+/// The engine objects labelled with the deployment's uid: containers and
+/// networks by ID, and volumes by name and creation time. Docker reports a
+/// volume's creation time only to the second, but it removes no volume that a
+/// container still uses, so recreating the gateway's storage also gives its
+/// initializer container a new ID.
+fn owned_objects(engine: &str, uid: &str) -> BTreeSet<String> {
+    let filter = format!("label=nemoclaw.nvidia.com/uid={uid}");
+    let mut objects = BTreeSet::new();
+    for kind in ["container", "network"] {
+        let ids = docker_objects(engine, kind, &filter);
+        objects.extend(ids.into_iter().map(|id| format!("{kind} {id}")));
+    }
+    let volumes = docker_objects(engine, "volume", &filter);
+    if !volumes.is_empty() {
+        let output = Command::new("docker")
+            .args(["--host", engine, "volume", "inspect", "--format"])
+            .arg("volume {{.Name}} {{.CreatedAt}}")
+            .args(&volumes)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "docker volume inspect failed");
+        objects.extend(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::to_owned),
+        );
+    }
+    objects
 }
 
 /// Keeps the state directory when the test fails, so `nemoclaw destroy` can
@@ -95,9 +125,36 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     let state_path = state.0.as_ref().unwrap().path().to_owned();
     let deployment = Deployment::new(&state_path, &bundle);
     let cancel = CancellationToken::new();
+    // The bundled CLI, run as an operator would, with OpenTofu arguments in
+    // the environment that fail any OpenTofu command they reach.
+    let cli = |operation: &str, args: &[&str]| {
+        let output = Command::new(
+            bundle
+                .join("bin")
+                .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+        )
+        .args([operation, "--state-dir"])
+        .arg(&state_path)
+        .args(args)
+        .env("TF_CLI_ARGS", "-nemoclaw-test-inherited-argument")
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{operation} failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
 
     let plan = deployment.plan(&document, &cancel).await.unwrap();
     assert_eq!(plan.outcome, Outcome::Planned);
+    assert_eq!(
+        owned_objects(&engine, &document.metadata.uid),
+        BTreeSet::new(),
+        "plan created engine objects"
+    );
     // One plan creates the managed gateway and the sandbox it will serve.
     assert!(
         plan.changes
@@ -115,21 +172,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     );
 
     // The bundled CLI's exit status is what an operator sees.
-    let apply = Command::new(
-        bundle
-            .join("bin")
-            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
-    )
-    .args(["apply", "-o", "json", "--progress", "off", "--state-dir"])
-    .arg(&state_path)
-    .arg(&config)
-    .output()
-    .unwrap();
-    assert!(
-        apply.status.success(),
-        "apply failed: {}",
-        String::from_utf8_lossy(&apply.stderr)
-    );
+    let apply = cli("apply", &["-o", "json", "--progress", "off", &config]);
     let applied: OperationResult = serde_json::from_slice(&apply.stdout).unwrap();
     assert_eq!(applied.outcome, Outcome::Succeeded);
     assert!(
@@ -186,7 +229,7 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     let unchanged = deployment.apply(&document, &cancel).await.unwrap();
     assert_eq!(unchanged.outcome, Outcome::Succeeded);
     assert!(unchanged.changes.is_empty(), "{:?}", unchanged.changes);
-    let exported = deployment.export(&cancel).await.unwrap();
+    let exported = Document::parse(cli("export", &[]).stdout.as_slice()).unwrap();
     assert_eq!(exported, document);
     let reapplied = deployment.apply(&exported, &cancel).await.unwrap();
     assert_eq!(reapplied.outcome, Outcome::Succeeded);
@@ -200,7 +243,10 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     let again = invoke(&client, &binding, &runtime, "dummy-lifecycle").await;
     assert_eq!(again["status"], "succeeded", "{again}");
 
-    let destroyed = deployment.destroy(&cancel).await.unwrap();
+    let applied_objects = owned_objects(&engine, &document.metadata.uid);
+    let destroyed: OperationResult =
+        serde_json::from_slice(&cli("destroy", &["-o", "json", "--progress", "off"]).stdout)
+            .unwrap();
     assert_eq!(destroyed.outcome, Outcome::Destroyed);
     assert!(
         destroyed
@@ -227,14 +273,14 @@ async fn the_dummy_agent_completes_a_managed_docker_lifecycle() {
     retained.sort();
     // Destroy deletes the workspace; only gateway storage remains.
     assert_eq!(retained, ["openshell_gateway_storage.runtime"]);
-    // Retained gateway storage is still on the engine.
+    // Retained gateway storage is still on the engine, as the same objects.
+    let kept = owned_objects(&engine, &document.metadata.uid);
     assert!(
-        !docker_objects(
-            &engine,
-            "volume",
-            &format!("label=nemoclaw.nvidia.com/uid={}", document.metadata.uid)
-        )
-        .is_empty(),
+        kept.iter().any(|object| object.starts_with("volume ")),
         "destroy removed the retained gateway storage"
+    );
+    assert!(
+        kept.is_subset(&applied_objects),
+        "destroy recreated retained objects: {kept:?}, before destroy {applied_objects:?}"
     );
 }

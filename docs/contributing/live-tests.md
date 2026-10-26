@@ -405,7 +405,9 @@ The container's Python process simulates model reconstruction and a credential; 
 
 nemoclaw-e2e's `dummy_agent::the_dummy_agent_completes_a_managed_docker_lifecycle` test deploys the [reference dummy image](../build.md#reference-contract-image) through a managed Docker gateway.
 The dummy runs Fabric's real `fabric-agent-ctl` with NemoClaw's test adapter, so it needs no model or credentials.
-The test checks plan, a successful bundled-CLI apply, an invocation that returns the configured `reply` setting, unchanged apply that keeps the same runtime, export/reapply, and destroy, after which Docker holds no sandbox containers or volumes but still holds the gateway's storage.
+The test checks that plan creates no container, network, or volume labelled with the document's UID, then a successful bundled-CLI apply, an invocation that returns the configured `reply` setting, unchanged apply that keeps the same runtime, bundled-CLI export, an SDK apply of the exported document, and bundled-CLI destroy.
+Each CLI step runs with a `TF_CLI_ARGS` that fails any OpenTofu command it reaches, so it passes only if the CLI keeps the caller's `TF_CLI_ARGS` from OpenTofu.
+After destroy, Docker must hold no sandbox containers or volumes but still hold the gateway's storage, and every remaining object labelled with the UID must have existed before destroy with the same ID, or for a volume the same creation time.
 It requests no inference and does not qualify a production adapter.
 
 Supply a verified bundle and an owned document like the gateway tests', with a fresh UID, free gateway port and subnet, the local dummy image by digest, `harness.kind: org.nemoclaw.dummy`, and a `harness.settings.reply` string:
