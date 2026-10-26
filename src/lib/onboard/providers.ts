@@ -9,6 +9,7 @@ const { resolveAgentNameAlias } = require("../agent/aliases");
 const { normalizeCredentialValue } = require("../credentials/store");
 const {
   DEFAULT_CLOUD_MODEL,
+  DEFAULT_OPENROUTER_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
@@ -18,6 +19,12 @@ const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/provider-adapter-cli");
+const {
+  getNativeNvidiaProviderAuthority,
+  getNativeHostedProviderAuthority,
+  setNativeHostedProviderAuthority,
+  setNativeNvidiaProviderAuthority,
+} = require("../state/registry/native-provider-authority");
 const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
@@ -78,7 +85,7 @@ const REMOTE_PROVIDER_CONFIG = {
     endpointUrl: openrouter.OPENROUTER_ENDPOINT_URL,
     helpUrl: openrouter.OPENROUTER_HELP_URL,
     modelMode: "catalog",
-    defaultModel: DEFAULT_CLOUD_MODEL,
+    defaultModel: DEFAULT_OPENROUTER_MODEL,
     skipVerify: true,
   },
   openai: {
@@ -402,6 +409,17 @@ async function providerExistsInGateway(name, runOpenshell) {
   throw new Error(result.error.message);
 }
 
+function setupInferenceProviderDeps(runOpenshell) {
+  return {
+    providerExistsInGateway,
+    providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+    getNativeNvidiaProviderAuthority,
+    getNativeHostedProviderAuthority,
+    setNativeHostedProviderAuthority,
+    setNativeNvidiaProviderAuthority,
+  };
+}
+
 /**
  * Recheck current OpenShell sandbox identity before each provider command.
  * Commands in one provider operation can be separated by
@@ -450,7 +468,8 @@ async function upsertProvider(
 ) {
   const operation = `inspect or change provider ${JSON.stringify(name)}`;
   const revalidate = () => options.revalidateSandboxIdentity?.(operation);
-  const adapter = createCliOpenShellProviderAdapter({ run: _runOpenshell });
+  const adapter =
+    options.providerAdapter ?? createCliOpenShellProviderAdapter({ run: _runOpenshell });
   let observed = null;
   if (options.knownExists === undefined || options.requireExactBinding) {
     revalidate();
@@ -607,6 +626,7 @@ module.exports = {
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   upsertProvider,
+  setupInferenceProviderDeps,
   providerExistsInGateway,
   readGatewayProviderMetadata,
   getSandboxInferenceConfig,
