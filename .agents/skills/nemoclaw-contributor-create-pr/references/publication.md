@@ -181,8 +181,11 @@ Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omi
 
 Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
 Keep it draft while automated evaluation or a candidate-owned repair is pending.
+For a PR targeting `main`, also complete [PR E2E](pr-e2e.md) before marking it ready.
+Missing authorization permits draft publication, but does not complete the required E2E stage.
+PRs targeting `v1` are excluded from this automatic E2E stage.
 Use `prepare_pr_for_human_review` only after the latest PR commit completes the shared follow-up cycle
-with no unresolved candidate-owned finding or failure.
+with no unresolved candidate-owned finding or failure and every required E2E result passes.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 

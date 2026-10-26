@@ -3,7 +3,7 @@
 
 # Manual PR E2E
 
-Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on
+Use this mode for authorized PR E2E, including the PR creator workflow. The trusted workflow stays on
 `main` and first checks out the latest commit of an open PR. It rejects an arbitrary or historical
 commit SHA. Replay the same selector against the exact PR base only after a candidate failure remains
 unresolved. The result is advisory and does not create a required PR check.
@@ -75,6 +75,7 @@ cannot silently change the selected behavior:
 ```bash
 E2E_JOBS="${E2E_JOBS:-}"
 E2E_TARGETS="${E2E_TARGETS:-}"
+E2E_GATEWAY_RUNTIMES="${E2E_GATEWAY_RUNTIMES:-docker}"
 ALLOW_JETSON_DISPATCH="${ALLOW_JETSON_DISPATCH:-false}"
 INCLUDE_STAGING_BREV_LAUNCHABLE="${INCLUDE_STAGING_BREV_LAUNCHABLE:-false}"
 HEAD_CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
@@ -83,6 +84,7 @@ gh workflow run .github/workflows/e2e.yaml \
   --ref main \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
+  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
@@ -158,7 +160,7 @@ unresolved and may proceed to the exact-base replay below.
 ## Replay an Unresolved Failure Against the Exact Base
 
 Before dispatch, prove that the PR still has the head and base captured for the failed head run.
-Use the same trusted workflow SHA, eligible jobs and targets, and inference mode. The selected source
+Use the same trusted workflow SHA, eligible jobs and targets, gateway runtimes, and inference mode. The selected source
 changes from the PR head repository and SHA to the PR base repository and SHA.
 
 Do not use an exact-base replay for Jetson or DGX Spark. Those selectors need dedicated hardware and
@@ -180,6 +182,7 @@ gh workflow run .github/workflows/e2e.yaml \
   --ref main \
   -f "targets=${E2E_TARGETS}" \
   -f "jobs=${E2E_JOBS}" \
+  -f "gateway_runtimes=${E2E_GATEWAY_RUNTIMES}" \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f allow_jetson_dispatch=false \
@@ -225,6 +228,7 @@ Return:
 - the workflow SHA;
 - the head and, when replayed, base correlation IDs;
 - the selectors;
+- the gateway runtimes;
 - the head and, when replayed, base workflow URLs; and
 - the result or comparison outcome.
 
