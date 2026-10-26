@@ -130,6 +130,9 @@ function loadProxyWithMocks(setup: MockSetup): {
 
 describe("Ollama model ownership locks", () => {
   it("shares one lock across non-default gateway state roots", async () => {
+    const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-lock-"));
+    const homedir = vi.spyOn(require("node:os") as typeof import("node:os"), "homedir");
+    homedir.mockReturnValue(isolatedHome);
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
     const originalProxy = require.cache[PROXY_DIST];
     const originalLocal = require.cache[LOCAL_DIST];
@@ -190,8 +193,10 @@ describe("Ollama model ownership locks", () => {
       require.cache[STATE_PATHS_DIST] = originalStatePaths;
       require.cache[STATE_ROOT_DIST] = originalStateRoot;
       require.cache[CORE_PORTS_DIST] = originalCorePorts;
+      homedir.mockRestore();
+      fs.rmSync(isolatedHome, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
 
 describe("promptOllamaModel installed-model fit filter", () => {

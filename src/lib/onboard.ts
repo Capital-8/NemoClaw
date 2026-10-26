@@ -2272,6 +2272,7 @@ const getSetupInferenceDeps = (): SetupInferenceDeps => ({
   withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
   step,
   getGatewayName: () => GATEWAY_NAME,
+  resolveOllamaOwnershipGateway: gatewayBinding.resolveSandboxGatewayName,
   runOpenshell,
   inferenceRouteMutator,
   inferenceRouteObserver,
@@ -2325,6 +2326,7 @@ const getSetupInferenceDeps = (): SetupInferenceDeps => ({
   error: (message: string) => console.error(message),
   exitProcess: (code: number): never => process.exit(code),
 });
+
 export type SetupInferenceDeps = import("./onboard/setup-inference").SetupInferenceDeps;
 export type SetupInference = import("./onboard/setup-inference").SetupInference;
 function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): SetupInference {
