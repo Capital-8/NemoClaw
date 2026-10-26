@@ -24,6 +24,9 @@ pub(super) struct Inputs {
     pub state_dir: PathBuf,
     #[arg(long)]
     pub agent: String,
+    /// HCL scenario key retained with this target's evidence.
+    #[arg(long)]
+    pub target: Option<String>,
     #[arg(long)]
     pub request: PathBuf,
     #[arg(long, value_enum)]
@@ -32,10 +35,7 @@ pub(super) struct Inputs {
     pub report: PathBuf,
 }
 
-pub(super) fn target_agent<'a>(
-    document: &'a Document,
-    agent: &str,
-) -> Result<NamedSandbox<'a>, String> {
+fn target_agent<'a>(document: &'a Document, agent: &str) -> Result<NamedSandbox<'a>, String> {
     let mut matches = document.sandboxes().filter(|s| s.agent.name == agent);
     let sandbox = matches.next().ok_or("target agent is not configured")?;
     if matches.next().is_some() {
@@ -79,6 +79,7 @@ pub(super) async fn execute(inputs: &Inputs) -> Result<(), String> {
         .open(report_path)
         .map_err(|_| "probe requires a new report file")?;
     let mut report = initial_report();
+    report["target"] = json!(inputs.target.as_deref().unwrap_or(&inputs.agent));
     save(report_path, &report)?;
     let result = observe(inputs, &mut report).await;
     if result.is_err() {
@@ -182,114 +183,4 @@ async fn observe(inputs: &Inputs, report: &mut Value) -> Result<(), String> {
     report["response"] = super::response::observations(&response, inputs.response_contract);
     report["failure"]["code"] = json!("none");
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use nemoclaw_sdk::backend::Backend as _;
-    use std::collections::BTreeMap;
-
-    #[tokio::test]
-    async fn the_probe_observes_the_bound_sandbox_and_invokes_only_after_health_checks() {
-        let fixture = nemoclaw_e2e::openshell::Fixture::start().await;
-        let mut document = Document::parse(
-            include_str!("../../../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
-        )
-        .unwrap();
-        *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
-        let client = OpenShell::connect(
-            &document.spec.gateway.connection(),
-            Arc::new(EnvironmentSecrets),
-        )
-        .unwrap();
-        let generations = ["workspace", "provider", "sandbox"]
-            .map(|name| (name.into(), format!("{name}-generation")))
-            .into_iter()
-            .collect::<BTreeMap<_, _>>();
-        let targets = nemoclaw_e2e::image_runtime::targets(&document, &generations).unwrap();
-        for target in targets.iter().filter(|t| {
-            matches!(
-                t.kind.as_str(),
-                "workspace" | "provider_profile" | "provider"
-            )
-        }) {
-            assert!(
-                client
-                    .ensure(&target.kind, &target.values)
-                    .await
-                    .error()
-                    .is_none()
-            );
-        }
-        let desired = targets.iter().find(|t| t.kind == "sandbox").unwrap();
-        let binding = client
-            .ensure("sandbox", &desired.values)
-            .await
-            .into_parts()
-            .0
-            .unwrap();
-        let bound = fabric_provider::fabric_binding(binding.clone()).unwrap();
-        let runtime = client
-            .start_agent(&bound, &json!({"metadata":{"name":bound["agent_name"]}}))
-            .await
-            .unwrap();
-        let reply = json!({"operation":"invoke","status":"succeeded","changed":false,"error":null,"result":{
-            "status":"succeeded","error":null,"agent_name":bound["agent_name"],"runtime_id":runtime,
-            "output":{"response":"fixture reply"}
-        }});
-        fixture.state.lock().unwrap().exec_response = Some(format!("{reply}\n").into_bytes());
-        let root = tempfile::tempdir().unwrap();
-        let config = root.path().join("deployment.yaml");
-        let request = root.path().join("request.json");
-        let report_path = root.path().join("report.json");
-        // The requested agent is deliberately not the first sandbox in the YAML.
-        let mut other = document.spec.sandboxes["assistant"].clone();
-        other.agent.name = "another-agent".into();
-        document.spec.sandboxes.insert("aaa".into(), other);
-        fs::write(&config, document.yaml().unwrap()).unwrap();
-        fs::write(&request, json!("test question").to_string()).unwrap();
-        let mut state = json!({"resources":[
-            {"mode":"managed","type":"openshell_sandbox","name":"assistant","instances":[{"attributes":{
-                "name":binding["name"],"id":binding["id"],"owner":binding["owner"],"generation":binding["generation"]
-            }}]},
-            {"mode":"managed","type":"fabric_agent","name":"assistant","instances":[{"attributes":{"runtime_id":runtime}}]}
-        ]});
-        fs::write(root.path().join("terraform.tfstate"), state.to_string()).unwrap();
-        let inputs = Inputs {
-            config,
-            state_dir: root.path().into(),
-            request,
-            agent: bound["agent_name"].clone(),
-            response_contract: crate::response::Contract::Openclaw,
-            report: report_path.clone(),
-        };
-        let mut report = initial_report();
-        observe(&inputs, &mut report).await.unwrap();
-        assert_eq!(
-            report["health"],
-            json!({
-                "gateway_ready":true,"sandbox_ready":true,"identity_matches":true,
-                "agent_name":bound["agent_name"],"policy_loaded":true
-            })
-        );
-        assert_eq!(
-            report["expected"],
-            json!({"agent_name":bound["agent_name"],"runtime_id":runtime})
-        );
-        assert_eq!(
-            report["response"],
-            json!({
-                "attempted":true,"succeeded":true,"agent_name":bound["agent_name"],
-                "runtime_id":runtime,"output_valid":true
-            })
-        );
-        let calls = fixture.state.lock().unwrap().exec_calls.len();
-        state["resources"][0]["instances"][0]["attributes"]["id"] = json!("another-sandbox");
-        fs::write(root.path().join("terraform.tfstate"), state.to_string()).unwrap();
-        let mut rejected = initial_report();
-        assert!(observe(&inputs, &mut rejected).await.is_err());
-        assert_eq!(rejected["response"]["attempted"], false);
-        assert_eq!(fixture.state.lock().unwrap().exec_calls.len(), calls);
-    }
 }

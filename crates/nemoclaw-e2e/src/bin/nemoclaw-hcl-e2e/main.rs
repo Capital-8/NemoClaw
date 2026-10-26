@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-mod case;
 mod probe;
 mod process;
 mod response;
@@ -22,10 +21,12 @@ struct Args {
 enum Action {
     Run {
         #[arg(long)]
-        case: PathBuf,
+        deployment: PathBuf,
+        #[arg(long)]
+        suite: PathBuf,
         #[arg(long)]
         bundle: PathBuf,
-        /// Full source commit used to build the helper and candidate bundle.
+        /// Candidate source commit under test, recorded with the results.
         #[arg(long)]
         candidate_revision: String,
         /// New private directory; an existing directory is refused.
@@ -42,7 +43,8 @@ async fn main() -> ExitCode {
     let result = match args.command {
         Action::Probe(inputs) => probe::execute(&inputs).await,
         Action::Run {
-            case,
+            deployment,
+            suite,
             bundle,
             candidate_revision,
             run_dir,
@@ -65,8 +67,15 @@ async fn main() -> ExitCode {
                 let _ = tokio::signal::ctrl_c().await;
                 token.cancel();
             });
-            let result =
-                wrapper::execute(&case, &bundle, &candidate_revision, &run_dir, &cancel).await;
+            let result = wrapper::execute(
+                &deployment,
+                &suite,
+                &bundle,
+                &candidate_revision,
+                &run_dir,
+                &cancel,
+            )
+            .await;
             signals.abort();
             result
         }

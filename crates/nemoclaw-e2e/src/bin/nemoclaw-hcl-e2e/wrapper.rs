@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{case::Case, process};
+use super::process;
 use nemoclaw_sdk::{
     CancellationToken, OperationResult, Outcome,
     bundle::{Bundle, executable},
+    config::{Document, parse_yaml_value},
 };
 use serde_json::json;
 use std::{
@@ -14,30 +15,43 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MODULE: &str = include_str!("../../../hcl/verifier/main.tf");
-const ASSERTIONS: &str = include_str!("../../../hcl/verifier/integration.tftest.hcl");
-
 pub(super) struct Tools {
     pub candidate_revision: String,
     pub cli: PathBuf,
     pub tofu: PathBuf,
+    pub probe: PathBuf,
     pub environment: BTreeMap<OsString, OsString>,
 }
 
-pub(super) fn verifier(directory: &Path) -> Result<(), String> {
-    fs::create_dir(directory).map_err(|_| "verifier directory must be new")?;
-    fs::create_dir(directory.join("reports"))
-        .map_err(|_| "cannot create probe report directory")?;
-    fs::write(directory.join("main.tf"), MODULE).map_err(|_| "cannot write verifier module")?;
-    fs::write(directory.join("integration.tftest.hcl"), ASSERTIONS)
-        .map_err(|_| "cannot write assertions")?;
-    fs::write(directory.join("cli.tfrc"), "disable_checkpoint = true\n")
-        .map_err(|_| "cannot write verifier CLI configuration")?;
-    Ok(())
+fn deployment(path: &Path) -> Result<Document, String> {
+    let mut value =
+        parse_yaml_value(fs::File::open(path).map_err(|_| "cannot read deployment YAML")?)
+            .map_err(|_| "invalid deployment YAML")?;
+    let mut random = [0_u8; 16];
+    getrandom::fill(&mut random).map_err(|_| "cannot allocate deployment identity")?;
+    random[6] = (random[6] & 15) | 64;
+    random[8] = (random[8] & 63) | 128;
+    let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let uid = format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    );
+    value
+        .get_mut("metadata")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("deployment metadata must be an object")?
+        .insert("uid".into(), uid.into());
+    let bytes = serde_json::to_vec(&value).map_err(|_| "cannot encode deployment")?;
+    Document::parse(bytes.as_slice()).map_err(|_| "invalid deployment configuration".into())
 }
 
 pub(super) async fn execute(
-    case: &Path,
+    deployment_path: &Path,
+    suite: &Path,
     bundle: &Path,
     candidate_revision: &str,
     directory: &Path,
@@ -48,19 +62,35 @@ pub(super) async fn execute(
         candidate_revision: candidate_revision.into(),
         cli: bundle.directory.join("bin").join(executable("nemoclaw")),
         tofu: bundle.tofu(),
+        probe: std::env::current_exe().map_err(|_| "cannot locate probe executable")?,
         environment: BTreeMap::new(),
     };
-    execute_with_tools(case, &bundle.directory, directory, &tools, cancel).await
+    execute_with_tools(
+        deployment_path,
+        suite,
+        &bundle.directory,
+        directory,
+        &tools,
+        cancel,
+    )
+    .await
 }
 
 pub(super) async fn execute_with_tools(
-    case_path: &Path,
+    deployment_path: &Path,
+    suite: &Path,
     bundle: &Path,
     directory: &Path,
     tools: &Tools,
     cancel: &CancellationToken,
 ) -> Result<(), String> {
-    let case = Case::read(case_path)?;
+    let document = deployment(deployment_path)?;
+    let suite = suite
+        .canonicalize()
+        .map_err(|_| "HCL suite directory is unavailable")?;
+    if !suite.is_dir() {
+        return Err("HCL suite must be a directory".into());
+    }
     if tools.candidate_revision.len() != 40
         || !tools
             .candidate_revision
@@ -79,14 +109,17 @@ pub(super) async fn execute_with_tools(
     builder
         .create(directory)
         .map_err(|_| "run directory must be new and its parent must exist")?;
-    let document = case.owned_document()?;
     let directory = directory
         .canonicalize()
         .map_err(|_| "cannot resolve run directory")?;
     let state = directory.join("deployment");
     fs::create_dir(&state).map_err(|_| "cannot create deployment state directory")?;
     let verification = directory.join("verifier");
-    verifier(&verification)?;
+    fs::create_dir(&verification).map_err(|_| "cannot create verifier directory")?;
+    let reports = verification.join("reports");
+    fs::create_dir(&reports).map_err(|_| "cannot create probe evidence directory")?;
+    fs::write(verification.join("cli.tfrc"), "disable_checkpoint = true\n")
+        .map_err(|_| "cannot write verifier CLI configuration")?;
     let config = directory.join("deployment.yaml");
     fs::write(
         &config,
@@ -95,13 +128,11 @@ pub(super) async fn execute_with_tools(
             .map_err(|_| "cannot encode resolved deployment")?,
     )
     .map_err(|_| "cannot save resolved deployment")?;
-    let request = directory.join("request.json");
-    fs::write(&request, case.request.to_string()).map_err(|_| "cannot save invocation request")?;
     nemoclaw_runtime::files::save_json(
-        &directory.join("case.json"),
-        &json!({"case": case.id, "candidate_revision": tools.candidate_revision}),
+        &directory.join("run.json"),
+        &json!({"suite": suite, "candidate_revision": tools.candidate_revision}),
     )
-    .map_err(|_| "cannot save case identity")?;
+    .map_err(|_| "cannot save run identity")?;
     let mut environment = tools.environment.clone();
     // Only gateway access is needed by the probe; inference credentials stay with apply.
     let connection = document.spec.gateway.connection();
@@ -124,34 +155,15 @@ pub(super) async fn execute_with_tools(
         nemoclaw_backend::DIAGNOSTICS_ENV.into(),
         directory.join("diagnostics").into_os_string(),
     );
-    environment.insert(
-        "NEMOCLAW_HCL_E2E".into(),
-        std::env::current_exe()
-            .map_err(|_| "cannot locate probe executable")?
-            .into_os_string(),
-    );
-    environment.insert(
-        "NEMOCLAW_HCL_CONFIG".into(),
-        config.clone().into_os_string(),
-    );
-    environment.insert("NEMOCLAW_HCL_STATE".into(), state.clone().into_os_string());
-    environment.insert("NEMOCLAW_HCL_REQUEST".into(), request.into_os_string());
-    environment.insert("NEMOCLAW_HCL_AGENT".into(), case.agent.clone().into());
-    environment.insert(
-        "NEMOCLAW_HCL_RESPONSE_CONTRACT".into(),
-        case.response_contract.name().into(),
-    );
     let arguments = |operation: &str| {
-        let mut args: Vec<OsString> = [
+        let mut args = strings(&[
             operation,
             "--output",
             "json",
             "--progress",
             "off",
             "--bundle",
-        ]
-        .map(Into::into)
-        .into();
+        ]);
         args.extend([
             bundle.as_os_str().to_owned(),
             "--state-dir".into(),
@@ -190,10 +202,30 @@ pub(super) async fn execute_with_tools(
             "TF_CLI_CONFIG_FILE".into(),
             verification.join("cli.tfrc").into_os_string(),
         );
+        verifier_environment.insert(
+            "TF_DATA_DIR".into(),
+            verification.join("data").into_os_string(),
+        );
+        verifier_environment.insert(
+            "TF_VAR_context".into(),
+            json!({
+                "config": config, "state_dir": state,
+                "probe_executable": tools.probe, "evidence_dir": reports,
+            })
+            .to_string()
+            .into(),
+        );
+        let chdir: OsString = format!("-chdir={}", suite.display()).into();
         phase = "tofu-init";
         process::execute(
             &tools.tofu,
-            &strings(&["init", "-backend=false", "-input=false", "-no-color"]),
+            &[
+                chdir.clone(),
+                "init".into(),
+                "-backend=false".into(),
+                "-input=false".into(),
+                "-no-color".into(),
+            ],
             &verification,
             phase,
             &verifier_environment,
@@ -203,7 +235,7 @@ pub(super) async fn execute_with_tools(
         phase = "tofu-test";
         process::execute(
             &tools.tofu,
-            &strings(&["test", "-json", "-no-color"]),
+            &[chdir, "test".into(), "-json".into(), "-no-color".into()],
             &verification,
             phase,
             &verifier_environment,
@@ -234,7 +266,7 @@ pub(super) async fn execute_with_tools(
     };
     let succeeded = primary.is_ok() && cleanup_result.is_ok();
     let result = json!({
-        "case": case.id, "succeeded": succeeded,
+        "deployment": document.metadata.name, "suite": suite, "succeeded": succeeded,
         "candidate_revision": tools.candidate_revision,
         "deployment_uid": document.metadata.uid,
         "failed_phase": failed_phase, "attributed_to": if succeeded { "none" } else { "unknown" },
@@ -242,7 +274,7 @@ pub(super) async fn execute_with_tools(
         "cleanup": {"required": apply_started, "succeeded": cleanup_result.is_ok(), "failure": cleanup_result.as_ref().err(), "retained": cleanup_result.as_ref().ok()},
     });
     nemoclaw_runtime::files::save_json(&directory.join("result.json"), &result)
-        .map_err(|_| "cannot save case result")?;
+        .map_err(|_| "cannot save run result")?;
     if succeeded {
         Ok(())
     } else {
@@ -265,6 +297,6 @@ fn destroy_result(directory: &Path) -> Result<Vec<String>, String> {
     Ok(result.retained)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "wrapper_tests.rs"]
 mod tests;
