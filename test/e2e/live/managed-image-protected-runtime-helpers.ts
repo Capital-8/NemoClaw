@@ -1,13 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
-import {
-  resolveRequestGuardAddress,
-  startQualificationLoopbackRelay,
-} from "../../../scripts/checks/run-llama-cpp-dgx-spark-qualification.mts";
 import path from "node:path";
 
 import {
@@ -236,6 +231,12 @@ export function protectedProviderContainerCleanupCommand(
       authority.kind,
     ],
   };
+}
+
+export function protectedProviderImagePulledByStart(image: string, stderr: string): boolean {
+  return stderr
+    .split("\n")
+    .some((line) => line.trim() === `Unable to find image '${image}' locally`);
 }
 
 function imageContracts(): ProtectedManagedImageContract[] {
@@ -573,7 +574,7 @@ async function removeProtectedProviderContainer(
 async function startProtectedVllm(
   host: HostCliClient,
   state: ProtectedProviderContainerState,
-): Promise<void> {
+): Promise<boolean> {
   const start = await host.command(
     "docker",
     [
@@ -637,6 +638,7 @@ async function startProtectedVllm(
     },
   );
   expect(cuda.exitCode, resultText(cuda)).toBe(0);
+  return protectedProviderImagePulledByStart(VLLM_IMAGE, start.stderr);
 }
 
 export function protectedVllmReadinessCommand(
@@ -967,11 +969,21 @@ export async function qualifyProtectedManagedImageRuntime(
 
     activePhase = "qualify all managed agents with GPU-backed vLLM";
     progress.phase("qualify all managed agents with GPU-backed vLLM");
-    await startProtectedVllm(host, vllmState);
+    const vllmImagePulledByRun = await startProtectedVllm(host, vllmState);
     await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
       NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
     });
     await removeProtectedProviderContainer(host, vllmState, "stop-vllm-before-nim");
+    if (vllmImagePulledByRun) {
+      // Free the vLLM image this run pulled before NIM downloads its model. This
+      // frees space when the image store and NIM cache share a filesystem (#13135).
+      // The artifact records the result; NIM readiness gates.
+      await host.command("docker", ["image", "rm", VLLM_IMAGE], {
+        artifactName: "remove-run-pulled-vllm-image",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      });
+    }
 
     activePhase = "qualify all managed agents with GPU-backed NVIDIA NIM";
     progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");
@@ -1001,76 +1013,4 @@ export async function qualifyProtectedManagedImageRuntime(
       cause: error,
     });
   }
-}
-
-// The runner tests own TCP forwarding, input rejection, and listener closure.
-// This case owns Docker address inspection and host access to an internal network.
-export async function qualifyQualificationRelay({
-  cleanup,
-  progress,
-}: Pick<E2ETargetFixtures, "cleanup" | "progress">): Promise<void> {
-  const owner = randomUUID();
-  const names = {
-    containerName: `nc-relay-${owner}`,
-    networkName: `nc-relay-${owner}`,
-    registryOwner: owner,
-  };
-  const label = `io.nvidia.nemoclaw.llama-cpp-qualification-owner=${owner}`;
-  const docker = (...args: string[]) =>
-    execFileSync("docker", args, {
-      encoding: "utf8",
-      timeout: 120_000,
-      killSignal: "SIGKILL",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  const image =
-    "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
-  progress.phase("create internal Docker fixture");
-  docker("pull", image);
-  const networkId = docker("network", "create", "--internal", "--label", label, names.networkName);
-  cleanup.trackDisposable("remove qualification fixture network", () => {
-    docker("network", "rm", networkId);
-  });
-  const containerId = docker(
-    "run",
-    "--detach",
-    "--name",
-    names.containerName,
-    "--label",
-    label,
-    "--network",
-    names.networkName,
-    "--read-only",
-    "--user",
-    "1000:1000",
-    "--cap-drop",
-    "ALL",
-    "--security-opt",
-    "no-new-privileges",
-    "--memory",
-    "128m",
-    "--pids-limit",
-    "32",
-    image,
-    "node",
-    "-e",
-    'require("node:http").createServer((req,res)=>res.end("internal-relay-ok")).listen(8081,"0.0.0.0")',
-  );
-  cleanup.trackDisposable("remove qualification fixture container", () => {
-    docker("rm", "--force", containerId);
-  });
-  // Wait for the fixture itself before testing the host-to-bridge handoff.
-  docker(
-    "exec",
-    containerId,
-    "node",
-    "-e",
-    'const end=Date.now()+10000; (async()=>{while(true){try{await fetch("http://127.0.0.1:8081");break}catch(e){if(Date.now()>end)throw e;await new Promise(r=>setTimeout(r,50))}}})()',
-  );
-  progress.phase("probe qualification relay");
-  const relay = await startQualificationLoopbackRelay(resolveRequestGuardAddress(names), 8081, 5);
-  cleanup.trackDisposable("close qualification fixture relay", () => relay.close());
-  const url = `http://127.0.0.1:${relay.port}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-  expect(await response.text()).toBe("internal-relay-ok");
 }
