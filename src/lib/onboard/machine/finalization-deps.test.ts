@@ -756,6 +756,20 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(ordinaryOpenClawPairingIncompleteMessage("alpha", "pairing-lock-unavailable")).toBe(
       "OpenClaw onboarding for 'alpha' is incomplete because NemoClaw could not acquire the pairing settlement locks. Resume or rerun onboarding.",
     );
+    expect(
+      ordinaryOpenClawPairingIncompleteMessage(
+        "alpha",
+        "pairing-incompatible",
+        "paired.clientMode",
+      ),
+    ).toContain("incompatible metadata, scopes, or credentials (paired.clientMode)");
+    expect(
+      ordinaryOpenClawPairingIncompleteMessage(
+        "alpha",
+        "pairing-incompatible",
+        "credential-value-must-not-leave-the-sandbox",
+      ),
+    ).not.toContain("credential-value-must-not-leave-the-sandbox");
   });
 });
 

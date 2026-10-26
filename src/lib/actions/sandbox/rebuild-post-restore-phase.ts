@@ -8,7 +8,10 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
-import { settleOrdinaryOpenClawPairing } from "../../onboard/machine/finalization-deps";
+import {
+  formatOpenClawPairingMismatchField,
+  settleOrdinaryOpenClawPairing,
+} from "../../onboard/machine/finalization-deps";
 import {
   classifyPortableLifecycleReceipt,
   portableLifecycleReceiptMatchesGeneration,
@@ -629,7 +632,7 @@ export async function runRebuildPostRestorePhase(
     if (pairing.kind !== "settled") {
       const pairingField = "pairingField" in pairing ? pairing.pairingField : null;
       console.error(
-        `  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}${pairingField ? ` (${pairingField})` : ""}`,
+        `  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}${formatOpenClawPairingMismatchField(pairingField)}`,
       );
       if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
       console.error(
