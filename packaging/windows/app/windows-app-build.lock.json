@@ -10,11 +10,11 @@
   },
   "dependencyLock": {
     "path": "../../../agents/openclaw/openclaw-runtime/package-lock.json",
-    "sha256": "4c14e6f08cafbe3309c4f2790812c7675c2b3836614463f1ee82a4d16d19fcc4"
+    "sha256": "0b1253c6570f55881623961c856b430a17d4271f5efe8c5beffa7ac0fc8d0199"
   },
   "choiceDependencyLock": {
     "path": "../../../agents/openclaw/managed-image-messaging-runtime/package-lock.json",
-    "sha256": "6b522789273625ef34286aef94f148127f54b1c32d423afb18b4e44716ba1fff",
+    "sha256": "72aecf8caf45e9773cda0e40c9a61adb6eea48c2122d0a5e469a8f6bdcf168f6",
     "packages": ["@openclaw/discord", "@openclaw/slack"],
     "sharedPackages": ["@emnapi/core", "@emnapi/runtime", "@emnapi/wasi-threads", "tslib"]
   },
