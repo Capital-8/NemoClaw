@@ -38,7 +38,7 @@ import {
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
-import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
+import { HERMES_API_PORT_ENV, REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   delegateRebuildToOwningRegistry,
   disposeRebuildAgentBaseImagePreflight,
@@ -157,7 +157,7 @@ export async function rebuildSandbox(
           DOCKER_GPU_PATCH_NETWORK_ENV,
           "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
           // Port selection publishes here; keep it from pinning the next rebuild (#13628).
-          "NEMOCLAW_HERMES_API_PORT",
+          HERMES_API_PORT_ENV,
           ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
           ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
         ];
