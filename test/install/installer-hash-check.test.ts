@@ -40,6 +40,7 @@ import {
   alterRequiredReleaseValue,
   brevMutationFixtures,
   copyTrustedInstallerVerifier,
+  prepareTrustedFormulaMismatchFixture,
   preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
@@ -53,10 +54,6 @@ import { registerV012TemplateCases } from "./installer-hash-v012-suite";
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALLER_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
-  "utf8",
-);
-const BREV_TEMPLATE = fs.readFileSync(
-  path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
 const OBSOLETE_NPM_REPLACEMENT_DIGEST =
@@ -537,7 +534,7 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
-  const template = BREV_TEMPLATE.replaceAll(
+  const template = NPM_CLEANUP_TEMPLATE.replaceAll(
     /0\.0\.116|0\.1\.2/g,
     openshellVersion === "0.1.2" ? "0.1.2" : "0.0.116",
   );
@@ -764,7 +761,7 @@ function runFixture(
   );
   tempDirs.push(trustedRoot);
   copyTrustedInstallerVerifier(REPO_ROOT, trustedRoot);
-  retainBaseInstallerTrust(trustedRoot);
+  retainBaseInstallerTrust(trustedRoot, mode);
   const parserSource = fs.readFileSync(trustedParserPath, "utf8");
   const mutateParser = PARSER_MUTATIONS[mode];
   const mutatedParserSource = mutateParser?.(parserSource) ?? parserSource;
@@ -772,6 +769,7 @@ function runFixture(
     mutateParser === undefined,
   );
   fs.writeFileSync(trustedParserPath, trustSyntheticSupervisorRuntimeTemplate(mutatedParserSource));
+  prepareTrustedFormulaMismatchFixture(trustedRoot, mode);
   fs.writeFileSync(
     targetChecker,
     trustedChecker
@@ -835,6 +833,8 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
   const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
   const parserSource = fs.readFileSync(parser, "utf8");
   fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));
+  const registry = path.join(root, "ci/openshell-upgrade-trust.json");
+  fs.writeFileSync(registry, fs.readFileSync(registry, "utf8").replaceAll(digest, trustedDigest));
   const brev = path.join(root, "scripts/brev-launchable-ci-cpu.sh");
   fs.writeFileSync(brev, source);
   return spawnSync(
@@ -871,7 +871,7 @@ describe("installer hash verification", () => {
     );
     expect(parserSource).not.toContain(`"${OBSOLETE_NPM_REPLACEMENT_DIGEST}"`);
 
-    const untrustedTemplate = `${BREV_TEMPLATE}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
+    const untrustedTemplate = `${NPM_CLEANUP_TEMPLATE}\n# Exercise the parser's current trusted-digest diagnostic.\n`;
     const result = parseNpmReplacement(untrustedTemplate, OBSOLETE_NPM_REPLACEMENT_DIGEST);
 
     expect(result.status, result.stderr).toBe(1);

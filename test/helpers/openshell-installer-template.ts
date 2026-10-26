@@ -26,12 +26,23 @@ export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: strin
 }
 
 /** Keep synthetic historical fixtures on the base trust record. */
-export function retainBaseInstallerTrust(root: string): void {
+export function retainBaseInstallerTrust(root: string, mode?: FixtureMode): void {
+  if (mode === "trusted-formula-mismatch") return;
   const registryPath = path.join(root, "ci/openshell-upgrade-trust.json");
   const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
     releases: { version: string }[];
   };
   registry.releases = registry.releases.filter((release) => release.version !== "0.0.116");
+  fs.writeFileSync(registryPath, JSON.stringify(registry));
+}
+
+export function prepareTrustedFormulaMismatchFixture(root: string, mode: FixtureMode): void {
+  if (mode !== "trusted-formula-mismatch") return;
+  const registryPath = path.join(root, "ci/openshell-upgrade-trust.json");
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  registry.releases.find(
+    (release: { version: string }) => release.version === "0.0.116",
+  ).formula.sha256 = "0".repeat(64);
   fs.writeFileSync(registryPath, JSON.stringify(registry));
 }
 
