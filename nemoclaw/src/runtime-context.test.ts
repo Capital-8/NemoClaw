@@ -131,6 +131,13 @@ describe("registerRuntimeContext", () => {
     "Find the official NemoClaw installation documentation online.",
     "Please look up the installation instructions on the web.",
     "Locate official installation documentation on the internet.",
+    "Look for the official NemoClaw installation documentation on the web.",
+    "Please could you look for the installation instructions online?",
+    "Look online for the official NemoClaw installation documentation.",
+    "Look on the web for the official NemoClaw installation documentation.",
+    "Search for the official NemoClaw installation documentation on the internet.",
+    "Use Tavily to look for the official NemoClaw installation documentation.",
+    "Look for the official NemoClaw installation documentation using Brave.",
   ])(
     "withholds tools for an explicit search request when search is disabled: %s",
     async (prompt) => {
@@ -164,6 +171,9 @@ describe("registerRuntimeContext", () => {
     "Run curl https://wttr.in/:help.",
     "Edit the Tavily configuration file.",
     "Find the word online in /sandbox/README.md.",
+    "Look for installation instructions in /sandbox/README.md.",
+    "Look for the word online in /sandbox/README.md.",
+    "Do not look for documentation on the web. Read /sandbox/README.md.",
     "Do not find documentation online. Read README.md instead.",
     "Run exactly this shell command: curl https://wttr.in/:help.\nDo not use web_fetch, web_search, or any other weather provider.",
     "Use web_fetch to fetch https://www.wikidata.org/wiki/Q30. Do not use web_search, Brave, or Tavily.",

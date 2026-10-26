@@ -131,9 +131,14 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
     });
     initialize(registry);
     try {
-      const availableTools = ["tool_search", "tool_call", "read", "exec", "web_fetch"].map(
-        (name) => ({ name }),
-      );
+      const availableTools = [
+        "tool_search",
+        "tool_call",
+        "read",
+        "exec",
+        "memory_search",
+        "web_fetch",
+      ].map((name) => ({ name }));
       const searchPrompt =
         "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.";
       for (const prompt of [
@@ -142,6 +147,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Research online for the official NemoClaw installation documentation",
         "Browse the internet for the official NemoClaw installation documentation.",
         "Could you browse online for the NemoClaw installation documentation?",
+        "Look for the official NemoClaw installation documentation on the web.",
       ]) {
         const searchTurn = await runner().runBeforePromptBuild(
           { prompt, messages: [] },
