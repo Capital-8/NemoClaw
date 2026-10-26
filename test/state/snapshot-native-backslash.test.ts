@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   writeExecutable,
   writeFakeOpenshell,
@@ -20,6 +20,10 @@ process.env.HOME = TMP_HOME;
 const sandboxState = await import(
   pathToFileURL(path.join(import.meta.dirname, "../..", "src", "lib", "state", "sandbox.ts")).href
 );
+const HOST_TAR_SUPPORTS_LITERAL_QUOTING =
+  spawnSync("tar", ["--quoting-style=literal", "-tf", "-"], {
+    input: Buffer.alloc(1024),
+  }).status === 0;
 
 function restoreEnv(name: string, value: string | undefined): void {
   value === undefined
@@ -32,7 +36,65 @@ afterAll(() => {
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
+beforeEach(() => {
+  fs.rmSync(path.join(TMP_HOME, ".nemoclaw", "rebuild-backups"), {
+    recursive: true,
+    force: true,
+  });
+});
+
+function createBackslashEnvFixture() {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-backslash-env-"));
+  const nativeRoot = path.join(fixture, "native-home");
+  const relativePath = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/.env";
+  const content = "CUSTOM_MODE=enabled\n";
+  fs.mkdirSync(path.dirname(path.join(nativeRoot, relativePath)), { recursive: true });
+  fs.writeFileSync(path.join(nativeRoot, relativePath), content);
+  writeSnapshotRegistry(TMP_HOME, "alpha");
+  const backup = sandboxState.backupSandboxState("alpha", {
+    nativeStateSource: {
+      root: "/sandbox",
+      directory: nativeRoot,
+      assertCurrent: () => undefined,
+    },
+  });
+  return { fixture, relativePath, content, backup };
+}
+
 describe("native backup with unsupported tar listing option", () => {
+  it.skipIf(!HOST_TAR_SUPPORTS_LITERAL_QUOTING)(
+    "preserves an .env under a backslash directory when tar lists literal names",
+    () => {
+      const { fixture, relativePath, content, backup } = createBackslashEnvFixture();
+      try {
+        expect(backup.success, backup.error).toBe(true);
+        sandboxState.inspectNativeSandboxState(
+          backup.manifest!.backupPath,
+          (root: string) => {
+            expect(fs.readFileSync(path.join(root, relativePath), "utf8")).toBe(content);
+          },
+          relativePath,
+        );
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(HOST_TAR_SUPPORTS_LITERAL_QUOTING)(
+    "fails closed for an .env under a backslash directory when tar doubles names",
+    () => {
+      const { fixture, backup } = createBackslashEnvFixture();
+      try {
+        expect(backup.success).toBe(false);
+        expect(backup.error).toContain("credential-bearing or uninspectable content");
+        expect(sandboxState.getLatestBackup("alpha")).toBeNull();
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("round-trips backslash paths after tar rejects --quoting-style=literal", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-bsdtar-fallback-"));
     const oldPath = process.env.PATH;

@@ -729,12 +729,6 @@ describe("complete native home persistence", () => {
           }),
         ],
       ]);
-      if (HOST_TAR_SUPPORTS_LITERAL_QUOTING) {
-        expected.set(
-          "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/.env",
-          "CUSTOM_MODE=enabled\n",
-        );
-      }
       for (const [relativePath, contents] of expected) {
         const target = path.join(nativeRoot, relativePath);
         fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -925,13 +919,8 @@ describe("complete native home persistence", () => {
       JSON.stringify({ requestId: "example-request" }),
     ],
     ["OpenClaw database", OPENCLAW_SQLITE_WAL, "SQLite format 3\0binary state"],
-    [
-      "a workspace .env in a directory whose name contains a backslash",
-      "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/.env",
-      "CUSTOM_MODE=enabled\n",
-    ],
   ])(
-    "preserves or safely rejects %s without treating it as credential configuration",
+    "preserves %s without treating it as credential configuration",
     (_case, relativePath, content) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-noncredential-"));
       try {
@@ -946,12 +935,6 @@ describe("complete native home persistence", () => {
             assertCurrent: vi.fn(),
           },
         });
-        if (relativePath.includes("\\") && !HOST_TAR_SUPPORTS_LITERAL_QUOTING) {
-          expect(backup.success).toBe(false);
-          expect(backup.error).toContain("credential-bearing or uninspectable content");
-          expect(sandboxState.getLatestBackup("alpha")).toBeNull();
-          return;
-        }
         expect(backup.success, backup.error).toBe(true);
         sandboxState.inspectNativeSandboxState(
           backup.manifest!.backupPath,
