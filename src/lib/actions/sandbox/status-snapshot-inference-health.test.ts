@@ -3,12 +3,16 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import type { ProviderHealthStatus } from "../../inference/health";
 import type { SandboxEntry } from "../../state/registry";
 import type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
-import type { SandboxInferenceRouteHealth } from "./inference-route-health";
-import { collectSandboxStatusSnapshot } from "./status-snapshot";
+import {
+  HermesNvidiaCredentialRejectedError,
+  HermesNvidiaCredentialVerifierMissingError,
+  verifyHermesNvidiaCredential,
+  type SandboxInferenceRouteHealth,
+} from "./inference-route-health";
+import { collectSandboxStatusSnapshot, isInferenceHealthFailing } from "./status-snapshot";
 import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
 import { recordingProbeShell } from "../../../../test/helpers/native-local-probe-shell";
 import { nativeLocalTestReceipt } from "../../../../test/helpers/inference-set";
@@ -57,27 +61,20 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
   it.each([true, false])(
     "reports native local attachment health without querying the shared route: %s (#12558)",
     async (attached) => {
-      const binding = {
-        provider: "ollama-local",
-        endpointUrl: "http://host.openshell.internal:11434/v1",
-        credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-        authMode: "sentinel",
-        gatewayName: "nemoclaw",
-        sandboxName: "alpha",
-      } as const;
-      const receipt = {
-        ...binding,
-        ...nativeLocalIdentity(binding),
-        schemaVersion: 1 as const,
-        providerId: "owned-local-provider",
-      };
+      const receipt = nativeLocalTestReceipt(
+        "ollama-local",
+        "http://host.openshell.internal:11434/v1",
+        {
+          authMode: "sentinel",
+        },
+      );
       const options = snapshotDeps(
         null,
         null,
         { ok: true },
         {
-          provider: binding.provider,
-          gatewayName: binding.gatewayName,
+          provider: receipt.provider,
+          gatewayName: receipt.gatewayName,
           nativeLocalProviderAttachment: receipt,
         },
       );
@@ -102,7 +99,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       });
       expect(snapshot.inferenceHealth).toMatchObject({
         ok: attached,
-        endpoint: expect.stringContaining(binding.endpointUrl),
+        endpoint: expect.stringContaining(receipt.endpointUrl),
       });
       expect(observeInferenceRoute).not.toHaveBeenCalled();
       expect(verifyNativeLocalProviderAttachmentImpl).toHaveBeenCalledWith({
@@ -115,28 +112,21 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
   );
 
   it("reports bounded redacted native local verification details and recovery (#12558)", async () => {
-    const binding = {
-      provider: "ollama-local",
-      endpointUrl: "http://host.openshell.internal:11434/v1",
-      credentialEnv: "NEMOCLAW_LOCAL_INFERENCE_TOKEN",
-      authMode: "sentinel",
-      gatewayName: "nemoclaw",
-      sandboxName: "alpha",
-    } as const;
-    const receipt = {
-      ...binding,
-      ...nativeLocalIdentity(binding),
-      schemaVersion: 1 as const,
-      providerId: "owned-local-provider",
-    };
+    const receipt = nativeLocalTestReceipt(
+      "ollama-local",
+      "http://host.openshell.internal:11434/v1",
+      {
+        authMode: "sentinel",
+      },
+    );
     const secret = `nvapi-${"a".repeat(40)}`;
     const options = snapshotDeps(
       null,
       null,
       { ok: true },
       {
-        provider: binding.provider,
-        gatewayName: binding.gatewayName,
+        provider: receipt.provider,
+        gatewayName: receipt.gatewayName,
         nativeLocalProviderAttachment: receipt,
       },
     );
@@ -439,41 +429,23 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     ]);
   });
 
-  it("does not set okLabel for a 5xx route failure, and classifies it unhealthy (#6846)", async () => {
-    const gateway: SandboxInferenceRouteHealth = {
-      ok: false,
-      endpoint: "https://inference.local/v1/models",
-      httpStatus: 502,
-      detail:
-        "Inference gateway returned HTTP 502 on https://inference.local/v1/models; the route is reachable but unhealthy.",
-    };
-
-    const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(gateway));
-
-    expect(snapshot.inferenceHealth).toMatchObject({
-      ok: false,
-      failureLabel: "unhealthy",
-    });
-    expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
-  });
-
-  it("does not set okLabel when the route is unreachable (#6846)", async () => {
-    const gateway: SandboxInferenceRouteHealth = {
-      ok: false,
-      endpoint: "https://inference.local/v1/models",
-      httpStatus: 0,
-      detail:
-        "Inference gateway unreachable on https://inference.local/v1/models from inside the sandbox.",
-    };
-
-    const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(gateway));
-
-    expect(snapshot.inferenceHealth).toMatchObject({
-      ok: false,
-      failureLabel: "unreachable",
-    });
-    expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
-  });
+  it.each([
+    [502, "unhealthy", "Inference gateway returned HTTP 502."],
+    [0, "unreachable", "Inference gateway unreachable."],
+  ] as const)(
+    "reports a failed route with no okLabel: HTTP %s (#6846)",
+    async (httpStatus, failureLabel, detail) => {
+      const gateway: SandboxInferenceRouteHealth = {
+        ok: false,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus,
+        detail,
+      };
+      const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(gateway));
+      expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel });
+      expect(snapshot.inferenceHealth?.okLabel).toBeUndefined();
+    },
+  );
 
   it("stays unprobed with no okLabel when the gateway probe is unavailable (#6846)", async () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps(null));
@@ -580,34 +552,6 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(upstream?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
     expect(upstream?.detail).toContain("provider credential stored in the gateway");
     expect(upstream?.detail).toContain("does not attribute this result to the sandbox route");
-  });
-
-  it("keeps an unreachable upstream check after the route served a request (#9595)", async () => {
-    const gateway: SandboxInferenceRouteHealth = {
-      ok: true,
-      endpoint: "https://inference.local/v1/models",
-      httpStatus: 200,
-      detail:
-        "Inference gateway responded HTTP 200 on https://inference.local/v1/models (full chain reachable).",
-    };
-    const providerHealth: ProviderHealthStatus = {
-      ok: false,
-      probed: true,
-      providerLabel: "NVIDIA Endpoints",
-      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
-      detail: "model invocation probe could not reach the endpoint",
-      failureLabel: "unreachable",
-    };
-
-    const snapshot = await collectSandboxStatusSnapshot(
-      "alpha",
-      snapshotDeps(gateway, providerHealth),
-    );
-
-    expect(snapshot.inferenceHealth?.subprobes).toContainEqual({
-      ...providerHealth,
-      probeLabel: "upstream",
-    });
   });
 
   it("keeps an unauthorized auth proxy subprobe after the route served a request (#9595)", async () => {
@@ -852,7 +796,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
   // Every transient status must repeat the whole probe pair, not just the
   // inference request: a retry that skipped the route probe could report a
   // served request against a route it never rechecked.
-  it.each([429, 502, 503, 504])(
+  it.each([429, 500, 502, 503, 504])(
     "serves a Ready managed sandbox after one transient HTTP %i inference request (#10709)",
     async (httpStatus) => {
       const healthy: SandboxInferenceRouteHealth = {
@@ -1049,15 +993,6 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         ok: false as const,
         detail: "sandbox inference invocation probe returned HTTP 404",
         httpStatus: 404,
-      },
-      failureLabel: "unhealthy",
-    },
-    {
-      label: "internal error",
-      invocation: {
-        ok: false as const,
-        detail: "sandbox inference invocation probe returned HTTP 500",
-        httpStatus: 500,
       },
       failureLabel: "unhealthy",
     },
@@ -1296,4 +1231,269 @@ it.each([
       ? ""
       : binding.endpointUrl + (state === "detached" ? "" : "/chat/completions"),
   );
+});
+
+describe("Hermes NVIDIA agent credential health", () => {
+  const options = () =>
+    snapshotDeps(
+      null,
+      null,
+      { ok: true },
+      {
+        agent: "hermes",
+        provider: "nvidia-prod",
+        gatewayName: "nemoclaw",
+        nativeNvidiaProviderAttachment: {
+          schemaVersion: 1,
+          profileId: "nemoclaw-nvidia-inference-v1",
+          providerName: "nemoclaw-nvidia-prod-v1",
+          providerId: "owned",
+        },
+      },
+    );
+  it("rejects an unusable agent credential despite a healthy route", async () => {
+    const input = options();
+    const verify = vi.fn(async () => {
+      throw new HermesNvidiaCredentialRejectedError();
+    });
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...input,
+      deps: {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: verify,
+      },
+    });
+    expect(verify).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unauthorized" });
+    expect(snapshot.inferenceHealth?.detail).toContain("Rebuild");
+    expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain("private credential detail");
+  });
+  it("requires rebuild when an older Hermes guard cannot verify credentials", async () => {
+    const input = options();
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...input,
+      deps: {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: (entry) =>
+          verifyHermesNvidiaCredential(entry, {
+            runBuffered: async () => ({
+              outcome: { kind: "completed", exitCode: 2 },
+              stdout: "",
+              stderr:
+                "hermes-runtime-config-guard.py: error: argument action: invalid choice: 'verify-nvidia-credential' (choose from 'ensure-api-key', 'refresh-hashes')",
+            }),
+          }),
+      },
+    });
+    expect(snapshot.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: false,
+      failureLabel: "unreachable",
+      detail: expect.stringContaining("Rebuild"),
+    });
+    expect(snapshot.inferenceHealth?.detail).toContain("install the credential verifier");
+    expect(snapshot.inferenceHealth?.detail).not.toContain("Retry status");
+  });
+  it.each(["command timeout", "transport unavailable", "missing verifier"])(
+    "reports unavailable verification without a credential diagnosis: %s",
+    async (failure) => {
+      const input = options();
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...input,
+        deps: {
+          ...input.deps,
+          verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+          verifyHermesNvidiaCredentialImpl: async () => {
+            throw new Error(failure);
+          },
+        },
+      });
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: false,
+        probed: false,
+        failureLabel: "unreachable",
+      });
+      expect(snapshot.inferenceHealth?.detail).toContain("Retry status");
+      expect(snapshot.inferenceHealth?.detail).not.toContain("Rebuild");
+      expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain(failure);
+    },
+  );
+  it.each([
+    {
+      label: "timeout",
+      error: new Error("timeout: private credential detail"),
+      recovery: "Retry status",
+    },
+    {
+      label: "transport error",
+      error: new Error("transport: private credential detail"),
+      recovery: "Retry status",
+    },
+    {
+      label: "missing verifier",
+      error: new HermesNvidiaCredentialVerifierMissingError(),
+      recovery: "Rebuild",
+    },
+  ])(
+    "retains failed provider-path diagnostics after a verifier $label",
+    async ({ error, recovery }) => {
+      const input = options();
+      const upstream: ProviderHealthStatus = {
+        ok: false,
+        probed: true,
+        providerLabel: "NVIDIA Endpoints",
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+        detail: "Upstream provider returned HTTP 403.",
+        failureLabel: "unauthorized",
+      };
+      input.deps.probeProviderHealthImpl = () => upstream;
+      input.deps.probeSandboxInferenceInvocationImpl = async () => ({
+        ok: false,
+        httpStatus: 401,
+        detail: "Native provider-path request returned HTTP 401.",
+      });
+      const deps = {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: async () => {},
+      };
+      const baseline = await collectSandboxStatusSnapshot("alpha", { ...input, deps });
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...input,
+        deps: {
+          ...deps,
+          verifyHermesNvidiaCredentialImpl: async () => {
+            throw error;
+          },
+        },
+      });
+      const { subprobes = [], ...providerPath } = baseline.inferenceHealth!;
+      expect(providerPath).toMatchObject({
+        ok: false,
+        probed: true,
+        detail: expect.stringContaining("HTTP 401"),
+        failureLabel: "unauthorized",
+      });
+      expect(snapshot.inferenceHealth).toEqual({
+        ...providerPath,
+        subprobes: [
+          ...subprobes,
+          expect.objectContaining({
+            ok: false,
+            probed: false,
+            probeLabel: "agent credential",
+            detail: expect.stringContaining(recovery),
+          }),
+        ],
+      });
+      expect(snapshot.inferenceHealth?.subprobes).toContainEqual({
+        ...upstream,
+        probeLabel: "upstream",
+      });
+      expect(isInferenceHealthFailing(snapshot.inferenceHealth)).toBe(true);
+      expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain("private credential detail");
+    },
+  );
+
+  it.each([
+    {
+      label: "unavailable verification after a served request",
+      invocation: { ok: true as const },
+      error: new Error("transport: private credential detail"),
+      failureLabel: "unreachable",
+    },
+    {
+      label: "credential rejection after a served request",
+      invocation: { ok: true as const },
+      error: new HermesNvidiaCredentialRejectedError(),
+      failureLabel: "unauthorized",
+    },
+    {
+      label: "credential rejection after a failed request",
+      invocation: {
+        ok: false as const,
+        httpStatus: 401,
+        detail: "Native provider-path request returned HTTP 401.",
+      },
+      error: new HermesNvidiaCredentialRejectedError(),
+      failureLabel: "unauthorized",
+    },
+  ])(
+    "retains provider-path diagnostics for $label",
+    async ({ invocation, error, failureLabel }) => {
+      const input = options();
+      const upstream: ProviderHealthStatus = {
+        ok: false,
+        probed: true,
+        providerLabel: "NVIDIA Endpoints",
+        endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+        detail: "Upstream endpoint unavailable.",
+        failureLabel: "unreachable",
+      };
+      input.deps.probeProviderHealthImpl = () => upstream;
+      input.deps.probeSandboxInferenceInvocationImpl = async () => invocation;
+      const snapshot = await collectSandboxStatusSnapshot("alpha", {
+        ...input,
+        deps: {
+          ...input.deps,
+          verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+          verifyHermesNvidiaCredentialImpl: async () => {
+            throw error;
+          },
+        },
+      });
+      expect(snapshot.inferenceHealth).toMatchObject({
+        ok: false,
+        probed: false,
+        probeLabel: "agent credential",
+        failureLabel,
+      });
+      expect(snapshot.inferenceHealth?.subprobes).toEqual([
+        expect.objectContaining({ ok: invocation.ok, probed: true, probeLabel: "provider path" }),
+        { ...upstream, probeLabel: "upstream" },
+      ]);
+      expect(isInferenceHealthFailing(snapshot.inferenceHealth)).toBe(true);
+      expect(JSON.stringify(snapshot.inferenceHealth)).not.toContain("private credential detail");
+    },
+  );
+
+  it("accepts verified agent credentials with a healthy route", async () => {
+    const input = options();
+    const verify = vi.fn(async () => {});
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...input,
+      deps: {
+        ...input.deps,
+        verifyNativeNvidiaProviderAttachmentImpl: async () => {},
+        verifyHermesNvidiaCredentialImpl: verify,
+      },
+    });
+    expect(verify).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth?.ok).toBe(true);
+  });
+});
+
+it("keeps retained shared Hermes NVIDIA inference healthy without a native credential receipt", async () => {
+  const options = snapshotDeps(
+    { ok: true, endpoint: "https://inference.local/v1/models", httpStatus: 200, detail: "OK" },
+    null,
+    { ok: true },
+    {
+      agent: "hermes",
+      provider: "nvidia-prod",
+      gatewayName: "nemoclaw",
+      endpointUrl: "https://inference.local/v1",
+    },
+  );
+  const verify = vi.fn(async () => {
+    throw new Error("native verifier must not run for shared routes");
+  });
+  const snapshot = await collectSandboxStatusSnapshot("alpha", {
+    ...options,
+    deps: { ...options.deps, verifyHermesNvidiaCredentialImpl: verify },
+  });
+  expect(snapshot.inferenceHealth?.ok).toBe(true);
+  expect(verify).not.toHaveBeenCalled();
 });

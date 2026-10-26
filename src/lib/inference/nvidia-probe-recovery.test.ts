@@ -65,7 +65,7 @@ describe("NVIDIA Endpoints validation recovery", () => {
       legacy: 0,
       expected: { ok: false, failures: [{ name: "Chat Completions API", httpStatus: 500 }] },
     },
-    { provider: "custom", status: 500, attempts: 1, legacy: 1, expected: { ok: false } },
+    { provider: "custom", status: 500, attempts: 4, legacy: 1, expected: { ok: false } },
     { provider: "nvidia-prod", status: 401, attempts: 1, legacy: 1, expected: { ok: false } },
     { provider: "nvidia-prod", status: 403, attempts: 1, legacy: 1, expected: { ok: false } },
   ])(
@@ -97,7 +97,7 @@ describe("NVIDIA Endpoints validation recovery", () => {
   it.each([
     { provider: "nvidia-prod", status: 500, recoverAt: 2, attempts: 2, ok: true },
     { provider: "nvidia-prod", status: 500, recoverAt: 99, attempts: 4, ok: false },
-    { provider: "custom", status: 500, recoverAt: 2, attempts: 1, ok: false },
+    { provider: "custom", status: 500, recoverAt: 2, attempts: 2, ok: true },
     { provider: "nvidia-prod", status: 401, recoverAt: 2, attempts: 1, ok: false },
     { provider: "nvidia-prod", status: 403, recoverAt: 2, attempts: 1, ok: false },
   ])(

@@ -187,6 +187,7 @@ export async function runRebuildPreflightPhase(
   if (blockRebuildOnLegacySharedRoute(sandboxName, sandboxEntry, bail)) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   restoreRecordedRebuildGatewayStateDir(sandboxEntry);
+  if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;

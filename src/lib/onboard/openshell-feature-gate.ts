@@ -74,6 +74,9 @@ const PINNED_SANDBOX_BUILD_VERSIONS = new Map<string, string>([
   // OpenShell v0.1.3 standalone sandbox binaries.
   ["38fe063f19c72680a1bc4b0c343a3ec5b7a5cb087a627faab5b2aefd9d50d094", "0.1.3"],
   ["23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281", "0.1.3"],
+  // OpenShell v0.1.5 standalone sandbox binaries.
+  ["a048b1fd2acd78f44f50a4cf0e02cdefec691656f3941e92c5ec0e09a69990e2", "0.1.5"],
+  ["65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc", "0.1.5"],
 ]);
 
 export function pinnedOpenShellSandboxBuildVersion(sha256: string): string | null {
@@ -213,7 +216,7 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   }
   if (!REQUIRED_OPENSHELL_MCP_FEATURES.every((marker) => foundMarkers.has(marker))) return false;
 
-  // OpenShell 0.1.2 and 0.1.3 enforce policy in the supervisor image. Only
+  // OpenShell 0.1.2, 0.1.3, and 0.1.5 enforce policy in the supervisor image. Only
   // their exact pinned sandbox artifacts use that split here; version text alone
   // cannot exempt another sandbox from the legacy marker check. Runtime policy
   // verification remains mandatory before credential or provider changes.
@@ -226,7 +229,7 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
       );
       return (
         content.includes(sandboxMarker) ||
-        ((pinnedVersion === "0.1.2" || pinnedVersion === "0.1.3") &&
+        ((pinnedVersion === "0.1.2" || pinnedVersion === "0.1.3" || pinnedVersion === "0.1.5") &&
           pinnedVersion === openshellVersion)
       );
     } catch {

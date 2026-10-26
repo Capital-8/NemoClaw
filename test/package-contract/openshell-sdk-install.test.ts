@@ -246,7 +246,7 @@ console.log(JSON.stringify([typeof sdk.OpenShellClient.connect, raw.SandboxPolic
 
   it("rejects a changed archive before creating an npm cache", () => {
     const { root, probe } = fixture();
-    const archive = path.join(root, "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.1.3.tgz");
+    const archive = path.join(root, "scripts/vendor/openshell-sdk/nvidia-openshell-sdk-0.1.5.tgz");
     writeFileSync(archive, "corrupted archive");
     const result = probe("prepare");
     expect(result.status).toBe(1);

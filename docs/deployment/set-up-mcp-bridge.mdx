@@ -29,7 +29,7 @@ The integration has three parts:
 
 This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
 
-Current NemoClaw builds require the pinned stable OpenShell `0.1.3` release, which exposes native `protocol: mcp` policy handling and endpoint-bound credential replacement.
+Current NemoClaw builds require the pinned stable OpenShell `0.1.5` release, which exposes native `protocol: mcp` policy handling and endpoint-bound credential replacement.
 Development builds are rejected because they do not match the reviewed credential boundary for the supported managed runtime.
 
 NemoClaw accepts Streamable HTTP MCP endpoints only.
@@ -63,8 +63,9 @@ The agent stores only an OpenShell resolver placeholder for the recorded credent
 OpenShell keeps the raw credential in its provider store and combines credential replacement with generated MCP policy at egress.
 
 <AgentOnly variant="hermes">
-Hermes includes the stable credential handle from the readiness check in this placeholder.
-Registration, inspection, rollback, and lifecycle reconciliation preserve that handle while OpenShell still reports it.
+Hermes uses the credential placeholder observed by the readiness check.
+Ordinary static credentials use revisioned placeholders; refresh-managed credentials can use stable handles.
+Registration, inspection, rollback, and lifecycle reconciliation preserve the placeholder while OpenShell still reports it.
 </AgentOnly>
 
 For the normal MCP client path, OpenShell evaluates the effective policy for the destination host and port, adapter binary, literal endpoint path, and MCP method before replacing placeholders in allowed HTTP request headers.
@@ -90,13 +91,13 @@ When enabled, OpenShell sends the requested hostname to the corporate proxy inst
 The [`dial_upstream` source](https://github.com/NVIDIA/OpenShell/blob/6648bd0c290efbc41ba131ee9831ee45cd431f94/crates/openshell-supervisor-network/src/proxy.rs#L4342-L4375) records that risk.
 NemoClaw does not enable or prohibit that host-level OpenShell option, so operators who require the pinned-address guarantee must leave it disabled and ensure their gateway configuration does not enable it.
 
-### Stable OpenShell 0.1.3 Limitations
+### Stable OpenShell 0.1.5 Limitations
 
-OpenShell v0.1.3 attributes network policy with `/proc/<pid>/exe`, verified process ancestors, and command-line-derived script paths.
+OpenShell v0.1.5 attributes network policy with `/proc/<pid>/exe`, verified process ancestors, and command-line-derived script paths.
 NemoClaw's generated MCP policies grant Node or Python interpreter paths; those grants do not identify immutable package entrypoints.
 NemoClaw compensates by restricting each server to its HTTPS destination, path, MCP method profile, DNS pins, and unique least-privilege credential.
 
-OpenShell v0.1.3 requires a static credential provider to have a complete endpoint binding before the supervisor projects its stable credential handle.
+OpenShell v0.1.5 requires a static credential provider to have a complete endpoint binding before the supervisor projects a usable credential placeholder.
 NemoClaw imports an endpointless profile that declares the credential name supplied through `--env`.
 The profile identity depends on that name, not the credential value.
 NemoClaw creates a dedicated provider for each server and binds it to one generated MCP endpoint with `credential_binding.provider`.
@@ -113,7 +114,7 @@ Remove the MCP server, export its recorded credential variable again, and add th
 Removal preserves the provider object for separate inspection and cleanup.
 Refer to [Rotate a Credential](manage-mcp-servers#rotate-a-credential) for the provider-cleanup procedure.
 
-OpenShell v0.1.3 supports resource-version checks, but its `provider update` and `provider delete` CLI commands still target mutable provider names.
+OpenShell v0.1.5 supports resource-version checks, but its `provider update` and `provider delete` CLI commands still target mutable provider names.
 NemoClaw cannot bind those CLI mutations atomically to the provider identity and version from its own inspection.
 It uses randomized provider names, the per-sandbox lifecycle lock, and immediate ownership checks against the recorded provider ID, credential-key metadata, and expected provider type.
 
@@ -147,11 +148,11 @@ mcp_servers:
       resources: true
       prompts: true
     headers:
-      Authorization: Bearer openshell:resolve:env:s0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_GITHUB_MCP_TOKEN
+      Authorization: Bearer openshell:resolve:env:v7_GITHUB_MCP_TOKEN
 ```
 
-The `s…_` prefix is an illustrative OpenShell stable credential handle.
-Hermes records the handle that the readiness check proves for the live provider.
+The `v7_` prefix is an illustrative OpenShell credential revision.
+Hermes records the placeholder that the readiness check proves for the live provider.
 
 ### Verify the Hermes Reload
 

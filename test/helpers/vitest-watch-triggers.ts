@@ -237,6 +237,8 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
       "test/agents/hermes/hermes-runtime-config-guard.test.ts",
       "test/agents/hermes/hermes-capability-free-supervisor.test.ts",
+      "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
+      "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
     ),
   },
   {

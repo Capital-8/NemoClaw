@@ -627,6 +627,7 @@
         "test/e2e/support/mcp-bridge-sandbox.test.ts",
         "test/e2e/support/registered-inference.test.ts",
         "test/cli/sandbox-status-text.test.ts",
+        "src/lib/actions/uninstall/run-plan-agent-state-volume.test.ts",
         "src/lib/onboard/created-sandbox-finalization.test.ts",
         "src/lib/onboard/gateway-reuse.test.ts",
         "src/lib/onboard/machine/core-flow-phases.test.ts",
@@ -695,7 +696,8 @@
         "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/hermes-config-export-live.test.ts"
+        "test/e2e/support/hermes-config-export-live.test.ts",
+        "test/e2e/support/hermes-discord-rebuild-contract.test.ts"
       ]
     },
     {
@@ -732,6 +734,8 @@
         "test/e2e/live/public-nvidia-switch-provider.ts"
       ],
       "fast": [
+        "src/lib/onboard/hermes/initial-inference-route.test.ts",
+        "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
         "test/e2e/support/hermes-native-local-evidence.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/hermes-inference-switch-command-shape.test.ts",
@@ -740,7 +744,8 @@
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/host-container-discovery.test.ts"
+        "test/e2e/support/host-container-discovery.test.ts",
+        "test/e2e/support/hermes-discord-rebuild-contract.test.ts"
       ]
     },
     {

@@ -3,10 +3,10 @@
 
 # OpenShell SDK archive
 
-This directory carries the reviewed `@nvidia/openshell-sdk@0.1.3` package under its upstream Apache-2.0 license.
+This directory carries the reviewed `@nvidia/openshell-sdk@0.1.5` package under its upstream Apache-2.0 license.
 The archive matches the GitHub Packages URL and SHA-512 integrity in the root `package-lock.json`.
-Its source is NVIDIA/OpenShell tag `v0.1.3`, commit `e1f3c82caa3ed3b65de22889ae7ef32a774878ef`.
-The included `LICENSE.v0.1.3` is copied from that source.
+Its source is NVIDIA/OpenShell tag `v0.1.5`, commit `bdb956f2cd65a635f1294fccf1d138d263bf650f`.
+The included `LICENSE.v0.1.5` is copied from that source.
 
 The installer and `npm run dev:setup` verify this archive, seed npm's cache offline, and run the normal dependency installation.
 Users do not need GitHub credentials or an SDK build toolchain.
@@ -32,4 +32,4 @@ Do not substitute a locally repacked archive: its compressed bytes can differ fr
 Run the SDK installation package contract after each update.
 Remove this archive and cache preparation when the pinned SDK is available through the public npm registry.
 
-The previous archives and their `LICENSE` remain retained for historical source references.
+The `0.0.116` archive and `LICENSE` remain for the current baseline packaging tests.

@@ -10,6 +10,11 @@ import { gatewayReachableCompatibleEndpointUrl } from "../../inference/native-lo
 import type { SandboxEntry } from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import {
+  normalizeNativeNvidiaProviderAttachment,
+  NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
+} from "../../inference/native-nvidia/contract";
+import {
   recordedCustomCredentialEnv,
   usesCustomNativeOnboarding,
 } from "../../inference/native-provider/custom-setup";
@@ -69,6 +74,20 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
     ): Promise<ResumeProviderRecoveryResult> {
       const recorded =
         provider && selection?.sandboxName ? deps.getSandbox?.(selection.sandboxName) : undefined;
+      if (
+        provider === NVIDIA_HOSTED_LOGICAL_PROVIDER &&
+        recorded?.nativeNvidiaProviderAttachment !== undefined
+      ) {
+        if (!normalizeNativeNvidiaProviderAttachment(recorded.nativeNvidiaProviderAttachment)) {
+          throw new Error("Invalid native NVIDIA provider attachment during resume.");
+        }
+        // Native setup verifies the live provider identity against its receipt.
+        // The logical name is not the credential-bearing gateway provider.
+        return {
+          forceInferenceSetup: true,
+          credentialEnv: credentialEnv || NVIDIA_HOSTED_CREDENTIAL_ENV,
+        };
+      }
       if (
         provider === "compatible-endpoint" &&
         recorded?.nativeLocalProviderAttachment !== undefined

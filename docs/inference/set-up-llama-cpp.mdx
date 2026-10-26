@@ -20,7 +20,7 @@ content:
 NemoClaw provides two first-class llama.cpp paths.
 You can attach an authenticated server that you operate, or let NemoClaw select and materialize a compatible repository-owned profile.
 Both paths are experimental and use OpenAI Chat Completions.
-OpenShell `0.1.3` GPU qualification remains pending, including Docker Desktop and Windows WSL validation of the managed path.
+OpenShell `0.1.5` GPU qualification remains pending, including Docker Desktop and Windows WSL validation of the managed path.
 
 <AgentOnly variant="openclaw,hermes,deepagents">
 New OpenClaw, Hermes, and Deep Agents Code llama.cpp selections use the recorded local endpoint through a sandbox-attached OpenShell provider.
@@ -58,7 +58,7 @@ The server must satisfy all of these requirements:
 - Report a stable, non-path served model alias.
 - Return native llama.cpp model metadata without conflicting model entries.
 
-On native Linux Docker with OpenShell `0.1.3`, publish the server with `-p 127.0.0.1:8081:8081`, or bind the host process to `127.0.0.1:8081`.
+On native Linux Docker with OpenShell `0.1.5` and its default supervisor network mode, publish the server with `-p 127.0.0.1:8081:8081`, or bind the host process to `127.0.0.1:8081`.
 The native supervisor reaches this loopback listener through `host.openshell.internal`; a second publication on a Docker bridge is unnecessary.
 Retain native API-key authentication.
 NemoClaw checks TCP reachability from a restricted probe container on the supervisor's host network.
@@ -67,7 +67,7 @@ The probe does not depend on a retained OpenShell Docker bridge.
 Docker Desktop, the portable profile, and native Podman retain their existing gateway-address probes.
 For these paths, preserve host-loopback access and make the authenticated server reachable through the selected runtime's host gateway.
 Restrict any non-loopback listener to the required runtime network.
-These probe changes do not establish OpenShell `0.1.3` platform qualification.
+These probe changes do not establish OpenShell `0.1.5` platform qualification.
 
 A confirmed connection failure stops onboarding.
 If the probe cannot run, exceeds its execution deadline, or cannot resolve the hostname, this preflight remains inconclusive and continues.

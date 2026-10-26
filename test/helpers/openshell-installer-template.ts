@@ -39,6 +39,16 @@ export function copyTrustedInstallerVerifier(repoRoot: string, targetRoot: strin
   });
 }
 
+export function prepareTrustedFormulaMismatchFixture(root: string, mode: FixtureMode): void {
+  if (mode !== "trusted-formula-mismatch") return;
+  const registryPath = path.join(root, "ci/openshell-upgrade-trust.json");
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+  registry.releases.find(
+    (release: { version: string }) => release.version === "0.0.116",
+  ).formula.sha256 = "0".repeat(64);
+  fs.writeFileSync(registryPath, JSON.stringify(registry));
+}
+
 export function brevMutationFixtures(
   ASSET_DIGESTS: ReadonlyMap<string, string>,
   ASSETS: readonly string[],
@@ -119,8 +129,21 @@ const MACOS_METHOD_START = `MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL
 const MACOS_METHOD_END = "esac\n";
 
 export function installerReleaseTemplate(source: string, version: string): string {
+  if (version !== "0.1.5") {
+    const v015SandboxBuild = String.raw`    # OpenShell v0.1.5 standalone sandbox binaries.
+    a048b1fd2acd78f44f50a4cf0e02cdefec691656f3941e92c5ec0e09a69990e2 | \
+      65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc)
+      printf '%s\n' "0.1.5"
+      ;;
+`;
+    assert.ok(source.includes(v015SandboxBuild), "OpenShell 0.1.5 sandbox fixture boundary");
+    source = source
+      .replace(v015SandboxBuild, "")
+      .replace("OpenShell 0.1.2, 0.1.3, and 0.1.5 enforce", "OpenShell 0.1.2 and 0.1.3 enforce")
+      .replace("0.1.2 | 0.1.3 | 0.1.5)", "0.1.2 | 0.1.3)");
+  }
   // Historical fixtures must retain their reviewed pre-0.1.3 feature gate.
-  if (version !== "0.1.3") {
+  if (version !== "0.1.3" && version !== "0.1.5") {
     const v013SandboxBuild = String.raw`    # OpenShell v0.1.3 standalone sandbox binaries.
     38fe063f19c72680a1bc4b0c343a3ec5b7a5cb087a627faab5b2aefd9d50d094 | \
       23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281)
@@ -154,7 +177,7 @@ export function installerReleaseTemplate(source: string, version: string): strin
   // Historical trust fixtures must use their own reviewed guard. Keep the
   // current guard only in the current-release fixture.
   const guardStart = source.indexOf("# Prove absence through searchable parents;");
-  if (version !== "0.1.3" && guardStart !== -1) {
+  if (version !== "0.1.3" && version !== "0.1.5" && guardStart !== -1) {
     const guardEnd = source.indexOf(
       "# invalidState: a consumed OpenShell release asset",
       guardStart,
@@ -184,7 +207,7 @@ export function installerReleaseTemplate(source: string, version: string): strin
       )
       .replace(fallback, "");
   }
-  if (["0.0.106", "0.0.116", "0.1.2", "0.1.3"].includes(version)) return source;
+  if (["0.0.106", "0.0.116", "0.1.2", "0.1.3", "0.1.5"].includes(version)) return source;
   const start = source.indexOf(MACOS_METHOD_START);
   const end = source.indexOf(MACOS_METHOD_END, start);
   if (start === -1 || end === -1 || source.indexOf(MACOS_METHOD_START, start + 1) !== -1) {

@@ -31,10 +31,10 @@ allow_unauthenticated_users = true
   });
 
   it.each([
-    ["openshell-gateway 0.1.3\n", "0.1.3"],
-    ["openshell-gateway v0.1.3\n", "0.1.3"],
-    ["openshell-gateway 0.1.3-dev.1\n", "0.1.3-dev.1"],
-    ["diagnostic 0.1.2\nopenshell-gateway 0.1.3\n", null],
+    ["openshell-gateway 0.1.5\n", "0.1.5"],
+    ["openshell-gateway v0.1.5\n", "0.1.5"],
+    ["openshell-gateway 0.1.5-dev.1\n", "0.1.5-dev.1"],
+    ["diagnostic 0.1.2\nopenshell-gateway 0.1.5\n", null],
     ["openshell-gateway 0.1.2\n", "0.1.2"],
     ["openshell-gateway v0.1.2\n", "0.1.2"],
     ["openshell-gateway 0.1.2-dev.1\n", "0.1.2-dev.1"],

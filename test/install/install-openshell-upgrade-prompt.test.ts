@@ -138,7 +138,7 @@ if [ "\${1:-}" = "--version" ] && [ "${openshellVersionCommandFails}" = "1" ]; t
   exit 7
 fi
 if [ "\${1:-}" = "--version" ] && [ "${options.ambiguousOpenshellVersionOutput === true ? "1" : "0"}" = "1" ]; then
-  printf 'openshell 0.1.3\nopenshell 0.0.116\n'
+  printf 'openshell 0.1.5\nopenshell 0.0.116\n'
   exit 0
 fi
 if [ "\${1:-} \${2:-}" = "gateway remove" ] && [ "${gatewayRemoveSucceeds}" != "1" ]; then
@@ -511,7 +511,7 @@ esac`,
       ["automatic", "prepared"].map((mode) => ({ version, mode })),
     ),
   )(
-    "preserves a registered $version gateway before the 0.1.3 $mode cutover (#12558)",
+    "preserves a registered $version gateway before the 0.1.5 $mode cutover (#12558)",
     async ({ version, mode }) => {
       const { result, cliLog, openshellLog, registry } = await runPreinstallUpgradeGuard(
         {
@@ -521,8 +521,8 @@ esac`,
           ...(mode === "prepared" ? { NEMOCLAW_OPENSHELL_UPGRADE_PREPARED: "1" } : {}),
         },
         {
-          currentMinOpenshellVersion: "0.1.3",
-          currentMaxOpenshellVersion: "0.1.3",
+          currentMinOpenshellVersion: "0.1.5",
+          currentMaxOpenshellVersion: "0.1.5",
           finishInstallMode: "source",
           openshellVersion: version,
         },
@@ -538,7 +538,7 @@ esac`,
     },
   );
 
-  it("preserves a registered gateway when its installed version is unreadable before 0.1.3 (#12558)", async () => {
+  it("preserves a registered gateway when its installed version is unreadable before 0.1.5 (#12558)", async () => {
     const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       {
         NON_INTERACTIVE: "1",
@@ -546,8 +546,8 @@ esac`,
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
       },
       {
-        currentMinOpenshellVersion: "0.1.3",
-        currentMaxOpenshellVersion: "0.1.3",
+        currentMinOpenshellVersion: "0.1.5",
+        currentMaxOpenshellVersion: "0.1.5",
         openshellVersionCommandFails: true,
       },
     );
@@ -560,13 +560,13 @@ esac`,
     expect(openshellLog).not.toContain("gateway ");
   });
 
-  it("preserves a registered gateway when version output contains two releases before 0.1.3 (#12558)", async () => {
+  it("preserves a registered gateway when version output contains two releases before 0.1.5 (#12558)", async () => {
     const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(
       { NON_INTERACTIVE: "1", NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1" },
       {
         ambiguousOpenshellVersionOutput: true,
-        currentMinOpenshellVersion: "0.1.3",
-        currentMaxOpenshellVersion: "0.1.3",
+        currentMinOpenshellVersion: "0.1.5",
+        currentMaxOpenshellVersion: "0.1.5",
       },
     );
 
@@ -746,7 +746,7 @@ esac`,
     expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
-  it.each(["0.0.85", "0.1.3"])(
+  it.each(["0.0.85", "0.1.5"])(
     "keeps a backed-up gateway on supported OpenShell %s",
     async (version) => {
       const { result, cliLog, openshellLog } = await runPreinstallUpgradeGuard(

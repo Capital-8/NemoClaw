@@ -220,7 +220,7 @@ export function applyHermesManagedRoute(
   config.custom_providers = customProviders;
 }
 
-/** Refresh an issued native reference without replacing restored model settings. */
+/** Refresh an issued managed reference without replacing restored model settings. */
 export function refreshHermesNativeLocalCredential(
   config: Record<string, unknown>,
   route: HermesManagedRoute & { nativeCredentialHandle: string },
@@ -237,13 +237,21 @@ export function refreshHermesNativeLocalCredential(
     (entry) => isObjectRecord(entry) && entry.name === route.upstreamProvider,
   );
   const previous = model.api_key;
+  const nvidia =
+    !route.registeredCredentialEnv &&
+    route.upstreamProvider === "nvidia-prod" &&
+    managedInferenceApiKey(route.baseUrl, "") === NVIDIA_INFERENCE_PLACEHOLDER;
   const credentialEnv = route.registeredCredentialEnv ?? NATIVE_LOCAL_CREDENTIAL_ENV;
-  const referencePattern = route.registeredCredentialEnv
-    ? `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${credentialEnv}$`
-    : NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN;
-  const reference = new RegExp(referencePattern).exec(String(previous));
+  const pattern = route.registeredCredentialEnv
+    ? new RegExp(`^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${credentialEnv}$`)
+    : nvidia
+      ? NATIVE_NVIDIA_SCOPED_HANDLE_PATTERN
+      : new RegExp(NATIVE_LOCAL_RUNTIME_REFERENCE_PATTERN);
+  const template = nvidia ? NVIDIA_INFERENCE_PLACEHOLDER : `\${${credentialEnv}}`;
+  const reference = pattern.exec(String(previous));
   if (
     (!route.registeredCredentialEnv &&
+      !nvidia &&
       !nativeLocalCredentialReference(
         route.upstreamProvider,
         route.baseUrl,
@@ -266,7 +274,7 @@ export function refreshHermesNativeLocalCredential(
     typeof previous !== "string" ||
     managed.api_key !== previous ||
     matches[0].api_key !== previous ||
-    ((Boolean(route.registeredCredentialEnv) || previous !== `\${${credentialEnv}}`) &&
+    ((Boolean(route.registeredCredentialEnv) || previous !== template) &&
       reference?.[0] !== previous)
   ) {
     throw new Error("Restored Hermes inference configuration does not match its registered route.");

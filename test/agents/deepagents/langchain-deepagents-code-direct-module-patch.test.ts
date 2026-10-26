@@ -1395,7 +1395,7 @@ print("managed-auto-approval-ok")
   });
 
   it("fails closed when the installed version or required source shape drifts", () => {
-    const wrongVersion = createPackageFixture("0.1.31");
+    const wrongVersion = createPackageFixture("0.1.51");
     const versionResult = spawnSync("python3", [patcher], {
       env: { PATH: process.env.PATH, PYTHONPATH: wrongVersion },
       encoding: "utf8",

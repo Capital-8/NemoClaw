@@ -16,7 +16,7 @@ import {
 } from "../managed-startup/state-roots";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import { preflightManagedStateVolumes, prepareManagedStateVolumes } from "./managed-state-volumes";
-import { removeManagedAgentStateVolumes } from "./hermes-state-volume";
+import { removeManagedAgentStateVolumes } from "./agent-state-volumes";
 
 const context = {
   agentName: "hermes",

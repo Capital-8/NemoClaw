@@ -122,8 +122,8 @@ import {
   managedAgentStateVolumeContext,
   type ManagedAgentStateVolumeRuntime,
   type ManagedAgentStateVolumeContext,
-  removeManagedStateVolumesForUninstall,
-} from "./managed-state-uninstall-cleanup";
+  removeManagedAgentStateVolumesForUninstall,
+} from "./agent-state-volume-cleanup";
 import {
   stopBedrockRuntimeAdapter,
   stopHttpsPinRuntimeAdapter,
@@ -3366,7 +3366,7 @@ async function executeOpenShellResourceCleanup(
   if (
     !portableRuntimeCleanup &&
     !externallySupervised &&
-    !removeManagedStateVolumesForUninstall(managedAgentStateVolumes, runtime)
+    !removeManagedAgentStateVolumesForUninstall(managedAgentStateVolumes, runtime)
   ) {
     return false;
   }

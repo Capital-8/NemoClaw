@@ -379,11 +379,11 @@ test(
     await artifacts.target.declare({
       id: "openshell-credential-generation-window",
       contracts: [
-        "OpenShell 0.1.3 ordinary static credential generations",
+        "OpenShell 0.1.5 ordinary static credential generations",
         "NemoClaw MCP detach, restart, and rebuild lifecycle",
         "NemoClaw rejects an expired selected inference credential before rebuild deletion",
       ],
-      sourceRevision: "e1f3c82caa3ed3b65de22889ae7ef32a774878ef",
+      sourceRevision: "bdb956f2cd65a635f1294fccf1d138d263bf650f",
     });
 
     const compatibleMock = await startCompatibleMock({

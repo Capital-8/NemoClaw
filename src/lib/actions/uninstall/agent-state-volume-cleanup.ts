@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ManagedAgentStateVolumeContext } from "../../onboard/managed-workload/hermes-state-volume";
+import type { ManagedAgentStateVolumeContext } from "../../onboard/managed-workload/agent-state-volumes";
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/access";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../onboard/runtime-provider/current";
 import type { RuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/contract";
@@ -38,7 +38,9 @@ export function managedAgentStateVolumeContext(
       ? (workload as Record<string, unknown>)["kind"]
       : "";
   return {
-    agentName: typeof agent === "string" ? agent : undefined,
+    // Null or absent is the canonical default OpenClaw harness; other non-strings stay ineligible.
+    agentName:
+      agent === null || agent === undefined ? null : typeof agent === "string" ? agent : "",
     runtimeProviderId:
       openshellDriver === undefined ||
       openshellDriver === null ||
@@ -50,7 +52,8 @@ export function managedAgentStateVolumeContext(
   };
 }
 
-export function removeManagedStateVolumesForUninstall(
+/** Remove every managed agent state volume of uninstalled sandboxes, as `destroy` does. */
+export function removeManagedAgentStateVolumesForUninstall(
   contexts: readonly ManagedAgentStateVolumeContext[],
   runtime: ManagedAgentStateVolumeRuntime,
 ): boolean {

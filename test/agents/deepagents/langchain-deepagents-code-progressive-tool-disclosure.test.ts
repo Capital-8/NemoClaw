@@ -881,7 +881,7 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
   });
 
   it("fails closed on the pinned package version before changing source", () => {
-    const fixture = makePatchFixture("0.1.31");
+    const fixture = makePatchFixture("0.1.51");
     const before = snapshot(fixture.sourcePaths);
     const result = runPatcher(fixture);
 

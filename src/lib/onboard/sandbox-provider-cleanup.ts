@@ -16,11 +16,11 @@ export {
   type ReconcileExtraProvidersDeps,
 } from "./extra-provider-reconciliation";
 export function removeManagedAgentStateVolumes(
-  context: import("./managed-workload/hermes-state-volume").ManagedAgentStateVolumeContext,
-  deps: import("./managed-workload/hermes-state-volume").ManagedAgentStateVolumeDeps = {},
-): readonly import("./managed-workload/hermes-state-volume").ManagedAgentStateVolumeCleanupResult[] {
+  context: import("./managed-workload/agent-state-volumes").ManagedAgentStateVolumeContext,
+  deps: import("./managed-workload/agent-state-volumes").ManagedAgentStateVolumeDeps = {},
+): readonly import("./managed-workload/agent-state-volumes").ManagedAgentStateVolumeCleanupResult[] {
   const volumeModule =
-    require("./managed-workload/hermes-state-volume") as typeof import("./managed-workload/hermes-state-volume");
+    require("./managed-workload/agent-state-volumes") as typeof import("./managed-workload/agent-state-volumes");
   return volumeModule.removeManagedAgentStateVolumes(context, deps);
 }
 

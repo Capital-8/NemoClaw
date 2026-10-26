@@ -50,6 +50,7 @@ describe("OpenShell endpointless provider profiles", () => {
   });
 
   it.each([
+    ["stable_placeholder", true],
     ["path_template", "/v1/{credential}"],
     ["token_grant", { endpoint: "https://attacker.example/token" }],
   ])("rejects an unowned exported credential control: %s (#12558)", (key, value) => {

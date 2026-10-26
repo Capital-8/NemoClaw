@@ -18,6 +18,7 @@ import {
 } from "./managed-state-volumes";
 
 export type ManagedAgentStateVolumeContext = {
+  /** Registry agent; null or absent is the canonical default OpenClaw harness. */
   readonly agentName: string | null | undefined;
   readonly runtimeProviderId: string | null | undefined;
   readonly sandboxName: string;
@@ -37,22 +38,7 @@ export type ManagedAgentStateVolumeDeps = Omit<
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;
 };
 
-function managedAgentStateRoots(context: ManagedAgentStateVolumeContext) {
-  if (
-    context.workloadKind !== "managed-image" ||
-    typeof context.agentName !== "string" ||
-    !isManagedImageAgent(context.agentName)
-  ) {
-    return [];
-  }
-  return managedStartupStateRoots({
-    agent: context.agentName,
-    sandboxName: context.sandboxName,
-    agentIdentity: managedImageRuntimeIdentity(context.agentName),
-  });
-}
-
-function selectedRuntimeProvider(
+export function selectedRuntimeProvider(
   runtimeProviderId: string | null | undefined,
   providers?: RuntimeProviderBundleRegistry,
   runtimeProvider?: RuntimeProviderBundle,
@@ -62,7 +48,7 @@ function selectedRuntimeProvider(
   return providerId && providers ? providers[providerId] : undefined;
 }
 
-function supportsContainerEngineOperation(
+export function supportsContainerEngineOperation(
   provider: RuntimeProviderBundle | undefined,
   operation: RuntimeProviderContainerEngineOperation,
 ): boolean {
@@ -72,7 +58,7 @@ function supportsContainerEngineOperation(
   );
 }
 
-function genericDeps(
+export function managedStateVolumeDeps(
   deps: ManagedAgentStateVolumeDeps,
   runtimeProviderId: string | null | undefined,
 ): ManagedStateVolumeDeps {
@@ -86,6 +72,23 @@ function genericDeps(
   };
 }
 
+function managedAgentStateRoots(context: ManagedAgentStateVolumeContext) {
+  const agentName = context.agentName ?? "openclaw";
+  if (
+    context.workloadKind !== "managed-image" ||
+    typeof agentName !== "string" ||
+    !isManagedImageAgent(agentName)
+  ) {
+    return [];
+  }
+  return managedStartupStateRoots({
+    agent: agentName,
+    sandboxName: context.sandboxName,
+    agentIdentity: managedImageRuntimeIdentity(agentName),
+  });
+}
+
+/** Remove every state root declared for a managed-image agent, gated by exact ownership labels. */
 export function removeManagedAgentStateVolumes(
   context: ManagedAgentStateVolumeContext & {
     readonly retainedRoots?: readonly ManagedStartupStateRoot[];
@@ -114,6 +117,6 @@ export function removeManagedAgentStateVolumes(
           ),
       ),
     },
-    genericDeps(deps, context.runtimeProviderId),
+    managedStateVolumeDeps(deps, context.runtimeProviderId),
   );
 }

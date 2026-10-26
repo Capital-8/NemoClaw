@@ -210,13 +210,15 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
 describe.skipIf(process.platform === "win32")(
   "Hermes restored native credential transaction",
   () => {
-    it("bounds restored adoption and preserves ordinary denials and recovery fences", () => {
-      const result = spawnSync(
-        "python3",
-        [
-          "-I",
-          "-c",
-          String.raw`
+    it.each(["local", "nvidia"])(
+      "bounds restored %s adoption and preserves denials and recovery fences",
+      (provider) => {
+        const result = spawnSync(
+          "python3",
+          [
+            "-I",
+            "-c",
+            String.raw`
 import copy, hashlib, importlib.util, json, os, pathlib, sys, tempfile, types
 source=pathlib.Path(sys.argv[1]).resolve()
 spec=importlib.util.spec_from_file_location('hermes_guard',source)
@@ -230,6 +232,7 @@ class GatewayConfig:
 sys.modules['gateway.config']=types.SimpleNamespace(GatewayConfig=GatewayConfig)
 # Model an admitted managed nonroot topology; do not alter any hash/digest/path/race predicates.
 guard._managed_nonroot_reconciliation_is_allowed=lambda:True
+nvidia = sys.argv[2] == 'nvidia'
 
 
 def sha(b):return hashlib.sha256(b).hexdigest()
@@ -240,13 +243,17 @@ def run(case):
   config=h/'config.yaml';env=h/'.env';compat=h/'.config-hash';strict=r/'strict';state=r/'state.json'
   def body(ref):
    return guard.yaml.safe_dump({'_nemoclaw_upstream':{'provider':'compatible-endpoint','provider_key':'compatible-endpoint','model':'m'},'model':{'default':'m','provider':'custom','base_url':'http://host.openshell.internal:8000/v1','api_key':ref},'providers':{'compatible-endpoint':{'api':'http://host.openshell.internal:8000/v1','api_key':ref,'default_model':'m'}},'custom_providers':[{'name':'compatible-endpoint','base_url':'http://host.openshell.internal:8000/v1','api_key':ref}],'mcp_servers':{}},sort_keys=False).encode()
+  local_body=body
+  def body(ref):
+   data=local_body(ref)
+   return data.replace(b'compatible-endpoint',b'nvidia-prod').replace(b'http://host.openshell.internal:8000/v1',b'https://integrate.api.nvidia.com/v1').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'NVIDIA_INFERENCE_API_KEY') if nvidia and not case.startswith('registered-') else data
   old=body('openshell:resolve:env:v7_NEMOCLAW_LOCAL_INFERENCE_TOKEN');fresh=body('openshell:resolve:env:v8_NEMOCLAW_LOCAL_INFERENCE_TOKEN')
   if case.startswith('registered-'):
    old=old.replace(b'compatible-endpoint',b'operator-provider').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'VENDOR_API_KEY')
    fresh=fresh.replace(b'compatible-endpoint',b'operator-provider').replace(b'NEMOCLAW_LOCAL_INFERENCE_TOKEN',b'VENDOR_API_KEY')
   if case=='registered-env-change':fresh=fresh.replace(b'VENDOR_API_KEY',b'OTHER_KEY')
   if case=='registered-raw-source':old=old.replace(b'openshell:resolve:env:v7_VENDOR_API_KEY',b'raw-secret')
-  if case=='registered-placeholder-source':old=old.replace(b'openshell:resolve:env:v7_VENDOR_API_KEY',b'\${VENDOR_API_KEY}')
+  if case=='registered-placeholder-source':old=old.replace(b'openshell:resolve:env:v7_VENDOR_API_KEY',b'$'+b'{VENDOR_API_KEY}')
   if case=='registered-route-drift':fresh=fresh.replace(b'host.openshell.internal',b'changed.example')
 
   oldenv=b'SAFE_SETTING=trusted\nAPI_SERVER_KEY='+b'a'*64+b'\n';freshenv=b'SAFE_SETTING=trusted\nAPI_SERVER_KEY='+b'b'*64+b'\n'
@@ -265,7 +272,7 @@ def run(case):
   if case=='mcp-drift':candidate['mcp_servers']={'unexpected':{}}
   if case=='user-setting-drift':candidate['user_setting']='added'
   if case=='invalid-new-handle':candidate['model']['api_key']='raw-credential'
-  if case=='slot-disagreement':source_config['providers']['compatible-endpoint']['api_key']='openshell:resolve:env:v6_NEMOCLAW_LOCAL_INFERENCE_TOKEN'
+  if case=='slot-disagreement':source_config['providers']['nvidia-prod' if nvidia else 'compatible-endpoint']['api_key']='openshell:resolve:env:v6_NEMOCLAW_LOCAL_INFERENCE_TOKEN'
   if case=='alias-side-effect':
    source_config['user_model']=source_config['model'];candidate['user_model']=candidate['model']
   config.write_text(guard.yaml.safe_dump(source_config,sort_keys=False))
@@ -313,27 +320,29 @@ assert rows[0]['config_candidate_applied']
 assert rows[15]['error'] is None and rows[15]['config_candidate_applied'] and rows[15]['state_removed'] and rows[15]['anchors_match'],rows[15]
 for row in rows[16:]:assert row['error'] and row['files_unchanged'] and row['state_removed'] and row['lock_removed'],row
 `,
-          RUNTIME_CONFIG_GUARD,
-        ],
-        { encoding: "utf8", timeout: 30_000 },
-      );
-      expect(result.status, result.stderr + result.stdout).toBe(0);
-      const report = JSON.parse(result.stdout);
-      expect(report.cases).toHaveLength(20);
-      expect(report.cases[0]).toMatchObject({
-        error: null,
-        config_candidate_applied: true,
-        anchors_match: true,
-        state_removed: true,
-        lock_removed: true,
-      });
-      expect(report.cases[12]).toMatchObject({
-        config_source_preserved: true,
-        anchors_match: true,
-        state_removed: true,
-      });
-      expect(report.cases[13]).toMatchObject({ recovery: "recovered", state_removed: true });
-      expect(report.cases[14]).toMatchObject({ state_removed: false });
-    });
+            RUNTIME_CONFIG_GUARD,
+            provider,
+          ],
+          { encoding: "utf8", timeout: 30_000 },
+        );
+        expect(result.status, result.stderr + result.stdout).toBe(0);
+        const report = JSON.parse(result.stdout);
+        expect(report.cases).toHaveLength(20);
+        expect(report.cases[0]).toMatchObject({
+          error: null,
+          config_candidate_applied: true,
+          anchors_match: true,
+          state_removed: true,
+          lock_removed: true,
+        });
+        expect(report.cases[12]).toMatchObject({
+          config_source_preserved: true,
+          anchors_match: true,
+          state_removed: true,
+        });
+        expect(report.cases[13]).toMatchObject({ recovery: "recovered", state_removed: true });
+        expect(report.cases[14]).toMatchObject({ state_removed: false });
+      },
+    );
   },
 );

@@ -145,20 +145,20 @@ assert_openshell_version() {
 
 case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
   stable | auto) ;;
-  dev) fail "NemoClaw requires exact stable OpenShell 0.1.3; the dev channel is not supported." ;;
+  dev) fail "NemoClaw requires exact stable OpenShell 0.1.5; the dev channel is not supported." ;;
   *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto" ;;
 esac
 if [ -z "$OPENSHELL_VERSION" ]; then
   case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
-    stable | auto) OPENSHELL_VERSION="v0.1.3" ;;
+    stable | auto) OPENSHELL_VERSION="v0.1.5" ;;
   esac
 fi
 assert_openshell_version "$OPENSHELL_VERSION"
 if [[ "$OPENSHELL_VERSION" != v* ]]; then
   OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
 fi
-if [[ "$OPENSHELL_VERSION" != "v0.1.3" ]]; then
-  fail "NemoClaw requires exact stable OpenShell 0.1.3; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
+if [[ "$OPENSHELL_VERSION" != "v0.1.5" ]]; then
+  fail "NemoClaw requires exact stable OpenShell 0.1.5; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
 fi
 if [ "${1:-}" = "--print-openshell-version" ]; then
   printf '%s\n' "$OPENSHELL_VERSION"
@@ -217,14 +217,14 @@ openshell_cli_asset_for_arch() {
 openshell_cli_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.1.3:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "ed08ea7874c47f22d6e5dcc4b27d9ef1ef5d2060f83035b35ff725d5160830a3"
+    v0.1.5:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "ca1ad6e6fbb4a6cd407e95763391b8ecff02912e7d9c467e7ca22696fe80af69"
       ;;
-    v0.1.3:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "07687dacefc52bc73b01943f5b58f7a5082c1ceaa228461b9a2a78023b8057c0"
+    v0.1.5:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "30c949b4ac07a9c8245c1248eb82e4eb241615134fcabf3c9bf30dec7d00addf"
       ;;
-    v0.1.3:openshell-checksums-sha256.txt)
-      printf '%s\n' "a7bc832c2e777e43e373bcdfa2f3d6180f2e83efb491d81d4299e181697444eb"
+    v0.1.5:openshell-checksums-sha256.txt)
+      printf '%s\n' "6023b4ab7302f2a718ae93c3f7e738e9609b161cc6a81b5af138e22235c590c7"
       ;;
     *)
       return 1
@@ -317,19 +317,19 @@ sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
 # New Docker group membership takes effect in a new login session.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
-# 3. Node.js 24.18.1
-NODE_VERSION="24.18.1"
+# 3. Node.js 24.22.1
+NODE_VERSION="24.22.1"
 if command -v node >/dev/null 2>&1 && [[ "$(node --version)" == "v${NODE_VERSION}" ]]; then
   info "Node.js already installed: $(node --version)"
 else
   case "$(uname -m)" in
     x86_64)
       node_arch="x64"
-      node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
+      node_sha256="eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"
       ;;
     aarch64 | arm64)
       node_arch="arm64"
-      node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"
+      node_sha256="33c37be234ba8bee041961047b19160f4d7d0f164e8e246f78bdd10feff148b3"
       ;;
     *) fail "Unsupported Node.js architecture: $(uname -m)" ;;
   esac

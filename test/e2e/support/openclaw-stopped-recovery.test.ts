@@ -93,7 +93,7 @@ describe("stopped Docker recovery inventory", () => {
   });
 
   it.each([
-    ["0.1.3 page", page()],
+    ["0.1.5 page", page()],
     ["legacy array", JSON.stringify([ROW])],
   ])("recovers the identified source from a complete %s", async (_name, inventory) => {
     const f = fixture(inventory);

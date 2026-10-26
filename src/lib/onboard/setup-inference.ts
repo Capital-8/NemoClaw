@@ -1706,6 +1706,8 @@ export function createSetupInference(
                 ? { recordedSandboxName: recordedSandbox.name }
                 : {}),
             });
+            // The retained gateway credential is unavailable to a host-side smoke.
+            retainedNativeHostedCredential = !credentialValue;
             if (deps.getNativeNvidiaProviderAuthority && deps.setNativeNvidiaProviderAuthority) {
               await persistNativeNvidiaProviderAuthority({
                 adapter: providerAdapter,

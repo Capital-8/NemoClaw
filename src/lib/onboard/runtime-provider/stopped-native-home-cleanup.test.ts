@@ -132,7 +132,7 @@ describe("stopped native-home cleanup", () => {
       }),
     ).toEqual({ cleared: true });
     expect(capture).toHaveBeenCalledWith(
-      ["pull", "--quiet", expect.stringContaining("node:24.18.1-trixie-slim")],
+      ["pull", "--quiet", expect.stringContaining("node:24.22.1-trixie-slim")],
       120_000,
     );
     const createArgs = capture.mock.calls.find(([args]) => args[0] === "create")![0];

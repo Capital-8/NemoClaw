@@ -41,6 +41,7 @@ import {
   brevMutationFixtures,
   npmReplacementFixtureVersion,
   copyTrustedInstallerVerifier,
+  prepareTrustedFormulaMismatchFixture,
   preparedReleaseArgs,
   prepareReleaseFixtureRuntime,
   installerReleaseTemplate,
@@ -55,10 +56,6 @@ const INSTALLER_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
   "utf8",
 );
-const BREV_TEMPLATE = fs.readFileSync(
-  path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
-  "utf8",
-);
 const OBSOLETE_NPM_REPLACEMENT_DIGEST =
   "d6a9924eae784af912bce30dc50884494ec547fbec6aab56f23734f72e3a234c";
 // Retain the reviewed 0.0.116 cleanup fixture across the 0.1.2 migration.
@@ -66,6 +63,7 @@ const NPM_CLEANUP_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "test/fixtures/openshell-brev-npm-cleanup.sh"),
   "utf8",
 );
+const BREV_TEMPLATE = NPM_CLEANUP_TEMPLATE;
 // Exact #12376 npm replacement, derived from the canonical bootstrap template.
 const DCODE_NPM_REPLACEMENT_TEMPLATE = NPM_CLEANUP_TEMPLATE.replace(
   '  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner',
@@ -537,8 +535,8 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
   const template = BREV_TEMPLATE.replaceAll(
-    /0\.0\.116|0\.1\.2|0\.1\.3/g,
-    openshellVersion === "0.1.2" || openshellVersion === "0.1.3" ? openshellVersion : "0.0.116",
+    /0\.0\.116|0\.1\.2|0\.1\.3|0\.1\.5/g,
+    ["0.1.2", "0.1.3", "0.1.5"].includes(openshellVersion) ? openshellVersion : "0.0.116",
   );
   const selected = template.replace(
     /^(\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION=")v[0-9]+\.[0-9]+\.[0-9]+("\s*;;\s*)$/m,
@@ -556,7 +554,7 @@ function renderSupervisorRuntime(openshellVersion: string): string {
   assert(INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS.has(openshellVersion));
   const pins = [...INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS]
     .filter(([version]) => version !== "9.9.9" || openshellVersion === version)
-    .filter(([version]) => version !== "0.1.3" || openshellVersion === version)
+    .filter(([version]) => !["0.1.3", "0.1.5"].includes(version) || openshellVersion === version)
     .map(([version, digest]) => `  "${version}": "${digest}",`)
     .join("\n");
   return `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
@@ -772,6 +770,7 @@ function runFixture(
     mutateParser === undefined,
   );
   fs.writeFileSync(trustedParserPath, trustSyntheticSupervisorRuntimeTemplate(mutatedParserSource));
+  prepareTrustedFormulaMismatchFixture(trustedRoot, mode);
   fs.writeFileSync(
     targetChecker,
     trustedChecker
@@ -835,6 +834,8 @@ function parseNpmReplacement(source: string, digest: string, trustedDigest = dig
   const parser = path.join(root, "scripts/checks/extract-installer-pins.mts");
   const parserSource = fs.readFileSync(parser, "utf8");
   fs.writeFileSync(parser, parserSource.replace(digest, trustedDigest));
+  const registry = path.join(root, "ci/openshell-upgrade-trust.json");
+  fs.writeFileSync(registry, fs.readFileSync(registry, "utf8").replaceAll(digest, trustedDigest));
   const brev = path.join(root, "scripts/brev-launchable-ci-cpu.sh");
   fs.writeFileSync(brev, source);
   return spawnSync(
@@ -1160,10 +1161,8 @@ describe("installer hash verification", () => {
   });
 
   it("requires the trusted release-record prerequisite before a newer pin PR", () => {
-    // The first invocation keeps the base trust records unchanged while the
-    // separate target tree selects 9.9.9. The target cannot authorize itself.
-    // The second models the complete trust prerequisite already present in
-    // base code; only then may the otherwise identical pin tree pass.
+    // The candidate cannot authorize itself. Accept the same pins only after
+    // their trust records exist in the separate base checkout.
     const beforePrerequisite = runFixture("complete", "9.9.9", true);
     expect(beforePrerequisite.status).toBe(1);
     expect(beforePrerequisite.stdout).toContain(

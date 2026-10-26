@@ -12,7 +12,7 @@ content:
 
 NemoClaw can connect to an existing vLLM server or, when Docker is available on `PATH`, install and start a managed vLLM container on supported NVIDIA GPU hosts.
 It also provides a Deferred N1x preview pending a physical NemoClaw Express E2E run.
-OpenShell `0.1.3` GPU qualification remains pending; the network changes below do not establish Docker Desktop, Windows WSL, or Jetson/Tegra qualification.
+OpenShell `0.1.5` GPU qualification remains pending; the network changes below do not establish Docker Desktop, Windows WSL, or Jetson/Tegra qualification.
 
 <Note>
 NemoClaw forces the Chat Completions API path for vLLM.
@@ -22,7 +22,7 @@ The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, 
 <Warning>
 Local vLLM does not require authentication by default.
 Existing-server and single-host managed-vLLM paths use `NEMOCLAW_VLLM_PORT`, which defaults to `8000`, for host-loopback validation.
-On OpenShell `0.1.3`, the native supervisor reaches an authenticated managed server through the same loopback listener.
+With OpenShell `0.1.5` and its default Docker supervisor network mode, the supervisor reaches an authenticated managed server through the same loopback listener.
 After onboarding, `status` and `doctor` probe an authenticated managed single-host vLLM container on its published loopback port.
 For a bearerless server, they use the port in the sandbox's recorded `http://host.openshell.internal:<port>/v1` route.
 When that route is valid, no later port environment override is required.
@@ -398,10 +398,15 @@ DGX Spark automatically selects its Qwen recipe from the detected unified-memory
 | At least 64 GB | 262,144 | 4 | 8,192 | 0.4 |
 
 The smaller recipe admits a nominal 64 GB DGX Spark that reports about 61.6 GB of usable unified memory.
+The admission floor uses detected total unified-memory capacity, not currently available memory.
+The separate GPU-memory preflight still checks available memory when `nvidia-smi` reports numeric values.
 It loads weights with vLLM's lazy `safetensors` strategy instead of `fastsafetensors`.
-It remains Experimental with software validation; physical 64 GB Spark qualification is pending.
 Unknown capacity or less than 60 GB does not qualify for either Qwen recipe.
 Before installation, NemoClaw displays the selected hardware profile and context limit.
+
+For Express installation on a nominal 64 GB DGX Spark, keep automatic serving-profile selection (option 1).
+The fixed profile (option 2) retains its 64 GB detected-capacity floor.
+
 The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `2` concurrent sequences, and a `4096`-token batch limit.
 The two-sequence limit permits vLLM to schedule a compaction summary while an agent response uses the other sequence.
 Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.

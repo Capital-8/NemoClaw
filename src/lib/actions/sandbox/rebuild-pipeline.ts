@@ -61,6 +61,7 @@ import {
   assertSandboxRebuildCommandAvailable,
   revalidateManagedWorkloadRebuildBeforeDelete,
   revalidateRebuildRouteBeforeDelete,
+  revalidateRebuildHostCredentialBeforeDelete,
 } from "./rebuild-preflight-guards";
 import {
   runHermesCronRestoreBackupPreflight,
@@ -76,7 +77,6 @@ import {
 } from "./rebuild-prepared-recovery";
 import {
   inspectRebuildGatewayProviderRegistration,
-  validateRebuildHostInferenceCredential,
   verifyRebuildNativeLocalProviderBeforeDelete,
   verifyRebuildRegisteredProviderBeforeDelete,
   shouldVerifyRebuildGatewayProvider,
@@ -848,16 +848,11 @@ async function rebuildSandboxUnlocked(
             !resumeConfig.registeredInferenceProviderAttachment && resumeConfig.credentialEnv
               ? hydrateCredentialEnv(resumeConfig.credentialEnv)
               : null;
-          if (
-            hostCredential &&
-            !(await validateRebuildHostInferenceCredential(resumeConfig, hostCredential))
-          ) {
-            return {
-              ok: false,
-              message:
-                "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
-            };
-          }
+          const hostCredentialCheck = await revalidateRebuildHostCredentialBeforeDelete(
+            resumeConfig,
+            hostCredential,
+          );
+          if (!hostCredentialCheck.ok) return hostCredentialCheck;
           const nativeAttachment =
             resumeConfig.nativeNvidiaProviderAttachment ??
             resumeConfig.nativeHostedProviderAttachment;

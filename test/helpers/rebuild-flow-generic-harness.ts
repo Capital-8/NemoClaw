@@ -58,7 +58,7 @@ import {
   rebuildCustomImagePreflight,
   rebuildFlowHelpers,
   rebuildInference,
-  rebuildProviderPreflight,
+  rebuildHostCredentialPreflight,
   rebuildManagedImage,
   rebuildMessagingConflict,
   rebuildOnboardDependencies,
@@ -401,9 +401,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   );
   const defaultHydrateCredentialEnv =
     onboardCredentialEnv.hydrateCredentialEnv.bind(onboardCredentialEnv);
-  vi.spyOn(rebuildProviderPreflight, "validateRebuildHostInferenceCredential").mockResolvedValue(
-    true,
-  );
+  vi.spyOn(
+    rebuildHostCredentialPreflight,
+    "validateRebuildHostInferenceCredential",
+  ).mockResolvedValue(true);
   const hydrateCredentialEnvSpy = vi
     .spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv")
     .mockImplementation((...args: unknown[]) => {

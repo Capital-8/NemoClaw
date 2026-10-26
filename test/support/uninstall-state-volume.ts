@@ -45,6 +45,7 @@ export async function runManagedHermesVolumeUninstall(
   containerMode: "absent" | "foreign" | "owned" = "absent",
   agent: "hermes" | "openclaw" = "hermes",
   workspace = "default",
+  registryAgent: "hermes" | "openclaw" | null = agent,
 ) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-hermes-volume-"));
   const stateDir = path.join(home, ".nemoclaw");
@@ -62,7 +63,7 @@ export async function runManagedHermesVolumeUninstall(
       defaultSandbox: "hermes",
       sandboxes: {
         hermes: {
-          agent,
+          agent: registryAgent,
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
           name: "hermes",

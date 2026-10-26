@@ -264,7 +264,7 @@ describe("Hermes Discord E2E policy binding", () => {
       const command = vi
         .fn<HostCliClient["command"]>()
         .mockImplementation(async (_command, args = []) => {
-          // OpenShell 0.1.3 rejects mixed endpoint and rule updates before gateway access.
+          // OpenShell 0.1.5 rejects mixed endpoint and rule updates before gateway access.
           expect(args.includes("--add-endpoint") && args.includes("--add-allow")).toBe(false);
           const responses: Record<string, () => ShellProbeResult> = {
             "sandbox provider": () => successfulProbe(providerName),

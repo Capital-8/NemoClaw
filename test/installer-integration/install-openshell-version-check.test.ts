@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.3.json";
+import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.1.5.json";
 import {
   prepareInstallerBin,
   runCommandWithInstalledVersion,
@@ -1346,8 +1346,8 @@ exit 0`,
     expect(result.stdout).toMatch(/below minimum.*upgrading/);
   });
 
-  it("reinstalls the pinned release when openshell 0.1.4 is above MAX_VERSION", () => {
-    const result = runCommandWithInstalledVersion("0.1.4");
+  it("reinstalls the pinned release when openshell 0.1.6 is above MAX_VERSION", () => {
+    const result = runCommandWithInstalledVersion("0.1.6");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain(
       `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
@@ -1379,7 +1379,7 @@ exit 0`,
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "NemoClaw requires exact stable OpenShell 0.1.3; the dev channel is not supported.",
+      "NemoClaw requires exact stable OpenShell 0.1.5; the dev channel is not supported.",
     );
     expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
   });
@@ -1460,7 +1460,6 @@ exit 1`,
         encoding: "utf8",
       });
 
-      // Should attempt install (not exit 0 early) and fail at the download step
       expect(result.stdout).toMatch(/Installing OpenShell from release/);
       expect(result.status).not.toBe(0);
     } finally {
@@ -1480,6 +1479,9 @@ describe("OpenShell split sandbox installation", () => {
     ["0.1.3", "5b2178f3b64a6c96eff9ed61bd7feeada4b4a4b3c68f3664e3b8f4f2b264a9b1", false],
     ["0.1.2", "23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281", false],
     ["0.1.3", "0".repeat(64), false],
+    ["0.1.5", "a048b1fd2acd78f44f50a4cf0e02cdefec691656f3941e92c5ec0e09a69990e2", true],
+    ["0.1.5", "65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc", true],
+    ["0.1.5", "23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281", false],
   ] as const)(
     "checks the sandbox digest and claimed version before deferring supervisor policy verification [%s, %s]",
     (version, digest, accepted) => {

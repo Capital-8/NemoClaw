@@ -117,10 +117,10 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 # round-trippable base policies: WebSocket text frames, provider-shaped
 # aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
 # `policy get --base` for MCP/JSON-RPC-safe read-modify-write operations.
-MIN_VERSION="0.1.3"
+MIN_VERSION="0.1.5"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.1.3"
+MAX_VERSION="0.1.5"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
@@ -128,7 +128,7 @@ MAX_VERSION="0.1.3"
 PIN_VERSION="$MAX_VERSION"
 # Keep the base-trusted template selector aligned with the immutable release;
 # the dev channel is rejected below and cannot consume it.
-DEV_MIN_VERSION="0.1.3"
+DEV_MIN_VERSION="0.1.5"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -429,41 +429,41 @@ try {
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.1.3:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "ed08ea7874c47f22d6e5dcc4b27d9ef1ef5d2060f83035b35ff725d5160830a3"
+    v0.1.5:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "ca1ad6e6fbb4a6cd407e95763391b8ecff02912e7d9c467e7ca22696fe80af69"
       ;;
-    v0.1.3:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "07687dacefc52bc73b01943f5b58f7a5082c1ceaa228461b9a2a78023b8057c0"
+    v0.1.5:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "30c949b4ac07a9c8245c1248eb82e4eb241615134fcabf3c9bf30dec7d00addf"
       ;;
-    v0.1.3:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "2eda3676aa85ff60551b403847090942e119c89f37c84d1635ac166c6b879826"
+    v0.1.5:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "48d6f4b4a222dc0a120ee4d6a677cb931bcc57f9ac54aefb101588f99c9c7642"
       ;;
-    v0.1.3:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "da8dce943fe01cce90243b2bf2587c71a243e4d641a4b616528829b681ced198"
+    v0.1.5:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "6ed6a6aff420c65250082cc1db48dc6271a6f5eec0e0068133566ffae4aa788b"
       ;;
-    v0.1.3:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "801214322227f64f2d3faa6989daaa5e6cd9ef1ab768b5860496deeb1158c27b"
+    v0.1.5:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "125f9f43b8d06da8280c78089904a6da2faa7c4cb03f82db3b31fc980cf6c62d"
       ;;
-    v0.1.3:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "a0cff0699f4a608a644805dbbf898c42caa59856274ff3cc2cdd6b3af4bacabe"
+    v0.1.5:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "8e6fd1b05999709a9042ec83fcd902e062507af3e817f28bcda181fb93b42e7a"
       ;;
-    v0.1.3:openshell-sandbox-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "8ab28e18e425f4160e99744ba74bb2a2d32a7f158ca55a2536e79f11ea1a8cf5"
+    v0.1.5:openshell-sandbox-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "e7a67e0254a19b829171d5bb1b5c9e00a3ea98411d941c9c99ad6d8fd7e181b5"
       ;;
-    v0.1.3:openshell-sandbox-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "47fb89fee5997f5dfb1911ec95201346690b46580df0220458f418e4c3c6782b"
+    v0.1.5:openshell-sandbox-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "5d9b633c2f2b935af0193089828a38b88bce74c1c94e7eab69329c86130dbcfb"
       ;;
-    v0.1.3:openshell-checksums-sha256.txt)
-      printf '%s\n' "a7bc832c2e777e43e373bcdfa2f3d6180f2e83efb491d81d4299e181697444eb"
+    v0.1.5:openshell-checksums-sha256.txt)
+      printf '%s\n' "6023b4ab7302f2a718ae93c3f7e738e9609b161cc6a81b5af138e22235c590c7"
       ;;
-    v0.1.3:openshell-gateway-checksums-sha256.txt)
-      printf '%s\n' "414dc38f465086532077429a5d652ebad4d28fc384077c54c70139209568f8c6"
+    v0.1.5:openshell-gateway-checksums-sha256.txt)
+      printf '%s\n' "12ab45742c9ce8b95660cc9f8eda47f65710affc8213b04de743f649af0d5361"
       ;;
-    v0.1.3:openshell-sandbox-checksums-sha256.txt)
-      printf '%s\n' "1320a57cc9fd3ce8ad4bb9e1f8e225241f2d8b35ae3ceb1ae69992670211d576"
+    v0.1.5:openshell-sandbox-checksums-sha256.txt)
+      printf '%s\n' "56a7b7a6ed3a6fe62022a6602c7810f54d4a253d980c9c0d737c359845943e15"
       ;;
-    v0.1.3:openshell.rb)
-      printf '%s\n' "e760d5c41f5d3fd7a430a87e1efdf813c44848689c76a10029c8f65ed4f4eb4b"
+    v0.1.5:openshell.rb)
+      printf '%s\n' "6b197da850a299774114d517a45cffd3f3259c9aa1a49faae28ec9d8e02a757a"
       ;;
     *)
       return 1
@@ -615,6 +615,11 @@ pinned_sandbox_build_version() {
     38fe063f19c72680a1bc4b0c343a3ec5b7a5cb087a627faab5b2aefd9d50d094 | \
       23147b42d31bd0b13e1a9ed7b3834b8e6075836cba0872fffa9e7d481f6dd281)
       printf '%s\n' "0.1.3"
+      ;;
+    # OpenShell v0.1.5 standalone sandbox binaries.
+    a048b1fd2acd78f44f50a4cf0e02cdefec691656f3941e92c5ec0e09a69990e2 | \
+      65aa2a2afb96e7d1351c1d197ded7a966e20bcad68e18a58a94621a8f23769bc)
+      printf '%s\n' "0.1.5"
       ;;
     *)
       return 1
@@ -824,7 +829,7 @@ openshell_has_required_messaging_features() {
     return 1
   fi
 
-  # OpenShell 0.1.2 and 0.1.3 enforce MCP policy in their supervisor images.
+  # OpenShell 0.1.2, 0.1.3, and 0.1.5 enforce MCP policy in their supervisor images.
   # Require a pinned sandbox digest matching the CLI, not version text alone.
   # Runtime policy verification still precedes credential/provider changes.
   if [ -z "$sandbox_bin" ] || [ ! -f "$sandbox_bin" ]; then
@@ -843,7 +848,7 @@ openshell_has_required_messaging_features() {
     sandbox_version="$(pinned_sandbox_build_version "$sandbox_digest")" || return 1
     openshell_version="$(component_build_version "$openshell_bin" cli)" || return 1
     case "$sandbox_version" in
-      0.1.2 | 0.1.3)
+      0.1.2 | 0.1.3 | 0.1.5)
         [ "$sandbox_version" = "$openshell_version" ] && return 0
         ;;
     esac

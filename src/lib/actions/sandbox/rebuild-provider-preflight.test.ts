@@ -29,7 +29,7 @@ import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider
 import { nativeLocalIdentity } from "../../inference/native-local/contract";
 import { preflightRebuildCredentials } from "./rebuild-credential-preflight";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
-import * as providerPreflight from "./rebuild-provider-preflight";
+import * as hostCredentialPreflight from "./rebuild/host-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 vi.mock("../../adapters/openshell/provider-policy", () => ({
@@ -397,7 +397,7 @@ describe.each(["langchain-deepagents-code", "hermes", "openclaw"] as const)(
       const f = nativeFixture();
       f.hydrate.mockReturnValue("test-only-rejected-key");
       const validate = vi
-        .spyOn(providerPreflight, "validateRebuildHostInferenceCredential")
+        .spyOn(hostCredentialPreflight, "validateRebuildHostInferenceCredential")
         .mockResolvedValue(false);
       await expect(preflightRebuildCredentials(f.entry, vi.fn(), throwingBail)).rejects.toThrow(
         "Host inference credential validation failed",
@@ -409,6 +409,8 @@ describe.each(["langchain-deepagents-code", "hermes", "openclaw"] as const)(
             agent === "openclaw" ? "NEMOCLAW_LLAMACPP_LOCAL_TOKEN" : "COMPATIBLE_API_KEY",
         }),
         "test-only-rejected-key",
+        undefined,
+        expect.any(Function),
       );
     });
 

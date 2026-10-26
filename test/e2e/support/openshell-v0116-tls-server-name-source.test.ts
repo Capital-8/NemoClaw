@@ -14,6 +14,7 @@ import {
   OPENSHELL_V0116_QUALIFICATION,
   OPENSHELL_V012_QUALIFICATION,
   OPENSHELL_V013_QUALIFICATION,
+  OPENSHELL_V015_QUALIFICATION,
 } from "../fixtures/openshell-v0116-qualification.ts";
 import {
   assertOpenShellTlsServerNameSource,
@@ -21,6 +22,7 @@ import {
   OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES,
   OPENSHELL_V012_TLS_SERVER_NAME_SOURCES,
   OPENSHELL_V013_TLS_SERVER_NAME_SOURCES,
+  OPENSHELL_V015_TLS_SERVER_NAME_SOURCES,
   verifyOpenShellTlsServerNameSourceBoundary,
 } from "../live/openshell-v0116-tls-server-name-source.ts";
 
@@ -73,19 +75,19 @@ describe("OpenShell TLS server-name boundary", () => {
     try {
       const helpers = createDockerDriverGatewayRuntimeHelpers({
         gatewayPort: 18_080,
-        getBlueprintMaxOpenshellVersion: () => OPENSHELL_V013_QUALIFICATION.version,
+        getBlueprintMaxOpenshellVersion: () => OPENSHELL_V015_QUALIFICATION.version,
         getCachedOpenshellBinary: () => null,
         getInstalledOpenshellVersion: () => null,
         isOpenshellDevVersion: () => false,
         loadDockerDriverGatewayEnv: () => dockerDriverGatewayEnv,
         runCapture: () => "",
         shouldUseOpenshellDevChannel: () => false,
-        supportedOpenshellFallbackVersion: OPENSHELL_V013_QUALIFICATION.version,
+        supportedOpenshellFallbackVersion: OPENSHELL_V015_QUALIFICATION.version,
       });
 
       expect(
         helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-      ).toBe(OPENSHELL_V013_QUALIFICATION.supervisorImage);
+      ).toBe(OPENSHELL_V015_QUALIFICATION.supervisorImage);
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -107,6 +109,7 @@ describe("OpenShell TLS server-name boundary", () => {
     [OPENSHELL_V0116_QUALIFICATION, OPENSHELL_V0116_TLS_SERVER_NAME_SOURCES],
     [OPENSHELL_V012_QUALIFICATION, OPENSHELL_V012_TLS_SERVER_NAME_SOURCES],
     [OPENSHELL_V013_QUALIFICATION, OPENSHELL_V013_TLS_SERVER_NAME_SOURCES],
+    [OPENSHELL_V015_QUALIFICATION, OPENSHELL_V015_TLS_SERVER_NAME_SOURCES],
   ] as const)("fetches each exact source once for %j", async (qualification, sources) => {
     const fixtures = sources.map((reviewedSource) => {
       const source = reviewedSource.checks.flatMap(({ orderedTokens }) => orderedTokens).join("\n");

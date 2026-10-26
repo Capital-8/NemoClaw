@@ -55,7 +55,7 @@ import {
   assertProviderlessInterceptorEnvironment,
   enforceRemovedImmutabilityMigrationBoundary,
 } from "../entry-options";
-import { removeManagedAgentStateVolumes } from "../managed-workload/hermes-state-volume";
+import { removeManagedAgentStateVolumes } from "../managed-workload/agent-state-volumes";
 import {
   createOnboardRecreateGatewayAuthorityRevalidator,
   shouldReconcileRestoredOpenClawSelection,

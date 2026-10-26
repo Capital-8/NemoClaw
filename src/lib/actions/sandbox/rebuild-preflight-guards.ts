@@ -32,10 +32,15 @@ import * as registry from "../../state/registry";
 import { withLock } from "../../state/registry/lock";
 import { load, save } from "../../state/registry/persistence";
 import type { SandboxEntry, SandboxRegistry } from "../../state/registry/types";
+import {
+  validateRebuildHostInferenceCredential,
+  type HostCredentialTarget,
+} from "./rebuild/host-credential-preflight";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildVersionCheck } from "./rebuild-preflight-confirmation";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import { reconcileJournaledRebuildRecovery } from "./destroy-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-preflight";
 
 export interface RebuildRoutePreflightReceipt {
@@ -395,6 +400,26 @@ export function blockRebuildOnRetainedSandboxRecovery(
     .find((record) => record.sandboxName === sandboxName);
   if (!retainedRecovery) return false;
 
+  if (retainedRecovery.sandboxIdentityFingerprint === null) {
+    try {
+      const reconciled = reconcileJournaledRebuildRecovery(
+        sandbox,
+        onboardSession.listRetainedSandboxRecoveryRecords(),
+        { session: onboardSession, registry },
+      );
+      if (reconciled) {
+        console.log(
+          `  Cleared absent replacement recovery for '${sandboxName}'; resuming its saved rebuild.`,
+        );
+        return false;
+      }
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      bail(`Retained sandbox recovery blocks rebuild for '${sandboxName}'.`, 1);
+      return true;
+    }
+  }
+
   console.error(
     `  Rebuild cannot use retained sandbox '${sandboxName}' while recovery record '${retainedRecovery.recordId}' is unresolved. No sandbox or Docker resources were removed.`,
   );
@@ -488,4 +513,23 @@ export function assertRebuildEntryUnchanged(
     "Sandbox configuration changed before rebuild lock acquisition",
     bail,
   );
+}
+
+export async function revalidateRebuildHostCredentialBeforeDelete(
+  target: HostCredentialTarget,
+  hostCredential: string | null,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  let indeterminate = false;
+  const valid =
+    !hostCredential ||
+    (await validateRebuildHostInferenceCredential(target, hostCredential, undefined, () => {
+      indeterminate = true;
+    }));
+  if (valid) return { ok: true };
+  return {
+    ok: false,
+    message: indeterminate
+      ? "NVIDIA upstream inference was temporarily unavailable before sandbox deletion. The sandbox is untouched; retry rebuild when inference recovers."
+      : "Host inference credential could not be validated before sandbox deletion. Check the credential and recorded endpoint, then retry rebuild.",
+  };
 }

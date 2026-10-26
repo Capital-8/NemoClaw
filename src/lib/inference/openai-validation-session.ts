@@ -22,7 +22,7 @@ import {
   MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
   STREAMING_EVENT_PROBE_MAX_SECONDS,
 } from "./probe-http-helpers";
-import { isRetriableHttpProbeStatus } from "./probe/transient-http-policy";
+import { RETRIABLE_HTTP_PROBE_STATUSES } from "./probe/transient-http-policy";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
 
@@ -198,7 +198,6 @@ async function requestWithHttpRetry(
   name: string,
   request: () => Promise<CurlProbeResult>,
   retryTransientHttp = true,
-  provider?: string,
 ): Promise<CurlProbeResult> {
   return retryUntilAsync(
     async (attempt) => {
@@ -215,7 +214,7 @@ async function requestWithHttpRetry(
       accept: (result) =>
         !retryTransientHttp ||
         result.curlStatus !== 0 ||
-        !isRetriableHttpProbeStatus(result.httpStatus, provider),
+        !RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus),
       retryDelaysMs: RETRY_DELAYS_MS,
       onRetry: (result, delayMs) => {
         console.log(
@@ -290,16 +289,12 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
         "nemoclaw.inference.validation_probe",
         { probe_name: "Responses API", api: "openai-responses" },
         () =>
-          requestWithHttpRetry(
-            "Responses API",
-            () =>
-              session.request({
-                ...auth,
-                body: responsesPayload(model, options.requireResponsesToolCalling === true),
-                timeoutMs: deps.getResponsesTimeoutMs(options),
-              }),
-            true,
-            options.provider,
+          requestWithHttpRetry("Responses API", () =>
+            session.request({
+              ...auth,
+              body: responsesPayload(model, options.requireResponsesToolCalling === true),
+              timeoutMs: deps.getResponsesTimeoutMs(options),
+            }),
           ),
       );
       if (responses.curlStatus !== 0) return nativeFailureFallback("native_responses_failure");
@@ -362,7 +357,6 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
                 ),
               }),
             retryTransientHttp,
-            options.provider,
           );
         const retryReasoningOnly = async (
           candidate: CurlProbeResult,
