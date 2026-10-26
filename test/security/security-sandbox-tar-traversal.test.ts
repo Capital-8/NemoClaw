@@ -17,6 +17,15 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+const HOST_TAR_SUPPORTS_LITERAL_QUOTING =
+  spawnSync("tar", ["--quoting-style=literal", "-tf", "-"], {
+    input: Buffer.alloc(1024),
+  }).status === 0;
+
+function listedRawTarName(name: string): string {
+  return HOST_TAR_SUPPORTS_LITERAL_QUOTING ? name : name.replaceAll("\\", "\\\\");
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Helpers — tar archive construction
 // ═══════════════════════════════════════════════════════════════════
@@ -306,7 +315,7 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     expect(result.violations[0]).toContain("../../.bashrc");
   });
 
-  it("preserves literal backslashes in archive entries while rejecting traversal", async () => {
+  it("lists raw backslash names consistently while rejecting traversal", async () => {
     const { validateTarEntries } = await loadSandboxState();
     const targetDir = "/tmp/nemoclaw-test-target";
     const backslashEntry = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/.env";
@@ -317,7 +326,7 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
 
     expect(valid).toEqual({
       safe: true,
-      entries: [backslashEntry],
+      entries: [listedRawTarName(backslashEntry)],
       violations: [],
     });
 
@@ -328,7 +337,7 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
 
     expect(escaping.safe).toBe(false);
     expect(escaping.violations[0]).toContain(
-      "path traversal: workspace/back\\slash/../../../escape.txt",
+      `path traversal: ${listedRawTarName("workspace/back\\slash/../../../escape.txt")}`,
     );
   });
 
@@ -589,7 +598,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
 
     expect(symlinkValidation.safe).toBe(true);
     expect(rejectSymlinkExtractionTraversal(symlinkTar, symlinkValidation.entries)).toEqual([
-      "archive member 'workspace/sym\\link/payload.txt' would extract through symlink 'workspace/sym\\link'",
+      `archive member '${listedRawTarName("workspace/sym\\link/payload.txt")}' would extract through symlink '${listedRawTarName("workspace/sym\\link")}'`,
     ]);
 
     const hardLinkTar = buildTar([
@@ -600,7 +609,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
 
     expect(hardLinkValidation.safe).toBe(true);
     expect(rejectHardLinkExtractionTraversal(hardLinkTar, hardLinkValidation.entries)).toEqual([
-      "hard-link target 'workspace/sym\\link/.config/secret' in 'workspace/stolen' resolves through symlink 'workspace/sym\\link'",
+      `hard-link target '${listedRawTarName("workspace/sym\\link/.config/secret")}' in 'workspace/stolen' resolves through symlink '${listedRawTarName("workspace/sym\\link")}'`,
     ]);
   });
 
@@ -617,6 +626,10 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
         encoding: "utf8",
       }).stdout.trim();
       expect(systemTar).not.toBe("");
+      const literalQuotingSupported =
+        spawnSync(systemTar, ["--quoting-style=literal", "-tf", "-"], {
+          input: Buffer.alloc(1024),
+        }).status === 0;
       const fakeTar = path.join(fixture, "tar");
       fs.writeFileSync(
         fakeTar,
@@ -625,7 +638,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
           'const { spawnSync } = require("node:child_process");',
           "const args = process.argv.slice(2);",
           'if (args.includes("--quoting-style=literal")) { process.stderr.write("tar: Option --quoting-style=literal is not supported\\n"); process.exit(1); }',
-          `process.exit(spawnSync(${JSON.stringify(systemTar)}, ["--quoting-style=literal", ...args], { stdio: "inherit" }).status ?? 90);`,
+          `process.exit(spawnSync(${JSON.stringify(systemTar)}, ${JSON.stringify(literalQuotingSupported ? ["--quoting-style=literal"] : [])}.concat(args), { stdio: "inherit" }).status ?? 90);`,
         ].join("\n"),
         { mode: 0o755 },
       );
@@ -635,7 +648,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
       const safeTar = buildTar([{ path: safeEntry, content: "CUSTOM_MODE=enabled\n" }]);
       expect(validateTarEntries(safeTar, "/tmp/private-stopped-state")).toEqual({
         safe: true,
-        entries: [safeEntry],
+        entries: [listedRawTarName(safeEntry)],
         violations: [],
       });
 
@@ -646,7 +659,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
       const symlinkValidation = validateTarEntries(symlinkTar, "/tmp/private-stopped-state");
       expect(symlinkValidation.safe).toBe(true);
       expect(rejectSymlinkExtractionTraversal(symlinkTar, symlinkValidation.entries)).toEqual([
-        "archive member 'workspace/sym\\link/payload.txt' would extract through symlink 'workspace/sym\\link'",
+        `archive member '${listedRawTarName("workspace/sym\\link/payload.txt")}' would extract through symlink '${listedRawTarName("workspace/sym\\link")}'`,
       ]);
 
       const hardLinkTar = buildTar([
@@ -656,7 +669,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
       const hardLinkValidation = validateTarEntries(hardLinkTar, "/tmp/private-stopped-state");
       expect(hardLinkValidation.safe).toBe(true);
       expect(rejectHardLinkExtractionTraversal(hardLinkTar, hardLinkValidation.entries)).toEqual([
-        "hard-link target 'workspace/sym\\link/.config/secret' in 'workspace/stolen' resolves through symlink 'workspace/sym\\link'",
+        `hard-link target '${listedRawTarName("workspace/sym\\link/.config/secret")}' in 'workspace/stolen' resolves through symlink '${listedRawTarName("workspace/sym\\link")}'`,
       ]);
 
       const replacementTar = path.join(fixture, "gnu-like-tar");
@@ -667,7 +680,8 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
           'const { spawnSync } = require("node:child_process");',
           "const args = process.argv.slice(2);",
           'if (!args.includes("--quoting-style=literal")) { process.stderr.write("missing --quoting-style=literal\\n"); process.exit(2); }',
-          `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" }).status ?? 90);`,
+          `const forwarded = ${JSON.stringify(literalQuotingSupported)} ? args : args.filter((arg) => arg !== "--quoting-style=literal");`,
+          `process.exit(spawnSync(${JSON.stringify(systemTar)}, forwarded, { stdio: "inherit" }).status ?? 90);`,
         ].join("\n"),
         { mode: 0o755 },
       );
@@ -676,7 +690,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
 
       expect(validateTarEntries(safeTar, "/tmp/private-stopped-state")).toEqual({
         safe: true,
-        entries: [safeEntry],
+        entries: [listedRawTarName(safeEntry)],
         violations: [],
       });
     } finally {

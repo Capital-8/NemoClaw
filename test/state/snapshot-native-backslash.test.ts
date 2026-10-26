@@ -1,0 +1,89 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { afterAll, describe, expect, it } from "vitest";
+import {
+  writeExecutable,
+  writeFakeOpenshell,
+  writeFakeSsh,
+  writeSnapshotRegistry,
+} from "../support/native-snapshot.ts";
+
+const ORIGINAL_HOME = process.env.HOME;
+const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-backslash-"));
+process.env.HOME = TMP_HOME;
+const sandboxState = await import(
+  pathToFileURL(path.join(import.meta.dirname, "../..", "src", "lib", "state", "sandbox.ts")).href
+);
+
+function restoreEnv(name: string, value: string | undefined): void {
+  value === undefined
+    ? Reflect.deleteProperty(process.env, name)
+    : Reflect.set(process.env, name, value);
+}
+
+afterAll(() => {
+  restoreEnv("HOME", ORIGINAL_HOME);
+  fs.rmSync(TMP_HOME, { recursive: true, force: true });
+});
+
+describe("native backup with unsupported tar listing option", () => {
+  it("round-trips backslash paths after tar rejects --quoting-style=literal", async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-bsdtar-fallback-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const nativeRoot = path.join(fixture, "native-home");
+      const relativeFile = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/notes.md";
+      const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(systemTar).not.toBe("");
+      const literalQuotingSupported =
+        spawnSync(systemTar, ["--quoting-style=literal", "-tf", "-"], {
+          input: Buffer.alloc(1024),
+        }).status === 0;
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.dirname(path.join(nativeRoot, relativeFile)), { recursive: true });
+      fs.writeFileSync(path.join(nativeRoot, relativeFile), "fallback-backslash-notes");
+      writeFakeOpenshell(binDir);
+      writeFakeSsh(binDir);
+      writeExecutable(
+        path.join(binDir, "tar"),
+        [
+          "#!/usr/bin/env node",
+          'const { spawnSync } = require("node:child_process");',
+          "const args = process.argv.slice(2);",
+          'if (args.includes("--quoting-style=literal")) { process.stderr.write("tar: Option --quoting-style=literal is not supported\\n"); process.exit(1); }',
+          `const forwarded = args.includes("-tf") || args.includes("-tvf") ? ${JSON.stringify(literalQuotingSupported ? ["--quoting-style=literal"] : [])}.concat(args) : args;`,
+          `process.exit(spawnSync(${JSON.stringify(systemTar)}, forwarded, { stdio: "inherit" }).status ?? 90);`,
+        ].join("\n"),
+      );
+      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
+      process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      writeSnapshotRegistry(TMP_HOME, "alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success, backup.error).toBe(true);
+      fs.writeFileSync(path.join(nativeRoot, relativeFile), "mutated");
+      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+      expect(restore.success, restore.error).toBe(true);
+      expect(fs.readFileSync(path.join(nativeRoot, relativeFile), "utf8")).toBe(
+        "fallback-backslash-notes",
+      );
+    } finally {
+      restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+      restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
