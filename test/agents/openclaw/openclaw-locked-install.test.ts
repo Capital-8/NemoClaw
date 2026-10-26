@@ -171,6 +171,8 @@ describe("locked OpenClaw production installation (#5896)", () => {
   it("binds the reviewed root artifact to the complete committed closure", () => {
     const verified = verifyReviewedNpmLock(lockRequest(), reviewedMetadata);
     expect(verified).toHaveLength(413);
+    expect(verified).toContain("body-parser@2.4.0");
+    expect(verified).toContain("qs@6.16.1");
     expect(verified).toContain(PACKAGE_SPEC);
     expect(verified).toContain("brace-expansion@5.0.12");
     expect(verified).toContain("fast-uri@3.1.8");

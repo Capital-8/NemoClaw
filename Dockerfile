@@ -13,7 +13,7 @@ ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY=sha512-I1f6WoSLbLlsWq4zH+vtwdoc4Y41mq
 
 FROM scratch AS reviewed-npm-archive
 ADD --chmod=0444 --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
-FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS npm12
+FROM node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS npm12
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates=20250419 curl=8.14.1-2+deb13u7 && rm -rf /var/lib/apt/lists/*
 COPY scripts/lib/install-openclaw-migration-runtimes.sh scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/patch-bundled-npm-ip-address.mts scripts/lib/reviewed-npm-identity.mts /scripts/lib/
 COPY scripts/lib/patch-bundled-npm-undici.mts scripts/lib/remediate-openclaw-runtime-dependencies.mts /scripts/lib/
@@ -895,11 +895,8 @@ COPY --from=openclaw-plugin-payload / /
 # Copy built plugin and blueprint into the sandbox
 RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
 
-# The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
-# the primary security gate: it enforces the generated boundary's strict module
-# dependency allowlist before this stage copies it. The node check below is
-# defense in depth only and proves the copied runtime still exports the complete
-# audited interface; function availability does not replace dependency lockdown.
+# The builder-stage verify-openshell-policy-boundary-dependencies.mts check
+# enforces the allowlist; verify the copied exports here.
 RUN test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
     && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); for (const name of ["parseOpenShellPolicy", "stripProviderComposedPolicies", "withoutProviderComposedPolicies"]) { if (typeof boundary[name] !== "function") throw new Error("OpenShell policy boundary export is unavailable: " + name); }' \
@@ -2134,16 +2131,10 @@ RUN set -eu; \
         chmod 660 /sandbox/.openclaw/openclaw.json; \
     fi
 
-# System-wide shell hooks for shells where ~/.bashrc / ~/.profile aren't
-# sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or
-# without HOME=/sandbox). Dockerfile.base is the source of truth. This final
-# image replay only repairs stale published bases that predate the v0.0.69
-# base layer and therefore lack /etc/profile.d/nemoclaw-rlimits.sh, the
-# /etc/bash.bashrc hook, or the root-owned helper mode. Remove this block after
-# the minimum supported OpenClaw sandbox base tag is v0.0.69 or newer and those
-# three artifacts are guaranteed by the base image and covered by
-# test/runtime/sandbox/sandbox-provisioning.test.ts.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
+# System-wide shell hooks cover login/interactive shells with other users or HOME values.
+# Replay Dockerfile.base's hooks and helper modes for pre-v0.0.69 bases.
+# Remove after v0.0.69 is required and test/runtime/sandbox/sandbox-provisioning.test.ts
+# covers these files (#2704).
 # hadolint ignore=SC2028,DL4006
 RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && if ! grep -q "sandbox-rlimits.sh" /etc/profile.d/nemoclaw-rlimits.sh 2>/dev/null; then \

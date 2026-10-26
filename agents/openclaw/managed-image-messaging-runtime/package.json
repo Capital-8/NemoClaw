@@ -27,7 +27,8 @@
     "nemoclaw-openclaw-override-qs": "npm:qs@6.16.1",
     "nemoclaw-openclaw-override-uuid": "npm:uuid@14.0.2",
     "openclaw": "2026.10.5",
-    "undici": "8.12.3"
+    "undici": "8.12.3",
+    "zod": "4.6.6"
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.0",
