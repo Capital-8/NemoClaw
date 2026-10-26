@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -123,6 +123,24 @@ describe("parseSshProcesses", () => {
 
     expect(parseSshProcesses(nativeExec, "my-sandbox", null, "nemoclaw")).toEqual([]);
     expect(parseSshProcesses(ssh, "my-sandbox", null, "nemoclaw")).toEqual([]);
+  });
+
+  it("requires one sandbox name and TTY before the exec separator", () => {
+    const wrongSandbox =
+      "45685 openshell sandbox exec --name other-sandbox -g nemoclaw --tty -- /bin/bash -i --name my-sandbox";
+    const fakeTty =
+      "45686 openshell sandbox exec --name my-sandbox -g nemoclaw -- /bin/bash -i --tty";
+    const conflictingNames =
+      "45687 openshell sandbox exec --name other-sandbox --name my-sandbox -g nemoclaw --tty -- /bin/bash -i";
+
+    expect(
+      parseSshProcesses(
+        [wrongSandbox, fakeTty, conflictingNames].join("\n"),
+        "my-sandbox",
+        null,
+        "nemoclaw",
+      ),
+    ).toEqual([]);
   });
 
   it("does not count noninteractive exec or dashboard forwards (#12665)", () => {
@@ -313,7 +331,9 @@ describe("getActiveSandboxSessions", () => {
         "12345 openshell sandbox exec --name other-sandbox --tty -- /bin/bash -i\n" +
         "12346 openshell sandbox exec --name my-sandbox -- id -un\n" +
         "12347 ssh -F /tmp/nemoclaw-acp-ssh-foo/ssh_config openshell-other-sandbox.default\n" +
-        "12348 openshell sandbox exec --name my-sandbox -g nemoclaw --tty -- /bin/bash -i",
+        "12348 openshell sandbox exec --name my-sandbox -g nemoclaw --tty -- /bin/bash -i\n" +
+        "12349 openshell sandbox exec --name other-sandbox --tty -- /bin/bash -i --name my-sandbox\n" +
+        "12350 openshell sandbox exec --name my-sandbox -- /bin/bash -i --tty",
       resolveNativeExecGateway,
       resolveSshConfigGateway,
     };
@@ -366,6 +386,14 @@ describe("getActiveSandboxSessions", () => {
 
       chmodSync(config, 0o600);
       writeFileSync(config, Buffer.alloc(1_048_577), { mode: 0o600 });
+      expect(getActiveSandboxSessions("my-sandbox", deps, "nemoclaw").sessions).toEqual([]);
+
+      rmSync(config);
+      const target = join(directory, "other_config");
+      writeFileSync(target, "ProxyCommand openshell ssh-proxy --gateway-name nemoclaw\n", {
+        mode: 0o600,
+      });
+      symlinkSync(target, config);
       expect(getActiveSandboxSessions("my-sandbox", deps, "nemoclaw").sessions).toEqual([]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
