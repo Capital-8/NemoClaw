@@ -40,7 +40,7 @@ import {
   type ReasoningEffortRequest,
   resolveReasoningEffortRequest,
 } from "../inference/selection";
-import { registryEntryGatewayPort, resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { registryEntryGatewayPort, resolveGatewayName } from "../onboard/gateway-binding";
 import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
@@ -2263,7 +2263,8 @@ export async function runInferenceSet(
       lockedSelection.entry,
       deps.runtimeProviders,
     );
-    const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
+    // Validate both persisted binding fields before pending provider cleanup.
+    const gatewayName = resolveGatewayName(registryEntryGatewayPort(lockedSelection.entry));
     const mutation = await deps.withGatewayRouteMutationLock(gatewayName, async () => {
       await reconcilePreviousOpenClawLocal({
         entry: lockedSelection.entry,
