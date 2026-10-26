@@ -201,6 +201,86 @@ async fn independent_sandboxes_reconcile_concurrently_and_retain_shared_dependen
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
+async fn an_apply_cancelled_while_it_creates_sandboxes_is_unfinished_until_the_next_apply() {
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    *document.spec.gateway.endpoint_mut() = fixture.endpoint.clone();
+    let _image_engine = nemoclaw_e2e::image_runtime::engine(&mut document).await;
+    let second = document.spec.sandboxes["assistant"].clone();
+    document.spec.sandboxes.insert("independent".into(), second);
+    fixture.state.lock().unwrap().sandbox_create_delay = std::time::Duration::from_secs(2);
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let cancel = CancellationToken::new();
+    // Cancel once the gateway is creating both sandboxes.
+    let creating = {
+        let (state, cancel) = (fixture.state.clone(), cancel.clone());
+        tokio::spawn(async move {
+            while state.lock().unwrap().active_sandbox_creates < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            cancel.cancel();
+        })
+    };
+    let result = deployment.apply(&document, &cancel).await;
+    creating.abort();
+    assert!(
+        matches!(result, Err(nemoclaw_sdk::Error::Cancelled)),
+        "{result:?}"
+    );
+    let cancel = CancellationToken::new();
+    assert_apply_unfinished(&deployment, &cancel).await;
+    // Renaming the agent changes its sandbox, agent configuration and Fabric
+    // agent. The configuration was bound before the cancel and the Fabric
+    // agent never started, so only the interrupted sandbox creation can refuse
+    // the rename.
+    let mut changed = document.clone();
+    changed
+        .spec
+        .sandboxes
+        .get_mut("independent")
+        .unwrap()
+        .agent
+        .name = "renamed".into();
+    let error = deployment.apply(&changed, &cancel).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unfinished creation requires its original resource configuration"),
+        "{error}"
+    );
+    fixture.state.lock().unwrap().sandbox_create_delay = std::time::Duration::ZERO;
+    deployment.apply(&document, &cancel).await.unwrap();
+    {
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(state.sandboxes.len(), 2);
+        assert_eq!(state.workspaces.len(), 1);
+        assert_eq!(state.providers.len(), 1);
+    }
+    let effects = fixture.state.lock().unwrap().effects;
+    assert!(
+        deployment
+            .apply(&document, &cancel)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    deployment.destroy(&cancel).await.unwrap();
+    let state = fixture.state.lock().unwrap();
+    assert!(state.sandboxes.is_empty());
+    assert!(state.providers.is_empty());
+    assert!(state.workspaces.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated gateway fixture"]
 async fn incompatible_gateway_is_reported_by_opentofu_plan_without_sdk_preflight() {
     let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     let directory = tempfile::tempdir().unwrap();
