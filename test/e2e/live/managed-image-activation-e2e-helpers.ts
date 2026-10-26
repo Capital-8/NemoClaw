@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { resolveSandboxHealthProbeUrl } from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
+import { readStableRegularFile } from "../../../src/lib/onboard/managed-startup/image-runtime.ts";
 import {
   type ManagedImagePlatform,
   type ManagedImageContractCatalog,
@@ -874,11 +875,9 @@ export async function collectOnboardFailureRuntimeDiagnostics(
             },
           );
           if (copy.exitCode !== 0) return;
-          const stat = fs.lstatSync(copiedLog);
-          if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) return;
           await artifacts.writeText(
             `managed-activation-onboard-failure-${agent}-container-${index + 1}-nemoclaw-start.log`,
-            fs.readFileSync(copiedLog, "utf8"),
+            readStableRegularFile(copiedLog, 2 * 1024 * 1024).toString("utf8"),
           );
         } finally {
           fs.rmSync(copyRoot, { recursive: true, force: true });
