@@ -3896,7 +3896,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:nemoclaw:config:v1alpha1:sha256:b8dad9d01ab8d8daef3a27b219c2207119ab1bacfd40878ce77180fbdf54b6f3",
+  "$id": "urn:nemoclaw:config:v1alpha1:sha256:0b8c328cae1e0dc21aa1bcf25f7f676de42a2eb58eb72978029c014ce1ee629a",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "allOf": [
