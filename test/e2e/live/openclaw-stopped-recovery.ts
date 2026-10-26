@@ -5,6 +5,10 @@ import assert from "node:assert/strict";
 import { parseCliOpenShellSandboxInventory } from "../../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { waitUntilAsync } from "../../../src/lib/core/wait.ts";
+import {
+  REBUILD_OPENCLAW_KILL_TIMEOUT_MS,
+  REBUILD_OPENCLAW_STOP_TIMEOUT_MS,
+} from "../../../tools/e2e/rebuild-openclaw-timeout-contract.mts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
@@ -120,11 +124,11 @@ export async function proveStoppedDockerAgentRecovery(
       ? await sandbox.openshell(["sandbox", "stop", "-g", gateway, sandboxName], {
           artifactName: `${artifactPrefix}-stop`,
           env,
-          timeoutMs: 120_000,
+          timeoutMs: REBUILD_OPENCLAW_STOP_TIMEOUT_MS,
         })
       : await runtime.command(["kill", container], {
           artifactName: `${artifactPrefix}-kill`,
-          timeoutMs: 30_000,
+          timeoutMs: REBUILD_OPENCLAW_KILL_TIMEOUT_MS,
         });
   assertExitZero(
     transitionResult,
