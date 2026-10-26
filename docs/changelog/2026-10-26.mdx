@@ -19,6 +19,9 @@ NemoClaw v0.0.139 improves sandbox recovery and native inference checks, fixes W
 - `nemoclaw host probe` now reports detected GPUs' indices, names, and memory in its text and JSON output, within the public evidence limit.
   JSON output holds at most 256 entries across GPU and other evidence, and reports `gpuInventory.collected`, `listed`, and `omitted` when it omits devices.
   Related change: [PR #13070](https://github.com/NVIDIA/NemoClaw/pull/13070).
+- Local Ollama model selection now keeps a reported `0` available GPU memory value instead of using total memory.
+  The model menu shows `0 B` available memory and identifies models that exceed it.
+  Related change: [PR #13748](https://github.com/NVIDIA/NemoClaw/pull/13748).
 - New llama.cpp image publications include Sigstore bundle signatures and a legacy image signature.
   The publication workflow verifies the legacy signature with Cosign 2 before it emits a receipt.
   Related change: [PR #13667](https://github.com/NVIDIA/NemoClaw/pull/13667).
