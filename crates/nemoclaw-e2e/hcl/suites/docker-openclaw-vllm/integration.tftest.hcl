@@ -5,7 +5,7 @@ run "agents_answer" {
   command = apply
 
   assert {
-    condition     = output.vllm.ready
+    condition     = output.vllm["qwen"].ready
     error_message = "vllm: the deployed qwen service is not ready."
   }
 

@@ -31,27 +31,17 @@ variable "targets" {
   }
 }
 
-module "vllm" {
-  source  = "../../probes/vllm"
-  context = var.context
-  service = "qwen"
-}
-
-module "target" {
-  for_each          = var.targets
-  source            = "../../verifier"
-  context           = var.context
-  target            = each.key
-  agent             = each.value.agent
-  request           = each.value.request
-  response_contract = each.value.response_contract
-  depends_on        = [module.vllm]
+module "verifier" {
+  source        = "../../verifier"
+  context       = var.context
+  targets       = var.targets
+  vllm_services = ["qwen"]
 }
 
 output "vllm" {
-  value = module.vllm
+  value = module.verifier.vllm
 }
 
 output "targets" {
-  value = module.target
+  value = module.verifier.targets
 }

@@ -97,25 +97,20 @@ fn reports(run: &Path) -> BTreeMap<String, (PathBuf, Value)> {
 }
 
 #[tokio::test]
-#[ignore = "requires pinned OpenTofu via NEMOCLAW_TEST_BUNDLE or NEMOCLAW_HCL_TOFU; fixture observations, no Docker or inference"]
+#[ignore = "requires NEMOCLAW_TEST_BUNDLE; NEMOCLAW_HCL_TOFU may override OpenTofu; fixture observations, no Docker or inference"]
 async fn shared_hcl_assertions_load_targets_from_disk_and_reject_unhealthy_observations() {
     let root = tempfile::tempdir().unwrap();
     let suite = suite(root.path());
     let mut tools = tools(root.path());
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
     tools.tofu = std::env::var_os("NEMOCLAW_HCL_TOFU")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Bundle::open(Path::new(
-                &std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap(),
-            ))
-            .unwrap()
-            .tofu()
-        });
+        .unwrap_or_else(|| Bundle::open(&bundle).unwrap().tofu());
     let healthy = root.path().join("healthy");
     execute_with_tools(
         &deployment(),
         &suite,
-        root.path(),
+        &bundle,
         &healthy,
         &tools,
         &CancellationToken::new(),
@@ -146,7 +141,7 @@ async fn shared_hcl_assertions_load_targets_from_disk_and_reject_unhealthy_obser
         execute_with_tools(
             &deployment(),
             &suite,
-            root.path(),
+            &bundle,
             &unhealthy,
             &tools,
             &CancellationToken::new()

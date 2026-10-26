@@ -3,6 +3,11 @@
 
 terraform {
   required_version = "= 1.12.8"
+  required_providers {
+    vllm = {
+      source = "registry.opentofu.org/nvidia/vllm"
+    }
+  }
 }
 
 variable "context" {
@@ -29,16 +34,12 @@ variable "targets" {
   }
 }
 
-module "target" {
-  for_each          = var.targets
-  source            = "../../verifier"
-  context           = var.context
-  target            = each.key
-  agent             = each.value.agent
-  request           = each.value.request
-  response_contract = each.value.response_contract
+module "verifier" {
+  source  = "../../verifier"
+  context = var.context
+  targets = var.targets
 }
 
 output "targets" {
-  value = module.target
+  value = module.verifier.targets
 }
