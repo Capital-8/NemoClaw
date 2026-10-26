@@ -28,6 +28,9 @@ Read the candidate's verified review-queue context through
 [Discovery and identity](../../../tools/pr-review-advisor/REVIEW-QUEUE.md#discovery-and-identity).
 Preserve its complete `deterministic.requiredJobs` and `deterministic.requiredTargets` as the required coverage floor.
 Include any additional coverage explicitly required by the accepted scope.
+Specialist recommendations enter the mandatory plan only when a maintainer accepts them.
+Record that acceptance and its selectors. Preserve unaccepted or unresolved recommendations in the review disposition;
+they do not expand this E2E requirement. Other review and approval gates still apply.
 The trusted [workflow planner](../../../tools/e2e/workflow-plan.mts) owns selector expansion and runtime coverage.
 Verify its result against that floor; do not derive a separate coverage list from the diff.
 Record required gateway runtimes and the planner's expanded execution IDs and runtime providers.
@@ -41,6 +44,8 @@ An empty selection or a run containing only planning or support tests cannot sat
 ## Verify the Evidence
 
 Read the [Results contract](../../../tools/pr-review-advisor/REVIEW-QUEUE.md#results) before accepting artifacts.
+Use its rules to verify artifact provenance and execution results for the mandatory plan above.
+Its requirement to cover all recommendations does not expand this gate's mandatory plan.
 Use GitHub run, job, and artifact metadata to verify the evidence; a PR comment or green badge is insufficient.
 
 Require all of these conditions:

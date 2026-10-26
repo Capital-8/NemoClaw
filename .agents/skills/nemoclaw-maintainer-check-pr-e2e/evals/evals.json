@@ -127,5 +127,17 @@
       "Checks candidate/base/workflow and artifact identities normally and keeps every runtime execution within the relied-on run and attempt.",
       "Does not claim the aggregate receipt itself contains gateway runtimes or grant approval."
     ]
+  },
+  {
+    "id": "specialist-recommendation-requires-maintainer-acceptance",
+    "question": "Two main-PR fixtures have matching latest-candidate trusted E2E evidence passing the complete deterministic floor. A verified specialist recommends an additional supported selector, which has not run. In fixture one, no maintainer accepted that recommendation. In fixture two, a verified maintainer acceptance record adds it to the required plan. Every other E2E evidence condition holds. Classify this E2E gate.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Mandatory E2E coverage includes deterministic requirements and maintainer-accepted recommendations; unaccepted recommendations remain review input.",
+    "expected_behavior": [
+      "Returns PASS for the E2E requirement in fixture one and preserves the unaccepted recommendation in the review disposition.",
+      "Returns BLOCKED in fixture two because the accepted required selector lacks passing evidence.",
+      "Records acceptance and selectors rather than silently making every specialist recommendation mandatory.",
+      "Does not waive other review gates, dispatch tests, or approve either PR."
+    ]
   }
 ]
