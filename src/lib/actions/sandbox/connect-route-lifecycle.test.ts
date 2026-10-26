@@ -32,6 +32,18 @@ describe("connectSandbox route lifecycle", () => {
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
 
+  it("explicitly targets the selected gateway when connecting without a persisted row", async () => {
+    const harness = createConnectHarness({ registryEntries: [] });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+    });
+  });
+
   it("skips the vLLM model preflight only for probe-only connects (#4585)", async () => {
     const harness = createConnectHarness();
 

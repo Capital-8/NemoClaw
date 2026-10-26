@@ -21,7 +21,7 @@ import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/comma
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { createOpenshellSandboxIdReader } from "../adapters/openshell/sandbox-identity";
-import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file-no-follow";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 
 // ---------------------------------------------------------------------------

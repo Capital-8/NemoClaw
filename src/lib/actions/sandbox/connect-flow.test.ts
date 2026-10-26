@@ -23,7 +23,6 @@ function completedBufferedCommand(
     stderr: "",
   };
 }
-
 function runInferenceRouteThenDrift(
   harness: ReturnType<typeof createConnectHarness>,
 ): (
@@ -120,18 +119,6 @@ describe("connectSandbox flow", () => {
     });
     delete process.env.NEMOCLAW_TEST_NO_SLEEP;
     delete require.cache[requireDist.resolve(connectModulePath)];
-  });
-
-  it("explicitly targets the selected gateway when connecting without a persisted row", async () => {
-    const harness = createConnectHarness({ registryEntries: [] });
-
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
-
-    expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
-      kind: "connect",
-      sandboxName: "alpha",
-      target: { kind: "named", gatewayName: "nemoclaw" },
-    });
   });
 
   it("runs readiness checks, recovery probes, auto-pair approval, and opens the OpenShell shell", async () => {
