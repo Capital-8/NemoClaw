@@ -78,6 +78,7 @@ function candidateFixture(
     dockerState?: string;
     installPreviousRevision?: boolean;
     replaceDockerGuard?: boolean;
+    checkTelemetryEnvironment?: boolean;
   } = {},
 ): CandidateFixture {
   const fixtureRoot = temporaryDirectory("nemoclaw-native-candidate-");
@@ -107,6 +108,12 @@ function candidateFixture(
   printf '#!/usr/bin/env bash\\nexit 0\\n' >"$docker_guard_path"
   chmod 500 "$docker_guard_path"`
     : ":";
+  const telemetryCheck = options.checkTelemetryEnvironment
+    ? `[[ "\${CI:-}" == "true" && "\${GITHUB_ACTIONS:-}" == "true" ]] || exit 72
+  [[ "\${GITHUB_RUN_ID:-}" == "12345678901" && "\${GITHUB_RUN_ATTEMPT:-}" == "2" ]] || exit 72
+  [[ "\${NEMOCLAW_TELEMETRY_TEST_LABEL:-}" == "qa-handoff:client:attempt-1" ]] || exit 72
+  [[ "\${NEMOCLAW_DISABLE_TELEMETRY+x}" == "x" && -z "\${NEMOCLAW_DISABLE_TELEMETRY:-}" ]] || exit 72`
+    : ":";
   writeExecutable(
     installer,
     `#!/usr/bin/env bash
@@ -115,6 +122,7 @@ printf 'sourced\\n' >${shellQuote(sourceMarker)}
 
 install_nemoclaw_before_onboarding() {
   [[ -z "\${QUALIFICATION_TEST_CREDENTIAL:-}" ]] || exit 71
+  ${telemetryCheck}
   ${dockerMutation}
   ${guardMutation}
   installed_checkout="\${HOME}/.nemoclaw/source"
@@ -404,12 +412,20 @@ main --non-interactive --yes-i-accept-third-party-software
   });
 
   it("writes bounded receipts after both Docker checks and installed-source verification", () => {
-    const candidate = candidateFixture();
+    const candidate = candidateFixture({ checkTelemetryEnvironment: true });
     const artifactParent = temporaryDirectory("nemoclaw-native-artifacts-");
     const artifactDirectory = path.join(artifactParent, "qualification");
     const credentialValue = "native-qualification-credential-value";
     const result = runQualification(candidate, artifactDirectory, {
-      environment: { QUALIFICATION_TEST_CREDENTIAL: credentialValue },
+      environment: {
+        CI: "true",
+        GITHUB_ACTIONS: "true",
+        GITHUB_RUN_ID: "12345678901",
+        GITHUB_RUN_ATTEMPT: "2",
+        NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-handoff:client:attempt-1",
+        NEMOCLAW_DISABLE_TELEMETRY: "",
+        QUALIFICATION_TEST_CREDENTIAL: credentialValue,
+      },
     });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
