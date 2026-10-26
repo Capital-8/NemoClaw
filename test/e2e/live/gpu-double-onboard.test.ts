@@ -156,19 +156,11 @@ async function querySandboxForAnswer(
   const command = sharedRoute
     ? `curl -fsS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data ${shellQuote(chatRequest(model))}`
     : nativeLocalChatCommand(endpoint, chatRequest(model), "-fsS");
-  return await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "sh",
-      "-lc",
-      `${command} | ${parseReplyCommand()}`,
-    ],
-    {
-      artifactName,
-      env: env(),
-      timeoutMs: 150_000,
-    },
-  );
+  return await sandbox.exec(SANDBOX_NAME, ["sh", "-lc", `${command} | ${parseReplyCommand()}`], {
+    artifactName,
+    env: env(),
+    timeoutMs: 150_000,
+  });
 }
 
 async function expectSandboxInference42(

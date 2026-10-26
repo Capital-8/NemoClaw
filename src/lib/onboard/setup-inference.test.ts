@@ -457,7 +457,6 @@ describe("releaseSupersededOllamaModel", () => {
     expect(harness.discoverActiveOllamaSandboxNames).not.toHaveBeenCalled();
     expect(harness.unloadOllamaModels).not.toHaveBeenCalled();
     expect(harness.localInference.clearPersistedOllamaHostIfUnused).not.toHaveBeenCalled();
-
   });
 });
 

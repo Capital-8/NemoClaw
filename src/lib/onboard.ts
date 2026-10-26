@@ -2326,7 +2326,6 @@ const getSetupInferenceDeps = (): SetupInferenceDeps => ({
   error: (message: string) => console.error(message),
   exitProcess: (code: number): never => process.exit(code),
 });
-
 export type SetupInferenceDeps = import("./onboard/setup-inference").SetupInferenceDeps;
 export type SetupInference = import("./onboard/setup-inference").SetupInference;
 function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): SetupInference {
@@ -2370,7 +2369,6 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
       promptOrDefault,
     }),
 });
-
 const stageSandboxCredentialProviders = (
   input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>,
 ) =>

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +10,10 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import type { SandboxEntry } from "../../state/registry";
 import { SANDBOX_PROVIDER_SUFFIXES } from "../../onboard/sandbox-provider-cleanup";
 import { assertUnambiguousDestroyContainerIdentity, cleanupSandboxServices } from "./destroy";
+import {
+  createDestroyHarness,
+  resetDestroyModuleCache,
+} from "../../../../test/helpers/destroy-flow-test-harness";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -607,4 +613,32 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     });
     expect(classify).toHaveBeenCalledWith("destroytest");
   });
+});
+
+describe("forced destroy host cleanup", () => {
+  it(
+    "preserves host resources when --force cannot confirm sandbox deletion",
+    { timeout: 30_000 },
+    async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-force-home-"));
+      vi.stubEnv("HOME", home);
+      try {
+        const harness = createDestroyHarness({
+          deleteStatus: 1,
+          deleteOutput: "connection refused",
+        });
+        await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
+        expect(harness.unloadOllamaModelsSpy).not.toHaveBeenCalled();
+        expect(harness.stopAllSpy).not.toHaveBeenCalled();
+        expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+          expect.arrayContaining(["provider", "delete"]),
+          expect.anything(),
+        );
+      } finally {
+        vi.unstubAllEnvs();
+        resetDestroyModuleCache();
+        fs.rmSync(home, { force: true, recursive: true });
+      }
+    },
+  );
 });
