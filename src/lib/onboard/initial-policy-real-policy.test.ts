@@ -19,6 +19,8 @@ import {
   MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
 } from "./managed-startup/shared-state-transaction";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
+import { customNativeProvider } from "../inference/native-provider/custom";
+import type { NativeProviderAttachment } from "../inference/native-provider/contract";
 import { resolveTierPresets } from "../policy/tiers";
 import { listPresets } from "../policy";
 
@@ -136,6 +138,8 @@ describe("initial sandbox policy real preset merge", () => {
       expect(policy.network_policies?.native_nvidia_inference?.binaries).toEqual([
         { path: "/usr/local/bin/node" },
         { path: "/usr/bin/node" },
+        { path: "/usr/bin/python3" },
+        { path: "/usr/bin/python3.13" },
         { path: "/opt/hermes/.venv/bin/python" },
         { path: "/opt/hermes/.venv/bin/python3" },
         { path: "/opt/venv/bin/python3" },
@@ -144,6 +148,52 @@ describe("initial sandbox policy real preset merge", () => {
       ]);
     },
   );
+
+  it("allows the real Ubuntu tool paths for a custom OpenAI-compatible endpoint (#13657)", () => {
+    const binding = {
+      provider: "compatible-endpoint",
+      endpointUrl: "https://custom.example/team/v1",
+      api: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      allowedIps: ["8.8.8.8"],
+    } as const;
+    const definition = customNativeProvider(binding);
+    const receipt: NativeProviderAttachment = {
+      schemaVersion: 1,
+      profileId: definition.profileId,
+      providerName: definition.providerName,
+      providerId: "openshell-issued-placeholder",
+      endpointUrl: definition.endpointUrl,
+      allowedIps: [...(definition.allowedIps ?? [])],
+      custom: definition.custom,
+    };
+    const policy = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        [],
+        {
+          agentName: "openclaw",
+          inferenceProvider: definition.providerName,
+          nativeHostedProviderAttachment: receipt,
+        },
+      ),
+    );
+    const binaries = policy.network_policies?.native_hosted_inference?.binaries ?? [];
+    const binaryPaths = binaries.map((binary) => binary.path ?? "");
+    // The in-sandbox verification probe runs the curl that actually exists in
+    // the Ubuntu 26.04 image (/usr/bin/curl), and the sandbox python3 resolves
+    // to /usr/bin/python3.13. Every one of these paths must be granted egress
+    // or OpenShell 403s the probe it generated itself (#13657).
+    expect(binaryPaths).toEqual(
+      expect.arrayContaining([
+        "/usr/local/bin/curl",
+        "/usr/bin/curl",
+        "/usr/bin/python3",
+        "/usr/bin/python3.13",
+      ]),
+    );
+  });
+
   const managedImagePolicyPathsByAgent = {
     openclaw: [["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"]],
     hermes: [["agents", "hermes", "policy-additions.yaml"]],

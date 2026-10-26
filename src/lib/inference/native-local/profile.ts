@@ -75,8 +75,11 @@ export function prepareNativeLocalProfile(input: NativeLocalBinding) {
         },
       ],
       binaries: [
-        // The provider-neutral onboarding smoke probe uses Python urllib.
+        // The provider-neutral onboarding smoke probe uses Python urllib. OpenShell
+        // matches /proc/<pid>/exe exactly, so the Ubuntu image's symlink target
+        // (python3.13) is listed next to the /usr/bin/python3 entry (#13657).
         "/usr/bin/python3",
+        "/usr/bin/python3.13",
         ...(binding.agent === "hermes"
           ? ["/opt/hermes/.venv/bin/python", "/opt/hermes/.venv/bin/python3"]
           : []),
