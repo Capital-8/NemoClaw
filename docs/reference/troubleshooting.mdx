@@ -571,6 +571,28 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 ## Onboarding
 
+### Resume Native Local Inference on a Reused Gateway
+
+OpenShell `0.1.5` composes attached-provider policies automatically when no active global policy overrides them.
+The `providers_v2_enabled` setting no longer exists.
+If onboarding reports a global policy override, ask the gateway administrator to review it before resuming.
+For a gateway named `nemoclaw`, inspect its policy history with:
+
+```bash
+openshell policy list -g nemoclaw --global --page-size 1 --output json
+```
+
+NemoClaw requires verified empty history or a superseded current global revision.
+It does not remove an override or change gateway settings.
+After the administrator resolves the reported policy condition, resume the failed onboarding session:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+Resume reruns native local inference setup when NemoClaw has no recorded native local provider for this sandbox, even if another sandbox already has the same shared gateway route.
+An active override or an unverified policy response stops onboarding before sandbox creation and retains the session for another attempt.
+
 ### Cgroup v2 errors during onboard
 
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2. Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.

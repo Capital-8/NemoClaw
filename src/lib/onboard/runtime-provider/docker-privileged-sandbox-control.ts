@@ -19,7 +19,10 @@ import {
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
-import { selectDockerPrivilegedSandboxTarget } from "./docker-privileged-sandbox-identity";
+import {
+  selectDockerPrivilegedSandboxTarget,
+  selectDockerPrivilegedSandboxTargetRecord,
+} from "./docker-privileged-sandbox-identity";
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import { prepareManagedWorkspaceMetadata } from "./managed-workspace-metadata";
 import {
@@ -261,9 +264,9 @@ function observeStoppedDockerTarget(
     return { failure: "runtime-discovery-failed" };
   }
   if (lookup.status !== 0 || lookup.error) return { failure: "runtime-discovery-failed" };
-  let resourceHandle: string | null;
+  let targetRecord;
   try {
-    resourceHandle = selectDockerPrivilegedSandboxTarget(
+    targetRecord = selectDockerPrivilegedSandboxTargetRecord(
       input.sandboxName,
       lookup.stdout,
       input.registeredSandboxNames,
@@ -274,13 +277,14 @@ function observeStoppedDockerTarget(
   if (
     "expectedResourceHandle" in input &&
     input.expectedResourceHandle !== undefined &&
-    input.expectedResourceHandle !== resourceHandle
+    input.expectedResourceHandle !== targetRecord?.resourceHandle
   ) {
     return { failure: "runtime-ownership-invalid" };
   }
-  if (!resourceHandle || /-nemoclaw-gpu-backup-\d+$/u.test(lookup.stdout)) {
+  if (!targetRecord || /-nemoclaw-gpu-backup-\d+$/u.test(targetRecord.containerName)) {
     return { failure: "no-eligible-stopped-runtime" };
   }
+  const resourceHandle = targetRecord.resourceHandle;
   const inspected = engine.capture(
     ["inspect", "--format", "{{.Id}}\t{{.State.Running}}\t{{json .Mounts}}", resourceHandle],
     30_000,
@@ -349,15 +353,25 @@ export function createDockerPrivilegedSandboxControl(): RuntimeProviderPrivilege
             maxOutputBytes: 4096,
           }),
         copyDirectory: (archive) => {
-          const target = resolvePinnedDockerTarget(input, input.expectedResourceHandle);
+          const portable = portableTarget(input.sandboxName, input.sandbox);
+          if (portable) portable.assertRuntimeAuthority();
+          const target = portable
+            ? portable.containerId
+            : resolvePinnedDockerTarget(input, input.expectedResourceHandle);
+          if (target !== input.expectedResourceHandle) {
+            throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
+          }
           // Do not pass -a: Docker then substitutes Config.User for archive ownership.
-          const result = dockerSpawnSync(["cp", "-", `${target}:/`], {
-            encoding: null,
-            input: archive,
-            maxBuffer: 4096,
-            stdio: ["pipe", "pipe", "pipe"],
-            timeout: input.timeoutMs,
-          });
+          const result = dockerSpawnSync(
+            [...(portable ? ["--host", portable.dockerHost] : []), "cp", "-", `${target}:/`],
+            {
+              encoding: null,
+              input: archive,
+              maxBuffer: 4096,
+              stdio: ["pipe", "pipe", "pipe"],
+              timeout: input.timeoutMs,
+            },
+          );
           return {
             ...result,
             stdout: Buffer.from(result.stdout ?? ""),

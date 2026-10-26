@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
+
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import type { ManagedStartupStateRoot } from "../managed-startup/state-roots";
 import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 
 const MISSING_VOLUME_PATTERN = /\bno such volume\b/iu;
 const COMMAND_TIMEOUT_MS = 30_000;
+const CREATION_LABEL = "io.nvidia.nemoclaw.state-volume.creation-id";
 
 export type ManagedStateVolumeMount = {
   readonly type: "volume";
@@ -18,7 +21,7 @@ export type ManagedStateVolumeMount = {
 export type ManagedStateVolumeCleanupResult =
   | { readonly status: "not-applicable" | "absent" | "removed" }
   | {
-      readonly status: "not-owned" | "failed";
+      readonly status: "not-owned" | "failed" | "retained";
       readonly detail: string;
       readonly volumeName: string;
     };
@@ -156,6 +159,7 @@ function inspectVolume(root: ManagedStartupStateRoot, run: ContainerEngineRun): 
 function removeOwnedVolume(
   root: ManagedStartupStateRoot,
   run: ContainerEngineRun,
+  preserve = false,
 ): ManagedStateVolumeCleanupResult {
   const observation = inspectVolume(root, run);
   if (observation.status === "absent") return { status: "absent" };
@@ -170,6 +174,15 @@ function removeOwnedVolume(
     return {
       status: "not-owned",
       detail: "the exact NemoClaw ownership labels are absent or changed",
+      volumeName: root.resourceIdentity,
+    };
+  }
+  // Named volumes have no immutable deletion handle. Even matching labels can
+  // become stale before rm, so automatic rollback must retain the named state.
+  if (preserve) {
+    return {
+      status: "retained",
+      detail: "automatic cleanup preserves named state; explicit operator cleanup is required",
       volumeName: root.resourceIdentity,
     };
   }
@@ -193,7 +206,7 @@ function supportsManagedStateVolumes(provider?: RuntimeProviderBundle): boolean 
 
 function managedStateVolumeApproval(deps: ManagedStateVolumeDeps): Record<string, string> {
   const workspace =
-    deps.workspace ?? process.env.OPENSHELL_WORKSPACE ?? OPENSHELL_DEFAULT_WORKSPACE;
+    deps.workspace ?? (process.env.OPENSHELL_WORKSPACE || OPENSHELL_DEFAULT_WORKSPACE);
   if (!workspace || workspace.trim() !== workspace || /[\0\r\n]/u.test(workspace)) {
     throw new Error("Managed state volume requires an exact OpenShell workspace.");
   }
@@ -247,6 +260,7 @@ export function prepareManagedStateVolumes(
           throw new Error("Managed state volumes require runtime provider authority.");
         })());
   const approvalLabels = managedStateVolumeApproval(deps);
+  const creationId = randomUUID();
   const created: ManagedStartupStateRoot[] = [];
   const reused: boolean[] = [];
   try {
@@ -262,6 +276,7 @@ export function prepareManagedStateVolumes(
         for (const [name, value] of Object.entries({
           ...root.ownershipLabels,
           ...approvalLabels,
+          [CREATION_LABEL]: creationId,
         }).sort(([left], [right]) => left.localeCompare(right))) {
           createArgs.push("--label", `${name}=${value}`);
         }
@@ -276,9 +291,21 @@ export function prepareManagedStateVolumes(
             `Cannot create managed state volume '${root.resourceIdentity}': ${boundedDetail(result)}`,
           );
         }
-        created.push(root);
       }
       const verified = inspectVolume(root, run);
+      // Named volume creation is idempotent: a competing invocation may have
+      // created this name after our first inspection. The creation label only
+      // identifies reuse; it cannot authorize deletion by a reusable name.
+      const createdHere =
+        before.status === "absent" &&
+        verified.status === "observed" &&
+        verified.labels[CREATION_LABEL] === creationId;
+      if (createdHere) {
+        created.push({
+          ...root,
+          ownershipLabels: { ...root.ownershipLabels, [CREATION_LABEL]: creationId },
+        });
+      }
       if (verified.status !== "observed" || !labelsMatch(verified.labels, root.ownershipLabels)) {
         const detail =
           verified.status === "failed"
@@ -294,15 +321,15 @@ export function prepareManagedStateVolumes(
             "Retained data was not changed; operator reconciliation is required.",
         );
       }
-      reused.push(before.status === "observed");
+      reused.push(!createdHere);
     }
   } catch (error) {
-    for (const root of [...created].reverse()) removeOwnedVolume(root, run);
+    for (const root of [...created].reverse()) removeOwnedVolume(root, run, true);
     throw error;
   }
   let committed = false;
   const cleanup = (): readonly ManagedStateVolumeCleanupResult[] =>
-    committed ? [] : [...created].reverse().map((root) => removeOwnedVolume(root, run));
+    committed ? [] : [...created].reverse().map((root) => removeOwnedVolume(root, run, true));
   const unregisterExitCleanup =
     created.length > 0
       ? (deps.registerExitCleanup ?? defaultRegisterExitCleanup)(() => {

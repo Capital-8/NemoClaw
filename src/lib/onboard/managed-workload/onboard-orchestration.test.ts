@@ -510,6 +510,7 @@ describe("managed workload onboard orchestration", () => {
         createManagedStateVolumeOnboardLifecycle(
           {
             roots,
+            workspace: "default",
             runtimeProvider: {
               workload: { managedStateMountDriverId: "docker" },
               containerEngine: { supported: true },
@@ -523,7 +524,7 @@ describe("managed workload onboard orchestration", () => {
     },
   );
 
-  it("keeps failure cleanup armed until the caller commits registration", () => {
+  it("preserves prepared named state when exit cleanup runs before registration", () => {
     const docker = createHermesStateVolumeDockerHarness();
     let exitCleanup: (() => void) | null = null;
 
@@ -544,6 +545,7 @@ describe("managed workload onboard orchestration", () => {
             ],
           },
         } as never,
+        workspace: "default",
       },
       {
         runContainerEngine: docker.runDocker as never,
@@ -563,8 +565,8 @@ describe("managed workload onboard orchestration", () => {
     });
     exitCleanup!();
 
-    expect(docker.volume).toBeNull();
-    expect(docker.calls.some((args) => args[0] === "rm")).toBe(true);
+    expect(docker.volume?.name).toBe("nemoclaw-hermes-state-v1-alpha");
+    expect(docker.calls.some((args) => args[0] === "rm")).toBe(false);
   });
 
   it("keeps deferred Hermes Portable launch on a semantic create request", () => {

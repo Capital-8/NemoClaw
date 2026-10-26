@@ -101,7 +101,8 @@
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
         "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
         "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts"
+        "test/automation/pull-requests/pr-risk-plan.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-budget.test.ts"
       ]
     },
     {

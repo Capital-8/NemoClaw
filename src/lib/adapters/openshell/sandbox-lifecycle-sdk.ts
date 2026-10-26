@@ -61,9 +61,13 @@ export type SdkOpenShellSandboxStateLifecycleDeps = Readonly<{
   waitForStopPoll?: (signal: AbortSignal) => Promise<void>;
 }>;
 
-const DEFAULT_START_TIMEOUT_MS = 75_000;
-// OpenShell 0.1.3 stops two Podman containers sequentially (45s each), then
-// allows 50s to observe the workload exit. Reserve time for SDK connection too.
+// Start polling tolerates forty stale Error snapshots at three-second intervals. A
+// managed ARM64 activation reproduced ContainerExited just after the first
+// minute while the immutable workload container was already running. The
+// lifecycle still requires the same sandbox identity to publish Ready.
+const SDK_START_INITIAL_ERROR_GRACE_POLLS = 40;
+const DEFAULT_START_TIMEOUT_MS = 135_000;
+// Native Podman stops the supervisor and workload sequentially before observing exit.
 const DEFAULT_STOP_TIMEOUT_MS = 150_000;
 
 function lifecycleError(
@@ -196,7 +200,10 @@ async function mutate(
         },
       };
     }
-    const allowInitialError = createSandboxStartErrorGrace(action === "start");
+    const allowInitialError = createSandboxStartErrorGrace(
+      action === "start",
+      SDK_START_INITIAL_ERROR_GRACE_POLLS,
+    );
     for (;;) {
       const current = await Promise.race([
         client.sandbox.get(request.sandboxName, { signal: controller.signal }),

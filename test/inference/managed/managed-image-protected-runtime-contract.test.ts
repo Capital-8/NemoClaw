@@ -9,6 +9,12 @@ import { runInNewContext } from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
 
+// This suite exercises the controller after reviewed 0.1.3 projection.
+vi.mock("../../../src/lib/onboard/openshell-version.ts", async (original) => ({
+  ...(await original<typeof import("../../../src/lib/onboard/openshell-version.ts")>()),
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.1.3",
+}));
+
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   configureLocalInferenceRoute,
@@ -133,6 +139,9 @@ it.each([
   "registers the exact %s %s native boundary without a global inference route",
   async (agent, kind) => {
     const f = nativeQualificationFixture(agent, kind);
+    expect(f.prepared.document.binaries).toContain(
+      agent === "langchain-deepagents-code" ? "/opt/venv/bin/python3" : "/usr/bin/python3.13",
+    );
     const receipt = await configureLocalInferenceRoute(
       f,
       f.input,
@@ -235,6 +244,26 @@ function runNativeQualificationProbe(handle: string, model = "fixture-model") {
 }
 
 describe("protected local inference agent response", () => {
+  it.each([
+    { response: "", expected: 'response=""' },
+    { response: "unexpected answer", expected: 'response="unexpected answer"' },
+    { response: "fixture-private-value", expected: 'response="<REDACTED>"' },
+    { response: "x".repeat(600), expected: `response="${"x".repeat(512)}"` },
+  ])("reports bounded, redacted rejected output [%#]", ({ response, expected }) => {
+    expect(() =>
+      assertLocalInferenceAgentResponse(
+        {
+          agent: "hermes",
+          image: IMAGE,
+          sandbox: VALID_SANDBOX,
+          localProvider: "ollama",
+          model: "fixture-model",
+        },
+        response,
+        { NVIDIA_API_KEY: "fixture-private-value" },
+      ),
+    ).toThrow(expected);
+  });
   const openclaw = {
     status: "ok",
     result: {
@@ -415,27 +444,29 @@ function observeWorkload(scenario: string): string {
   const contentId = `sha256:${"d".repeat(64)}`;
   const runCommand: ManagedImageCommandRunner = (argv) => {
     const stdout =
-      argv[1] === "image"
-        ? contentId
-        : argv[1] === "ps"
-          ? argv.includes("label=openshell.ai/isolation-role=sandbox") && scenario !== "duplicate"
-            ? containerId
-            : `${containerId}\n${"e".repeat(64)}`
-          : JSON.stringify([
-              {
-                Image: scenario === "image" ? "sha256:wrong" : contentId,
-                Config: {
-                  Labels: {
-                    "openshell.ai/managed-by": "openshell",
-                    "openshell.ai/sandbox-name": VALID_SANDBOX,
-                    "openshell.ai/sandbox-namespace":
-                      scenario === "namespace" ? "other" : gatewayIdForStateDir(stateDir),
-                    "openshell.ai/isolation-role": scenario === "role" ? "supervisor" : "sandbox",
+      argv[1] === "--version"
+        ? "openshell 0.1.3\n"
+        : argv[1] === "image"
+          ? contentId
+          : argv[1] === "ps"
+            ? argv.includes("label=openshell.ai/isolation-role=sandbox") && scenario !== "duplicate"
+              ? containerId
+              : `${containerId}\n${"e".repeat(64)}`
+            : JSON.stringify([
+                {
+                  Image: scenario === "image" ? "sha256:wrong" : contentId,
+                  Config: {
+                    Labels: {
+                      "openshell.ai/managed-by": "openshell",
+                      "openshell.ai/sandbox-name": VALID_SANDBOX,
+                      "openshell.ai/sandbox-namespace":
+                        scenario === "namespace" ? "other" : gatewayIdForStateDir(stateDir),
+                      "openshell.ai/isolation-role": scenario === "role" ? "supervisor" : "sandbox",
+                    },
                   },
+                  HostConfig: { NetworkMode: scenario === "network" ? "bridge" : "none" },
                 },
-                HostConfig: { NetworkMode: scenario === "network" ? "bridge" : "none" },
-              },
-            ]);
+              ]);
     return { status: 0, stdout, stderr: "" };
   };
   return assertExactSandboxImage(

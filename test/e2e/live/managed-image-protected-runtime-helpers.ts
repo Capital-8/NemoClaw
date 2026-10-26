@@ -14,19 +14,15 @@ import {
   parseProtectedManagedImageContracts,
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { PROTECTED_MANAGED_IMAGE_COHORT_PATTERN } from "../../../scripts/checks/protected-managed-image-contract.ts";
-import {
-  adoptServedModelId,
-  dockerLoginNgc,
-  pullNimImage,
-} from "../../../src/lib/inference/nim.ts";
+import { adoptServedModelId, getImageForModel } from "../../../src/lib/inference/nim.ts";
 import {
   getOllamaProxyToken,
   killStaleProxy,
-  persistAndProbeOllamaProxy,
+  persistProxyToken,
   startOllamaAuthProxy,
 } from "../../../src/lib/inference/ollama/proxy.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -37,6 +33,68 @@ import {
   env as gpuEnv,
   REPO_ROOT,
 } from "./gpu-e2e-helpers.ts";
+
+const MINUTE = 60_000;
+export const PROTECTED_RUNTIME_JOB_MINUTES = 75;
+export const PROTECTED_RUNTIME_CLEANUP_MS = 5 * MINUTE;
+export const PROTECTED_RUNTIME_EVIDENCE_MS = 8 * MINUTE;
+export const PROTECTED_RUNTIME_RUNNER_HEADROOM_MS = 2 * MINUTE;
+export const PROTECTED_RUNTIME_ROLLBACK_MS = 15 * MINUTE;
+const BODY_MS =
+  PROTECTED_RUNTIME_JOB_MINUTES * MINUTE -
+  PROTECTED_RUNTIME_CLEANUP_MS -
+  PROTECTED_RUNTIME_EVIDENCE_MS -
+  PROTECTED_RUNTIME_RUNNER_HEADROOM_MS;
+
+export function protectedRuntimeDeadlines(startedAt: string | undefined, now = Date.now()) {
+  const start = Number(startedAt);
+  if (!Number.isSafeInteger(start) || start <= 0 || start > now) {
+    throw new Error("protected runtime job start must be a past epoch millisecond timestamp");
+  }
+  if (now >= start + BODY_MS - PROTECTED_RUNTIME_ROLLBACK_MS) {
+    throw new Error(
+      "protected runtime setup exhausted the provider budget; qualification was not started",
+    );
+  }
+  return {
+    providers: start + BODY_MS - PROTECTED_RUNTIME_ROLLBACK_MS,
+    rollback: start + BODY_MS,
+    testTimeoutMs: Math.max(1, start + BODY_MS - now),
+  };
+}
+
+// Preserve each command's failure guard while sharing the suite's remaining
+// wall-clock budget. The underlying ShellProbe owns process-group termination
+// and artifact capture; cleanup uses the original host with its own signal.
+export function protectedRuntimeDeadlineHost(
+  host: Pick<HostCliClient, "command">,
+  deadline: number,
+  now = Date.now,
+): HostCliClient {
+  return new HostCliClient({
+    async run(command, options = {}) {
+      const remaining = deadline - now();
+      // Leave the existing supervisor's termination grace inside the deadline.
+      const killGraceMs = options.killGraceMs ?? 5_000;
+      if (remaining <= killGraceMs) {
+        throw new Error(
+          "protected runtime suite deadline exhausted; reserved cleanup and evidence remain",
+        );
+      }
+      const result = await host.command(command.command, [...command.args], {
+        ...options,
+        killGraceMs,
+        timeoutMs: Math.min(options.timeoutMs ?? 60_000, remaining - killGraceMs),
+      });
+      if (result.timedOut || now() >= deadline) {
+        throw new Error(
+          `protected runtime command exceeded its budget; see ${result.artifacts.result}`,
+        );
+      }
+      return result;
+    },
+  });
+}
 
 const OLLAMA_MODEL = "qwen3.5:9b";
 const VLLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct";
@@ -86,26 +144,14 @@ export function protectedProviderContainerName(
   if (!PROTECTED_MANAGED_IMAGE_COHORT_PATTERN.test(cohort)) {
     throw new Error("NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT has an invalid protected cohort");
   }
-  const name = `nemoclaw-mi-${kind}-${cohort}`;
-  if (
-    name.length > PROTECTED_PROVIDER_CONTAINER_MAX_LENGTH ||
-    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(name)
-  ) {
-    throw new Error("protected provider container name is outside the Docker name contract");
-  }
-  return name;
+  // The fixed provider kinds and bounded cohort yield at most 58 Docker-safe characters.
+  return `nemoclaw-mi-${kind}-${cohort}`;
 }
 
-export function protectedProviderReportedContainerId(name: string, stdout: string): string {
-  if (
-    name.length > PROTECTED_PROVIDER_CONTAINER_MAX_LENGTH ||
-    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(name)
-  ) {
-    throw new Error("protected provider container name is outside the Docker name contract");
-  }
+export function protectedProviderReportedContainerId(stdout: string): string {
   const candidate = stdout.trim();
   if (!/^[a-f0-9]{64}$/u.test(candidate)) {
-    throw new Error(`provider start did not report one full container ID for ${name}`);
+    throw new Error("provider start did not report one full container ID");
   }
   return candidate;
 }
@@ -388,19 +434,7 @@ export function protectedOllamaReadinessCommand(logPath: string): ProtectedRunti
   return {
     command: "bash",
     captureLimitBytes: PROTECTED_READINESS_CAPTURE_LIMIT_BYTES,
-    args: [
-      "-c",
-      `(
-${startScript}
-)
-status=$?
-if [ "$status" -eq 0 ]; then
-  printf 'managed-image-ollama-ready\n'
-else
-  printf 'managed-image-ollama-not-ready status=%s\n' "$status" >&2
-fi
-exit "$status"`,
-    ],
+    args: ["-c", startScript],
   };
 }
 
@@ -430,7 +464,9 @@ export async function startProtectedOllama(host: HostCliClient): Promise<string>
   expect(startOllamaAuthProxy(), "Ollama auth proxy must start").toBe(true);
   const proxyToken = getOllamaProxyToken();
   expect(proxyToken).toMatch(/^[a-f0-9]{48}$/u);
-  await persistAndProbeOllamaProxy(proxyToken!);
+  // Each child proves inference through its own native provider and private gateway.
+  // The legacy default-bridge probe cannot validate that route.
+  persistProxyToken(proxyToken!);
   return proxyToken!;
 }
 
@@ -595,8 +631,11 @@ async function startProtectedVllm(
       VLLM_MODEL,
       "--served-model-name",
       VLLM_MODEL,
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "hermes",
       "--max-model-len",
-      "2048",
+      "32768",
       "--gpu-memory-utilization",
       "0.45",
     ],
@@ -607,7 +646,7 @@ async function startProtectedVllm(
     },
   );
   expect(start.exitCode, resultText(start)).toBe(0);
-  state.reportedContainerId = protectedProviderReportedContainerId(state.name, start.stdout);
+  state.reportedContainerId = protectedProviderReportedContainerId(start.stdout);
   state.authority = await inspectProtectedProviderContainer(
     host,
     state,
@@ -720,10 +759,33 @@ async function startProtectedNim(
   state: ProtectedProviderContainerState,
   apiKey: string,
 ): Promise<string> {
-  expect(dockerLoginNgc(apiKey), "NGC login must succeed for protected NIM qualification").toBe(
-    true,
+  // NIM's production login and platform-aware pull are synchronous. Run them
+  // in the supervised child so a slow registry cannot block the suite deadline.
+  const prepare = await host.command(
+    "node",
+    [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      `
+    import * as importedNim from './src/lib/inference/nim.ts';
+    const { dockerLoginNgc, pullNimImage } = importedNim.default ?? importedNim;
+    if (!dockerLoginNgc(process.env.NGC_API_KEY)) throw new Error('NGC login failed');
+    pullNimImage(${JSON.stringify(NIM_CATALOG_MODEL)});
+  `,
+    ],
+    {
+      artifactName: "prepare-protected-nim-image",
+      cwd: REPO_ROOT,
+      env: { ...buildAvailabilityProbeEnv(), NGC_API_KEY: apiKey },
+      redactionValues: [apiKey],
+      timeoutMs: 20 * 60_000,
+    },
   );
-  const image = pullNimImage(NIM_CATALOG_MODEL);
+  expect(prepare.exitCode, resultText(prepare)).toBe(0);
+  // pullNimImage in the successful child validated this same pinned catalog entry.
+  const image = getImageForModel(NIM_CATALOG_MODEL)!;
   const start = await host.command(
     "docker",
     [
@@ -745,6 +807,8 @@ async function startProtectedNim(
       "NGC_API_KEY",
       "--env",
       "NIM_NGC_API_KEY",
+      "--env",
+      "NIM_PASSTHROUGH_ARGS=--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3",
       image,
     ],
     {
@@ -759,7 +823,7 @@ async function startProtectedNim(
     },
   );
   expect(start.exitCode, resultText(start)).toBe(0);
-  state.reportedContainerId = protectedProviderReportedContainerId(state.name, start.stdout);
+  state.reportedContainerId = protectedProviderReportedContainerId(start.stdout);
   state.authority = await inspectProtectedProviderContainer(
     host,
     state,
@@ -896,13 +960,9 @@ export function protectedProviderFinalInventoryCommand(
 async function proveOwnedRuntimeInventoryClean(
   host: HostCliClient,
   cohort: string,
-  providerStates: readonly ProtectedProviderContainerState[],
+  vllmName: string,
+  nimName: string,
 ): Promise<void> {
-  const vllmName = providerStates.find(({ kind }) => kind === "vllm")?.name;
-  const nimName = providerStates.find(({ kind }) => kind === "nim")?.name;
-  if (!vllmName || !nimName) {
-    throw new Error("protected provider inventory requires vLLM and NIM container names");
-  }
   const command = protectedProviderFinalInventoryCommand(cohort, vllmName, nimName);
   const result = await host.command(command.command, command.args, {
     artifactName: "final-managed-image-owned-runtime-inventory",
@@ -916,8 +976,11 @@ async function proveOwnedRuntimeInventoryClean(
 export async function qualifyProtectedManagedImageRuntime(
   fixtures: RuntimeFixtures,
   ngcApiKeyInput: string,
+  deadlines = protectedRuntimeDeadlines(process.env.NEMOCLAW_PROTECTED_RUNTIME_STARTED_AT_MS),
 ): Promise<void> {
-  const { artifacts, cleanup, host, progress } = fixtures;
+  const { artifacts, cleanup, progress } = fixtures;
+  const host = protectedRuntimeDeadlineHost(fixtures.host, deadlines.providers);
+  const rollbackHost = protectedRuntimeDeadlineHost(fixtures.host, deadlines.rollback);
   const contracts = imageContracts();
   const ngcApiKey = requiredNgcApiKey(ngcApiKeyInput);
   const cohort = process.env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT ?? "";
@@ -926,91 +989,79 @@ export async function qualifyProtectedManagedImageRuntime(
   const providerStates = [vllmState, nimState] as const;
 
   cleanup.trackDisposable("remove protected vLLM container", async () => {
-    await removeProtectedProviderContainer(host, vllmState, "cleanup-vllm-container");
+    await removeProtectedProviderContainer(fixtures.host, vllmState, "cleanup-vllm-container");
   });
   cleanup.trackDisposable("remove protected NIM container", async () => {
-    await removeProtectedProviderContainer(host, nimState, "cleanup-nim-container");
+    await removeProtectedProviderContainer(fixtures.host, nimState, "cleanup-nim-container");
   });
   cleanup.trackDisposable("stop protected Ollama runtime", async () => {
     killStaleProxy();
-    const result = await cleanupOllama(host, "cleanup-managed-image-ollama");
+    const result = await cleanupOllama(fixtures.host, "cleanup-managed-image-ollama");
     expect(result.exitCode, resultText(result)).toBe(0);
   });
 
-  let activePhase = "validate protected host runtime";
-  try {
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "docker-info",
+  const docker = await host.command("docker", ["info"], {
+    artifactName: "docker-info",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(docker.exitCode, resultText(docker)).toBe(0);
+  const nvidia = await host.command("nvidia-smi", [], {
+    artifactName: "nvidia-smi",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  assertNvidiaAvailable(nvidia, (message) => {
+    throw new Error(message ?? "protected GPU runner is unavailable");
+  });
+  await assertProtectedProviderContainerAbsent(host, vllmState, "preflight-vllm-container");
+  await assertProtectedProviderContainerAbsent(host, nimState, "preflight-nim-container");
+
+  progress.phase("qualify all managed agents with GPU-backed Ollama");
+  const proxyToken = await startProtectedOllama(host);
+  await qualifyEveryAgent(host, contracts, "ollama", OLLAMA_MODEL, {
+    NEMOCLAW_OLLAMA_PROXY_TOKEN: proxyToken,
+  });
+  await proveOllamaGpuPlacement(host);
+  killStaleProxy();
+  const ollamaCleanup = await cleanupOllama(host, "stop-ollama-before-vllm");
+  expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
+
+  progress.phase("qualify all managed agents with GPU-backed vLLM");
+  const vllmImagePulledByRun = await startProtectedVllm(host, vllmState);
+  await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
+    NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
+  });
+  await removeProtectedProviderContainer(host, vllmState, "stop-vllm-before-nim");
+  if (vllmImagePulledByRun) {
+    // Free the vLLM image this run pulled before NIM downloads its model. This
+    // frees space when the image store and NIM cache share a filesystem (#13135).
+    // The artifact records the result; NIM readiness gates.
+    await host.command("docker", ["image", "rm", VLLM_IMAGE], {
+      artifactName: "remove-run-pulled-vllm-image",
       env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(docker.exitCode, resultText(docker)).toBe(0);
-    const nvidia = await host.command("nvidia-smi", [], {
-      artifactName: "nvidia-smi",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    });
-    assertNvidiaAvailable(nvidia, (message) => {
-      throw new Error(message ?? "protected GPU runner is unavailable");
-    });
-    await assertProtectedProviderContainerAbsent(host, vllmState, "preflight-vllm-container");
-    await assertProtectedProviderContainerAbsent(host, nimState, "preflight-nim-container");
-
-    activePhase = "qualify all managed agents with GPU-backed Ollama";
-    progress.phase("qualify all managed agents with GPU-backed Ollama");
-    const proxyToken = await startProtectedOllama(host);
-    await qualifyEveryAgent(host, contracts, "ollama", OLLAMA_MODEL, {
-      NEMOCLAW_OLLAMA_PROXY_TOKEN: proxyToken,
-    });
-    await proveOllamaGpuPlacement(host);
-    killStaleProxy();
-    const ollamaCleanup = await cleanupOllama(host, "stop-ollama-before-vllm");
-    expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
-
-    activePhase = "qualify all managed agents with GPU-backed vLLM";
-    progress.phase("qualify all managed agents with GPU-backed vLLM");
-    const vllmImagePulledByRun = await startProtectedVllm(host, vllmState);
-    await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
-      NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
-    });
-    await removeProtectedProviderContainer(host, vllmState, "stop-vllm-before-nim");
-    if (vllmImagePulledByRun) {
-      // Free the vLLM image this run pulled before NIM downloads its model. This
-      // frees space when the image store and NIM cache share a filesystem (#13135).
-      // The artifact records the result; NIM readiness gates.
-      await host.command("docker", ["image", "rm", VLLM_IMAGE], {
-        artifactName: "remove-run-pulled-vllm-image",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      });
-    }
-
-    activePhase = "qualify all managed agents with GPU-backed NVIDIA NIM";
-    progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");
-    const nimModel = await startProtectedNim(host, nimState, ngcApiKey);
-    await qualifyEveryAgent(host, contracts, "nim", nimModel, {
-      NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
-    });
-    await removeProtectedProviderContainer(host, nimState, "stop-nim-before-rollback");
-
-    activePhase = "prove all-agent managed bootstrap rollback and exact cleanup";
-    progress.phase("prove all-agent managed bootstrap rollback and exact cleanup");
-    await qualifyEveryRollback(host, contracts);
-    await proveOwnedRuntimeInventoryClean(host, cohort, providerStates);
-    const providerContainers = providerStates.map(({ authority }) => {
-      if (!authority) throw new Error("protected provider authority is missing from the receipt");
-      return authority;
-    });
-    await artifacts.writeJson("managed-image-protected-runtime-summary.json", {
-      agents: PROTECTED_MANAGED_IMAGE_AGENTS,
-      providerContainers,
-      providers: ["ollama", "vllm", "nim"],
-      rollbackAgents: PROTECTED_MANAGED_IMAGE_AGENTS,
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`protected managed-image runtime phase '${activePhase}' failed: ${detail}`, {
-      cause: error,
+      timeoutMs: 120_000,
     });
   }
+
+  progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");
+  const nimModel = await startProtectedNim(host, nimState, ngcApiKey);
+  await qualifyEveryAgent(host, contracts, "nim", nimModel, {
+    NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
+  });
+  await removeProtectedProviderContainer(host, nimState, "stop-nim-before-rollback");
+
+  progress.phase("prove all-agent managed bootstrap rollback and exact cleanup");
+  await qualifyEveryRollback(rollbackHost, contracts);
+  await proveOwnedRuntimeInventoryClean(rollbackHost, cohort, vllmState.name, nimState.name);
+  const providerContainers = providerStates.map(({ authority }) => {
+    if (!authority) throw new Error("protected provider authority is missing from the receipt");
+    return authority;
+  });
+  await artifacts.writeJson("managed-image-protected-runtime-summary.json", {
+    agents: PROTECTED_MANAGED_IMAGE_AGENTS,
+    providerContainers,
+    providers: ["ollama", "vllm", "nim"],
+    rollbackAgents: PROTECTED_MANAGED_IMAGE_AGENTS,
+  });
 }
