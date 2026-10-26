@@ -383,4 +383,37 @@ describe("removed immutability migration boundary", () => {
       ),
     ).toThrow(/credential-bearing or uninspectable material/u);
   });
+
+  it("rejects a WhatsApp session credential file from legacy-record recovery downloads", () => {
+    expect(
+      isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.hermes/platforms/whatsapp/session"),
+    ).toBe(false);
+    expect(
+      isRemovedImmutabilityRecoveryDownloadPath(
+        "/sandbox/.hermes/platforms/whatsapp/session/creds.json",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects WhatsApp session credentials inside a staged platforms directory", () => {
+    const root = stateDir();
+    const platforms = path.join(root, "platforms");
+    const credentials = path.join(platforms, "whatsapp/session/creds.json");
+    fs.mkdirSync(path.dirname(credentials), { recursive: true });
+    fs.writeFileSync(
+      credentials,
+      JSON.stringify({
+        noiseKey: { private: [1, 2, 3] },
+        signedIdentityKey: { private: [4, 5, 6] },
+      }),
+    );
+
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        platforms,
+        "/sandbox/.hermes/platforms/",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+  });
 });

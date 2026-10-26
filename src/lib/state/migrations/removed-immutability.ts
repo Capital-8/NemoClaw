@@ -83,6 +83,7 @@ const REMOVED_IMMUTABILITY_DISALLOWED_DOWNLOAD_SEGMENTS = new Set([
   "config.json",
   "config.yaml",
   "config.yml",
+  "creds.json",
   "credentials",
   "credentials.json",
   "device-auth.json",
@@ -95,6 +96,7 @@ const REMOVED_IMMUTABILITY_DISALLOWED_DOWNLOAD_SEGMENTS = new Set([
   "paired.json",
   "pending.json",
   "secrets.json",
+  "session",
   "tokens.json",
 ]);
 
