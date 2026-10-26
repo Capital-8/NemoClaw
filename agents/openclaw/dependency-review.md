@@ -153,6 +153,8 @@ Ordinary audit installation leaves the reviewed lock unchanged; explicit `update
 The shared writer in `bundled-npm-package.mts` serves runtime workspaces, runtime and plugin manifests, and lock metadata.
 These updates stage and verify complete bytes in the same directory before an atomic rename.
 Staging failures preserve the original file and remove the attempt's temporary file; a later retry can resume.
+After publication, the writer syncs the parent directory and reports any sync failure.
+A retry syncs the directory even when the metadata already contains the verified replacement.
 The writer preserves file permissions and ownership, rejects symlinks, and stops if it observes a replaced pathname or changed source before publication.
 The runtime helper verifies the original or patched managed-workspace digest before updating overrides.
 The shared `bundled-npm-package.mts` owns package replacement, rollback, archive-integrity checks, and backup cleanup for the ip-address and Undici repairs.

@@ -42,6 +42,18 @@ export function readJsonObject(file: string, label: string): JsonObject {
   }
 }
 
+function syncMetadataDirectory(filename: string): void {
+  const directory = fs.openSync(
+    dirname(filename),
+    fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    fs.fsyncSync(directory);
+  } finally {
+    fs.closeSync(directory);
+  }
+}
+
 /** Publish complete verified metadata without modifying the source file in place. */
 export function rewriteRegularFile(
   filename: string,
@@ -58,7 +70,10 @@ export function rewriteRegularFile(
     if (!initial.isFile()) throw new Error(`${label} must be a real file`);
     const original = fs.readFileSync(descriptor, "utf8");
     const patched = transform(original);
-    if (patched === original) return;
+    if (patched === original) {
+      syncMetadataDirectory(filename);
+      return;
+    }
     const bytes = Buffer.from(patched);
     const stagingPath = `${filename}.nemoclaw-${randomBytes(16).toString("hex")}.tmp`;
     const staging = fs.openSync(
@@ -94,6 +109,7 @@ export function rewriteRegularFile(
         throw new Error(`${label} changed before writing`);
       fs.renameSync(stagingPath, filename);
       temporary = undefined;
+      syncMetadataDirectory(filename);
     } finally {
       fs.closeSync(staging);
     }

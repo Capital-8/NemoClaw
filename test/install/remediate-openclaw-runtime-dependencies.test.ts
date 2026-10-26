@@ -15,7 +15,11 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { syncBuiltinESMExports } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { interruptMetadataWrite, replaceAfterMetadataRead } from "../support/metadata-write-faults";
+import {
+  interruptMetadataWrite,
+  replaceAfterMetadataRead,
+  failMetadataDirectorySync,
+} from "../support/metadata-write-faults";
 import { OPENCLAW_MANAGED_PLUGIN_WORKSPACE } from "../fixtures/openclaw-managed-plugin-workspace";
 import {
   remediateOpenClawRuntimeDependencies,
@@ -388,6 +392,25 @@ describe("OpenClaw managed plugin security overrides", () => {
       });
     },
   );
+
+  it("reports directory sync failure and retries complete published metadata", () => {
+    const { owner, workspace } = workspaceFixture();
+    const entries = fs.readdirSync(owner).sort();
+    const failure = failMetadataDirectorySync();
+    expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow("directory sync failed");
+    expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
+      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+    );
+    expect(fs.readdirSync(owner).sort()).toEqual(entries);
+    // Already patched bytes must not hide an incomplete directory publication on retry.
+    expect(() => patchOpenClawManagedPluginOverrides(owner)).toThrow("directory sync failed");
+    failure.mockRestore();
+    patchOpenClawManagedPluginOverrides(owner);
+    expect(createHash("sha256").update(readFileSync(workspace)).digest("hex")).toBe(
+      "c48734878ccb1de613af3307aa42f26cb8d6add6ca1e2dc95a2761ff671e20bb",
+    );
+    expect(fs.readdirSync(owner).sort()).toEqual(entries);
+  });
 
   it("patches the reviewed workspace and remains idempotent", () => {
     const { owner, workspace } = workspaceFixture();
