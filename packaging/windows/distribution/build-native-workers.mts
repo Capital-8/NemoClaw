@@ -525,9 +525,21 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const sourceRevision = execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], {
     encoding: "utf8",
   }).trim();
-  execFileSync("git", ["-C", repository, "diff", "--quiet", "HEAD", "--", "packaging/windows"], {
-    stdio: "pipe",
-  });
+  execFileSync(
+    "git",
+    [
+      "-C",
+      repository,
+      "diff",
+      "--quiet",
+      "HEAD",
+      "--",
+      "packaging/windows",
+      "src/lib/onboard/runtime-provider/installed-session.ts",
+      "src/lib/onboard/runtime-provider/mxc-installed.ts",
+    ],
+    { stdio: "pipe" },
+  );
   const staged = prepareRuntimeSource(source);
   try {
     await buildNativeWorkers(staged.runtime, path.resolve(output), process.argv[3], {
