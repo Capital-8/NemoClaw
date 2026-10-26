@@ -104,6 +104,8 @@ describe.each(HOSTED_NATIVE_PROVIDERS)("native $label lifecycle", (definition) =
     expect(profile?.boundary.binaries).toEqual([
       "/usr/local/bin/node",
       "/usr/bin/node",
+      "/usr/bin/python3",
+      "/usr/bin/python3.13",
       "/opt/hermes/.venv/bin/python",
       "/opt/hermes/.venv/bin/python3",
       "/opt/venv/bin/python3",
