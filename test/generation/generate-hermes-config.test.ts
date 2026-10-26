@@ -532,7 +532,7 @@ describe("agents/hermes/generate-config.ts", () => {
       NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
     });
 
-    expect(config.web).toBeUndefined();
+    expect(config.web).toEqual({ keyless_fallback: false });
     expect(envFile).not.toContain("TAVILY_API_KEY=");
   });
 

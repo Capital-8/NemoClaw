@@ -153,6 +153,7 @@ import {
   buildInferenceSetFailure,
   createDefaultInferenceSetRouteObserver,
   createDefaultInferenceSetRouteMutator,
+  queryRegisteredGatewayProviders,
 } from "./inference-set-provider-diagnostics";
 import {
   applyOpenClawAnthropicReplyBudget,
@@ -435,13 +436,27 @@ function trimRequired(value: string | null | undefined, label: string): string {
   return trimmed;
 }
 
-/** Require a provider with an accepted NemoClaw runtime-selection contract. */
-function assertSelectableProvider(provider: string, model: string): void {
+/**
+ * Require either a built-in provider or an exact non-messaging provider already
+ * registered on the selected gateway. The latter keeps native-agent providers
+ * selectable without letting an unverified name create or borrow a route.
+ */
+async function assertSelectableProvider(
+  provider: string,
+  model: string,
+  gatewayName: string,
+  deps: Pick<InferenceSetDeps, "providerAdapter" | "log">,
+): Promise<void> {
   if (getProviderSelectionConfig(provider, model) || isModelRouterProvider(provider)) return;
-  throw new InferenceSetError(
-    `Unsupported provider '${provider}'. Supported provider names: ${SUPPORTED_PROVIDER_NAMES.join(", ")}.`,
-    2,
-  );
+  const registeredProviders = await queryRegisteredGatewayProviders(gatewayName, deps);
+  if (registeredProviders?.includes(provider)) return;
+  const providerGuidance =
+    registeredProviders === undefined
+      ? `Supported provider names: ${SUPPORTED_PROVIDER_NAMES.join(", ")}.`
+      : registeredProviders.length > 0
+        ? `Selectable providers registered on gateway '${gatewayName}': ${registeredProviders.join(", ")}.`
+        : `No selectable providers are registered on gateway '${gatewayName}'.`;
+  throw new InferenceSetError(`Unsupported provider '${provider}'. ${providerGuidance}`, 2);
 }
 
 function assertInferenceSetRuntimeAuthority(
@@ -1342,7 +1357,7 @@ async function runInferenceSetWithoutHostLock(
   const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
   const reasoningEffortRequest = resolveScopedReasoningEffortRequest(options.reasoningEffort);
-  assertSelectableProvider(provider, model);
+  await assertSelectableProvider(provider, model, expectedGatewayName, deps);
   assertReasoningEffortProvider(reasoningEffortRequest, provider);
   assertInferenceModelId(model);
 

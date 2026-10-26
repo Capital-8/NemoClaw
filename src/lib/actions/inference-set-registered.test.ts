@@ -136,22 +136,83 @@ function collisionFixture() {
 }
 
 describe("registered inference selection transaction", () => {
-  it.each(["openclaw", "hermes"])(
-    "rejects an unaccepted registered provider for %s before gateway mutation",
-    async (agent) => {
-      const f = fixture(agent);
-      await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(
-        "Unsupported provider 'native-extra'",
+  it.each([
+    {
+      inventory: "missing",
+      provider: "native-extra",
+      list: async () => ({ ok: true as const, value: { names: [] } }),
+    },
+    {
+      inventory: "messaging",
+      provider: "alpha-telegram-bridge",
+      list: async () => ({ ok: true as const, value: { names: ["alpha-telegram-bridge"] } }),
+    },
+    {
+      inventory: "unavailable",
+      provider: "native-extra",
+      list: async () => {
+        throw new Error("gateway unavailable");
+      },
+    },
+  ])(
+    "rejects a $inventory provider inventory before reading credentials or changing state",
+    async ({ provider, list }) => {
+      const f = fixture();
+      f.adapter.listProviders.mockImplementation(list);
+      await expect(runInferenceSet({ ...f.options, provider }, f.deps)).rejects.toThrow(
+        `Unsupported provider '${provider}'`,
       );
-      expect(f.adapter.listProviders).not.toHaveBeenCalled();
+      expect(f.adapter.listProviders).toHaveBeenCalledExactlyOnceWith({
+        target: { kind: "named", gatewayName: f.binding.gatewayName },
+        timeoutMs: 5_000,
+      });
+      expect(f.deps.readRegisteredInferenceCredentialHandle).not.toHaveBeenCalled();
       expect(f.adapter.attachProvider).not.toHaveBeenCalled();
       expect(f.adapter.detachProvider).not.toHaveBeenCalled();
       expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
-      expect(f.deps.calls.captureOpenshell).not.toHaveBeenCalled();
     },
   );
 
-  it("removes a failed owned selection before restoring a recorded registered attachment", async () => {
+  it("preserves the recorded route and configuration when the operator provider was replaced", async () => {
+    const f = fixture();
+    await runInferenceSet(f.options, f.deps);
+    const before = structuredClone({ entry: f.entry, config: f.config });
+    f.state.id = "replacement-provider";
+    vi.clearAllMocks();
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(
+      "Recorded registered inference provider identity or profile changed",
+    );
+    expect({ entry: f.entry, config: f.config }).toEqual(before);
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(f.deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    expect(f.deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+    expect(f.deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+  });
+
+  it.each(["openclaw", "hermes"])(
+    "attaches an explicit operator route for %s without shared inference mutation",
+    async (agent) => {
+      const f = fixture(agent);
+      await expect(runInferenceSet(f.options, f.deps)).resolves.toMatchObject({
+        provider: "native-extra",
+        providerKey: "native-extra",
+      });
+      expect(f.entry.registeredInferenceProviderAttachment).toMatchObject({
+        providerId: f.binding.providerId,
+        attachedBySelection: true,
+      });
+      expect(f.deps.calls.captureOpenshell).not.toHaveBeenCalled();
+      expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
+      expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+      expect(f.adapter.createProvider).not.toHaveBeenCalled();
+      expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+      expect(f.deps.calls.restartSandboxGateway).toHaveBeenCalled();
+    },
+  );
+
+  it("removes a failed owned selection before restoring a registered attachment with the same credential environment", async () => {
     const f = collisionFixture();
     await expect(
       runInferenceSet({ provider: "nvidia-prod", model: "vendor/model-b" }, f.deps),
@@ -166,7 +227,7 @@ describe("registered inference selection transaction", () => {
     expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("does not restore a recorded attachment after uncertain owned cleanup", async () => {
+  it("does not restore the registered attachment after uncertain owned cleanup", async () => {
     const f = collisionFixture();
     const detach = f.deps.providerAdapter.detachProvider;
     f.deps.providerAdapter.detachProvider = async (request) =>
@@ -183,6 +244,139 @@ describe("registered inference selection transaction", () => {
     expect(f.state.attached).toBe(false);
     expect(f.entry.registeredInferenceProviderAttachment).toEqual(f.binding);
     expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not restore an owned provider when removing a new registered attachment is uncertain", async () => {
+    const f = collisionFixture();
+    f.deps.calls.probeSandboxRoute.mockResolvedValueOnce({
+      ok: true,
+      httpStatus: 200,
+      detail: "ok",
+    });
+    await runInferenceSet({ provider: "nvidia-prod", model: "vendor/model-b" }, f.deps);
+    const committed = f.entry.nativeNvidiaProviderAttachment;
+    f.events.length = 0;
+    f.deps.readRegisteredInferenceCredentialHandle = async () =>
+      f.handle.replace("VENDOR_API_KEY", "NVIDIA_API_KEY");
+    const detach = f.deps.providerAdapter.detachProvider;
+    f.deps.providerAdapter.detachProvider = async (request) =>
+      request.providerName === f.binding.providerName
+        ? {
+            ok: false,
+            error: { kind: "command", reason: "uncertain", message: "detach response lost" },
+          }
+        : detach(request);
+    await expect(
+      runInferenceSet({ ...f.options, credentialEnv: "NVIDIA_API_KEY" }, f.deps),
+    ).rejects.toThrow("attachment removal was not confirmed");
+    expect(f.events).toEqual(["detach:nemoclaw-nvidia-prod-v1", "attach:native-extra"]);
+    expect(f.state.attached).toBe(true);
+    expect(f.entry.nativeNvidiaProviderAttachment).toEqual(committed);
+    expect(f.entry.registeredInferenceProviderAttachment).toBeUndefined();
+  });
+
+  it("writes the selected Hermes native endpoint and scoped credential", async () => {
+    const f = fixture("hermes");
+    await runInferenceSet(f.options, f.deps);
+    expect(f.config.model).toMatchObject({
+      base_url: f.binding.endpointUrl,
+      api_key: f.handle,
+      default: f.options.model,
+    });
+  });
+
+  it.each([
+    ["endpoint", { endpointUrl: undefined }],
+    ["API", { inferenceApi: undefined }],
+    ["credential", { credentialEnv: undefined }],
+  ])("refuses incomplete %s metadata before attachment", async (_label, change) => {
+    const f = fixture();
+    await expect(runInferenceSet({ ...f.options, ...change }, f.deps)).rejects.toThrow(
+      "requires explicit",
+    );
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "preserves external provider and prior attachment after failed verification (already attached: %s)",
+    async (attached) => {
+      const f = fixture("openclaw", attached);
+      f.deps.calls.probeSandboxRoute.mockResolvedValue({
+        ok: false,
+        httpStatus: 401,
+        detail: "rejected",
+      });
+      await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow();
+      expect(f.state.attached).toBe(attached);
+      expect(f.adapter.detachProvider).toHaveBeenCalledTimes(attached ? 0 : 1);
+      expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+      expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+      expect(f.deps.calls.setOpenClawConfigValues).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects provider changes during handle reading before publication", async () => {
+    const f = fixture();
+    f.deps.readRegisteredInferenceCredentialHandle = async () => {
+      f.state.revision++;
+      return f.handle;
+    };
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow("changed while reading");
+    expect(f.state.attached).toBe(false);
+    expect(f.deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("removes its new attachment when registry publication fails", async () => {
+    const f = fixture();
+    f.deps.calls.updateSandbox.mockReturnValue(false);
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow("Failed to update");
+    expect(f.state.attached).toBe(false);
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+  });
+
+  it("retries a committed Hermes selection after its native configuration write fails", async () => {
+    const f = fixture("hermes");
+    const before = structuredClone(f.config);
+    f.deps.calls.readSandboxConfig
+      .mockReturnValueOnce(structuredClone(before))
+      .mockReturnValueOnce(structuredClone(before));
+    f.deps.calls.writeSandboxConfig.mockImplementationOnce(() => {
+      throw new Error("config write unavailable");
+    });
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(
+      "Retry the same inference set command",
+    );
+    expect(f.entry.registeredInferenceProviderAttachment).toMatchObject({
+      providerId: f.binding.providerId,
+      attachedBySelection: true,
+    });
+    expect(f.deps.calls.log.mock.calls.flat().join("\n")).not.toContain("rebuild");
+    await expect(
+      runInferenceSet({ provider: f.options.provider, model: f.options.model }, f.deps),
+    ).resolves.toMatchObject({ inSandboxConfigSynced: true });
+    expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.deps.calls.writeSandboxConfig).toHaveBeenCalledTimes(2);
+    expect(f.deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
+  });
+
+  it("retries config publication from the immutable recorded binding without attaching again", async () => {
+    const f = fixture();
+    f.deps.calls.setOpenClawConfigValues.mockImplementationOnce(() => {
+      throw new Error("config unavailable");
+    });
+    await expect(runInferenceSet(f.options, f.deps)).rejects.toThrow(
+      "synchronization did not complete",
+    );
+    expect(f.state.attached).toBe(true);
+    expect(f.entry.openClawConfigSyncPending).toBe(true);
+    await expect(
+      runInferenceSet({ provider: f.options.provider, model: f.options.model }, f.deps),
+    ).resolves.toMatchObject({ inSandboxConfigSynced: true });
+    expect(f.adapter.attachProvider).toHaveBeenCalledOnce();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.entry.openClawConfigSyncPending).toBeUndefined();
   });
 });
 
