@@ -568,6 +568,25 @@ If the error names an invalid gateway binding, restore the affected row's known-
 
 ## Onboarding
 
+### Enable Native Local Inference on a Reused Gateway
+
+If onboarding reports that native local inference requires `providers_v2_enabled=true`, ask the gateway administrator to review attached providers and run the command printed in the error.
+For a gateway named `nemoclaw`, that command is:
+
+```bash
+openshell settings set -g nemoclaw --global --key providers_v2_enabled --value true --yes
+```
+
+NemoClaw does not change this setting on an existing gateway.
+After the administrator enables it, resume the failed onboarding session:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+Resume reruns native local inference setup when NemoClaw has no recorded native local provider for this sandbox, even if another sandbox already has the same shared gateway route.
+If the setting is still missing, onboarding stops before creating the sandbox and retains the session for another attempt.
+
 ### Cgroup v2 errors during onboard
 
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2. Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
