@@ -230,6 +230,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
       "test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts",
       "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-startup.test.ts",
     ),
   },
   {
@@ -241,6 +242,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
       "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-startup.test.ts",
     ),
   },
   {
