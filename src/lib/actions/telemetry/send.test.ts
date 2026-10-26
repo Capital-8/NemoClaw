@@ -118,11 +118,23 @@ it("reports partial collection when count evidence is unavailable (#12859)", asy
   expect(event.parameters.collectionStatus).toBe("partial");
 });
 
-it.each([undefined, "qa-telemetry:client:attempt-1"])(
-  "sends one anonymous TEST envelope with test label %j",
-  async (testLabel) => {
+it.each([
+  ["NEMOCLAW_TELEMETRY_TEST_LABEL", undefined, ""],
+  [
+    "NEMOCLAW_TELEMETRY_TEST_LABEL",
+    "qa-telemetry:client:attempt-1",
+    "qa-telemetry:client:attempt-1",
+  ],
+  ["CI", "true", "qa-ci:generic:attempt-1"],
+  ["CI", "1", "qa-ci:generic:attempt-1"],
+  ["GITHUB_ACTIONS", "true", "qa-ci:gh-12345678901:attempt-2"],
+] satisfies [string, string | undefined, string][])(
+  "sends one anonymous TEST envelope when %s is %j",
+  async (key, value, testLabel) => {
     allowLocalTelemetry();
-    vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", testLabel);
+    vi.stubEnv(key, value);
+    vi.stubEnv("GITHUB_RUN_ID", "12345678901");
+    vi.stubEnv("GITHUB_RUN_ATTEMPT", "2");
     resolveTelemetryDeliveryConfig();
     const privateValue = "secret-key_https://private.example/home_10.0.0.7_sandbox-name";
     collectOperationSnapshot.mockResolvedValue({
@@ -142,7 +154,7 @@ it.each([undefined, "qa-telemetry:client:attempt-1"])(
     const body = JSON.parse(String(request.body));
     expect(body.events).toHaveLength(1);
     expect(isOperationEvent(body.events[0])).toBe(true);
-    expect(body.events[0].parameters.testLabel).toBe(testLabel ?? "");
+    expect(body.events[0].parameters.testLabel).toBe(testLabel);
     expect(body).toMatchObject({
       deviceGdprFuncOptIn: "Temp",
       deviceId: "undefined",
@@ -156,9 +168,6 @@ it.each([undefined, "qa-telemetry:client:attempt-1"])(
 
 it.each([
   ["NEMOCLAW_DISABLE_TELEMETRY", "1"],
-  ["CI", "true"],
-  ["CI", "1"],
-  ["GITHUB_ACTIONS", "true"],
   ["VITEST", "true"],
   ["NODE_ENV", "test"],
   ["NEMOCLAW_TELEMETRY_TEST_LABEL", "invalid"],
