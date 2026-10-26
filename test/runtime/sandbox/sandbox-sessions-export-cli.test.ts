@@ -58,6 +58,9 @@ function buildStubOpenshell(
             `    printf '%s\\n' ${JSON.stringify(transcriptProbe.output)}; exit ${transcriptProbe.status} ;;`,
           ]
         : []),
+      ...(!sandboxRoot && !transcriptProbe
+        ? ['  *"--name alpha -- node --no-warnings -e"*) printf "staged\\n"; exit 0 ;;']
+        : []),
       '  *"sandbox exec --name alpha -- sh -c"*) exit 0 ;;',
       '  "sandbox download"*)',
       // Create the destination so the host-side chmod/stat succeed (mirrors a
@@ -142,7 +145,7 @@ describe("sandbox sessions export CLI", () => {
       const cleanupLine = calls.find((line) => line.includes("-- rm -f"));
       expect(listLine).toBeDefined();
       expect(tarLine).toBeDefined();
-      expect(tarLine).toContain("/sandbox/.openclaw/agents/main/sessions");
+      expect(tarLine).toMatch(/\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]{12}/);
       expect(tarLine).toContain("./sid-a.jsonl");
       expect(tarLine).toContain("./sid-b.jsonl");
       expect(tarLine).not.toContain("trajectory.jsonl");
@@ -172,7 +175,7 @@ describe("sandbox sessions export CLI", () => {
     }
   });
 
-  it("writes a browsable directory of session files by default (dir format, no tar/staging)", () => {
+  it("writes a browsable directory of staged session files by default", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-dir-"));
     try {
       writeSandboxRegistry(home);
@@ -194,13 +197,15 @@ describe("sandbox sessions export CLI", () => {
       expect(result.code).toBe(0);
 
       const calls = fs.readFileSync(openshellLog, "utf8").split("\n");
-      // dir is the default: no in-sandbox tar (umask 077) and no /tmp staging cleanup.
+      // dir is the default: no in-sandbox tar (umask 077).
       expect(calls.some((line) => line.includes("umask 077"))).toBe(false);
       expect(calls.some((line) => line.includes("-- rm -f"))).toBe(false);
       const downloadLines = calls.filter((line) => line.startsWith("sandbox download"));
       expect(downloadLines).toHaveLength(2);
       expect(downloadLines.every((line) => line.includes("-g nemoclaw alpha"))).toBe(true);
-      expect(downloadLines[0]).toContain("/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl");
+      expect(downloadLines[0]).toMatch(
+        /\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]{12}\/sid-a\.jsonl/,
+      );
       // #7367: each file downloads into a fresh staging dir under outDir and is
       // renamed to its final path only after verification, so every download
       // targets a staging path — the published files land at outDir/<file>.
@@ -408,6 +413,44 @@ describe("sandbox sessions export CLI", () => {
       const downloadLine = calls.find((line) => line.startsWith("sandbox download"));
       expect(downloadLine).toMatch(new RegExp(`${staged.source}/sid-a\\.jsonl `));
       expect(calls.some((line) => new RegExp(`-- rm -rf ${staged.source}$`).test(line))).toBe(true);
+      expect(fs.readdirSync(path.join(sandboxRoot, ".nemoclaw-staging"))).toEqual([]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("exports a legacy transcript from private staging after checking its file descriptor", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-legacy-"));
+    try {
+      writeSandboxRegistry(home);
+      const sandboxRoot = path.join(home, "sandbox-root");
+      const store = path.join(sandboxRoot, ".openclaw", "agents", "main", "sessions");
+      fs.mkdirSync(store, { recursive: true });
+      fs.writeFileSync(path.join(store, "sid-a.jsonl"), '{"type":"session","id":"sid-a"}\n');
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }]),
+        "",
+        undefined,
+        sandboxRoot,
+      );
+
+      const outDir = path.join(home, "sessions-alpha");
+      const result = runWithEnv(`alpha sessions export --out ${outDir} 2>&1`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(result.code).toBe(0);
+      expect(fs.readFileSync(path.join(outDir, "sid-a.jsonl"), "utf8")).toBe(
+        '{"type":"session","id":"sid-a"}\n',
+      );
+      const calls = fs.readFileSync(openshellLog, "utf8");
+      expect(calls).toMatch(
+        /sandbox download .*\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]{12}\/sid-a\.jsonl/,
+      );
       expect(fs.readdirSync(path.join(sandboxRoot, ".nemoclaw-staging"))).toEqual([]);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

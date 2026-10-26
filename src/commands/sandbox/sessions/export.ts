@@ -19,8 +19,10 @@ export default class SandboxSessionsExportCommand extends NemoClawCommand {
   static description = [
     "Routes by the sandbox's agent kind, recorded in the registry.",
     "",
-    "OpenClaw sandbox: tar the per-session JSONL files inside the sandbox and",
-    "download the bundle to the host via `openshell sandbox download`. By default",
+    "OpenClaw sandbox: read selected transcripts from the session database in",
+    "OpenClaw 2026.9 or later, or from per-session JSONL files in older releases.",
+    "Export them as a host directory by default, or as a tar bundle with --format tar.",
+    "The transfer uses `openshell sandbox download`. By default",
     "every non-internal session for the agent is exported; NemoClaw onboard",
     "warm-up sessions are hidden from export-all output. Pass one or more",
     "positional keys to filter. Keys may be either an alias (e.g. `main`, `telegram:t-1`) or the",

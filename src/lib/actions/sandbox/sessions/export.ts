@@ -14,11 +14,9 @@
 //         download the resulting tarball via `openshell sandbox download`,
 //         and best-effort clean up the staging artefact afterwards.
 //       * OpenClaw side (upstream `openclaw` npm package): owns the on-disk
-//         session store under `/sandbox/.openclaw/agents/<id>/sessions/` and
-//         the `sessions.list` index contract. NemoClaw never edits that
-//         store and only reads it through the upstream CLI; renaming a key,
-//         changing the per-session filename layout, or normalising the
-//         `sessions list --json` shape are upstream concerns.
+//         session store and the `sessions list` index contract. NemoClaw uses
+//         that CLI to resolve session keys, then reads selected transcripts
+//         from the database or legacy files without editing the store.
 //       * OpenClaw 2026.9 and later keep transcripts in the per-agent SQLite
 //         database instead of `<sessionId>.jsonl` files. NemoClaw reads the
 //         selected rows read-only inside the sandbox and stages them as
@@ -286,7 +284,7 @@ async function exportSandboxSessionsUnlocked(
       sessions,
     });
   } finally {
-    if (source.stagingDir) removeStagedTranscripts(opts.sandboxName, target, source.stagingDir);
+    removeStagedTranscripts(opts.sandboxName, target, source.stagingDir);
   }
 }
 
@@ -747,13 +745,10 @@ function buildShellInvocation(input: {
   // staging directory itself is owner-only even if a previous run (or an
   // unrelated tool) created it with a broader mode.
   //
-  // The archive operation re-verifies each transcript is a regular,
-  // non-symlink file with link count 1 immediately before tar reads it, using absolute paths
-  // under sourceDir. This is a best-effort re-check: the test and tar are
-  // separate commands, so a transcript replaced between them can still be
-  // bundled. It narrows, but does not eliminate, the window where tar could
-  // recurse a directory or pack a link; the preflight probe remains the
-  // primary diagnostic.
+  // The source script stages transcripts from checked database rows or held
+  // legacy file descriptors. Before tar reads the staged files, this command
+  // checks that each is still a regular, single-link file. The check and tar
+  // are separate commands, so this remains a best-effort re-check.
   const quoted = tarArgv.map(shellQuote).join(" ");
   const quotedTarball = shellQuote(tarballRemote);
   const quotedStagingDir = shellQuote(STAGING_DIR_IN_SANDBOX);
@@ -894,19 +889,18 @@ function readSessionIndex(
 /**
  * Find the selected transcripts in the sandbox. OpenClaw 2026.9 and later keep
  * them in the per-agent session database; the in-sandbox script then writes
- * them as `<sessionId>.jsonl` files into a new owner-only staging directory,
- * and the export reads from there. Earlier OpenClaw releases keep the files in
- * `agents/<id>/sessions`; the script checks each one in place. A selected
- * session with no stored transcript, or an abnormal legacy file, refuses the
- * whole export before any output is written.
+ * them as `<sessionId>.jsonl` files into a new owner-only staging directory.
+ * Earlier OpenClaw releases keep files in `agents/<id>/sessions`; the script
+ * copies each selected file from a checked descriptor into the same staging
+ * directory. A session with no stored transcript, or an abnormal legacy file,
+ * refuses the whole export before host output is written.
  */
 function locateOpenClawTranscripts(
   sandboxName: string,
   target: OpenShellSandboxTransferRequest["target"],
   agent: string,
   files: readonly string[],
-): { sourceDir: string; stagingDir: string | null } {
-  const legacyDir = `/sandbox/.openclaw/agents/${agent}/sessions`;
+): { sourceDir: string; stagingDir: string } {
   const stagingDir = `${STAGING_DIR_IN_SANDBOX}/sessions-export-${agent}-${randomBytes(6).toString("hex")}`;
   // The agent id, staging directory, and file basenames travel as argv
   // operands, never interpolated into the script.
@@ -933,14 +927,12 @@ function locateOpenClawTranscripts(
   );
   const source = parseOpenClawTranscriptSource(result, files);
   switch (source.kind) {
-    case "legacy":
-      return { sourceDir: legacyDir, stagingDir: null };
     case "staged":
       return { sourceDir: stagingDir, stagingDir };
     case "legacy-abnormal":
       throw new Error(
         `Refusing to export: sessions are listed in the agent index but their transcript files are missing, symlinks, hard links, or not regular files in the sandbox store: ${source.files.join(", ")}. ` +
-          `Inspect ${legacyDir} in the sandbox, or re-run the affected turn.`,
+          `Inspect /sandbox/.openclaw/agents/${agent}/sessions in the sandbox, or re-run the affected turn.`,
       );
     case "stored-missing":
       throw new Error(

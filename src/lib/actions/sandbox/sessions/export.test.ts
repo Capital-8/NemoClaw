@@ -49,7 +49,7 @@ import type { OpenShellSandboxTransferCompletion } from "../../../adapters/opens
 import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit, getKnownSandboxTargetGatewayName } from "../gateway-state";
 import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
-import { buildSandboxTarArgv, exportSandboxSessions } from "./export";
+import { exportSandboxSessions } from "./export";
 import {
   OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT,
   OPENCLAW_TRANSCRIPT_SOURCE_TIMEOUT_MS,
@@ -71,11 +71,11 @@ let processExitSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   captureMock.mockReset();
-  // Fallback for the transcript-existence probe: by default every resolved
-  // transcript exists (empty missing list, exit 0), so tests that only care
-  // about the list/tar/download flow do not need to stub the extra call.
-  // Individual tests override the probe with mockReturnValueOnce.
-  captureMock.mockReturnValue(makeCapture("", 0));
+  // The source step always stages checked transcripts, including legacy files.
+  // Tests that examine source failures override this response explicitly.
+  captureMock.mockImplementation((args: string[]) =>
+    makeCapture(args.includes(OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT) ? "staged\n" : "", 0),
+  );
   runMock.mockReset();
   runMock.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   transferRunMock.mockReset();
@@ -146,28 +146,6 @@ function makeTransferCompletion(
 function throwEnoent(): never {
   throw new Error("ENOENT");
 }
-
-describe("buildSandboxTarArgv", () => {
-  it("isolates resolved files behind `--` and prefixes each with './' so a leading-dash filename cannot be reinterpreted as a tar option", () => {
-    expect(
-      buildSandboxTarArgv({
-        sourceDir: "/sandbox/.openclaw/agents/main/sessions",
-        tarballRemote: "/tmp/x.tgz",
-        resolvedFiles: ["sid-1.jsonl", "sid-2.jsonl"],
-      }),
-    ).toEqual([
-      "tar",
-      "-czf",
-      "/tmp/x.tgz",
-      "--no-recursion",
-      "-C",
-      "/sandbox/.openclaw/agents/main/sessions",
-      "--",
-      "./sid-1.jsonl",
-      "./sid-2.jsonl",
-    ]);
-  });
-});
 
 describe("isWarmupSessionId", () => {
   it("matches the onboard warm-up session id prefix (#5511)", () => {
@@ -306,6 +284,11 @@ describe("exportSandboxSessions", () => {
       expect(captureCall).toContain("list");
       expect(captureCall).toContain("--agent");
       expect(captureCall).toContain("main");
+      const sourceCall = captureMock.mock.calls[1]?.[0] as string[];
+      const stagedSource = sourceCall.find((arg) =>
+        /^\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]{12}$/.test(arg),
+      );
+      expect(stagedSource).toBeDefined();
       // The third capture is the post-tar archive member type check.
       expect(shellCommand(captureMock.mock.calls[2]?.[0] as string[])).toContain("tar -tvzf");
 
@@ -329,14 +312,12 @@ describe("exportSandboxSessions", () => {
       // hard-link-free file (link count 1) runs before tar, so a file replaced
       // between the preflight probe and the archive is refused (exit 3) rather
       // than bundled as a directory, link, or hard link.
-      expect(command).toMatch(
-        /\[ -f \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] && \[ ! -L \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl \] && \[ "\$\(stat -c %h \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-a\.jsonl 2>\/dev\/null\)" = "1" \] \|\| \{ printf 'refusing non-regular transcript %s\\n' .* >&2; exit 3; \}/,
+      expect(command).toContain(
+        `[ -f ${stagedSource}/sid-a.jsonl ] && [ ! -L ${stagedSource}/sid-a.jsonl ] && [ "$(stat -c %h ${stagedSource}/sid-a.jsonl 2>/dev/null)" = "1" ]`,
       );
       // Each re-check is command-separated with `&&` so a multi-session archive
       // does not collapse the validation snippets into one broken shell line.
-      expect(command).toMatch(
-        /exit 3; \} && \[ -f \/sandbox\/\.openclaw\/agents\/main\/sessions\/sid-b\.jsonl \]/,
-      );
+      expect(command).toContain(`exit 3; } && [ -f ${stagedSource}/sid-b.jsonl ]`);
       expect(command).toMatch(
         /&& tar -czf \/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz/,
       );
@@ -357,7 +338,7 @@ describe("exportSandboxSessions", () => {
         /^\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]+\.tgz$/,
       );
       expect(runMock.mock.calls.at(-1)?.[0]).toEqual(
-        expect.arrayContaining(["sandbox", "exec", "-g", "gateway-alpha", "rm", "-f"]),
+        expect.arrayContaining(["sandbox", "exec", "-g", "gateway-alpha", "rm", "-rf"]),
       );
 
       expect(result.selectedKeys).toBe("all");
@@ -390,7 +371,7 @@ describe("exportSandboxSessions", () => {
     }
   });
 
-  it("writes a browsable directory of session files by default (dir format, no tar staging)", async () => {
+  it("writes a browsable directory of staged session files by default", async () => {
     captureMock.mockReturnValueOnce(
       makeCapture(
         JSON.stringify([
@@ -408,7 +389,7 @@ describe("exportSandboxSessions", () => {
         out: "./sessions-alpha",
       });
 
-      // dir is the default: no in-sandbox tar/staging, but each file downloads
+      // dir is the default: no in-sandbox tar, but each file downloads
       // into a fresh host-side staging directory inside the export directory and
       // is renamed into place only after verification (#7367: a stale file from
       // an earlier export must never satisfy the post-download check). The host
@@ -420,6 +401,11 @@ describe("exportSandboxSessions", () => {
       const expectedStagingDir = path.join(expectedDir, ".sessions-export-stub");
       const expectedStagingSidA = path.join(expectedStagingDir, "sid-a.jsonl");
       const expectedStagingSidB = path.join(expectedStagingDir, "sid-b.jsonl");
+      const sourceCall = captureMock.mock.calls[1]?.[0] as string[];
+      const stagedSource = sourceCall.find((arg) =>
+        /^\/sandbox\/\.nemoclaw-staging\/sessions-export-main-[0-9a-f]{12}$/.test(arg),
+      );
+      expect(stagedSource).toBeDefined();
       expect(mkdirSpy).toHaveBeenCalledWith(expectedDir, { recursive: true });
       const shellCalls = runMock.mock.calls.filter((c) => (c[0] as string[]).includes("sh"));
       expect(shellCalls).toHaveLength(0);
@@ -428,14 +414,14 @@ describe("exportSandboxSessions", () => {
           direction: "download",
           sandboxName: "alpha",
           target: { kind: "named", gatewayName: "gateway-alpha" },
-          source: "/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl",
+          source: `${stagedSource}/sid-a.jsonl`,
           destination: expectedStagingSidA,
         },
         {
           direction: "download",
           sandboxName: "alpha",
           target: { kind: "named", gatewayName: "gateway-alpha" },
-          source: "/sandbox/.openclaw/agents/main/sessions/sid-b.jsonl",
+          source: `${stagedSource}/sid-b.jsonl`,
           destination: expectedStagingSidB,
         },
       ]);
@@ -821,7 +807,7 @@ describe("exportSandboxSessions", () => {
         out: "./out.tgz",
         format: "tar",
       });
-      const cleanupCall = runMock.mock.calls.at(-1);
+      const cleanupCall = runMock.mock.calls.find(([args]) => (args as string[]).includes("-f"));
       expect(cleanupCall?.[0]).toContain("rm");
       expect(cleanupCall?.[0]).toContain("-f");
       expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
@@ -918,7 +904,7 @@ describe("exportSandboxSessions", () => {
         format: "tar",
       }),
     ).rejects.toThrow(/Failed to tar sessions/);
-    const cleanupCall = runMock.mock.calls.at(-1);
+    const cleanupCall = runMock.mock.calls.find(([args]) => (args as string[]).includes("-f"));
     expect(cleanupCall?.[0]).toContain("rm");
     expect(cleanupCall?.[0]).toContain("-f");
     expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
@@ -944,6 +930,19 @@ describe("exportSandboxSessions", () => {
     expect(runMock.mock.calls[0]?.[0]).toEqual(
       expect.arrayContaining(["rm", "-rf", expect.stringMatching(/sessions-export-main-/)]),
     );
+    expect(transferRunMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a silent successful transcript source instead of reading the legacy path", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    captureMock.mockReturnValueOnce(makeCapture("", 0));
+
+    await expect(
+      exportSandboxSessions({ sandboxName: "alpha", out: "./out.tgz", format: "tar" }),
+    ).rejects.toThrow(/Failed to verify session transcripts/);
+    expect(runMock.mock.calls.some(([args]) => (args as string[]).includes("tar"))).toBe(false);
     expect(transferRunMock).not.toHaveBeenCalled();
   });
 
@@ -1042,7 +1041,7 @@ describe("exportSandboxSessions", () => {
       makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
     );
     // Preflight probe passes; the archive member check reports a directory.
-    captureMock.mockReturnValueOnce(makeCapture("", 0));
+    captureMock.mockReturnValueOnce(makeCapture("staged\n", 0));
     captureMock.mockReturnValueOnce(
       makeCapture("drwxr-xr-x root/root 0 2026-01-01 00:00 ./sid-a.jsonl", 0),
     );
@@ -1090,7 +1089,7 @@ describe("exportSandboxSessions", () => {
         format: "tar",
       }),
     ).rejects.toThrow(/Failed to download/);
-    const cleanupCall = runMock.mock.calls.at(-1);
+    const cleanupCall = runMock.mock.calls.find(([args]) => (args as string[]).includes("-f"));
     expect(cleanupCall?.[0]).toContain("rm");
     expect(cleanupCall?.[0]).toContain("-f");
     expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
@@ -1131,7 +1130,7 @@ describe("exportSandboxSessions", () => {
         format: "tar",
       }),
     ).rejects.toThrow(/reported success \(exit 0\) but no file was written/);
-    const cleanupCall = runMock.mock.calls.at(-1);
+    const cleanupCall = runMock.mock.calls.find(([args]) => (args as string[]).includes("-f"));
     expect(cleanupCall?.[0]).toContain("rm");
     expect(cleanupCall?.[0]).toContain("-f");
     expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
@@ -1156,7 +1155,7 @@ describe("exportSandboxSessions", () => {
         format: "tar",
       }),
     ).rejects.toThrow(/reported success \(exit 0\) but wrote an empty file/);
-    const cleanupCall = runMock.mock.calls.at(-1);
+    const cleanupCall = runMock.mock.calls.find(([args]) => (args as string[]).includes("-f"));
     expect(cleanupCall?.[0]).toContain("rm");
     expect(cleanupCall?.[0]).toContain("-f");
     expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });

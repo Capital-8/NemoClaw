@@ -26,18 +26,13 @@ afterEach(() => {
 });
 
 function runScriptWith(nodeOptions: string[], ...files: string[]) {
+  return runScriptText(OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT, nodeOptions, ...files);
+}
+
+function runScriptText(script: string, nodeOptions: string[], ...files: string[]) {
   const result = spawnSync(
     process.execPath,
-    [
-      ...nodeOptions,
-      "--no-warnings",
-      "-e",
-      OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT,
-      root,
-      "main",
-      staging,
-      ...files,
-    ],
+    [...nodeOptions, "--no-warnings", "-e", script, root, "main", staging, ...files],
     { encoding: "utf8" },
   );
   return { status: result.status, output: result.stdout, stderr: result.stderr };
@@ -173,11 +168,38 @@ describe("OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT (#12673)", () => {
     expect(fs.existsSync(staging)).toBe(false);
   });
 
-  it("accepts regular single-link legacy files in place", () => {
+  it("copies regular single-link legacy files into owner-only staging", () => {
     writeLegacyStore();
 
-    expect(runScript("sid-a.jsonl")).toMatchObject({ status: 0, output: "" });
-    expect(fs.existsSync(staging)).toBe(false);
+    expect(runScript("sid-a.jsonl")).toMatchObject({ status: 0, output: "staged\n" });
+    expect(fs.readFileSync(path.join(staging, "sid-a.jsonl"), "utf8")).toBe('{"type":"session"}\n');
+    expect(fs.statSync(staging).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.join(staging, "sid-a.jsonl")).mode & 0o777).toBe(0o600);
+  });
+
+  it("copies the checked descriptor when the legacy pathname changes after opening", () => {
+    const store = writeLegacyStore();
+    const sourcePath = path.join(store, "sid-a.jsonl");
+    const unrelatedPath = path.join(root, "unrelated.txt");
+    const prelude = String.raw`(() => {
+      const fs = require("node:fs");
+      const original = fs.openSync;
+      fs.openSync = function(pathname, ...args) {
+        const descriptor = original.call(this, pathname, ...args);
+        if (pathname === process.argv[1] + "/.openclaw/agents/main/sessions/sid-a.jsonl") {
+          fs.renameSync(pathname, pathname + ".checked");
+          fs.linkSync(process.argv[1] + "/unrelated.txt", pathname);
+        }
+        return descriptor;
+      };
+    })();
+    `;
+
+    const result = runScriptText(prelude + OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT, [], "sid-a.jsonl");
+
+    expect(result).toMatchObject({ status: 0, output: "staged\n" });
+    expect(fs.readFileSync(sourcePath, "utf8")).toBe(fs.readFileSync(unrelatedPath, "utf8"));
+    expect(fs.readFileSync(path.join(staging, "sid-a.jsonl"), "utf8")).toBe('{"type":"session"}\n');
   });
 
   it("reports missing, symlinked, and hard-linked legacy files", () => {
@@ -188,6 +210,7 @@ describe("OPENCLAW_TRANSCRIPT_SOURCE_SCRIPT (#12673)", () => {
     const result = runScript("sid-a.jsonl", "sid-m.jsonl", "sid-l.jsonl", "sid-h.jsonl");
 
     expect(result).toMatchObject({ status: 1, output: "sid-m.jsonl\nsid-l.jsonl\nsid-h.jsonl\n" });
+    expect(fs.existsSync(staging)).toBe(false);
   });
 });
 
@@ -195,7 +218,10 @@ describe("parseOpenClawTranscriptSource", () => {
   const files = ["sid-a.jsonl", "sid-b.jsonl"];
 
   it.each([
-    [{ status: 0, output: "" }, { kind: "legacy" }],
+    [
+      { status: 0, output: "" },
+      { kind: "failed", detail: "" },
+    ],
     [{ status: 0, output: "staged\n" }, { kind: "staged" }],
     [
       { status: 1, output: "sid-b.jsonl\n" },

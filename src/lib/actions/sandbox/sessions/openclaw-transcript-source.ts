@@ -15,9 +15,11 @@
 //     owner-only `<stagingDir>`, so memory use does not grow with the history.
 //     It prints `staged` and exits 0. When a selected session has no rows, it
 //     removes `<stagingDir>`, prints each affected file, and exits 2.
-//   - When the database does not exist, it checks each file in the legacy
-//     store. It exits 0 with no output when every file is a regular file with
-//     one link. Otherwise it prints each affected file and exits 1.
+//   - When the database does not exist, it opens each legacy file without
+//     following a final symlink, checks the held descriptor, and copies it to
+//     the same private staging directory. This keeps the later transfer from
+//     reopening a pathname that could have been replaced after validation.
+//     It exits 1 and names any missing or abnormal selected files.
 //   - It exits 3 for an unsafe path (a symlinked path component, a database
 //     file or companion with more than one link, or a store path that is not
 //     a directory) and 5 for an unsupported database schema. A
@@ -56,19 +58,57 @@ function existingPath(relative, finalIsFile) {
 const database = existingPath(".openclaw/agents/" + agent + "/agent/openclaw-agent.sqlite", true);
 if (database === null) {
   const store = existingPath(".openclaw/agents/" + agent + "/sessions", false);
-  const abnormal = files.filter((file) => {
-    if (store === null) return true;
-    try {
-      const stat = fs.lstatSync(path.join(store, file));
-      return !stat.isFile() || stat.nlink !== 1;
-    } catch {
-      return true;
+  if (store === null) {
+    process.stdout.write(files.join("\n") + "\n");
+    process.exit(1);
+  }
+  const abnormal = [];
+  fs.mkdirSync(path.dirname(stagingDir), { recursive: true, mode: 0o700 });
+  fs.chmodSync(path.dirname(stagingDir), 0o700);
+  fs.mkdirSync(stagingDir, { mode: 0o700 });
+  try {
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    for (const file of files) {
+      let descriptor;
+      try {
+        descriptor = fs.openSync(path.join(store, file), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        const stat = fs.fstatSync(descriptor);
+        if (!stat.isFile() || stat.nlink !== 1) {
+          fs.closeSync(descriptor);
+          descriptor = undefined;
+          abnormal.push(file);
+          continue;
+        }
+      } catch {
+        if (descriptor !== undefined) fs.closeSync(descriptor);
+        abnormal.push(file);
+        continue;
+      }
+      try {
+        const target = fs.openSync(path.join(stagingDir, file), "wx", 0o600);
+        try {
+          let count;
+          while ((count = fs.readSync(descriptor, buffer, 0, buffer.length, null)) > 0) {
+            let offset = 0;
+            while (offset < count) offset += fs.writeSync(target, buffer, offset, count - offset);
+          }
+        } finally {
+          fs.closeSync(target);
+        }
+      } finally {
+        fs.closeSync(descriptor);
+      }
     }
-  });
+  } catch (error) {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    throw error;
+  }
   if (abnormal.length > 0) {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
     process.stdout.write(abnormal.join("\n") + "\n");
     process.exit(1);
   }
+  process.stdout.write("staged\n");
   process.exit(0);
 }
 for (const suffix of ["-journal", "-shm", "-wal"]) {
@@ -143,7 +183,6 @@ process.stdout.write("staged\n");
 `;
 
 export type OpenClawTranscriptSource =
-  | { kind: "legacy" }
   | { kind: "staged" }
   | { kind: "legacy-abnormal"; files: string[] }
   | { kind: "stored-missing"; files: string[] }
@@ -158,7 +197,6 @@ export function parseOpenClawTranscriptSource(
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  if (result.status === 0 && lines.length === 0) return { kind: "legacy" };
   if (result.status === 0 && lines.length === 1 && lines[0] === "staged") return { kind: "staged" };
   // Only lines that name a requested file are valid reports. Other output, or
   // a report with no files, is a sandbox or gateway failure and fails closed.
