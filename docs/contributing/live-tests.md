@@ -21,13 +21,18 @@ cargo ci live-kind
 
 The runner builds OpenClaw, exports its metadata bundle, loads it by digest, and installs the pinned Agent Sandbox prerequisite.
 The gateway test checks authentication, forged-token rejection, repeated install/removal, and retained storage without a Helm executable on `PATH`.
-The OpenShift-profile and registry tests share one flow that uses the public SDK to deploy a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
+The OpenShift-profile and registry tests share one flow that deploys a gateway and agent sandboxes from that image, with one inference profile for all of them as in `examples/kubernetes/managed-development.yaml`.
+It uses the public SDK and the bundled CLI on one state directory: SDK apply, CLI export, SDK apply of the export, then CLI destroy.
+The CLI runs with a `KUBECONFIG` and a `TF_CLI_ARGS` that would fail it if they reached the cluster client or OpenTofu, so it must use only the document's kubeconfig.
 Each sandbox also grants one endpoint named for it, so no two sandboxes have the same policy.
 Before deploying, the flow starts a stub model server in its own namespace, as a platform would: the pinned `nginx-unprivileged` image that the development issuer runs, behind a Service named `model` on port 8000.
-The inference profile names that Service by its cluster DNS name, without a key, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) describes.
-The stub answers every `POST /v1/chat/completions` with the same streamed chat completion, which holds a value unique to the run.
+The inference profile names that Service by its cluster DNS name, and a key unique to the run by reference, as [Use a Model Server in the Cluster](../kubernetes.md#use-a-model-server-in-the-cluster) and `examples/kubernetes/in-cluster-vllm.yaml` describe.
+The stub answers every `POST /v1/chat/completions` that carries the key with the same streamed chat completion, which holds a value unique to the run, and refuses any other with 401.
+Only OpenShell's proxy can put the key into a request, so an answer also shows that the key's placeholder in the agent's configuration is the one OpenShell fills.
 The OpenShift-profile test deploys three sandboxes, `assistant`, `researcher`, and `reviewer`; the registry test deploys `assistant` alone.
-The flow supplies a caller-relative kubeconfig and expects apply to complete with every agent started.
+The flow supplies a caller-relative kubeconfig.
+A plan before the first apply must create nothing: the deployment's namespace must not exist after it.
+Apply must complete with every agent started.
 A second apply must report no changes.
 Its refresh records two values the first apply leaves for later: the sandbox's loaded policy hash and the auth resource's Helm release presence.
 Export must reproduce the authored configuration, and applying the export must report no changes and leave OpenTofu state as the second apply left it, apart from its serial and the order of check results.
@@ -38,6 +43,7 @@ Each agent must answer from that runtime, as that agent, with a succeeded run wh
 Each round ends after 30 seconds and abandons a request that has not answered; Fabric keeps running that request, so the export's round skips its agent, and destroy's stop of that agent waits for the request to end.
 Fabric reports no runtime status, so a runtime that stops is found at its next invocation ([NVIDIA/NeMo-Fabric#420](https://github.com/NVIDIA/NeMo-Fabric/issues/420)); the answer shows that the runtime the first apply started still runs and that the agent's request reached the stub.
 Destroy must then remove every `Sandbox` object within 60 seconds and keep the namespace, encryption key, and gateway PVC with unchanged UIDs; afterward the flow deletes the stub's namespace without waiting.
+The key must appear, as written or base64-encoded, in no file of the state directory, saved plans included, and in neither CLI command's output.
 If an apply fails, the flow prints each pod's phase and container states, the last 40 lines of each container's log, and the namespace's 15 most recent events; if the stub is not ready or a request fails, it prints the same for the stub's namespace and the deployment's.
 CI keeps that output in the suite's JUnit report for 14 days.
 The OpenShift-profile test also supplies namespace UID-range annotations on kind and checks that the gateway pod and each sandbox's agent pod use the assigned UID.

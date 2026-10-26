@@ -4,7 +4,11 @@
 //!
 //! The test places the stub in its own namespace, as a platform places a
 //! model server, and the agents reach it through its Service. It answers
-//! every chat completion request with one streamed reply, so no model runs.
+//! every chat completion request that carries its key with one streamed
+//! reply, so no model runs, and refuses any other. The deployment names the
+//! key by reference; only OpenShell's proxy substitutes it into a request, so
+//! an answer also shows that the placeholder Fabric sends is the one OpenShell
+//! fills.
 //! Fabric reports no runtime status (NVIDIA/NeMo-Fabric#420): a runtime that
 //! stops is found at its next invocation. An answer from the runtime ID the
 //! first apply recorded therefore shows that this runtime still runs. The
@@ -36,6 +40,9 @@ pub(super) struct Stub {
     pub namespace: String,
     /// The text of every reply, unique to the run.
     pub reply: String,
+    /// The bearer key each request must carry, unique to the run. Hex, so
+    /// nginx reads it literally.
+    pub key: String,
 }
 
 impl Stub {
@@ -44,13 +51,14 @@ impl Stub {
         Self {
             namespace,
             reply: format!("nemoclaw-stub-{}", random_hex(8)),
+            key: random_hex(16),
         }
     }
 
     /// Create the stub's namespace and start the stub in it, without waiting
     /// for its pod.
     pub async fn place(&self, client: &kube::Client) {
-        let objects = objects(&self.namespace, &self.reply);
+        let objects = objects(&self.namespace, &self.reply, &self.key);
         Api::<Namespace>::all(client.clone())
             .create(
                 &kube::api::PostParams::default(),
@@ -136,12 +144,13 @@ fn stream(reply: &str) -> String {
     .concat()
 }
 
-/// The nginx configuration that answers every chat completion request with
-/// `reply`. nginx's static handler refuses POST, so `return` answers, and
-/// discards the request body. Its text is a single-quoted string in which
-/// nginx expands variables and backslash escapes; the stream holds no `$`,
-/// `'` or `\`, and its line breaks are written as `\n`.
-fn configuration(reply: &str) -> String {
+/// The nginx configuration that answers every chat completion request bearing
+/// `key` with `reply`, and refuses others with 401. nginx's static handler
+/// refuses POST, so `return` answers, and discards the request body. Its text
+/// is a single-quoted string in which nginx expands variables and backslash
+/// escapes; the stream holds no `$`, `'` or `\`, and its line breaks are
+/// written as `\n`.
+fn configuration(reply: &str, key: &str) -> String {
     let text = stream(reply).replace('\n', "\\n");
     format!(
         r#"worker_processes 1;
@@ -158,6 +167,7 @@ http {{
     server {{
         listen {PORT};
         location = {BASE_PATH}/chat/completions {{
+            if ($http_authorization != "Bearer {key}") {{ return 401; }}
             default_type text/event-stream;
             return 200 '{text}';
         }}
@@ -171,12 +181,12 @@ http {{
 /// The stub's ConfigMap, Service and Deployment, in creation order. The pod
 /// runs like the development issuer's: unprivileged, with a read-only root
 /// filesystem.
-fn objects(namespace: &str, reply: &str) -> Vec<Value> {
+fn objects(namespace: &str, reply: &str, key: &str) -> Vec<Value> {
     let metadata = json!({"name": SERVICE, "namespace": namespace});
     let selector = json!({"app.kubernetes.io/name": "nemoclaw-test-model"});
     vec![
         json!({"apiVersion": "v1", "kind": "ConfigMap", "metadata": metadata,
-               "data": {"default.conf": configuration(reply)}}),
+               "data": {"default.conf": configuration(reply, key)}}),
         json!({"apiVersion": "v1", "kind": "Service", "metadata": metadata, "spec": {
             "selector": selector, "ports": [{"port": PORT, "targetPort": PORT, "protocol": "TCP"}],
         }}),
@@ -447,6 +457,24 @@ fn each_agent_must_answer_from_the_first_runtime_with_the_reply() {
             "{defect}: {found:?}"
         );
     }
+}
+
+#[test]
+fn the_stub_answers_only_requests_that_carry_its_key() {
+    let key = "0123abcd".repeat(4);
+    let configuration = configuration("nemoclaw-stub-0123abcd", &key);
+    let guard = configuration
+        .find(&format!(
+            r#"if ($http_authorization != "Bearer {key}") {{ return 401; }}"#
+        ))
+        .expect("the endpoint compares the whole Authorization header with the key");
+    let answer = configuration.find("return 200").unwrap();
+    assert!(guard < answer, "the key is checked before the stub answers");
+    assert_eq!(
+        configuration.matches('$').count(),
+        1,
+        "nginx expands only the Authorization header"
+    );
 }
 
 #[tokio::test]

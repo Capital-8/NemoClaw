@@ -46,6 +46,7 @@ tar.workspace = true
 
 [dev-dependencies]
 base64 = "0.22.1"
+zip.workspace = true
 bollard.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk", features = ["test-scenarios"] }
 k8s-openapi.workspace = true

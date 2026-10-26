@@ -75,7 +75,7 @@ impl Drop for OwnedNamespace {
 
 /// The regular files under `directory`, without following symbolic links:
 /// OpenTofu links its provider directories to the bundle.
-fn regular_files(directory: &Path) -> Vec<PathBuf> {
+pub(super) fn regular_files(directory: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut pending = vec![directory.to_path_buf()];
     while let Some(directory) = pending.pop() {

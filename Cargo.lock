@@ -2633,6 +2633,7 @@ dependencies = [
  "tonic-prost",
  "tower",
  "url",
+ "zip",
 ]
 
 [[package]]
