@@ -41,7 +41,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::Output,
+    process::{Command, Output, Stdio},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -786,8 +786,9 @@ async fn sandbox_objects_left(
 /// The document `deploy_image_and_export` applies: a managed gateway on
 /// `provider` at a free loopback port, and one sandbox per `(sandbox, agent)`
 /// name pair running `image`'s agent, all sharing one inference profile with
-/// the keyless model server at `endpoint`. Each sandbox also grants an
-/// endpoint named for it, so no two sandboxes have the same policy.
+/// the model server at `endpoint`, whose key the caller supplies as
+/// `NEMOCLAW_TEST_STUB_KEY`. Each sandbox also grants an endpoint named for
+/// it, so no two sandboxes have the same policy.
 fn agent_document(
     provider: &str,
     uid: &str,
@@ -849,6 +850,7 @@ spec:
     - name: stub
       provider: openai
       endpoint: {endpoint}
+      credential: {{env: NEMOCLAW_TEST_STUB_KEY}}
   inferences:
     chat:
       routes:
@@ -876,24 +878,111 @@ spec:
 /// The one sandbox, and its agent, that a deployment has unless a test needs more.
 const ONE_AGENT: [(&str, &str); 1] = [("assistant", "main")];
 
-/// A full deployment on a real cluster through the public SDK: the managed
-/// gateway, then one agent sandbox per `(sandbox, agent)` name pair, each from
-/// an image built from this checkout and sharing one inference profile, as
-/// `examples/kubernetes/managed-development.yaml` does. The profile names a
-/// fixed stub that the flow runs in its own namespace (see `requests`). Apply
-/// starts each agent through `fabric-agent-ctl`. Applying the document again,
-/// and then its export, must change nothing and keep each sandbox's ID and
-/// its agent's runtime ID; the first of these must also leave OpenTofu state
-/// as it was. After each of these two applies, every agent must answer one
-/// request from the runtime the first apply started, with the stub's reply.
-/// Each sandbox must have its own ID, and its agent must be bound to it.
-/// Export must recover the authored document; it also requires each sandbox's
-/// provider registrations and policy on the gateway to be the ones compiled
-/// for that sandbox, and the policies differ between sandboxes. Destroy must
-/// remove every `Sandbox` object and keep the gateway's storage: its
-/// namespace, encryption key and claims keep their UIDs. A failed apply
-/// prints the namespace's pods, events and log tails; a failed request also
-/// prints the stub's.
+/// Run the bundled CLI on the deployment in `state`, with `secrets` in its
+/// environment and an ambient `KUBECONFIG` that does not exist.
+fn cli(state: &Path, secrets: &BTreeMap<String, String>, args: &[&str]) -> Output {
+    let bundle = PathBuf::from(required("NEMOCLAW_TEST_BUNDLE"));
+    Command::new(
+        bundle
+            .join("bin")
+            .join(nemoclaw_sdk::bundle::executable("nemoclaw")),
+    )
+    .args(args)
+    .arg("--state-dir")
+    .arg(state)
+    .envs(secrets)
+    .env("KUBECONFIG", "/nonexistent")
+    .stdin(Stdio::null())
+    .output()
+    .unwrap()
+}
+
+/// Where `secret` appears: files under `directory`, and the named CLI outputs.
+/// Symbolic links and files over 16 MiB, such as provider executables, are
+/// skipped.
+fn leaks(secret: &str, directory: &Path, outputs: &[(&str, &Output)]) -> Vec<String> {
+    let holds = |bytes: &[u8]| {
+        bytes
+            .windows(secret.len())
+            .any(|window| window == secret.as_bytes())
+    };
+    let mut found = Vec::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        if metadata.is_dir() {
+            pending.extend(
+                fs::read_dir(&path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        } else if metadata.is_file()
+            && metadata.len() <= 16 << 20
+            && holds(&fs::read(&path).unwrap())
+        {
+            found.push(path.display().to_string());
+        }
+    }
+    found.extend(
+        outputs
+            .iter()
+            .filter(|(_, output)| holds(&output.stdout) || holds(&output.stderr))
+            .map(|(name, _)| (*name).to_owned()),
+    );
+    found
+}
+
+#[test]
+fn a_secret_in_a_nested_state_file_or_a_cli_output_is_a_leak() {
+    let secret = "0123abcd".repeat(4);
+    let state = tempfile::tempdir().unwrap();
+    fs::write(state.path().join("terraform.tfstate"), "{}").unwrap();
+    fs::create_dir(state.path().join("kubernetes")).unwrap();
+    let receipt = state.path().join("kubernetes").join("receipt.json");
+    fs::write(&receipt, format!("{{\"token\":\"{secret}\"}}")).unwrap();
+    let output = |stdout: &str, stderr: &str| Output {
+        status: Default::default(),
+        stdout: stdout.into(),
+        stderr: stderr.into(),
+    };
+    assert_eq!(
+        leaks(
+            &secret,
+            state.path(),
+            &[
+                ("export", &output("kind: NemoClawConfig", "")),
+                ("destroy", &output("", &format!("Bearer {secret}"))),
+            ],
+        ),
+        [receipt.display().to_string(), "destroy".to_owned()]
+    );
+}
+
+/// A full deployment on a real cluster through the public SDK and the bundled
+/// CLI on one state directory, in the order docs/design/scope.md validates:
+/// SDK apply, CLI export, SDK apply of the export, CLI destroy. It has the
+/// managed gateway, then one agent sandbox per `(sandbox, agent)` name pair,
+/// each from an image built from this checkout and sharing one inference
+/// profile, as `examples/kubernetes/managed-development.yaml` does. The profile
+/// names a fixed stub that the flow runs in its own namespace (see `requests`)
+/// and its key by reference, as `examples/kubernetes/in-cluster-vllm.yaml`
+/// does. Planning first must create nothing in the cluster. Apply starts each
+/// agent through `fabric-agent-ctl`. Applying the document again, and then its
+/// export, must change nothing and keep each sandbox's ID and its agent's
+/// runtime ID; the first of these must also leave OpenTofu state as it was.
+/// After each of these two applies, every agent must answer one request from
+/// the runtime the first apply started, with the stub's reply, which the stub
+/// gives only to requests that carry its key. Each sandbox must have its own
+/// ID, and its agent must be bound to it. Export must recover the authored
+/// document; it also requires each sandbox's provider registrations and policy
+/// on the gateway to be the ones compiled for that sandbox, and the policies
+/// differ between sandboxes. The CLI runs with a `KUBECONFIG` that does not
+/// exist, so it must use only the document's kubeconfig. Destroy must remove
+/// every `Sandbox` object and keep the gateway's storage: its namespace,
+/// encryption key and claims keep their UIDs. The key must appear neither in
+/// the state directory nor in the CLI's output. A failed apply prints the
+/// namespace's pods, events and log tails; a failed request also prints the
+/// stub's.
 ///
 /// `cargo ci live-kind` also provides:
 /// - `NEMOCLAW_TEST_BUNDLE`: the verified bundle
@@ -972,19 +1061,30 @@ async fn deploy_image_and_export(
         state: state.path().join("kubernetes"),
         openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
     };
-    let credentials = Values(BTreeMap::from([
+    // The SDK gets these values through `Values`, and the bundled CLI from its
+    // environment.
+    let secrets = BTreeMap::from([
         (
-            "NEMOCLAW_TEST_KUBECONFIG".into(),
+            "NEMOCLAW_TEST_KUBECONFIG".to_owned(),
             relative.to_string_lossy().into_owned(),
         ),
-        ("NEMOCLAW_TEST_AGENT_METADATA".into(), metadata.to_owned()),
-    ]));
+        (
+            "NEMOCLAW_TEST_AGENT_METADATA".to_owned(),
+            metadata.to_owned(),
+        ),
+        ("NEMOCLAW_TEST_STUB_KEY".to_owned(), stub.key.clone()),
+    ]);
     let deployment = Deployment::new(
         state.path(),
         std::path::Path::new(&required("NEMOCLAW_TEST_BUNDLE")),
     )
-    .with_secrets(Arc::new(credentials));
+    .with_secrets(Arc::new(Values(secrets.clone())));
     let cancel = CancellationToken::new();
+    // Planning reads the cluster but must create nothing in it.
+    let planned = deployment.plan(&document, &cancel).await;
+    let after_plan = Api::<Namespace>::all(cluster.clone())
+        .get_opt(&namespace)
+        .await;
     // The stub's pod starts while the deployment applies.
     stub.place(&cluster).await;
 
@@ -1049,7 +1149,12 @@ async fn deploy_image_and_export(
         Some(agents) => requests::round(&operations, agents, &[]).await,
         None => Vec::new(),
     };
-    let exported = deployment.export(&cancel).await;
+    let export = cli(state.path(), &secrets, &["export"]);
+    let exported = if export.status.success() {
+        Document::parse(export.stdout.as_slice()).map_err(|error| error.to_string())
+    } else {
+        Err(String::from_utf8_lossy(&export.stderr).into_owned())
+    };
     let reapplied = match &exported {
         Ok(exported) => Some(
             diagnosed(
@@ -1084,9 +1189,26 @@ async fn deploy_image_and_export(
     let reapplied_identities = identities(state.path(), &document);
     let deployed_objects = sandbox_objects(&cluster, &namespace).await;
     let kept = retained(&cluster, &namespace, &release).await;
-    let destroyed = deployment.destroy(&cancel).await;
+    let destroy = cli(
+        state.path(),
+        &secrets,
+        &["destroy", "-o", "json", "--progress", "off"],
+    );
     stub.remove(&cluster).await;
-    let destroyed = destroyed.unwrap();
+    assert!(
+        destroy.status.success(),
+        "the CLI must destroy the deployment: {}",
+        String::from_utf8_lossy(&destroy.stderr)
+    );
+    let destroyed: nemoclaw_sdk::OperationResult = serde_json::from_slice(&destroy.stdout).unwrap();
+    let leaked = leaks(
+        &stub.key,
+        state.path(),
+        &[
+            ("the CLI's export", &export),
+            ("the CLI's destroy", &destroy),
+        ],
+    );
     let remaining = retained(&cluster, &namespace, &release).await;
     let objects_left = sandbox_objects_left(&cluster, &namespace).await;
     for change in &destroyed.changes {
@@ -1096,6 +1218,13 @@ async fn deploy_image_and_export(
             change.resource
         );
     }
+    planned.expect("planning the deployment must succeed");
+    assert!(
+        after_plan
+            .expect("the namespace is observable after plan")
+            .is_none(),
+        "plan creates nothing in the cluster"
+    );
     let unchanged = unchanged.expect("an unchanged apply must succeed");
     assert!(
         unchanged.changes.is_empty(),
@@ -1165,6 +1294,11 @@ async fn deploy_image_and_export(
         kept.expect("the gateway's storage is observable before destroy")
             == remaining.expect("the gateway's storage is observable after destroy"),
         "namespace, encryption key and gateway PVC identities survive SDK destroy"
+    );
+    assert!(
+        leaked.is_empty(),
+        "the stub's key appears in {}",
+        leaked.join(", ")
     );
     stub_ready.unwrap_or_else(|error| panic!("{error}"));
     // Fabric reports no runtime status, so a stopped runtime is found when it
