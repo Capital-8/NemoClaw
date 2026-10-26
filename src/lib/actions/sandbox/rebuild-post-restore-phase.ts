@@ -627,7 +627,10 @@ export async function runRebuildPostRestorePhase(
         ? await settleOrdinaryOpenClawPairing(sandboxName)
         : portablePairing;
     if (pairing.kind !== "settled") {
-      console.error(`  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}`);
+      const pairingField = "pairingField" in pairing ? pairing.pairingField : null;
+      console.error(
+        `  OpenClaw pairing remains incomplete after rebuild: ${pairing.reason}${pairingField ? ` (${pairingField})` : ""}`,
+      );
       if (backupManifest) console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
       console.error(
         `  Resolve the pairing failure, then rerun \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
