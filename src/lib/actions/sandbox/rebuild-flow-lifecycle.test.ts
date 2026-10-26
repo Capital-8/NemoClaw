@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
+import { writeSdkTlsFiles } from "../../../../test/helpers/openshell-sdk-tls";
 import {
   createRebuildFlowHarness,
   createHarnessTempDir,
@@ -30,6 +31,7 @@ function markedGatewayStateDir(label: string): { stateDir: string; cleanup: () =
   const stateDir = fs.mkdtempSync(path.join(os.homedir(), `.nemoclaw-rebuild-${label}-`));
   fs.chmodSync(stateDir, 0o700);
   ensureManagedGatewayStateRoot({ gatewayName: "nemoclaw", gatewayPort: 8080, stateDir });
+  writeSdkTlsFiles(stateDir);
   return { stateDir, cleanup: () => fs.rmSync(stateDir, { force: true, recursive: true }) };
 }
 

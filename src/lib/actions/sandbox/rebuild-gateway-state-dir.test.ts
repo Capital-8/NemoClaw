@@ -11,6 +11,7 @@ import {
   installRebuildFlowTestHooks,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
+import { writeSdkTlsFiles } from "../../../../test/helpers/openshell-sdk-tls";
 import { ensureManagedGatewayStateRoot } from "../../onboard/gateway/state-dir";
 
 const roots: string[] = [];
@@ -22,9 +23,15 @@ function unmarkedStateDir(): string {
   return stateDir;
 }
 
-function sandboxGatewayStateDir(): string {
+function markedStateDirWithoutTls(): string {
   const stateDir = unmarkedStateDir();
   ensureManagedGatewayStateRoot({ gatewayName: "nemoclaw", gatewayPort: 8080, stateDir });
+  return stateDir;
+}
+
+function sandboxGatewayStateDir(): string {
+  const stateDir = markedStateDirWithoutTls();
+  writeSdkTlsFiles(stateDir);
   return stateDir;
 }
 
@@ -65,6 +72,48 @@ describe("rebuild gateway state directory preflight (#13330)", () => {
       ).resolves.toBeUndefined();
 
       expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("stops before backup or delete when the state directory lacks the SDK TLS files", async () => {
+    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+    process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = markedStateDirWithoutTls();
+    try {
+      const harness = createRebuildFlowHarness();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/Configured OpenShell gateway state directory is unusable/u);
+
+      const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errors).toContain("gateway TLS credentials");
+      expect(errors).toContain("or unset it");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("does not suggest unsetting the override when the recorded state directory is unusable", async () => {
+    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+    delete process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+    try {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { openshellGatewayStateDir: unmarkedStateDir() },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/Configured OpenShell gateway state directory is unusable/u);
+
+      const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errors).toContain("recorded for the sandbox");
+      expect(errors).not.toContain("or unset it");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
     } finally {
       restoreEnv();
     }

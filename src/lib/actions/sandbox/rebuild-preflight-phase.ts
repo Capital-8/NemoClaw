@@ -181,12 +181,18 @@ export async function runRebuildPreflightPhase(
   if (!sandboxEntry) return null;
   if (blockRebuildOnLegacySharedLocalRoute(sandboxName, sandboxEntry, bail)) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
+  // The recorded directory is reapplied on every retry unless an explicit override is set.
+  const usesRecordedStateDir =
+    !process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() &&
+    sandboxEntry.openshellGatewayStateDir != null;
   restoreRecordedRebuildGatewayStateDir(sandboxEntry);
   const gatewayStateDirIssue = rebuildGatewayStateDirIssue(sandboxEntry);
   if (gatewayStateDirIssue) {
     printRebuildPreflightFailure(
       `OpenShell cannot use the configured gateway state directory. ${gatewayStateDirIssue}`,
-      "Point NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR (or NEMOCLAW_GATEWAY_MANAGEMENT) at this sandbox's gateway state directory, or unset it, then retry.",
+      usesRecordedStateDir
+        ? "This directory is recorded for the sandbox, so unsetting NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR does not change it. Restore the gateway state at the recorded directory, or set NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR to this sandbox's valid gateway state directory, then retry."
+        : "Point NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR (or NEMOCLAW_GATEWAY_MANAGEMENT) at this sandbox's gateway state directory, or unset it, then retry.",
       "Configured OpenShell gateway state directory is unusable",
       bail,
     );

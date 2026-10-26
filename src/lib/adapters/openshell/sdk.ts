@@ -164,6 +164,18 @@ export function resolveManagedOpenShellSdkStateDir(
   return stateDir;
 }
 
+/** Read the mTLS files the SDK needs from one validated gateway state directory. */
+export function readManagedOpenShellSdkTls(
+  stateDir: string,
+): Readonly<{ caCert: Buffer; clientCert: Buffer; clientKey: Buffer }> {
+  const tlsDirectory = path.join(stateDir, "tls");
+  return {
+    caCert: readPem(path.join(tlsDirectory, "ca.crt")),
+    clientCert: readPem(path.join(tlsDirectory, "client", "tls.crt")),
+    clientKey: readPem(path.join(tlsDirectory, "client", "tls.key")),
+  };
+}
+
 /** Connect the SDK to one validated local gateway, independent of compute provider. */
 export async function connectManagedOpenShellSdk(
   target: OpenShellGatewayTarget,
@@ -172,14 +184,11 @@ export async function connectManagedOpenShellSdk(
   throwIfAborted(deps.signal);
   const port = gatewayPort(target);
   const stateDir = resolveManagedOpenShellSdkStateDir(target, deps);
-  const tlsDirectory = path.join(stateDir, "tls");
   const sdk = await (deps.loadSdk ?? loadOpenShellSdk)();
   throwIfAborted(deps.signal);
   const client = await sdk.OpenShellClient.connect({
     gateway: `https://127.0.0.1:${String(port)}`,
-    caCert: readPem(path.join(tlsDirectory, "ca.crt")),
-    clientCert: readPem(path.join(tlsDirectory, "client", "tls.crt")),
-    clientKey: readPem(path.join(tlsDirectory, "client", "tls.key")),
+    ...readManagedOpenShellSdkTls(stateDir),
   });
   throwIfAborted(deps.signal);
   return client;

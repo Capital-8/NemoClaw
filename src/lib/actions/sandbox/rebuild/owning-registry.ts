@@ -7,7 +7,10 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
-import { resolveManagedOpenShellSdkStateDir } from "../../../adapters/openshell/sdk";
+import {
+  readManagedOpenShellSdkTls,
+  resolveManagedOpenShellSdkStateDir,
+} from "../../../adapters/openshell/sdk";
 import { resolveGatewayName } from "../../../gateway-runtime-action";
 import { webSearchEnvFor } from "../../../inference/web-search";
 import { resolveGatewayStateDirForPort } from "../../../onboard/gateway/state-dir";
@@ -107,7 +110,8 @@ const REBUILD_ENV_NAMES = [
 /**
  * Validate a configured gateway state location before rebuild changes anything.
  * The replacement uses the SDK after the source is deleted, so a location the SDK
- * rejects would otherwise strand the sandbox. Returns the reason, or null when usable.
+ * rejects, or one without the SDK mTLS files, would otherwise strand the sandbox.
+ * Returns the reason, or null when usable.
  */
 export function rebuildGatewayStateDirIssue(
   entry: Pick<SandboxEntry, "name" | "gatewayName" | "gatewayPort">,
@@ -125,10 +129,16 @@ export function rebuildGatewayStateDirIssue(
       gatewayName: entry.gatewayName,
       gatewayPort: entry.gatewayPort,
     });
-    resolveManagedOpenShellSdkStateDir(
+    const stateDir = resolveManagedOpenShellSdkStateDir(
       { kind: "named", gatewayName: resolveGatewayName(port) },
       { env, homeDir: resolveHome(env) },
     );
+    try {
+      readManagedOpenShellSdkTls(stateDir);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return `The gateway TLS credentials in ${stateDir}/tls are missing or unreadable: ${detail}`;
+    }
     return null;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
