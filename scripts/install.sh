@@ -2625,11 +2625,16 @@ try {
   const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8"));
   const identity = JSON.parse(fs.readFileSync(identityFile, "utf8"));
   if (pkg.name !== "nemoclaw" || pkg.bin?.["nemoclaw-acp"] !== "./dist/lib/acp/main.js") process.exit(1);
-  // Keep these checks aligned with SOURCE_REVISION_PATTERN/PUBLIC_VERSION_PATTERN in src/lib/core/version.ts.
+  // Keep these checks aligned with validateBuildIdentity in src/lib/core/version.ts.
   const publicVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
   if (!publicVersionPattern.test(pkg.version ?? "")) process.exit(1);
-  if (!publicVersionPattern.test(identity.nemoclawVersion ?? "")) process.exit(1);
-  if (!/^[0-9a-f]{40,64}$/.test(identity.sourceRevision ?? "")) process.exit(1);
+  if (typeof identity.nemoclawVersion !== "string" ||
+      identity.nemoclawVersion.length > 128 ||
+      !publicVersionPattern.test(identity.nemoclawVersion)) process.exit(1);
+  if (typeof identity.sourceRevision !== "string" ||
+      !/^[0-9a-f]{40,64}$/.test(identity.sourceRevision)) process.exit(1);
+  const describedRevision = /-\d+-g([0-9a-f]{7,64})$/.exec(identity.nemoclawVersion)?.[1];
+  if (describedRevision && !identity.sourceRevision.startsWith(describedRevision)) process.exit(1);
   let gitDir = path.join(packageRoot, ".git");
   let gitStat = fs.lstatSync(gitDir);
   if (ownedRegularFile(gitDir)) {

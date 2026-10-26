@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   configureSourceCheckoutGitFilters,
   configureSourceCheckoutGitHooks,
@@ -27,8 +27,16 @@ type Scenario = {
   shimPath: string;
 };
 
+const scenarioRoots = new Set<string>();
+
+afterEach(() => {
+  for (const root of scenarioRoots) fs.rmSync(root, { recursive: true, force: true });
+  scenarioRoots.clear();
+});
+
 function createScenario(name: string): Scenario {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-acp-contract-${name}-`));
+  scenarioRoots.add(tmp);
   const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
   return {
     tmp,
@@ -368,6 +376,41 @@ ensure_cli_shim "nemoclaw-acp"`,
         identityPath,
         JSON.stringify({ nemoclawVersion: "0.0.131", sourceRevision: "not-a-revision" }),
       );
+      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
+      const originalContents = fs.readFileSync(scenario.shimPath);
+
+      expectRejectedUnchanged(
+        runInstallerFunction(scenario, {}, "preflight_nemoclaw_acp_shim"),
+        scenario,
+        originalContents,
+      );
+    },
+  );
+
+  it
+    .skipIf(process.platform === "win32")
+    .each(["described-revision-mismatch", "overlong-version"] as const)(
+    "rejects %s in a managed-source build identity (#12830)",
+    (failure) => {
+      const scenario = createScenario(failure);
+      const oldCli = createManagedSourceNemoClawAcp(scenario.tmp, scenario.oldPrefix);
+      const identityPath = path.join(
+        scenario.tmp,
+        ".nemoclaw",
+        "source",
+        "dist",
+        "build-identity.json",
+      );
+      const identity = JSON.parse(fs.readFileSync(identityPath, "utf8")) as {
+        nemoclawVersion: string;
+        sourceRevision: string;
+      };
+      const mismatch = identity.sourceRevision.startsWith("deadbee") ? "badbeef" : "deadbee";
+      identity.nemoclawVersion =
+        failure === "described-revision-mismatch"
+          ? `0.0.131-0-g${mismatch}`
+          : `0.0.131-${"x".repeat(130)}`;
+      fs.writeFileSync(identityPath, JSON.stringify(identity));
       writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
       const originalContents = fs.readFileSync(scenario.shimPath);
 

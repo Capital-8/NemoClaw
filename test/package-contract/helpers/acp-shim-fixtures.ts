@@ -3,57 +3,11 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../../helpers/installer-sourced-env.js";
+
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
-const INSTALLER_PAYLOAD = path.join(REPO_ROOT, "scripts", "install.sh");
-const BASH_BIN = resolveBashBin();
-
-function resolveBashBin(): string {
-  const whereResult =
-    process.platform === "win32" ? spawnSync("where.exe", ["bash"], { encoding: "utf-8" }) : null;
-  const firstWindowsBash =
-    typeof whereResult?.stdout === "string"
-      ? whereResult.stdout
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .find(Boolean)
-      : undefined;
-  return firstWindowsBash ?? "bash";
-}
-
-function buildIsolatedSystemPath(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-contract-sysbin-"));
-  const exclude = new Set(["node", "npm", "npx"]);
-  for (const sysDir of [
-    "/usr/bin",
-    "/bin",
-    ...(process.platform === "win32" ? [path.dirname(BASH_BIN)] : []),
-  ]) {
-    if (!path.isAbsolute(sysDir) || !fs.existsSync(sysDir)) continue;
-    for (const name of fs.readdirSync(sysDir)) {
-      if (exclude.has(name)) continue;
-      try {
-        fs.symlinkSync(path.join(sysDir, name), path.join(dir, name));
-      } catch (error) {
-        if (
-          error &&
-          typeof error === "object" &&
-          "code" in error &&
-          (error.code === "EEXIST" ||
-            (process.platform === "win32" && (error.code === "EPERM" || error.code === "EACCES")))
-        ) {
-          continue;
-        }
-        throw error;
-      }
-    }
-  }
-  return dir;
-}
-
-const TEST_SYSTEM_PATH = buildIsolatedSystemPath();
 
 export function runInstallerFunction(
   scenario: { tmp: string; fakeBin: string; prefixBin: string },
@@ -61,7 +15,7 @@ export function runInstallerFunction(
   command = 'ensure_cli_shim "nemoclaw-acp"',
 ) {
   const cmd = `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1; ${command}`;
-  return spawnSync(BASH_BIN, ["-c", cmd], {
+  return spawnSync("bash", ["-c", cmd], {
     cwd: REPO_ROOT,
     encoding: "utf-8",
     env: {
