@@ -278,6 +278,26 @@ ensure_cli_shim "nemoclaw-acp"`,
   );
 
   it.skipIf(process.platform === "win32")(
+    "rejects a clean filter with an equals sign in its config key before Git can run it",
+    () => {
+      const scenario = createScenario("equals-filter-key");
+      const sourceRoot = path.join(scenario.tmp, ".nemoclaw", "source");
+      const sentinel = path.join(scenario.tmp, "equals-filter-executed");
+      const oldCli = createManagedSourceNemoClawAcp(scenario.tmp, scenario.oldPrefix);
+      configureSourceCheckoutGitFilters(sourceRoot, sentinel, "clean", "local", "marker=extra");
+      writeInstallerGeneratedAcpShim(scenario.shimPath, scenario.fakeBin, oldCli);
+      const originalContents = fs.readFileSync(scenario.shimPath);
+
+      expectRejectedUnchanged(
+        runInstallerFunction(scenario, {}, "preflight_nemoclaw_acp_shim"),
+        scenario,
+        originalContents,
+      );
+      expect(fs.existsSync(sentinel)).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
     "does not execute repository-configured hooks while verifying a linked source checkout",
     () => {
       const scenario = createScenario("source-checkout-git-hooks");

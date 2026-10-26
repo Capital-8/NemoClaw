@@ -2656,6 +2656,7 @@ try {
     ["-C", packageRoot, "config", "--null", "--name-only", "--list"],
     gitOptions,
   ).split("\0").filter(key => /^filter\..*\.(clean|process)$/i.test(key));
+  if (filterConfigKeys.some(key => key.includes("="))) process.exit(1);
   const disableFilterArgs = filterConfigKeys.flatMap(key => ["-c", `${key}=`]);
   const gitDiffArgs = [
     ...disableFilterArgs,

@@ -254,8 +254,8 @@ export function configureSourceCheckoutGitFilters(
   sentinel: string,
   filterType: "clean" | "process",
   configScope: "local" | "global",
+  filterName = `marker-${filterType}`,
 ): void {
-  const filterName = `marker-${filterType}`;
   const filter = path.join(path.dirname(sourceRoot), `${filterName}.js`);
   fs.writeFileSync(
     filter,
