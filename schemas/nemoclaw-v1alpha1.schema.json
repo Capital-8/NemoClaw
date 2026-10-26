@@ -112,7 +112,7 @@
           "items": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^[^\\u0000-\\u001f\\u007f]+$(?![\\s\\S])",
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$",
             "type": "string"
           },
           "maxItems": 128,
@@ -699,7 +699,7 @@
             ],
             "properties": {
               "endpoint": {
-                "pattern": "^https://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$(?![\\s\\S])"
+                "pattern": "^https://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
               }
             },
             "required": [
@@ -1354,7 +1354,7 @@
           "description": "Existing ConfigMap in this deployment's namespace whose `ca.crt` verifies the issuer's TLS certificate; omit for a publicly trusted issuer.",
           "maxLength": 253,
           "minLength": 1,
-          "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\\s\\S])",
+          "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$",
           "type": "string",
           "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         },
@@ -1438,7 +1438,7 @@
           "description": "Exact kubeconfig context used for every cluster operation.",
           "maxLength": 253,
           "minLength": 1,
-          "pattern": "^[^\\x00-\\x20\\x7f]+$(?![\\s\\S])",
+          "pattern": "^[^\\x00-\\x20\\x7f]+$",
           "type": "string"
         },
         "environment": {
@@ -1505,7 +1505,7 @@
           "items": {
             "maxLength": 253,
             "minLength": 1,
-            "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\\s\\S])",
+            "pattern": "^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$",
             "type": "string"
           },
           "maxItems": 32,
@@ -1564,7 +1564,7 @@
           "description": "Namespace for this deployment's gateway and generated development authentication resources.",
           "maxLength": 63,
           "minLength": 1,
-          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$(?![\\s\\S])",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
           "type": "string"
         }
       },
@@ -1761,8 +1761,8 @@
           "type": "string"
         },
         "uid": {
-          "description": "Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations.",
-          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+          "description": "Immutable deployment UUID. Use a fresh UUID for a new deployment and retain it for later operations. Either case is accepted; NemoClaw stores it lowercase.",
+          "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$",
           "type": "string"
         }
       },
@@ -3655,7 +3655,7 @@
         "environment": {
           "additionalProperties": {
             "maxLength": 4096,
-            "pattern": "^[^\\u0000]*$",
+            "pattern": "^[^\\x00]*$",
             "type": "string"
           },
           "default": {},

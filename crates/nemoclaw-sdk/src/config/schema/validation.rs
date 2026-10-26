@@ -97,7 +97,11 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             json!({"pattern": c::SLUG}),
         );
     }
-    property(&mut defs["Metadata"], "uid", json!({"pattern": c::UUID}));
+    property(
+        &mut defs["Metadata"],
+        "uid",
+        json!({"pattern": if normalized { c::UUID } else { c::UUID_INPUT }}),
+    );
     // Integration kinds are inlined in Integration's variants.
     for variant in defs["Integration"]["oneOf"]
         .as_array_mut()
@@ -157,7 +161,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             "uniqueItems": true,
             "items": {
                 "type": "string", "minLength": 1, "maxLength": 253,
-                "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])"
+                "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$"
             },
             "x-nemoclaw-error": "image pull Secret references must be unique Kubernetes Secret names"
         }),
@@ -189,7 +193,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         authentication,
         "caConfigMap",
         json!({
-            "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$(?![\s\S])",
+            "pattern": r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$",
             "x-nemoclaw-error": "caConfigMap must be a Kubernetes ConfigMap name"
         }),
     );
@@ -263,7 +267,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
             {"required": ["harnessRef"], "not": {"required": ["harness"]}}
         ]}));
     let native_identifier =
-        json!({"minLength":1,"maxLength":256,"pattern":"^[^\\u0000-\\u001f\\u007f]+$(?![\\s\\S])"});
+        json!({"minLength":1,"maxLength":256,"pattern":"^[^\\x00-\\x1f\\x7f]+$"});
     let allow = &mut defs["AgentTools"]["properties"]["allow"];
     allow["items"] = json!({"type":"string"});
     allow["items"]
