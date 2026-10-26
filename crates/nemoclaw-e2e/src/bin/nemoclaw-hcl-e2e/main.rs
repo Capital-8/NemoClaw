@@ -8,16 +8,20 @@ mod run;
 
 use clap::{Parser, Subcommand};
 use nemoclaw_sdk::CancellationToken;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{path::PathBuf, process::ExitCode};
 
-fn response_valid(response: &Value, agent: &str, runtime: &str) -> bool {
-    nemoclaw_e2e::state::successful_invocation(&serde_json::to_vec(response).unwrap())
-        && response["agent_name"] == agent
-        && response["runtime_id"] == runtime
-        && response["output"]["response"]
+fn response_observations(response: &Value) -> Value {
+    json!({
+        "attempted": true,
+        "succeeded": nemoclaw_e2e::state::successful_invocation(&serde_json::to_vec(response).unwrap()),
+        "agent_name": response["agent_name"].as_str(),
+        "runtime_id": response["runtime_id"].as_str(),
+        // Interpret the OpenClaw adapter's payload without retaining response text.
+        "has_response_text": response["output"]["response"]
             .as_str()
             .is_some_and(|text| !text.trim().is_empty())
+    })
 }
 
 #[derive(Parser)]
@@ -87,32 +91,55 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn an_empty_response_cannot_pass_the_live_response_contract() {
+    fn an_empty_response_is_reported_without_claiming_response_text() {
         let response = json!({
             "status": "succeeded", "error": null,
             "agent_name": "assistant", "runtime_id": "runtime", "output": null
         });
-        assert!(!response_valid(&response, "assistant", "runtime"));
+        let observed = response_observations(&response);
+        assert_eq!(observed["has_response_text"], false);
+        assert_eq!(observed["agent_name"], "assistant");
+        assert_eq!(observed["runtime_id"], "runtime");
     }
 
     #[test]
-    fn the_response_must_be_nonempty_successful_and_from_the_expected_binding() {
+    fn response_observations_preserve_the_binding_and_normalize_the_adapter_output() {
         let good = json!({"status":"succeeded", "error":null, "agent_name":"assistant", "runtime_id":"runtime", "output":{"response":"Hello"}});
-        assert!(response_valid(&good, "assistant", "runtime"));
-        for (pointer, value) in [
-            ("/agent_name", json!("other")),
-            ("/runtime_id", json!("other")),
-            ("/status", json!("failed")),
-            ("/error", json!({"code":"model_error"})),
-            ("/output/response", json!(" ")),
-            ("/output/response", Value::Null),
+        assert_eq!(
+            response_observations(&good),
+            json!({
+                "attempted":true,"succeeded":true,"agent_name":"assistant",
+                "runtime_id":"runtime","has_response_text":true
+            })
+        );
+        for (pointer, value, field, expected) in [
+            ("/agent_name", json!("other"), "agent_name", json!("other")),
+            ("/runtime_id", json!("other"), "runtime_id", json!("other")),
+            ("/status", json!("failed"), "succeeded", json!(false)),
+            (
+                "/error",
+                json!({"code":"model_error"}),
+                "succeeded",
+                json!(false),
+            ),
+            (
+                "/output/response",
+                json!(" "),
+                "has_response_text",
+                json!(false),
+            ),
+            (
+                "/output/response",
+                Value::Null,
+                "has_response_text",
+                json!(false),
+            ),
         ] {
             let mut bad = good.clone();
             *bad.pointer_mut(pointer).unwrap() = value;
-            assert!(!response_valid(&bad, "assistant", "runtime"), "{pointer}");
+            assert_eq!(response_observations(&bad)[field], expected, "{pointer}");
         }
     }
 }

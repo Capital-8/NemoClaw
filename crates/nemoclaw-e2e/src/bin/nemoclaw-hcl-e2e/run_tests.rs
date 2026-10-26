@@ -301,21 +301,36 @@ async fn shared_hcl_assertions_keep_verifier_state_separate_and_reject_failed_ob
         "probe",
         "cp \"$FIXTURE_REPORT\" \"$NEMOCLAW_HCL_REPORT\"",
     );
-    for defect in [
-        None,
-        Some("gateway_ready"),
-        Some("binding_matches"),
-        Some("response"),
+    for (defect, value) in [
+        (None, Value::Null),
+        (Some("/health/gateway_ready"), json!(false)),
+        (Some("/health/agent_name"), json!("another-agent")),
+        (Some("/health/identity_matches"), json!(false)),
+        (Some("/health/sandbox_ready"), json!(false)),
+        (Some("/health/policy_loaded"), json!(false)),
+        (Some("/response/attempted"), json!(false)),
+        (Some("/response/succeeded"), json!(false)),
+        (Some("/response/agent_name"), json!("another-agent")),
+        (Some("/response/runtime_id"), json!("another-runtime")),
+        (Some("/response/has_response_text"), json!(false)),
     ] {
-        let directory = root.path().join(defect.unwrap_or("healthy"));
+        let directory = root
+            .path()
+            .join(defect.unwrap_or("healthy").replace('/', "-"));
         verifier(&directory).unwrap();
-        let mut report = json!({"health":{"gateway_ready":true,"sandbox_ready":true,"binding_matches":true,"policy_loaded":true},"response":{"attempted":true,"valid":true}});
-        if let Some(field) = defect {
-            if field == "response" {
-                report["response"]["valid"] = json!(false);
-            } else {
-                report["health"][field] = json!(false);
+        let mut report = json!({
+            "expected": {"agent_name":"assistant","runtime_id":"runtime"},
+            "health": {
+                "gateway_ready":true,"sandbox_ready":true,"identity_matches":true,
+                "agent_name":"assistant","policy_loaded":true
+            },
+            "response": {
+                "attempted":true,"succeeded":true,"agent_name":"assistant",
+                "runtime_id":"runtime","has_response_text":true
             }
+        });
+        if let Some(field) = defect {
+            *report.pointer_mut(field).unwrap() = value;
         }
         let fixture = directory.join("fixture.json");
         fs::write(&fixture, report.to_string()).unwrap();

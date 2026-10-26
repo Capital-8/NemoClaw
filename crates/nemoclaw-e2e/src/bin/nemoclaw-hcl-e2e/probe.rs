@@ -39,8 +39,9 @@ fn save(path: &Path, report: &Value) -> Result<(), String> {
 
 fn initial_report() -> Value {
     json!({
-        "health": {"gateway_ready": false, "sandbox_ready": false, "binding_matches": false, "policy_loaded": false},
-        "response": {"attempted": false, "valid": false},
+        "expected": {"agent_name": null, "runtime_id": null},
+        "health": {"gateway_ready": false, "sandbox_ready": false, "identity_matches": false, "agent_name": null, "policy_loaded": false},
+        "response": {"attempted": false, "succeeded": false, "agent_name": null, "runtime_id": null, "has_response_text": false},
         "failure": {"observed_at": "probe", "attributed_to": "unknown", "code": "incomplete"}
     })
 }
@@ -101,6 +102,7 @@ async fn observe(
         .as_str()
         .filter(|v| !v.is_empty())
         .ok_or("missing runtime")?;
+    report["expected"] = json!({"agent_name": sandbox.agent.name, "runtime_id": runtime});
     let client = OpenShell::connect(
         &document.spec.gateway.connection(),
         Arc::new(EnvironmentSecrets),
@@ -121,14 +123,13 @@ async fn observe(
             .map_err(|_| "sandbox observation failed")?
             .ok_or("sandbox absent")?;
         verify_identity(&expected, &observed).map_err(|_| "sandbox identity mismatch")?;
+        report["health"]["identity_matches"] = json!(true);
         report["health"]["policy_loaded"] =
             json!(observed.get("policy_hash").is_some_and(|v| !v.is_empty()));
         report["failure"]["observed_at"] = json!("fabric.binding");
         let binding =
             fabric_provider::fabric_binding(observed).map_err(|_| "invalid Fabric binding")?;
-        report["health"]["binding_matches"] = json!(
-            binding.get("agent_name").map(String::as_str) == Some(sandbox.agent.name.as_str())
-        );
+        report["health"]["agent_name"] = json!(binding.get("agent_name"));
         report["failure"]["observed_at"] = json!("openshell.sandbox-readiness");
         report["health"]["sandbox_ready"] = json!(
             client
@@ -143,9 +144,11 @@ async fn observe(
         .await
         .map_err(|_| "health deadline exceeded")??;
     save(report_path, report)?;
-    if report["health"]
-        .as_object()
-        .is_none_or(|h| h.values().any(|v| v != true))
+    // These prerequisites prevent invoking an unready or incorrectly bound agent.
+    // HCL independently evaluates the recorded observations and expected binding.
+    if report["health"]["sandbox_ready"] != true
+        || report["health"]["policy_loaded"] != true
+        || report["health"]["agent_name"] != report["expected"]["agent_name"]
     {
         return Err("required health check failed".into());
     }
@@ -160,16 +163,8 @@ async fn observe(
         .invoke_agent(&binding, runtime, &input)
         .await
         .map_err(|_| "invocation failed")?;
-    report["response"]["valid"] = json!(super::response_valid(
-        &response,
-        &sandbox.agent.name,
-        runtime
-    ));
-    report["failure"]["code"] = json!(if report["response"]["valid"] == true {
-        "none"
-    } else {
-        "invalid_response"
-    });
+    report["response"] = super::response_observations(&response);
+    report["failure"]["code"] = json!("none");
     Ok(())
 }
 
@@ -245,14 +240,24 @@ mod tests {
         observe(&report_path, &mut report, &config, root.path(), &request)
             .await
             .unwrap();
-        assert!(
-            report["health"]
-                .as_object()
-                .unwrap()
-                .values()
-                .all(|v| v == true)
+        assert_eq!(
+            report["health"],
+            json!({
+                "gateway_ready":true,"sandbox_ready":true,"identity_matches":true,
+                "agent_name":bound["agent_name"],"policy_loaded":true
+            })
         );
-        assert_eq!(report["response"]["valid"], true);
+        assert_eq!(
+            report["expected"],
+            json!({"agent_name":bound["agent_name"],"runtime_id":runtime})
+        );
+        assert_eq!(
+            report["response"],
+            json!({
+                "attempted":true,"succeeded":true,"agent_name":bound["agent_name"],
+                "runtime_id":runtime,"has_response_text":true
+            })
+        );
         let calls = fixture.state.lock().unwrap().exec_calls.len();
         state["resources"][0]["instances"][0]["attributes"]["id"] = json!("another-sandbox");
         fs::write(root.path().join("terraform.tfstate"), state.to_string()).unwrap();

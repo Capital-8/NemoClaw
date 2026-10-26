@@ -14,11 +14,27 @@ The POC rejects combinations outside its scope before deployment.
 
 ~~~mermaid
 flowchart LR
-    A["1. Case YAML<br/>Deployment combination + request"]
-    B["2. NemoClaw CLI<br/>plan → apply"]
-    C["3. Dedicated verifier<br/>tofu test + HCL assertions<br/>Health checks + Fabric invoke"]
-    A --> B --> C
+    subgraph input["1. Case input"]
+        YAML["YAML<br/>Deployment combination + request"]
+    end
+    subgraph deployment["2. Deployment lifecycle — product state"]
+        Apply["nemoclaw plan → apply"]
+        Cleanup["nemoclaw destroy + verify cleanup"]
+    end
+    subgraph verification["3. Shared verification — tofu test, separate state"]
+        Probe["Shared probe<br/>SDK/provider health observations + Fabric invoke"]
+        Report["Observation JSON → HCL outputs"]
+        Assert["HCL assertions<br/>Compare observations with expectations"]
+        Probe --> Report --> Assert
+    end
+    YAML --> Apply -->|"tofu test starts probe"| Probe
+    verification -->|"pass or fail"| Cleanup
+    Apply -.->|"partial apply or cancellation"| Cleanup
 ~~~
+
+The execution flow is case YAML → plan/apply → shared probe → HCL assertions → cleanup.
+The probe writes observations; the verifier module exposes them as outputs.
+HCL compares those observations with the expected agent and runtime from the resolved deployment.
 
 ## Run the live case
 
@@ -47,7 +63,8 @@ The helper runs these stages:
 2. Run nemoclaw plan and nemoclaw apply with noninteractive JSON output.
 3. Initialize a separate verifier directory and run tofu test.
 4. Let the verifier's apply-time local-exec resource run the same helper in probe mode.
-5. Collect observations, invoke the agent once through AgentBridge::invoke_agent, and evaluate the HCL assertions.
+5. Collect SDK/provider observations and invoke the agent once through AgentBridge::invoke_agent.
+   Write the observation JSON, expose it as verifier outputs, and evaluate the HCL assertions.
 6. Run nemoclaw destroy after every started apply, including partial failures and cancellation.
 7. Verify final state and Docker workload absence. Write the combined test/cleanup outcome.
 
@@ -64,6 +81,11 @@ SIGKILL, host loss, and an unavailable Docker engine can prevent cleanup; the re
 - A successful Fabric response from the expected agent/runtime, containing nonempty OpenClaw response text.
 
 Health probes reuse OpenShell capability, sandbox observation, identity, and readiness operations.
+The report records readiness, identity verification, the observed agent binding, and policy presence.
+Response observations include success, agent/runtime metadata, and whether the adapter returned nonempty text.
+The probe records these facts without collapsing them into a final response verdict.
+HCL owns the binding comparisons and health/response expectations.
+The probe requires a ready, correctly bound sandbox with a loaded policy before invoking it.
 Fabric does not expose an independent runtime-status API at the pinned version.
 Binding validation therefore does not claim that an agent process is healthy; the real invocation proves it responds.
 The response check follows the pinned OpenClaw adapter's output.response contract.
@@ -84,12 +106,25 @@ Only nemoclaw destroy owns product teardown.
 Ambient OpenTofu argument and state overrides are removed from child commands.
 The verifier receives an explicit environment without the hosted inference credential.
 
+## Extend the shared flow
+
+This POC permits only the checked-in Docker + OpenClaw + NVIDIA-hosted combination.
+Broader support must extend this harness and its supported-case validation.
+It must preserve the same deployment, observation, assertion, evidence, and cleanup flow.
+
+- A new case within supported component interfaces should usually need only case YAML changes.
+- A new runtime or agent interface may need a probe/cleanup adapter or response normalizer.
+- A different test behavior may need additional HCL assertions against shared verifier outputs.
+
+Runner provisioning and runtime expansion remain outside this POC.
+
 ## Evidence and cleanup
 
 The run directory is created with mode 0700 on Unix.
 It retains result.json, resolved inputs, command stdout/stderr, HCL JSON output,
 probe observations, and private Fabric diagnostics.
 Backend messages, requests, and response text are excluded from the normalized probe report.
+Agent names and runtime IDs remain available for HCL binding assertions.
 Raw command logs and Fabric diagnostics remain private; do not upload the complete run directory.
 
 Probe failures identify the observation phase and preserve unknown attribution.
@@ -130,7 +165,7 @@ NEMOCLAW_TEST_BUNDLE=/absolute/path/to/candidate/bundle \
 
 Alternatively, set NEMOCLAW_HCL_TOFU to an absolute pinned OpenTofu executable.
 The lifecycle nextest profile selects this contract test.
-It proves that healthy observations pass, failed health/response observations fail,
+It proves that healthy observations pass, failed health/response observations and mismatched bindings fail,
 and verifier execution leaves product state unchanged.
 It does not deploy Docker workloads or call hosted inference.
 

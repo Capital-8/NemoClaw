@@ -24,6 +24,10 @@ output "health" {
   value = local.report.health
 }
 
+output "expected" {
+  value = local.report.expected
+}
+
 output "response" {
   value = local.report.response
 }
