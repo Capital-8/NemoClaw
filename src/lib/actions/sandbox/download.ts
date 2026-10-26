@@ -16,14 +16,12 @@ import type {
 
 import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { CLI_NAME } from "../../cli/branding";
-import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
-import {
-  assertRemovedImmutabilityRecoveryDownloadArtifactSafe,
-  enforceRemovedImmutabilityMigrationBoundary,
-  isRemovedImmutabilityRecoveryDownloadPath,
-} from "../../state/migrations/removed-immutability";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
-import { ensureLiveSandboxOrExit, getKnownSandboxTargetGatewayName } from "./gateway-state";
+import {
+  assertHermesPortableCommandUnavailable,
+  ensureLiveSandboxOrExit,
+  getKnownSandboxTargetGatewayName,
+} from "./gateway-state";
 import { resolveHostPathFromCwd } from "./host-path";
 import {
   assertDownloadArtifactExists,
@@ -153,9 +151,6 @@ export async function downloadFromSandbox(
       // so a relative path that starts with a hyphen is parsed as a flag. Anchor
       // it with `./` so it stays positional. Absolute paths are already safe.
       const sandboxPath = requestedPath.startsWith("-") ? `./${requestedPath}` : requestedPath;
-      const removedImmutability = enforceRemovedImmutabilityMigrationBoundary(opts.sandboxName, {
-        allowStateRecord: isRemovedImmutabilityRecoveryDownloadPath(sandboxPath),
-      });
       const hostDest = resolveHostPathFromCwd((opts.hostDest ?? "").trim() || ".");
 
       await ensureLiveSandboxOrExit(opts.sandboxName, {
@@ -250,13 +245,6 @@ export async function downloadFromSandbox(
           remoteLabel: sandboxPath,
           sandboxName: opts.sandboxName,
         });
-        if (removedImmutability.stateRecord) {
-          assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
-            stagedArtifact,
-            sandboxPath,
-            opts.sandboxName,
-          );
-        }
         publishDownloadArtifact(stagedArtifact, expectedArtifact, sourceKind);
       } finally {
         fs.rmSync(stagingDir, { recursive: true, force: true });
