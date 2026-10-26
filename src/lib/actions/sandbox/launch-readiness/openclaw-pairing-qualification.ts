@@ -67,6 +67,10 @@ const MISMATCH_FIELDS = new Set([
   "scope.consistency",
 ]);
 
+export function formatOpenClawPairingMismatchField(field: string | null | undefined): string {
+  return field && MISMATCH_FIELDS.has(field) ? ` (${field})` : "";
+}
+
 export const OPENCLAW_PAIRING_REQUIRED_ROLES = ["operator"] as const;
 // Canonical approval preserves the requested pairing/write view on the paired
 // record and adds implied read access to credential-bearing token views. A prior

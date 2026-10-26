@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  formatOpenClawPairingMismatchField,
   OpenClawPairingIncompatibleError,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   type OpenClawPairingSettlementObservation,
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
+
 import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
 import type {
   AutoPairWatcherStatus,
@@ -17,6 +19,7 @@ import { WATCHER_STATUS_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmu
 import { sanitizeWedgeLogLine } from "../../actions/sandbox/gateway-wedge-diagnostics";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 
+export { formatOpenClawPairingMismatchField };
 export {
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
@@ -452,9 +455,12 @@ export async function settleOrdinaryOpenClawPairing(
 export function ordinaryOpenClawPairingIncompleteMessage(
   name: string,
   reason: OrdinaryOpenClawPairingIncompleteReason,
+  pairingField?: string,
 ): string {
   const cause = ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES[reason];
-  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Resume or rerun onboarding.`;
+  const field =
+    reason === "pairing-incompatible" ? formatOpenClawPairingMismatchField(pairingField) : "";
+  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}${field}. Resume or rerun onboarding.`;
 }
 
 function readRegistrySandbox(name: string) {
@@ -509,7 +515,9 @@ export const finalizationHandlerDeps = {
   async settleStartedOpenclawGatewayForConfiguration(name: string): Promise<boolean> {
     const pairing = await settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());
     if (pairing.kind === "settled") return true;
-    console.error(`  ${ordinaryOpenClawPairingIncompleteMessage(name, pairing.reason)}`);
+    console.error(
+      `  ${ordinaryOpenClawPairingIncompleteMessage(name, pairing.reason, pairing.pairingField)}`,
+    );
     return false;
   },
   async checkAndRecoverSandboxProcesses(
