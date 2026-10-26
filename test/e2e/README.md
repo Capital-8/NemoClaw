@@ -2534,6 +2534,11 @@ OpenRouter key and model. Its six-assertion case checks onboarding, credential i
 the native TOML route, and one fresh `dcode -n --json` response.
 The OpenClaw case checks the native endpoint, credential placeholder,
 selected adapter, response model, and nonempty answer.
+Hermes is a separate OpenRouter rebuild coverage gap tracked by
+[#13759](https://github.com/NVIDIA/NemoClaw/issues/13759). Its reported sequence has a
+working Hermes turn, a successful rebuild, a ready `connect --probe-only` result,
+and an immediate Hermes turn that returns HTTP 401. The OpenClaw and Deep Agents
+Code cases do not exercise Hermes's credential path after rebuild.
 The OpenRouter case switches the running sandbox to a second model and back.
 After each successful switch, it requires a fresh OpenClaw response whose reported model matches the selection.
 An unavailable or rate-limited intermediate model fails the first switch.
