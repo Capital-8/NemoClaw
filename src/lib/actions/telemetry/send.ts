@@ -199,7 +199,8 @@ export async function sendOperationTelemetry(
     if (
       telemetryRuntime.config !== config ||
       shouldSuppressTelemetry(process.env) ||
-      !allowedTelemetryCollection(config, readTelemetryTestLabel(process.env))
+      !allowedTelemetryCollection(config, readTelemetryTestLabel(process.env)) ||
+      event.parameters.testLabel !== readTelemetryTestLabel(process.env)
     )
       return "disabled";
     const envelope = operationEnvelope(event, config.localReceiver !== true);

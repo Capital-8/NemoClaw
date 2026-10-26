@@ -294,12 +294,17 @@ Broader binary access would let unrelated sandbox processes send data to Tavily 
 ## Operation Telemetry
 
 The installer and supported CLI commands attempt to send anonymous operation telemetry to NVIDIA's fixed TEST receiver by default.
-Ordinary runs send an empty `testLabel`.
+Ordinary runs outside continuous integration (CI) send an empty `testLabel`.
 QA runs can set `NEMOCLAW_TELEMETRY_TEST_LABEL` to attach a valid label to the same receiver.
 Use `qa-<label>:<client>:attempt-<number>`, for example, `qa-telemetry:client:attempt-1`.
 `<label>` allows 1 to 32 lowercase letters, digits, or hyphens; `<client>` allows 1 to 40 of the same characters.
 Each segment must start with a letter or digit, and the attempt number must be 1 to 999 without a leading zero.
-A missing label sends ordinary telemetry; an invalid value disables telemetry for that run.
+Outside CI, a missing label sends ordinary telemetry; an invalid value disables telemetry for that run.
+NemoClaw recognizes CI from `CI=true`, `CI=1`, or `GITHUB_ACTIONS=true` and automatically selects a `qa-ci` label.
+GitHub Actions runs use `qa-ci:gh-<run-id>:attempt-<run-attempt>` when the run ID and attempt are valid.
+Other CI runs and invalid GitHub run identities use `qa-ci:generic:attempt-1`.
+These labels replace valid explicit QA labels in CI; malformed explicit labels still disable telemetry.
+CI labels are query metadata and do not authenticate the source run.
 Telemetry covers onboarding, CLI update, sandbox upgrade, rebuild, destroy, and recover.
 It also covers inference selection, agent and channel changes, policy changes, and approved sandbox settings changes.
 NemoClaw attempts to send one record when a covered operation finishes.
@@ -311,7 +316,7 @@ The record describes the operation result and approved configuration categories,
 Production delivery is not enabled.
 
 Set `NEMOCLAW_DISABLE_TELEMETRY=1` in the installer or CLI process environment to suppress collection and delivery.
-NemoClaw also suppresses telemetry for `CI=true`, `CI=1`, `GITHUB_ACTIONS=true`, `VITEST=true`, or `NODE_ENV=test`.
+NemoClaw also suppresses telemetry for `VITEST=true` or `NODE_ENV=test`.
 This setting controls NemoClaw operation telemetry; an agent or third-party tool can have separate diagnostics settings.
 
 ## Filesystem Controls
