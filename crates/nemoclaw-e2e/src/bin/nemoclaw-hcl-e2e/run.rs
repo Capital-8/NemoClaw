@@ -62,6 +62,7 @@ pub(super) async fn execute_with_tools(
 ) -> Result<(), String> {
     let case = Case::read(case_path)?;
     let mut builder = fs::DirBuilder::new();
+    builder.recursive(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
