@@ -155,7 +155,8 @@ export function createNativeAgentCompletionFixture(_route: ResultRoute, deferAbs
           ts.isExpressionStatement(item) &&
           ts.isAwaitExpression(item.expression) &&
           ts.isCallExpression(item.expression.expression) &&
-          item.expression.expression.expression.getText(source) === "confirmNativeUiRegistryEmpty",
+          item.expression.expression.expression.getText(source) ===
+            "gatewaySession.confirmRegistryEmpty",
       );
       if (first >= 0 && last > first) fence = node.statements.slice(first, last + 1);
     }
@@ -189,9 +190,6 @@ export function createNativeAgentCompletionFixture(_route: ResultRoute, deferAbs
   const deletions: unknown[][] = [];
   const registryQueries: unknown[][] = [];
   const runtimeLease = { assertHeld() {} };
-  const ownProcess = (_child: ChildProcess) => {
-    throw new Error("The controlled command boundary must not launch a real process.");
-  };
   let confirmAbsent!: () => void;
   let rejectAbsence!: (error: Error) => void;
   const absence = new Promise<void>((resolve, reject) => {
@@ -202,27 +200,27 @@ export function createNativeAgentCompletionFixture(_route: ResultRoute, deferAbs
   if (!deferAbsence) confirmAbsent();
   const finish = new vm.Script(code).runInNewContext({
     Error,
-    openshell: "owned-openshell",
     cliEnvironment: environment,
     sandboxName: "owned-sandbox",
     gateway,
-    gatewaySession: { ownCommandProcess: ownProcess },
+    // Provider command ownership is covered by windows-installed-runtime.test.ts.
+    // These gates exercise the actual caller's completion and absence ordering.
+    gatewaySession: {
+      waitForCompletion: (...args: unknown[]) => {
+        queries.push(args);
+        return completion;
+      },
+      deleteWorkload: async (...args: unknown[]) => {
+        deletions.push(args);
+      },
+      confirmRegistryEmpty: (...args: unknown[]) => {
+        registryQueries.push(args);
+        return absence;
+      },
+    },
     agentLabel: "Hermes",
     create: null,
     runtimeLease,
-    // The real shared completion helper has its own terminal-condition tests.
-    // This gate controls that boundary to exercise the exact caller's ordering.
-    waitForNativeMxcCompletion: (...args: unknown[]) => {
-      queries.push(args);
-      return completion;
-    },
-    run: async (...args: unknown[]) => {
-      deletions.push(args);
-    },
-    confirmNativeUiRegistryEmpty: (...args: unknown[]) => {
-      registryQueries.push(args);
-      return absence;
-    },
   }) as () => Promise<void>;
   return {
     finish,
@@ -236,6 +234,5 @@ export function createNativeAgentCompletionFixture(_route: ResultRoute, deferAbs
     runtimeLease,
     confirmAbsent,
     rejectAbsence,
-    ownProcess,
   };
 }

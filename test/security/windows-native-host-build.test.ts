@@ -10,7 +10,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildNativeWorkers } from "../../packaging/windows/distribution/build-native-workers.mts";
 import { nativeRuntimeWorkerCommand } from "../../packaging/windows/runtime/native-runtime.mts";
-import { nativeWorkerApiFixture } from "../helpers/native-worker-api-fixture.ts";
+import {
+  copyInstalledRuntimeProviderFixture,
+  nativeWorkerApiFixture,
+} from "../helpers/native-worker-api-fixture.ts";
 
 const owner = path.resolve("packaging/windows/installer/prepare-finished-host.py");
 const sourceLock = JSON.parse(
@@ -192,6 +195,7 @@ it.each([
             path.relative(source, file).split(path.sep)[0],
           ),
       });
+      copyInstalledRuntimeProviderFixture(root);
       fs.mkdirSync(path.join(root, "nemoclaw-blueprint"));
       fs.copyFileSync(
         path.resolve("nemoclaw-blueprint/private-networks.yaml"),

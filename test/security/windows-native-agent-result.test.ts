@@ -140,14 +140,12 @@ describe.each(routes)("native %s result cleanup", (route) => {
     expect(fixture.deletions).toHaveLength(1);
     expect(fixture.registryQueries).toEqual([
       [
-        "owned-openshell",
         fixture.environment,
         {
           sandboxName: "owned-sandbox",
           gateway: fixture.gateway,
           stateSession: fixture.runtimeLease,
         },
-        fixture.ownProcess,
       ],
     ]);
     expect(finished).toBe(false);
@@ -172,15 +170,7 @@ describe.each(routes)("native %s result cleanup", (route) => {
       const fixture = createNativeAgentCompletionFixture(route);
       const pending = fixture.finish();
       expect(fixture.queries).toEqual([
-        [
-          "owned-openshell",
-          fixture.environment,
-          "owned-sandbox",
-          fixture.gateway,
-          fixture.runtimeLease,
-          undefined,
-          fixture.ownProcess,
-        ],
+        [fixture.environment, "owned-sandbox", fixture.gateway, fixture.runtimeLease, undefined],
       ]);
       expect(fixture.deletions).toEqual([]);
       await delay(25);
@@ -188,15 +178,7 @@ describe.each(routes)("native %s result cleanup", (route) => {
       fixture.complete(completion);
       await pending;
       expect(fixture.deletions).toEqual([
-        [
-          "owned-openshell",
-          ["sandbox", "delete", "owned-sandbox"],
-          fixture.environment,
-          expect.any(String),
-          undefined,
-          undefined,
-          fixture.ownProcess,
-        ],
+        ["owned-sandbox", fixture.environment, expect.any(String), undefined, undefined],
       ]);
     },
   );
