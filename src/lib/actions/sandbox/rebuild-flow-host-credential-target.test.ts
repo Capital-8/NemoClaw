@@ -13,6 +13,7 @@ import {
 } from "../../../../test/helpers/rebuild-flow-harness";
 import type { preflightRebuildImage } from "./rebuild-custom-image-preflight";
 import type { HostCredentialTarget } from "./rebuild-provider-preflight";
+import { nativeProviderRebuildScenario } from "./rebuild-flow-test-fixtures";
 
 function createRemoteRebuildHarness() {
   const selection = {
@@ -50,6 +51,33 @@ function createRemoteRebuildHarness() {
 describe("rebuildSandbox flow: host credential target", () => {
   installRebuildFlowTestHooks();
 
+  it("preserves a native sandbox when its available host credential is invalid", async () => {
+    const { overrides } = nativeProviderRebuildScenario(false);
+    const harness = createRebuildFlowHarness({
+      ...overrides,
+      hydrateCredentialEnv: () => "invalid-host-key",
+    });
+    const validate = vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential);
+    validate.mockResolvedValue(false);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).rejects.toThrow("Host inference credential validation failed");
+
+    expect(validate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+      "invalid-host-key",
+      undefined,
+      expect.any(Function),
+    );
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
   it("rebuilds a legacy row with the inference API recovered from its matching session", async () => {
     const harness = createRemoteRebuildHarness();
     const validate = vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential);
@@ -67,7 +95,33 @@ describe("rebuildSandbox flow: host credential target", () => {
     expect(validate).toHaveBeenCalledWith(
       expect.objectContaining({ preferredInferenceApi: "openai-responses" }),
       "host-provider-key",
+      undefined,
+      expect.any(Function),
     );
+  });
+
+  it("stops before deletion when NVIDIA upstream validation is indeterminate (#13616)", async () => {
+    const { overrides } = nativeProviderRebuildScenario(false);
+    const harness = createRebuildFlowHarness({
+      ...overrides,
+      hydrateCredentialEnv: () => "nvapi-host-test-key",
+    });
+    vi.mocked(rebuildProviderPreflight.validateRebuildHostInferenceCredential).mockImplementation(
+      async (
+        ...args: Parameters<typeof rebuildProviderPreflight.validateRebuildHostInferenceCredential>
+      ) => {
+        const onIndeterminate = args[3] as (() => void) | undefined;
+        onIndeterminate?.();
+        return false;
+      },
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).rejects.toThrow("NVIDIA upstream inference was unavailable before sandbox deletion");
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
   it.each([

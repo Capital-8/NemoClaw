@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { recordTelemetryTarget } from "../telemetry/operation";
 import { getCredential } from "../../credentials/store";
 import {
   type WebSearchProvider,
@@ -9,7 +10,10 @@ import {
   webSearchLabelFor,
   webSearchProviderForConfig,
 } from "../../inference/web-search";
-import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
+import {
+  rebuildDashboardChatUiUrl,
+  shouldManageDashboardForAgent,
+} from "../../onboard/dashboard-runtime";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
 import { verifySandboxBridgeGatewayReachableOrExit } from "../../onboard/gateway-sandbox-reachability";
@@ -225,7 +229,11 @@ export async function preflightRebuildTargetRuntime(
       preResolvedBaseImageMetadata: recreateOptions.preResolvedBaseImageMetadata ?? null,
       gatewayPort: recreateOptions.targetGatewayPort,
       chatUiUrl: managesDashboard
-        ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}`
+        ? rebuildDashboardChatUiUrl({
+            agentName: target.agentDefinition?.name,
+            recordedExternalUrl: sb.dashboardExternalUrl,
+            port: recreateOptions.controlUiPort ?? 0,
+          })
         : "",
     });
     if (!customImage.ok) {
@@ -295,6 +303,8 @@ export async function preflightAuthoritativeOnboardRuntime(
     const gatewayAuthority = await rebuildOnboardDependencies.preflightAuthoritativeRebuildTarget({
       ...recreateOptions,
       ...options,
+      agent: resumeConfig.agent,
+      nativeLocalProviderAttachment: resumeConfig.nativeLocalProviderAttachment,
       model: resumeConfig.model,
       provider: resumeConfig.provider,
       sandboxName,
@@ -302,6 +312,13 @@ export async function preflightAuthoritativeOnboardRuntime(
     recreateOptions.rebuildGatewayAuthority = gatewayAuthority;
     return true;
   } catch (err) {
+    recordTelemetryTarget({
+      scope: "sandbox",
+      sandboxName,
+      gatewayName: recreateOptions.targetGatewayName,
+      outcome: "failed",
+      state: "unchanged",
+    });
     printRebuildPreflightFailure(
       "the replacement onboarding host/runtime checks did not pass.",
       err instanceof Error ? err.message : String(err),
