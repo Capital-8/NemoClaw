@@ -3,7 +3,13 @@
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-import { REBUILD_OPENCLAW_TEST_TIMEOUT_MS } from "../../../tools/e2e/rebuild-openclaw-timeout-contract.mts";
+import {
+  REBUILD_OPENCLAW_INSTALL_TIMEOUT_MS,
+  REBUILD_OPENCLAW_NATIVE_READINESS_TIMEOUT_MS,
+  REBUILD_OPENCLAW_PRE_CLEANUP_TIMEOUT_MS,
+  REBUILD_OPENCLAW_REBUILD_TIMEOUT_MS,
+  REBUILD_OPENCLAW_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/rebuild-openclaw-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -97,7 +103,7 @@ test(
       await sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "rebuild-openclaw-preclean-openshell-delete",
         env,
-        timeoutMs: 120_000,
+        timeoutMs: REBUILD_OPENCLAW_PRE_CLEANUP_TIMEOUT_MS,
       });
     } catch {
       // The named gateway does not exist before first onboarding.
@@ -117,7 +123,7 @@ test(
       cwd: REPO_ROOT,
       env,
       redactionValues: redactions,
-      timeoutMs: execTimeout(20 * 60_000),
+      timeoutMs: execTimeout(REBUILD_OPENCLAW_INSTALL_TIMEOUT_MS),
     });
     assertExitZero(install, "OpenClaw rebuild install");
 
@@ -147,7 +153,7 @@ test(
         artifactName,
         env,
         redactionValues: redactions,
-        timeoutMs: 20 * 60_000,
+        timeoutMs: REBUILD_OPENCLAW_REBUILD_TIMEOUT_MS,
       });
       assertExitZero(rebuild, "rebuild OpenClaw sandbox");
       expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
@@ -236,7 +242,7 @@ async function waitForNativeOpenClaw(
       artifactName: `${artifactPrefix}-native-ready`,
       env: buildAvailabilityProbeEnv(),
       redactionValues: redactions,
-      timeoutMs: 180_000,
+      timeoutMs: REBUILD_OPENCLAW_NATIVE_READINESS_TIMEOUT_MS,
     },
   );
   assertExitZero(ready, "native OpenClaw readiness after rebuild");
