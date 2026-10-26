@@ -38,34 +38,53 @@ describe("Docker-driver gateway env config validation", () => {
   });
 
   it.each([
-    ["relative CA path", /^client_ca_path = .+$/m, 'client_ca_path = "relative.crt"'],
-    ["schema 1", /version = 2/, "version = 1"],
-    ["unquoted CA path", /^client_ca_path = .+$/m, "client_ca_path = /invalid.crt"],
-    ["invalid TLS boolean", /disable_tls = false/, "disable_tls = []"],
+    [
+      "relative CA path",
+      /^client_ca_path = .+$/m,
+      'client_ca_path = "relative.crt"',
+      "absolute TLS path",
+    ],
+    ["schema 1", /version = 2/, "version = 1", "openshell.version=2"],
+    [
+      "unquoted CA path",
+      /^client_ca_path = .+$/m,
+      "client_ca_path = /invalid.crt",
+      "Invalid TOML document",
+    ],
+    ["invalid TLS boolean", /disable_tls = false/, "disable_tls = []", "disable_tls=false"],
     [
       "retired TLS switch",
       /\[openshell.gateway.tls\]/,
       "[openshell.gateway.tls]\nrequire_client_auth = true",
+      "client-CA authentication",
     ],
-    ["OIDC config", /$/, '\n[openshell.gateway.oidc]\nissuer = "https://issuer.invalid"\n'],
-  ] as const)("rejects %s without changing the config", (_kind, pattern, replacement) => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-auth-"));
-    try {
-      const configPath = writeSafeGatewayAuthConfig(stateDir);
-      const gatewayEnv: Record<string, string> = {
-        OPENSHELL_BIND_ADDRESS: "127.0.0.1",
-        OPENSHELL_GATEWAY_CONFIG: configPath,
-      };
-      const config = fs.readFileSync(configPath, "utf-8").replace(pattern, replacement);
-      fs.writeFileSync(configPath, config);
-      expect(() => assertDockerDriverGatewayAuthConfigSafe(gatewayEnv, {})).toThrow(
-        /absolute TLS path|openshell.version=2|client-CA authentication|non-empty openshell.gateway.tls.client_ca_path|disable_tls=false/,
-      );
-      expect(fs.readFileSync(configPath, "utf-8")).toBe(config);
-    } finally {
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
+    [
+      "OIDC config",
+      /$/,
+      '\n[openshell.gateway.oidc]\nissuer = "https://issuer.invalid"\n',
+      "client-CA authentication",
+    ],
+  ] as const)(
+    "rejects %s without changing the config",
+    (_kind, pattern, replacement, expectedError) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-auth-"));
+      try {
+        const configPath = writeSafeGatewayAuthConfig(stateDir);
+        const gatewayEnv: Record<string, string> = {
+          OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+          OPENSHELL_GATEWAY_CONFIG: configPath,
+        };
+        const config = fs.readFileSync(configPath, "utf-8").replace(pattern, replacement);
+        fs.writeFileSync(configPath, config);
+        expect(() => assertDockerDriverGatewayAuthConfigSafe(gatewayEnv, {})).toThrow(
+          expectedError,
+        );
+        expect(fs.readFileSync(configPath, "utf-8")).toBe(config);
+      } finally {
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     ["OIDC environment", { OPENSHELL_OIDC_ISSUER: "https://issuer.invalid" }, {}],

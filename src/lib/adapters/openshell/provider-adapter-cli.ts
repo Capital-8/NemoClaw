@@ -736,6 +736,7 @@ export function createCliOpenShellProviderAdapter(
       const credentialState = parseCliOpenShellProviderCredentialState(
         commandStdout(inventory),
         request.providerName,
+        projectedRuntime,
       );
       if (credentialState && "nextPageToken" in credentialState) {
         if (!projectedRuntime || seenPageTokens.has(credentialState.nextPageToken)) {
