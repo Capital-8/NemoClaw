@@ -487,25 +487,26 @@ print(json.dumps(result))
     },
   );
 
-  it.each(["my-lab", "MY-LAB"])(
-    "prefers a case-insensitive provider-key match over an earlier display-name alias for %s",
-    (provider) => {
-      const report = reportHermesRoute({
-        ...ONBOARDED_CONFIG,
-        model: { ...LAB_MODEL, provider },
-        providers: {
-          shadow: { name: "My Lab", api: "https://shadow.example/v1" },
-          ...ONBOARDED_CONFIG.providers,
-          "my-lab": { name: "Selected Lab", api: LAB_ENDPOINT },
-        },
-      });
+  it.each([
+    ["my-lab", "my-lab"],
+    ["MY-LAB", "my-lab"],
+    ["my-lab", "MY-LAB"],
+  ])("prefers provider key %s/%s over an earlier display-name alias", (provider, providerKey) => {
+    const report = reportHermesRoute({
+      ...ONBOARDED_CONFIG,
+      model: { ...LAB_MODEL, provider },
+      providers: {
+        shadow: { name: "My Lab", api: "https://shadow.example/v1" },
+        ...ONBOARDED_CONFIG.providers,
+        [providerKey]: { name: "Selected Lab", api: LAB_ENDPOINT },
+      },
+    });
 
-      expect(report.info).toMatchObject({ provider, base_url: LAB_ENDPOINT });
-      expect(report.context).toContain(`provider=${provider}, endpoint=${LAB_ENDPOINT}`);
-      expect(report.status).toContain(`Endpoint: ${LAB_ENDPOINT}`);
-      expect(JSON.stringify(report)).not.toContain("shadow.example");
-    },
-  );
+    expect(report.info).toMatchObject({ provider, base_url: LAB_ENDPOINT });
+    expect(report.context).toContain(`provider=${provider}, endpoint=${LAB_ENDPOINT}`);
+    expect(report.status).toContain(`Endpoint: ${LAB_ENDPOINT}`);
+    expect(JSON.stringify(report)).not.toContain("shadow.example");
+  });
 
   it("prefers the managed route's provider key over an earlier display-name alias", () => {
     const report = reportHermesRoute({
@@ -621,6 +622,45 @@ print(json.dumps(result))
     try {
       fs.mkdirSync(path.join(runtimeDir, "hermes_cli"));
       fs.mkdirSync(path.join(runtimeDir, "agent"));
+      fs.mkdirSync(path.join(runtimeDir, "gateway"));
+      fs.writeFileSync(
+        path.join(runtimeDir, "yaml.py"),
+        `import json
+def safe_load(value):
+    return json.loads(value if isinstance(value, str) else value.read())
+`,
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "guard.py"),
+        `import json, os
+from pathlib import Path
+def provider_placeholders(home, *_args, **_kwargs):
+    target = Path(home) / "config.yaml"
+    config = json.loads(target.read_text())
+    handle = os.environ["NEMOCLAW_LOCAL_INFERENCE_TOKEN"]
+    for source in (config["model"], *config["providers"].values(), *config["custom_providers"]):
+        source["api_key"] = handle
+    target.write_text(json.dumps(config))
+`,
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "gateway", "config.py"),
+        `class GatewayConfig:
+    @staticmethod
+    def from_dict(config):
+        return config
+`,
+      );
+      fs.writeFileSync(
+        path.join(runtimeDir, "hermes_cli", "runtime_provider.py"),
+        `import json, os
+from pathlib import Path
+def resolve_runtime_provider(*, requested):
+    config = json.loads((Path(os.environ["HERMES_HOME"]) / "config.yaml").read_text())
+    model = config["model"]
+    return {"api_key": model["api_key"], "base_url": model["base_url"]}
+`,
+      );
       fs.writeFileSync(
         path.join(runtimeDir, "hermes_cli", "config.py"),
         `
@@ -724,7 +764,13 @@ def _collect_pre_llm_call_context(
 
       const probe = spawnSync(
         process.execPath,
-        [CHECK_NATIVE_CREDENTIALS_PATH, runtimeDir, "python3", PLUGIN_DIR],
+        [
+          CHECK_NATIVE_CREDENTIALS_PATH,
+          runtimeDir,
+          "python3",
+          path.join(runtimeDir, "guard.py"),
+          PLUGIN_DIR,
+        ],
         { encoding: "utf-8", timeout: 15_000 },
       );
 

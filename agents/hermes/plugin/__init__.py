@@ -1067,14 +1067,11 @@ def _named_provider_url(hermes_cfg, provider):
     wanted = _provider_alias(provider)
     providers = hermes_cfg.get("providers")
     if wanted and isinstance(providers, dict):
-        entry = providers.get(_config_text(provider).lower())
-        if isinstance(entry, dict):
-            return entry.get("api") or entry.get("url") or entry.get("base_url")
         for key, entry in providers.items():
-            if isinstance(entry, dict) and wanted in (
-                _provider_alias(str(key)),
-                _provider_alias(entry.get("name")),
-            ):
+            if isinstance(entry, dict) and wanted == _provider_alias(str(key)):
+                return entry.get("api") or entry.get("url") or entry.get("base_url")
+        for entry in providers.values():
+            if isinstance(entry, dict) and wanted == _provider_alias(entry.get("name")):
                 return entry.get("api") or entry.get("url") or entry.get("base_url")
     custom_providers = hermes_cfg.get("custom_providers")
     if wanted and isinstance(custom_providers, list):
