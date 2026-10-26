@@ -114,6 +114,7 @@ function successfulBackup(options: BackupOptions): BackupResult {
   }
   return {
     success: true,
+    nativeArchiveCounts: { directories: 3, files: 7 },
     manifest: {
       version: 1,
       sandboxName: "alpha",
@@ -381,6 +382,7 @@ describe("managed snapshot backup authority", () => {
       });
 
       expect(result.success).toBe(true);
+      expect(result.nativeArchiveCounts).toEqual({ directories: 3, files: 7 });
       expect(backup).toHaveBeenCalledWith(
         "alpha",
         expect.objectContaining({
@@ -421,6 +423,7 @@ describe("managed snapshot backup authority", () => {
     );
 
     expect(result.success).toBe(true);
+    expect(result.nativeArchiveCounts).toEqual({ directories: 3, files: 7 });
     expect(backup).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
