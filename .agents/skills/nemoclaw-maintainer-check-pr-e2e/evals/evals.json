@@ -105,5 +105,27 @@
       "Requires the replacement PR to be evaluated under its own identity.",
       "Does not close, replace, dispatch for, or approve either PR."
     ]
+  },
+  {
+    "id": "runtime-evidence-missing-or-incomplete",
+    "question": "A main PR has matching trusted dispatch/result receipts with pass status and success for every recorded job group. Accepted scope requires Docker and Podman for a supported selected target. In fixture one, same-attempt GitHub jobs prove only Docker execution. In fixture two, no runtime-specific job evidence can be verified. Qualify both.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Selector-level aggregate receipts cannot prove missing required gateway-runtime executions.",
+    "expected_behavior": [
+      "Returns BLOCKED for both fixtures and names missing Podman or ambiguous runtime coverage.",
+      "Expands the recorded runtime requirements with the trusted planner and compares expected executions with same-run, same-attempt GitHub jobs and trusted matrix definitions.",
+      "Does not infer Podman coverage from Docker success, fabricate receipt runtime fields, or dispatch another run."
+    ]
+  },
+  {
+    "id": "matching-runtime-executions-pass",
+    "question": "A main PR requires Docker and Podman for a supported selected target. Its latest trusted workflow run and attempt have matching candidate/base/PR dispatch and result artifacts, pass status, and successful controller and selected groups. The trusted planner expansion matches successful GitHub jobs for every required Docker and Podman execution in that attempt. All other evidence conditions hold.",
+    "expected_skill": "nemoclaw-maintainer-check-pr-e2e",
+    "ground_truth": "Matching runtime-specific execution evidence completes qualification without requiring fields absent from current receipts.",
+    "expected_behavior": [
+      "Returns PASS with the planner runtime coverage and matching GitHub job evidence.",
+      "Checks candidate/base/workflow and artifact identities normally and keeps every runtime execution within the relied-on run and attempt.",
+      "Does not claim the aggregate receipt itself contains gateway runtimes or grant approval."
+    ]
   }
 ]

@@ -30,6 +30,7 @@ Preserve its complete `deterministic.requiredJobs` and `deterministic.requiredTa
 Include any additional coverage explicitly required by the accepted scope.
 The trusted [workflow planner](../../../tools/e2e/workflow-plan.mts) owns selector expansion and runtime coverage.
 Verify its result against that floor; do not derive a separate coverage list from the diff.
+Record required gateway runtimes and the planner's expanded execution IDs and runtime providers.
 
 When both required arrays are empty, require the existing credential-free `vllm-docker-storage` E2E in the `shared-e2e` job.
 Use explicit `targets=vllm-docker-storage`, empty `jobs`, and `gateway_runtimes=docker` inputs.
@@ -51,6 +52,11 @@ Require all of these conditions:
 - The workflow completed with conclusion `success`, and `Relevant E2E` succeeded.
 - The result receipt reports `pass`. Every selected E2E job and matrix execution succeeded.
   Apply only the Results contract's planner-authorized exception for skipped `base-image-publication`.
+
+The current dispatch and result receipts omit gateway runtimes; their aggregate results alone cannot prove runtime coverage.
+Match the planner's required executions and runtime providers to successful GitHub jobs using the trusted workflow's matrix definitions.
+Keep this evidence within the same run and attempt. Missing or ambiguous runtime evidence blocks approval.
+Docker-only results cannot satisfy required Podman coverage.
 
 For a manual PR run, Actions `head_sha` identifies the executing workflow commit.
 Use the verified dispatch receipt to identify the tested candidate commit.
