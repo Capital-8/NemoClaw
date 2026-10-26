@@ -77,15 +77,7 @@ import { isSshTransportFailure } from "./ssh-transport.js";
 import { inspectExtractedDcodeSessionsDatabase } from "./snapshot/dcode-session-credential-scan.js";
 import { withoutOpenClawSqliteMachineAuthority } from "./snapshot/openclaw-sqlite-sanitizer.js";
 import { nemoclawStateRoot } from "./state-root.js";
-import {
-  readArchiveRange,
-  runTarListing,
-  TAR_BLOCK_BYTES,
-  type TarArchiveSource,
-  tarHeaderSize,
-  tarHeaderString,
-  type TarListingSource,
-} from "./tar-listing.js";
+import { runTarListing, type TarArchiveSource, type TarListingSource } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT), "rebuild-backups");
@@ -283,6 +275,8 @@ export interface BackupOptions {
 
 export interface BackupResult {
   success: boolean;
+  /** Directory and non-directory member counts; symbolic links count as files. */
+  nativeArchiveCounts?: { directories: number; files: number };
   // Only set once the backup has been written to disk — absent on
   // precondition failures like an invalid --name.
   manifest?: RebuildManifest;
@@ -595,27 +589,17 @@ function rejectSymlinksOnPath(targetPath: string): void {
 }
 
 /**
- * List tar entries and confirm that every path stays within targetDir.
- * Reject absolute paths, .. traversal, NUL bytes, and line breaks in member
- * paths or link targets. Return a violation when header inspection fails or
- * deadlineMs passes.
+ * List tar entries and validate every path is within targetDir.
+ * Rejects absolute paths, path traversal (..), and null bytes.
  */
 export function validateTarEntries(
   tarArchive: TarListingSource,
   targetDir: string,
-  deadlineMs?: number,
 ): TarValidationResult {
   const entries: string[] = [];
-  const listingFailure = runTarListing(
-    tarArchive,
-    ["-tf", "-"],
-    "tar listing",
-    (line) => {
-      entries.push(line);
-    },
-    undefined,
-    deadlineMs,
-  );
+  const listingFailure = runTarListing(tarArchive, ["-tf", "-"], "tar listing", (line) => {
+    entries.push(line);
+  });
   if (listingFailure) {
     return {
       safe: false,
@@ -659,23 +643,20 @@ export function validateTarEntries(
 export function rejectSymlinkExtractionTraversal(
   tarArchive: TarListingSource,
   entries: readonly string[],
-  deadlineMs?: number,
+  counts?: BackupResult["nativeArchiveCounts"],
 ): string[] {
   const symlinks: Array<{ entry: string; index: number }> = [];
   let index = 0;
-  const listingFailure = runTarListing(
-    tarArchive,
-    ["-tvf", "-"],
-    "tar symlink listing",
-    (line) => {
-      const entry = entries[index];
-      if (entry === undefined) return;
-      if (line.startsWith("l")) symlinks.push({ entry, index });
-      index += 1;
-    },
-    undefined,
-    deadlineMs,
-  );
+  const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar symlink listing", (line) => {
+    const entry = entries[index];
+    if (entry === undefined) return;
+    if (counts) {
+      const kind = line.startsWith("d") ? "directories" : "files";
+      counts[kind] += 1;
+    }
+    if (line.startsWith("l")) symlinks.push({ entry, index });
+    index += 1;
+  });
   if (listingFailure) return [listingFailure];
   if (index !== entries.length) return ["tar symlink listing did not match archive inventory"];
 
@@ -710,39 +691,31 @@ export function rejectSymlinkExtractionTraversal(
 export function rejectHardLinkExtractionTraversal(
   tarArchive: TarListingSource,
   entries: readonly string[],
-  deadlineMs?: number,
 ): string[] {
   const symlinks: Array<{ path: string; index: number; entry: string }> = [];
   const hardLinks: Array<{ target: string; index: number; entry: string }> = [];
   const violations: string[] = [];
   let index = 0;
-  const listingFailure = runTarListing(
-    tarArchive,
-    ["-tvf", "-"],
-    "tar link listing",
-    (line) => {
-      const entry = entries[index];
-      if (entry === undefined) return;
-      const normalizedEntry = path.posix.normalize(entry.replace(/^\.\//u, "")).replace(/\/$/u, "");
-      if (line.startsWith("l")) {
-        symlinks.push({ path: normalizedEntry, index, entry });
-      } else if (line.startsWith("h") || / link to /u.test(line)) {
-        const marker = line.lastIndexOf(" link to ");
-        if (marker < 0) {
-          violations.push(`uninspectable hard link: ${entry}`);
-        } else {
-          hardLinks.push({
-            target: line.slice(marker + " link to ".length).trim(),
-            index,
-            entry,
-          });
-        }
+  const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar link listing", (line) => {
+    const entry = entries[index];
+    if (entry === undefined) return;
+    const normalizedEntry = path.posix.normalize(entry.replace(/^\.\//u, "")).replace(/\/$/u, "");
+    if (line.startsWith("l")) {
+      symlinks.push({ path: normalizedEntry, index, entry });
+    } else if (line.startsWith("h") || / link to /u.test(line)) {
+      const marker = line.lastIndexOf(" link to ");
+      if (marker < 0) {
+        violations.push(`uninspectable hard link: ${entry}`);
+      } else {
+        hardLinks.push({
+          target: line.slice(marker + " link to ".length).trim(),
+          index,
+          entry,
+        });
       }
-      index += 1;
-    },
-    undefined,
-    deadlineMs,
-  );
+    }
+    index += 1;
+  });
   if (listingFailure) return [listingFailure];
   if (index !== entries.length) return ["tar link listing did not match archive inventory"];
 
@@ -777,22 +750,15 @@ export function rejectHardLinkExtractionTraversal(
  * legitimate reason to contain them, and they can be used to reference
  * files outside the extraction root.
  */
-export function rejectHardLinks(tarArchive: TarArchiveSource, deadlineMs?: number): string[] {
+export function rejectHardLinks(tarArchive: TarArchiveSource): string[] {
   const violations: string[] = [];
-  const listingFailure = runTarListing(
-    tarArchive,
-    ["-tvf", "-"],
-    "tar verbose listing",
-    (line) => {
-      // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
-      // and include " link to " in the line.
-      if (line.startsWith("h") || / link to /.test(line)) {
-        violations.push(`hard link: ${line.trim()}`);
-      }
-    },
-    undefined,
-    deadlineMs,
-  );
+  const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar verbose listing", (line) => {
+    // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
+    // and include " link to " in the line.
+    if (line.startsWith("h") || / link to /.test(line)) {
+      violations.push(`hard link: ${line.trim()}`);
+    }
+  });
   if (listingFailure) return [listingFailure];
 
   return violations;
@@ -1152,6 +1118,7 @@ function readExtractedNativeCredentialCandidate(
   }
 }
 
+const TAR_BLOCK_BYTES = 512;
 const NATIVE_CREDENTIAL_SCAN_CHUNK_BYTES = 64 * 1024;
 const NATIVE_CREDENTIAL_SCAN_OVERLAP_CHARS = 4096;
 const NATIVE_TAR_METADATA_MAX_BYTES = 1024 * 1024;
@@ -1248,6 +1215,37 @@ function dependencyLockfileContainsCredential(name: string, raw: string): boolea
     // contents can cross the host-side persistence boundary.
     return true;
   }
+}
+
+function tarHeaderString(header: Buffer, start: number, length: number): string {
+  const end = header.indexOf(0, start);
+  return header
+    .subarray(start, end >= start && end < start + length ? end : start + length)
+    .toString("utf8");
+}
+
+function tarHeaderSize(header: Buffer): number | null {
+  const field = header.subarray(124, 136);
+  if ((field[0] ?? 0) & 0x80) {
+    let value = BigInt((field[0] ?? 0) & 0x7f);
+    for (const byte of field.subarray(1)) value = (value << 8n) | BigInt(byte);
+    return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+  }
+  const text = field.toString("ascii").replace(/\0.*$/su, "").trim();
+  if (!/^[0-7]*$/u.test(text)) return null;
+  const value = text.length === 0 ? 0 : Number.parseInt(text, 8);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function readArchiveRange(descriptor: number, position: number, length: number): Buffer | null {
+  const result = Buffer.alloc(length);
+  let read = 0;
+  while (read < length) {
+    const count = readSync(descriptor, result, read, length - read, position + read);
+    if (count === 0) return null;
+    read += count;
+  }
+  return result;
 }
 
 function paxMetadata(
@@ -2481,21 +2479,18 @@ function backupNativeSandboxState(
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive validation failed: ${rawArchiveViolation}`);
     }
-    const validation = validateTarEntries(
-      { filePath: archivePath },
-      rootResult.root,
-      options.deadlineMs,
-    );
+    const validation = validateTarEntries({ filePath: archivePath }, rootResult.root);
     if (!validation.safe) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
         `Native state archive validation failed: ${validation.violations.join("; ")}`,
       );
     }
+    const nativeArchiveCounts = { directories: 0, files: 0 };
     const symlinkTraversalViolations = rejectSymlinkExtractionTraversal(
       { filePath: archivePath },
       validation.entries,
-      options.deadlineMs,
+      nativeArchiveCounts,
     );
     if (symlinkTraversalViolations.length > 0) {
       rmSync(backupPath, { recursive: true, force: true });
@@ -2503,7 +2498,7 @@ function backupNativeSandboxState(
         `Native state archive validation failed: ${symlinkTraversalViolations.join("; ")}`,
       );
     }
-    const hardLinkViolations = rejectHardLinks({ filePath: archivePath }, options.deadlineMs);
+    const hardLinkViolations = rejectHardLinks({ filePath: archivePath });
     if (hardLinkViolations.length > 0) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
@@ -2610,6 +2605,7 @@ function backupNativeSandboxState(
     return {
       success: true,
       manifest,
+      nativeArchiveCounts,
       backedUpDirs: ["."],
       failedDirs: [],
       backedUpFiles: [],
