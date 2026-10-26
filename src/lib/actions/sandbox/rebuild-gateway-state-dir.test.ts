@@ -35,6 +35,12 @@ function sandboxGatewayStateDir(): string {
   return stateDir;
 }
 
+function sandboxGatewayStateDirWithMalformedKey(): string {
+  const stateDir = sandboxGatewayStateDir();
+  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.key"), "not a key\n", { mode: 0o600 });
+  return stateDir;
+}
+
 describe("rebuild gateway state directory preflight (#13330)", () => {
   installRebuildFlowTestHooks();
   afterEach(() => {
@@ -90,6 +96,25 @@ describe("rebuild gateway state directory preflight (#13330)", () => {
       const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(errors).toContain("gateway TLS credentials");
       expect(errors).toContain("or unset it");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("stops before backup or delete when the SDK TLS key is malformed", async () => {
+    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+    process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = sandboxGatewayStateDirWithMalformedKey();
+    try {
+      const harness = createRebuildFlowHarness();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/Configured OpenShell gateway state directory is unusable/u);
+
+      const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errors).toContain("gateway TLS credentials");
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     } finally {

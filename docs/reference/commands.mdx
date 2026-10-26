@@ -3334,7 +3334,7 @@ To replace a Portable Hermes sandbox, run `nemohermes onboard --experimental-pro
 If the sandbox or its retained recovery record belongs to another local OpenShell gateway registry, NemoClaw runs the rebuild or recovery retirement from that registry.
 It asks for confirmation before it starts the delegated rebuild worker unless you pass `--yes` or `--force`.
 The worker uses the sandbox's recorded gateway state and credentials; you do not need to select the gateway first.
-When `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` or `NEMOCLAW_GATEWAY_MANAGEMENT` is set, rebuild checks before backup or deletion that OpenShell accepts that state directory for the sandbox's gateway and that it holds the gateway TLS files under `tls/`, and stops with the reason when it does not.
+When `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` or `NEMOCLAW_GATEWAY_MANAGEMENT` is set, rebuild checks before backup or deletion that OpenShell accepts that state directory for the sandbox's gateway and that it holds valid gateway TLS files under `tls/`, and stops with the reason when it does not.
 When the directory comes from the sandbox's registry record, set `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` to a valid directory to override it; unsetting the variable does not change the recorded directory.
 
 <AgentOnly variant="openclaw,hermes">

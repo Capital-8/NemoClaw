@@ -4,6 +4,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import tls from "node:tls";
 import type { Readable } from "node:stream";
 
 import type { RebuildSandboxOptions } from "../../../domain/lifecycle/options";
@@ -110,7 +111,7 @@ const REBUILD_ENV_NAMES = [
 /**
  * Validate a configured gateway state location before rebuild changes anything.
  * The replacement uses the SDK after the source is deleted, so a location the SDK
- * rejects, or one without the SDK mTLS files, would otherwise strand the sandbox.
+ * rejects, or one without usable SDK mTLS files, would otherwise strand the sandbox.
  * Returns the reason, or null when usable.
  */
 export function rebuildGatewayStateDirIssue(
@@ -134,7 +135,13 @@ export function rebuildGatewayStateDirIssue(
       { env, homeDir: resolveHome(env) },
     );
     try {
-      readManagedOpenShellSdkTls(stateDir);
+      // The SDK hands these to Node TLS; reject malformed or mismatched material here.
+      const credentials = readManagedOpenShellSdkTls(stateDir);
+      tls.createSecureContext({
+        ca: credentials.caCert,
+        cert: credentials.clientCert,
+        key: credentials.clientKey,
+      });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       return `The gateway TLS credentials in ${stateDir}/tls are missing or unreadable: ${detail}`;
