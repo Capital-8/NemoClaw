@@ -257,15 +257,6 @@ exit 0`,
   }
 }
 
-function systemBinIsWritable(): boolean {
-  try {
-    fs.accessSync("/usr/local/bin", fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function createLinuxArm64DownloadFixture() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-linux-arm64-assets-"));
   const fakeBin = path.join(tmp, "bin");
@@ -344,6 +335,9 @@ chmod 755 "$outdir/$name"`,
     path.join(fakeBin, "install"),
     `#!/usr/bin/env bash
 dest="\${@: -1}"
+if [ "\${NEMOCLAW_TEST_USER_LOCAL_ONLY:-}" = "1" ] && [[ "$dest" = /usr/local/bin/* ]]; then
+  exit 90
+fi
 mkdir -p "$(dirname "$dest")"
 case "$(basename "$dest")" in
 openshell)
@@ -973,39 +967,49 @@ exit 1`,
     }
   });
 
-  it.runIf(!systemBinIsWritable())(
-    "creates owner-safe user-local directories in a direct install under umask 0002 (#12496)",
-    () => {
-      const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+  it("creates owner-safe user-local directories in a direct install under umask 0002 (#12496)", () => {
+    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+    try {
+      fs.rmSync(path.join(fakeBin, "openshell"));
+      const bashEnv = path.join(tmp, "force-user-local-install.sh");
+      fs.writeFileSync(
+        bashEnv,
+        `function [ {
+  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then
+    return 1
+  fi
+  builtin [ "$@"
+}
+`,
+      );
+      const previousUmask = process.umask(0o002);
+      let directInstall;
       try {
-        fs.rmSync(path.join(fakeBin, "openshell"));
-        const previousUmask = process.umask(0o002);
-        let directInstall;
-        try {
-          directInstall = spawnSync("bash", [SCRIPT], {
-            env: {
-              ...process.env,
-              HOME: tmp,
-              XDG_BIN_HOME: "",
-              NEMOCLAW_NON_INTERACTIVE: "1",
-              NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-              PATH: `${fakeBin}:/usr/bin:/bin`,
-            },
-            encoding: "utf8",
-          });
-        } finally {
-          process.umask(previousUmask);
-        }
-        expect(directInstall.status, `${directInstall.stdout}\n${directInstall.stderr}`).toBe(0);
-        expect({
-          local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
-          bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
-        }).toEqual({ local: 0o755, bin: 0o755 });
+        directInstall = spawnSync("bash", [SCRIPT], {
+          env: {
+            ...process.env,
+            BASH_ENV: bashEnv,
+            HOME: tmp,
+            XDG_BIN_HOME: "",
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+            NEMOCLAW_TEST_USER_LOCAL_ONLY: "1",
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+          },
+          encoding: "utf8",
+        });
       } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
+        process.umask(previousUmask);
       }
-    },
-  );
+      expect(directInstall.status, `${directInstall.stdout}\n${directInstall.stderr}`).toBe(0);
+      expect({
+        local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
+        bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
+      }).toEqual({ local: 0o755, bin: 0o755 });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 
   it("upgrades into the active writable openshell directory to avoid PATH shadowing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-active-dir-"));
