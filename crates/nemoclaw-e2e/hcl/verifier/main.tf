@@ -21,7 +21,12 @@ locals {
 }
 
 output "health" {
-  value = local.report.health
+  value = merge(local.report.health, {
+    binding_matches = (
+      local.report.health.identity_matches &&
+      local.report.health.agent_name == local.report.expected.agent_name
+    )
+  })
 }
 
 output "expected" {
@@ -29,5 +34,12 @@ output "expected" {
 }
 
 output "response" {
-  value = local.report.response
+  value = merge(local.report.response, {
+    valid = (
+      local.report.response.succeeded &&
+      local.report.response.agent_name == local.report.expected.agent_name &&
+      local.report.response.runtime_id == local.report.expected.runtime_id &&
+      local.report.response.has_response_text
+    )
+  })
 }

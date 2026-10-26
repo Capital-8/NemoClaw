@@ -50,16 +50,21 @@ cargo build --locked -p nemoclaw-e2e --bin nemoclaw-hcl-e2e
 target/debug/nemoclaw-hcl-e2e run \
   --case crates/nemoclaw-e2e/hcl/cases/docker-openclaw-nvidia.yaml \
   --bundle /absolute/path/to/candidate/bundle \
+  --candidate-revision FULL_40_HEX_COMMIT \
   --run-dir /absolute/path/to/new-private-run
 ~~~
 
 The parent of the run directory must exist. The run directory itself must not exist.
 Each run allocates a fresh deployment UUID and loopback gateway endpoint.
 The checked-in UUID is a template, never the identity used for deployment.
+Supply the full lowercase source commit used to build both the helper and bundle.
+The helper records this caller-selected revision in case.json before deployment and in result.json.
+Bundle integrity is checked against its file manifest.
 
 The helper runs these stages:
 
-1. Resolve and validate the case. Write the resolved deployment and request into a private directory.
+1. Resolve and validate the case and candidate revision.
+   Write the resolved deployment, request, and case identity into a private directory.
 2. Run nemoclaw plan and nemoclaw apply with noninteractive JSON output.
 3. Initialize a separate verifier directory and run tofu test.
 4. Let the verifier's apply-time local-exec resource run the same helper in probe mode.
@@ -85,6 +90,8 @@ The report records readiness, identity verification, the observed agent binding,
 Response observations include success, agent/runtime metadata, and whether the adapter returned nonempty text.
 The probe records these facts without collapsing them into a final response verdict.
 HCL owns the binding comparisons and health/response expectations.
+The verifier derives health.binding_matches and response.valid in HCL from these observations.
+The shared assertions use those outputs, preserving the proposal's HCL interface.
 The probe requires a ready, correctly bound sandbox with a loaded policy before invoking it.
 Fabric does not expose an independent runtime-status API at the pinned version.
 Binding validation therefore does not claim that an agent process is healthy; the real invocation proves it responds.
@@ -111,6 +118,9 @@ The verifier receives an explicit environment without the hosted inference crede
 This POC permits only the checked-in Docker + OpenClaw + NVIDIA-hosted combination.
 Broader support must extend this harness and its supported-case validation.
 It must preserve the same deployment, observation, assertion, evidence, and cleanup flow.
+The proposed combination/profile resolver is represented here by a case wrapper containing
+deployment and request. Only deployment is passed to NemoClaw; test-only fields stay in the harness.
+Profile resolution, runner scheduling, and multiple requests/suites are deferred.
 
 - A new case within supported component interfaces should usually need only case YAML changes.
 - A new runtime or agent interface may need a probe/cleanup adapter or response normalizer.
@@ -121,7 +131,7 @@ Runner provisioning and runtime expansion remain outside this POC.
 ## Evidence and cleanup
 
 The run directory is created with mode 0700 on Unix.
-It retains result.json, resolved inputs, command stdout/stderr, HCL JSON output,
+It retains case.json, result.json, resolved inputs, command stdout/stderr, HCL JSON output,
 probe observations, and private Fabric diagnostics.
 Backend messages, requests, and response text are excluded from the normalized probe report.
 Agent names and runtime IDs remain available for HCL binding assertions.

@@ -21,7 +21,12 @@ async fn successful_verification_and_cleanup_produce_a_successful_case() {
     let result: Value =
         serde_json::from_slice(&fs::read(run.join("result.json")).unwrap()).unwrap();
     assert_eq!(result["succeeded"], true);
+    assert_eq!(result["candidate_revision"], "a".repeat(40));
     assert_eq!(result["cleanup"]["succeeded"], true);
+    let identity: Value =
+        serde_json::from_slice(&fs::read(run.join("case.json")).unwrap()).unwrap();
+    assert_eq!(identity["case"], "docker-openclaw-nvidia-hosted");
+    assert_eq!(identity["candidate_revision"], "a".repeat(40));
 }
 
 #[cfg(unix)]
@@ -136,6 +141,7 @@ fi
 "#,
     );
     Tools {
+        candidate_revision: "a".repeat(40),
         cli,
         tofu,
         docker: script(root, "docker", "exit 0"),
@@ -149,6 +155,30 @@ fi
             ),
             ("HANG_APPLY".into(), "0".into()),
         ]),
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_case_requires_an_explicit_candidate_revision_before_deployment() {
+    for revision in ["".into(), "abc123".into(), "g".repeat(40), "A".repeat(40)] {
+        let root = tempfile::tempdir().unwrap();
+        let mut tools = tools(root.path(), true, true, true);
+        tools.candidate_revision = revision;
+        let run = root.path().join("run");
+        assert!(
+            execute_with_tools(
+                &case_path(),
+                root.path(),
+                &run,
+                &tools,
+                &CancellationToken::new(),
+            )
+            .await
+            .is_err()
+        );
+        assert!(!run.exists());
+        assert!(!root.path().join("trace").exists());
     }
 }
 

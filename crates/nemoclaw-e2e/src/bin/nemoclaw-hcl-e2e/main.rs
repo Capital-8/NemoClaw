@@ -38,6 +38,9 @@ enum Action {
         case: PathBuf,
         #[arg(long)]
         bundle: PathBuf,
+        /// Full source commit used to build the helper and candidate bundle.
+        #[arg(long)]
+        candidate_revision: String,
         /// New private directory; an existing directory is refused.
         #[arg(long)]
         run_dir: PathBuf,
@@ -54,6 +57,7 @@ async fn main() -> ExitCode {
         Action::Run {
             case,
             bundle,
+            candidate_revision,
             run_dir,
         } => {
             let cancel = CancellationToken::new();
@@ -74,7 +78,7 @@ async fn main() -> ExitCode {
                 let _ = tokio::signal::ctrl_c().await;
                 token.cancel();
             });
-            let result = run::execute(&case, &bundle, &run_dir, &cancel).await;
+            let result = run::execute(&case, &bundle, &candidate_revision, &run_dir, &cancel).await;
             signals.abort();
             result
         }

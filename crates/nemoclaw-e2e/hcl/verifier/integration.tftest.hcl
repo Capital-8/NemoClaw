@@ -7,18 +7,14 @@ run "live_integration" {
   assert {
     condition = (
       output.health.gateway_ready && output.health.sandbox_ready &&
-      output.health.identity_matches && output.health.policy_loaded &&
-      output.health.agent_name == output.expected.agent_name
+      output.health.binding_matches && output.health.policy_loaded
     )
     error_message = "Required component health failed; inspect the private probe report."
   }
 
   assert {
     condition = (
-      output.response.attempted && output.response.succeeded &&
-      output.response.agent_name == output.expected.agent_name &&
-      output.response.runtime_id == output.expected.runtime_id &&
-      output.response.has_response_text
+      output.response.attempted && output.response.valid
     )
     error_message = "Fabric invocation did not return a nonempty response from the expected agent/runtime."
   }

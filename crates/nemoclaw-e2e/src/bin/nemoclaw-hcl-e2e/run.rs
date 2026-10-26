@@ -19,6 +19,7 @@ const MODULE: &str = include_str!("../../../hcl/verifier/main.tf");
 const ASSERTIONS: &str = include_str!("../../../hcl/verifier/integration.tftest.hcl");
 
 pub(super) struct Tools {
+    pub candidate_revision: String,
     pub cli: PathBuf,
     pub tofu: PathBuf,
     pub docker: PathBuf,
@@ -40,11 +41,13 @@ pub(super) fn verifier(directory: &Path) -> Result<(), String> {
 pub(super) async fn execute(
     case: &Path,
     bundle: &Path,
+    candidate_revision: &str,
     directory: &Path,
     cancel: &CancellationToken,
 ) -> Result<(), String> {
     let bundle = Bundle::open(bundle).map_err(|_| "a verified candidate bundle is required")?;
     let tools = Tools {
+        candidate_revision: candidate_revision.into(),
         cli: bundle.directory.join("bin").join(executable("nemoclaw")),
         tofu: bundle.tofu(),
         docker: "docker".into(),
@@ -61,6 +64,14 @@ pub(super) async fn execute_with_tools(
     cancel: &CancellationToken,
 ) -> Result<(), String> {
     let case = Case::read(case_path)?;
+    if tools.candidate_revision.len() != 40
+        || !tools
+            .candidate_revision
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("candidate revision must be a full lowercase 40-hex commit".into());
+    }
     let mut builder = fs::DirBuilder::new();
     builder.recursive(false);
     #[cfg(unix)]
@@ -89,6 +100,11 @@ pub(super) async fn execute_with_tools(
     .map_err(|_| "cannot save resolved deployment")?;
     let request = directory.join("request.json");
     fs::write(&request, case.request.to_string()).map_err(|_| "cannot save invocation request")?;
+    nemoclaw_runtime::files::save_json(
+        &directory.join("case.json"),
+        &json!({"case": case.id, "candidate_revision": tools.candidate_revision}),
+    )
+    .map_err(|_| "cannot save case identity")?;
     let mut environment = tools.environment.clone();
     environment.insert(
         nemoclaw_backend::DIAGNOSTICS_ENV.into(),
@@ -202,6 +218,7 @@ pub(super) async fn execute_with_tools(
     let succeeded = primary.is_ok() && cleanup_result.is_ok();
     let result = json!({
         "case": case.id, "succeeded": succeeded,
+        "candidate_revision": tools.candidate_revision,
         "deployment_uid": document.metadata.uid,
         "failed_phase": failed_phase, "attributed_to": if succeeded { "none" } else { "unknown" },
         "failure": primary.err(),
