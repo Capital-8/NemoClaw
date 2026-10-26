@@ -36,8 +36,8 @@ export function unownedNativeProviderMessage(
   const gatewayFlag = target.kind === "named" ? ` -g ${target.gatewayName}` : "";
   return [
     `OpenShell provider '${providerName}' already exists without a matching NemoClaw ownership receipt. No provider was changed.`,
-    "An earlier installation can leave this provider on the gateway after its NemoClaw state is removed.",
-    `If no sandbox uses it, remove it with 'openshell provider delete${gatewayFlag} ${providerName}', then run onboarding again.`,
+    "Check whether any sandbox on this gateway uses this provider.",
+    `If none does, remove it with 'openshell provider delete${gatewayFlag} ${providerName}', then run onboarding again.`,
   ].join(" ");
 }
 
