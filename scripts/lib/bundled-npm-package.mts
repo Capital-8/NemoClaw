@@ -18,7 +18,7 @@ import fs, {
   readFileSync,
   realpathSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type JsonObject = Record<string, unknown>;
@@ -223,6 +223,155 @@ type RetainedBackupOptions = {
   verifyBackup: (manifest: JsonObject) => void;
 };
 
+const stagingMarker = "nemoclaw-owner.json";
+
+// A PID is meaningful only in the same host boot and, on Linux, PID namespace.
+// If this identity cannot be established, retain the stage for manual inspection.
+function stagingProcessScope(): string {
+  if (process.platform === "linux") {
+    return JSON.stringify([
+      hostname(),
+      readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(),
+      fs.readlinkSync("/proc/self/ns/pid"),
+    ]);
+  }
+  if (process.platform === "darwin") {
+    const boot = spawnSync("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], {
+      encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: 4096,
+    });
+    if (boot.status !== 0 || !/^[a-f0-9-]{36}$/i.test(boot.stdout.trim())) {
+      throw new Error("staging boot identity is unavailable");
+    }
+    return JSON.stringify([hostname(), "darwin", boot.stdout.trim()]);
+  }
+  throw new Error("staging process identity is unavailable on this platform");
+}
+
+function sameDirectory(left: fs.Stats, right: fs.Stats): boolean {
+  return right.isDirectory() && left.dev === right.dev && left.ino === right.ino;
+}
+
+function markBundledPackageStage(stage: string, packageName: string): void {
+  const parent = dirname(stage);
+  const parentStat = lstatSync(parent);
+  const stageStat = lstatSync(stage);
+  const marker = {
+    schemaVersion: 1,
+    packageName,
+    parent,
+    parentDevice: parentStat.dev,
+    parentInode: parentStat.ino,
+    stage: basename(stage),
+    stageDevice: stageStat.dev,
+    stageInode: stageStat.ino,
+    uid: stageStat.uid,
+    pid: process.pid,
+    processScope: stagingProcessScope(),
+  };
+  const file = join(stage, stagingMarker);
+  const descriptor = openSync(
+    file,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify(marker)}\n`);
+    fs.fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+  syncMetadataDirectory(file);
+  syncMetadataDirectory(stage);
+}
+
+function reconcileBundledPackageStages(parent: string, packageName: string): void {
+  const parentStat = lstatSync(parent);
+  for (const name of readdirSync(parent)) {
+    if (!name.startsWith(`.${packageName}.nemoclaw-stage-`)) continue;
+    const stage = join(parent, name);
+    try {
+      const stageStat = lstatSync(stage);
+      if (
+        parentStat.uid !== process.getuid?.() ||
+        (parentStat.mode & 0o022) !== 0 ||
+        !stageStat.isDirectory() ||
+        stageStat.uid !== process.getuid?.() ||
+        (stageStat.mode & 0o077) !== 0
+      )
+        throw new Error("stage ownership cannot be verified");
+      const file = join(stage, stagingMarker);
+      const descriptor = openSync(
+        file,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      let marker: JsonObject;
+      try {
+        const initial = fstatSync(descriptor);
+        if (
+          !initial.isFile() ||
+          initial.nlink !== 1 ||
+          initial.uid !== stageStat.uid ||
+          (initial.mode & 0o077) !== 0 ||
+          initial.size < 1 ||
+          initial.size > 4096
+        )
+          throw new Error("stage marker is not a private regular file");
+        marker = jsonObject(JSON.parse(readFileSync(descriptor, "utf8")), "stage marker");
+        const current = lstatSync(file);
+        const final = fstatSync(descriptor);
+        if (
+          current.dev !== initial.dev ||
+          current.ino !== initial.ino ||
+          final.size !== initial.size ||
+          final.mtimeMs !== initial.mtimeMs ||
+          final.ctimeMs !== initial.ctimeMs
+        )
+          throw new Error("stage marker changed during recovery");
+      } finally {
+        closeSync(descriptor);
+      }
+      if (
+        marker.schemaVersion !== 1 ||
+        marker.packageName !== packageName ||
+        marker.parent !== parent ||
+        marker.parentDevice !== parentStat.dev ||
+        marker.parentInode !== parentStat.ino ||
+        marker.stage !== name ||
+        marker.stageDevice !== stageStat.dev ||
+        marker.stageInode !== stageStat.ino ||
+        marker.uid !== stageStat.uid ||
+        marker.processScope !== stagingProcessScope() ||
+        typeof marker.pid !== "number" ||
+        !Number.isSafeInteger(marker.pid) ||
+        marker.pid <= 0
+      )
+        throw new Error("stage marker does not identify this package, directory and process scope");
+      let inactive = false;
+      try {
+        process.kill(marker.pid, 0);
+      } catch (error) {
+        inactive = (error as NodeJS.ErrnoException).code === "ESRCH";
+      }
+      if (!inactive) throw new Error("stage creator is active or its exit cannot be verified");
+      rejectUnsafePackageTree(stage, "retained npm package stage");
+      if (
+        !sameDirectory(parentStat, lstatSync(parent)) ||
+        !sameDirectory(stageStat, lstatSync(stage))
+      ) {
+        throw new Error("stage directory changed during recovery");
+      }
+      rmSync(stage, { recursive: true });
+      syncMetadataDirectory(stage);
+    } catch (error) {
+      console.error(
+        `npm bundled ${packageName} staging recovery incomplete; inspect before removing ${JSON.stringify(stage)}: ${String(error)}`,
+      );
+    }
+  }
+}
+
 // Only one recognized backup is eligible; ambiguous or unverifiable trees stay intact.
 function verifiedRetainedBackup(options: RetainedBackupOptions): string | undefined {
   const parent = requireRealDirectory(
@@ -254,13 +403,14 @@ function verifiedRetainedBackup(options: RetainedBackupOptions): string | undefi
 }
 
 // Callers validate npm identity first. Never replace an existing path, including a dangling link.
-// Unverified staging trees are not used or removed during recovery.
+// Only inactive, verified owned stages are removed; unknown stages are retained and reported.
 export function restoreMissingBundledPackage(options: RetainedBackupOptions): void {
   const parent = requireRealDirectory(
     join(options.npmRoot, "node_modules"),
     "npm node_modules root",
   );
   const livePath = join(parent, options.packageName);
+  reconcileBundledPackageStages(parent, options.packageName);
   if (lstatSync(livePath, { throwIfNoEntry: false })) return;
   const backupPath = verifiedRetainedBackup(options);
   if (backupPath) renameSync(backupPath, livePath);
@@ -289,13 +439,15 @@ export function replaceBundledPackage<State>(options: {
   verify: (npmRoot: string) => State;
 }): State {
   const { npmRoot, packageName, replacementRoot, verify } = options;
-  const livePath = join(npmRoot, "node_modules", packageName);
+  const parent = requireRealDirectory(join(npmRoot, "node_modules"), "npm node_modules root");
+  const livePath = join(parent, packageName);
   const transactionId = `${process.pid}-${randomBytes(8).toString("hex")}`;
   const stagingRoot = mkdtempSync(join(dirname(livePath), `.${packageName}.nemoclaw-stage-`));
   const stagedPath = join(stagingRoot, "replacement");
   const backupPath = `${livePath}.nemoclaw-backup-${transactionId}`;
   let rollbackRequired = false;
   try {
+    markBundledPackageStage(stagingRoot, packageName);
     cpSync(replacementRoot, stagedPath, { dereference: false, recursive: true });
     cpSync(livePath, backupPath, {
       dereference: false,

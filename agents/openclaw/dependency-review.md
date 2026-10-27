@@ -104,9 +104,13 @@ The writer preserves file permissions and ownership, rejects symlinks, and stops
 The shared `bundled-npm-package.mts` owns replacement, rollback, archive verification, and backup cleanup for ip-address and Undici.
 Both entrypoints restore one verified affected backup when an interrupted replacement leaves the live package absent.
 They validate npm identity before restoration and preserve unverified staging trees.
+Replacement stages carry private ownership markers bound to the package, parent and stage directories, and creator's host boot and process scope.
+On retry, both entrypoints remove a marked stage only after verifying that identity and confirming that its creator has exited.
+Unknown, active, unsafe, or unverifiable stages remain intact with a recovery diagnostic; a directory-name prefix alone never authorizes deletion.
 Cleanup retries remove one recognized affected backup only after verifying the live replacement.
 Unrecognized names, multiple backups, missing identity, or unsafe trees fail without deletion.
 `test/install/bundled-npm-package.test.ts` covers shared archive and recovery failures; package-specific suites retain identity and rollback coverage.
+`test/install/bundled-npm-staging-recovery.test.ts` interrupts real child processes during copying and promotion, then checks recovery and ownership-denial behavior for both packages.
 `test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` materializes reviewed 2026.10.5 archives and runs npm, npx, and the Discord SDK through the repaired dependencies.
 It also verifies Google Chat account parsing through patched Zod and Slack Bolt HTTP body parsing through its patched local parser dependencies.
 Remove these repairs only after reviewed upstream packages resolve the required versions without mutation and the audit and real consumers pass.
