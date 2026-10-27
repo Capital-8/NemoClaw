@@ -209,6 +209,7 @@ printf '%s  %s\n' "$digest" "$1"
         DCODE_BASE_REF,
         GITHUB_OUTPUT: outputPath,
         HERMES_BASE_REF: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
+        OPENCLAW_BASE_REF: "candidate",
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: fixture,
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: WORKFLOW_SHA,
         NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: COHORT,
@@ -292,6 +293,32 @@ describe("protected managed-image build contract", () => {
     );
     expect(result.status, result.stderr).toBe(0);
     expect(output).toBe("openclaw=candidate\nhermes=candidate\ndcode=candidate\n");
+    expect(dockerCalls).toBe("");
+  });
+
+  it("selects an immutable published OpenClaw base for a candidate multiarch build", () => {
+    const publishedOpenClawBase = `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`;
+    const { result, output, dockerCalls } = runBaseResolution(
+      "managed-image-multiarch-startup",
+      "Resolve digest-pinned platform base images",
+      { candidate: "true", env: { OPENCLAW_BASE_REF: publishedOpenClawBase } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe(`openclaw=${publishedOpenClawBase}\nhermes=candidate\ndcode=candidate\n`);
+    expect(dockerCalls).toBe("");
+  });
+
+  it.each([
+    { name: "empty", reference: "" },
+    { name: "mutable", reference: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest" },
+  ])("rejects a $name OpenClaw base reference for a candidate multiarch build", ({ reference }) => {
+    const { result, output, dockerCalls } = runBaseResolution(
+      "managed-image-multiarch-startup",
+      "Resolve digest-pinned platform base images",
+      { candidate: "true", env: { OPENCLAW_BASE_REF: reference } },
+    );
+    expect(result.status).not.toBe(0);
+    expect(output).toBe("");
     expect(dockerCalls).toBe("");
   });
 
