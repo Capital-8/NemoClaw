@@ -106,6 +106,47 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(vllm.route.nativeLocalExpected).toBe(true);
   });
 
+  it("verifies a Portable Hermes Ollama route through inference.local without a native attachment", () => {
+    const flow = {
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      endpointUrl: "https://inference.local/v1",
+      preferredInferenceApi: "openai-completions",
+    };
+    const portable = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "hermes",
+      flow,
+      {
+        agent: "hermes",
+        portableLifecycleProfile: "hermes",
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: "https://inference.local/v1",
+        hostLocalInferenceReceipt: serializeHostLocalInferenceReceipt(
+          hostLocalInferenceReceipt("ollama"),
+        ),
+      },
+    );
+    const nonPortable = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "hermes",
+      flow,
+      {
+        agent: "hermes",
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: "https://inference.local/v1",
+      },
+    );
+    expect(portable.route.nativeLocalExpected).toBe(false);
+    expect(portable.invocation.nativeLocalExpected).toBe(false);
+    expect(nonPortable.route.nativeLocalExpected).toBe(true);
+    expect(nonPortable.invocation.nativeLocalExpected).toBe(true);
+  });
+
   it("uses the recorded native local attachment instead of the shared models route", async () => {
     const scripts: string[] = [];
     const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);

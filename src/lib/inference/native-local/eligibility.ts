@@ -84,6 +84,38 @@ export function isPersistedPiSharedLocalInferenceRoute(
   );
 }
 
+export function isPersistedHermesPortableSharedLocalInferenceRoute(
+  recorded:
+    | {
+        agent?: string | null;
+        portableLifecycleProfile?: "openclaw" | "hermes" | null;
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        pendingRouteReservation?: boolean;
+        hostLocalInferenceReceipt?: string | null;
+        nativeLocalProviderAttachment?: unknown;
+      }
+    | null
+    | undefined,
+  selected?: { provider?: string | null; model?: string | null; endpointUrl?: string | null },
+): boolean {
+  return Boolean(
+    recorded?.agent === "hermes" &&
+    recorded.portableLifecycleProfile === "hermes" &&
+    recorded.provider === "ollama-local" &&
+    recorded.endpointUrl === "https://inference.local/v1" &&
+    typeof recorded.hostLocalInferenceReceipt === "string" &&
+    recorded.hostLocalInferenceReceipt.trim().length > 0 &&
+    recorded.pendingRouteReservation !== true &&
+    recorded.nativeLocalProviderAttachment === undefined &&
+    (!selected ||
+      (recorded.provider === selected.provider &&
+        recorded.model === selected.model &&
+        (recorded.endpointUrl ?? null) === (selected.endpointUrl ?? null))),
+  );
+}
+
 export const COMPATIBLE_ENDPOINT_GATEWAY_PORTS = [11434, 11435, VLLM_PORT] as const;
 
 const COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET = new Set<number>(COMPATIBLE_ENDPOINT_GATEWAY_PORTS);

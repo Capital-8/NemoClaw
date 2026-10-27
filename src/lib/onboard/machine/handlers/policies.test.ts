@@ -46,6 +46,76 @@ describe("policy state handler", () => {
     expect(calls.setupPolicies).not.toHaveBeenCalled();
   });
 
+  it("applies policies without the local-inference preset and verifies a Portable Hermes Ollama route without a native attachment", async () => {
+    const proofAuthority = {
+      service: "ollama" as const,
+      directHostPort: 11434,
+      directHealthPath: "/api/tags" as const,
+      toolCallingRequired: true,
+    };
+    const { deps, calls } = createPolicyHandlerDeps({
+      getActiveSandbox: vi.fn(() => ({
+        agent: "hermes",
+        portableLifecycleProfile: "hermes" as const,
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: "https://inference.local/v1",
+        hostLocalInferenceReceipt: '{"schemaVersion":2,"providerId":"podman","service":"ollama"}',
+        createdAt: "2026-10-23T00:00:00Z",
+      })),
+    });
+    await handlePoliciesState({
+      ...basePolicyHandlerOptions(deps),
+      agent: { name: "hermes" },
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      endpointUrl: "https://inference.local/v1",
+      hostLocalInferenceRouteOnly: true,
+      hostLocalInferenceSandboxProofAuthority: proofAuthority,
+    });
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({
+        agent: "hermes",
+        provider: null,
+        excludedPresets: ["local-inference"],
+      }),
+    );
+    expect(calls.smoke).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: "https://inference.local/v1",
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: proofAuthority,
+      }),
+    );
+    expect(calls.smoke.mock.calls[0]?.[0]).not.toHaveProperty("nativeLocalProviderAttachment");
+  });
+
+  it("requires a native attachment for a non-portable Hermes local selection", async () => {
+    const { deps, calls } = createPolicyHandlerDeps({
+      getActiveSandbox: vi.fn(() => ({
+        agent: "hermes",
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: "https://inference.local/v1",
+        hostLocalInferenceReceipt: '{"schemaVersion":2,"providerId":"podman","service":"ollama"}',
+      })),
+    });
+    await expect(
+      handlePoliciesState({
+        ...basePolicyHandlerOptions(deps),
+        agent: { name: "hermes" },
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointUrl: "https://inference.local/v1",
+        hostLocalInferenceRouteOnly: true,
+      }),
+    ).rejects.toThrow("requires its recorded provider attachment");
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+  });
+
   it("resumes from the live OpenShell preset selection", async () => {
     const prepare = vi.fn(() => ({
       policyPresets: ["npm"],

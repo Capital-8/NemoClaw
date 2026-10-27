@@ -69,6 +69,7 @@ function publishedManagedOllamaSelection(
     },
   };
   return {
+    sharedInferenceRoute: true,
     runtimeProviderId: "podman",
     request: {
       application: input.application,
@@ -110,6 +111,15 @@ describe("Hermes managed Ollama inference recovery", () => {
       publishedManagedOllamaSelection(input),
     );
     const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: vi.fn(() => ({
+        name: "portable-hermes",
+        agent: "hermes",
+        portableLifecycleProfile: "hermes" as const,
+        provider: "ollama-local",
+        model,
+        endpointUrl: "https://inference.local/v1",
+        hostLocalInferenceReceipt: '{"schemaVersion":2,"providerId":"podman","service":"ollama"}',
+      })),
       isInferenceRouteReady: vi.fn(() => true),
       resolveHostLocalInferenceStartupSelection: resolver,
     });
