@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -135,6 +136,56 @@ describe("complete native-home backup deadlines", () => {
       expect(sandboxState.getLatestBackup("alpha")).toBeNull();
     } finally {
       nowSpy.mockRestore();
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("stops raw inventory inspection at its deadline and removes private staging", () => {
+    const { fixture, nativeRoot } = createNativeSource();
+    try {
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+      expect(backup.success, backup.error).toBe(true);
+      const backupPath = backup.manifest!.backupPath;
+      const baseNow = Date.now();
+      let listingComplete = false;
+      let readRawHeader = false;
+      const originalRead = fs.readSync;
+      const originalRemove = fs.rmSync;
+      const remove = vi.spyOn(fs, "rmSync").mockImplementation((...args) => {
+        Reflect.apply(originalRemove, fs, args);
+        listingComplete ||= path.basename(String(args[0])).startsWith("nemoclaw-tar-listing-");
+      });
+      const read = vi.spyOn(fs, "readSync").mockImplementation((...args) => {
+        const count = Reflect.apply(originalRead, fs, args) as number;
+        readRawHeader ||= listingComplete && args[3] === 512;
+        return count;
+      });
+      syncBuiltinESMExports();
+      const clock = vi
+        .spyOn(Date, "now")
+        .mockImplementation(() =>
+          readRawHeader ? baseNow + sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS + 1 : baseNow,
+        );
+      try {
+        expect(() => sandboxState.inspectNativeSandboxState(backupPath, () => undefined)).toThrow(
+          "Native home/workspace archive inspection exceeded its deadline",
+        );
+        expect(readRawHeader).toBe(true);
+        expect(fs.existsSync(backupPath)).toBe(true);
+        expect(fs.readdirSync(backupPath).some((name) => name.startsWith(".native-"))).toBe(false);
+      } finally {
+        clock.mockRestore();
+        read.mockRestore();
+        remove.mockRestore();
+        syncBuiltinESMExports();
+      }
+    } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });

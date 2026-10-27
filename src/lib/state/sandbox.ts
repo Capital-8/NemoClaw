@@ -1687,6 +1687,9 @@ function scanNativeTarFilePayload(
 }
 
 type NativeArchiveCredentialViolation = string | { entry: string; deadlineExpired: true } | null;
+type RawTarArchiveEntries = string[] | { entry: string; deadlineExpired: true } | null;
+const NATIVE_ARCHIVE_INSPECTION_TIMEOUT =
+  "Native home/workspace archive inspection exceeded its deadline";
 
 function walkNativeTarMembers(
   descriptor: number,
@@ -1697,12 +1700,16 @@ function walkNativeTarMembers(
     dataOffset: number,
     size: number,
   ) => NativeArchiveCredentialViolation,
+  deadlineMs?: number,
 ): NativeArchiveCredentialViolation {
   const archiveSize = fstatSync(descriptor).size;
   let offset = 0;
   let globalPath: string | null = null;
   let nextPath: string | null = null;
   while (offset < archiveSize) {
+    if (backupDeadlineExpired(deadlineMs)) {
+      return { entry: rawEntries?.at(-1) ?? "native state archive", deadlineExpired: true };
+    }
     const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
     if (!header) return "native state credential scan";
     if (header.every((byte) => byte === 0)) {
@@ -1748,19 +1755,26 @@ function walkNativeTarMembers(
     }
     offset = nextOffset;
   }
+  if (backupDeadlineExpired(deadlineMs)) {
+    return { entry: rawEntries?.at(-1) ?? "native state archive", deadlineExpired: true };
+  }
   return offset === archiveSize && nextPath === null ? null : "native state credential scan";
 }
 
-function readRawTarArchiveEntries(descriptor: number): string[] | null {
+function readRawTarArchiveEntries(descriptor: number, deadlineMs?: number): RawTarArchiveEntries {
   const entries: string[] = [];
-  return walkNativeTarMembers(descriptor, entries) === null ? entries : null;
+  const violation = walkNativeTarMembers(descriptor, entries, undefined, deadlineMs);
+  return violation === null ? entries : typeof violation === "string" ? null : violation;
 }
 
-function readRawTarArchiveEntriesFromPath(archivePath: string): string[] | null {
+function readRawTarArchiveEntriesFromPath(
+  archivePath: string,
+  deadlineMs?: number,
+): RawTarArchiveEntries {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    return readRawTarArchiveEntries(descriptor);
+    return readRawTarArchiveEntries(descriptor, deadlineMs);
   } catch {
     return null;
   } finally {
@@ -1926,41 +1940,49 @@ function nativeArchiveRawCredentialViolation(
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    return walkNativeTarMembers(descriptor, rawEntries, (entry, type, dataOffset, size) => {
-      if (type !== "0" && type !== "\0" && type !== "7") return null;
-      const fileName = path.posix.basename(entry).toLowerCase();
-      const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
-      // SQLite inspection of the main database does not cover unused sidecar bytes.
-      if (shouldSkipNativeRawCredentialScan(fileName) || dcodeSessionsDatabaseRole === "database") {
-        return null;
-      }
-      // Dependency source is not a credential authority and generated
-      // bundles can contain accidental token-shaped bytes. Package
-      // manifests still receive a structure-aware scan below.
-      const providerProfileSchema = isBundledProviderProfileSchema(entry);
-      const dependencyTree = isNativeDependencyTreeEntry(entry);
-      const openclawConfig =
-        nativeStructuredAuthorityKind(
-          path.posix.normalize(entry.replace(/^\.\//u, "")),
-          fileName,
-        ) === "openclaw-config";
-      const violation = scanNativeTarFilePayload(
-        descriptor!,
-        dataOffset,
-        size,
-        dcodeSessionsDatabaseRole === "sidecar" ||
-          shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
-        fileName === ".npmrc",
-        providerProfileSchema,
-        openclawConfig,
-        !dependencyTree,
-        dependencyTree,
-        deadlineMs,
-      );
-      if (violation === "deadline") return { entry, deadlineExpired: true };
-      if (violation === null) return "native state credential scan";
-      return violation ? entry : null;
-    });
+    return walkNativeTarMembers(
+      descriptor,
+      rawEntries,
+      (entry, type, dataOffset, size) => {
+        if (type !== "0" && type !== "\0" && type !== "7") return null;
+        const fileName = path.posix.basename(entry).toLowerCase();
+        const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
+        // SQLite inspection of the main database does not cover unused sidecar bytes.
+        if (
+          shouldSkipNativeRawCredentialScan(fileName) ||
+          dcodeSessionsDatabaseRole === "database"
+        ) {
+          return null;
+        }
+        // Dependency source is not a credential authority and generated
+        // bundles can contain accidental token-shaped bytes. Package
+        // manifests still receive a structure-aware scan below.
+        const providerProfileSchema = isBundledProviderProfileSchema(entry);
+        const dependencyTree = isNativeDependencyTreeEntry(entry);
+        const openclawConfig =
+          nativeStructuredAuthorityKind(
+            path.posix.normalize(entry.replace(/^\.\//u, "")),
+            fileName,
+          ) === "openclaw-config";
+        const violation = scanNativeTarFilePayload(
+          descriptor!,
+          dataOffset,
+          size,
+          dcodeSessionsDatabaseRole === "sidecar" ||
+            shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+          fileName === ".npmrc",
+          providerProfileSchema,
+          openclawConfig,
+          !dependencyTree,
+          dependencyTree,
+          deadlineMs,
+        );
+        if (violation === "deadline") return { entry, deadlineExpired: true };
+        if (violation === null) return "native state credential scan";
+        return violation ? entry : null;
+      },
+      deadlineMs,
+    );
   } catch {
     return "native state credential scan";
   } finally {
@@ -2112,6 +2134,7 @@ function copyNativeArchiveToPrivateDescriptor(
   sourceDescriptor: number,
   stagingDirectory: string,
   nativeRoot: string,
+  deadlineMs: number,
 ): {
   descriptor: number;
   sha256: string;
@@ -2131,6 +2154,7 @@ function copyNativeArchiveToPrivateDescriptor(
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let position = 0;
     for (;;) {
+      if (backupDeadlineExpired(deadlineMs)) throw new Error(NATIVE_ARCHIVE_INSPECTION_TIMEOUT);
       const bytesRead = readSync(sourceDescriptor, buffer, 0, buffer.byteLength, position);
       if (bytesRead === 0) break;
       hash.update(buffer.subarray(0, bytesRead));
@@ -2144,24 +2168,37 @@ function copyNativeArchiveToPrivateDescriptor(
     const validation = validateTarEntries(
       { filePath: privatePath },
       nativeRoot,
-      undefined,
+      deadlineMs,
       undefined,
       (format) => {
         nameFormat = format;
       },
     );
-    const rawEntries = validation.safe ? readRawTarArchiveEntries(descriptor) : null;
+    const rawInventory = validation.safe ? readRawTarArchiveEntries(descriptor, deadlineMs) : null;
+    if (rawInventory && !Array.isArray(rawInventory)) {
+      throw new Error(NATIVE_ARCHIVE_INSPECTION_TIMEOUT);
+    }
+    const rawEntries = rawInventory;
     const rawInventoryViolations =
       validation.safe && !nativeTarInventoriesMatch(rawEntries, validation.entries, nameFormat)
         ? ["tar raw header inventory did not match archive listing"]
         : [];
     const symlinkViolations =
       validation.safe && rawInventoryViolations.length === 0
-        ? rejectSymlinkExtractionTraversal({ filePath: privatePath }, validation.entries)
+        ? rejectSymlinkExtractionTraversal(
+            { filePath: privatePath },
+            validation.entries,
+            undefined,
+            deadlineMs,
+          )
         : [];
     const hardLinkTraversalViolations =
       validation.safe && rawInventoryViolations.length === 0
-        ? rejectHardLinkExtractionTraversal({ filePath: privatePath }, validation.entries)
+        ? rejectHardLinkExtractionTraversal(
+            { filePath: privatePath },
+            validation.entries,
+            deadlineMs,
+          )
         : [];
     const result = {
       descriptor,
@@ -2186,6 +2223,7 @@ function openValidatedNativeArchive(
   archivePath: string,
   expectedSha256: string,
   nativeRoot: string,
+  deadlineMs = Date.now() + NATIVE_STATE_CAPTURE_TIMEOUT_MS,
 ): OpenedNativeArchive {
   let sourceDescriptor: number | null = null;
   let restoreDescriptor: number | null = null;
@@ -2198,6 +2236,7 @@ function openValidatedNativeArchive(
       sourceDescriptor,
       path.dirname(archivePath),
       nativeRoot,
+      deadlineMs,
     );
     restoreDescriptor = privateArchive.descriptor;
     if (
@@ -2225,6 +2264,9 @@ function openValidatedNativeArchive(
     restoreDescriptor = null;
     return { descriptor, entries: privateArchive.entries };
   } catch (error) {
+    if (error instanceof Error && error.message === NATIVE_ARCHIVE_INSPECTION_TIMEOUT) {
+      return { error: NATIVE_ARCHIVE_INSPECTION_TIMEOUT };
+    }
     const code =
       typeof error === "object" &&
       error !== null &&
@@ -2711,14 +2753,20 @@ function backupNativeSandboxState(
         nameFormat = format;
       },
     );
-    const verifiedRawEntries = validation.safe
+    const verifiedRawInventory = validation.safe
       ? rawArchiveViolation === null
         ? rawEntries
-        : readRawTarArchiveEntriesFromPath(archivePath)
+        : readRawTarArchiveEntriesFromPath(archivePath, options.deadlineMs)
       : null;
+    if (verifiedRawInventory && !Array.isArray(verifiedRawInventory)) {
+      rmSync(backupPath, { recursive: true, force: true });
+      return nativeStateFailure(
+        `Native archive validation exceeded the backup deadline at '${verifiedRawInventory.entry}'`,
+      );
+    }
     const rawInventoryViolation =
       validation.safe &&
-      !nativeTarInventoriesMatch(verifiedRawEntries, validation.entries, nameFormat)
+      !nativeTarInventoriesMatch(verifiedRawInventory, validation.entries, nameFormat)
         ? "tar raw header inventory did not match archive listing"
         : null;
     if (!validation.safe || rawInventoryViolation) {
