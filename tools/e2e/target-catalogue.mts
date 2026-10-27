@@ -726,7 +726,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: [...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS, "test/e2e/live/json-envelope.ts"],
+    owningPaths: [
+      ...OPEN_SHELL_FORWARD_ADAPTER_OWNING_PATHS,
+      "test/e2e/live/json-envelope.ts",
+      // Dashboard-origin parsing, generation, recording, and rebuild replay (#13177).
+      "src/lib/dashboard/url.ts",
+      "scripts/generate-openclaw-config.mts",
+      "src/lib/onboard/managed-startup/onboard-profile.ts",
+      "src/lib/onboard/managed-startup/agent-environment.ts",
+      "src/lib/actions/sandbox/rebuild-env-isolation.ts",
+      "src/lib/actions/sandbox/agents/managed-workload-rebuild-profile.ts",
+    ],
     environment: {
       ...hostedInference,
       NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND: "1",

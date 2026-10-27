@@ -535,6 +535,7 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("CHAT_UI_URL", "dashboard.url"),
     affordance("NEMOCLAW_DASHBOARD_BIND", "dashboard.bindAddress"),
     affordance("NEMOCLAW_WSL_DASHBOARD_EXPOSURE", "dashboard.wslExposure"),
+    affordance("NEMOCLAW_DASHBOARD_ORIGINS", "dashboard.extraOrigins"),
     affordance("NEMOCLAW_DASHBOARD_PORT", "dashboard.port", "runtime-env"),
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
     affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),

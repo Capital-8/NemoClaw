@@ -131,6 +131,16 @@ describe("managed startup OpenClaw dashboard origins (#13177)", () => {
     ).toThrow(/dashboard contains unsupported fields/);
   });
 
+  it("does not let an exported NEMOCLAW_DASHBOARD_ORIGINS reach the profile builder", () => {
+    const profile = buildManagedStartupOnboardProfile(
+      openClawInput({
+        environment: { NEMOCLAW_DASHBOARD_ORIGINS: "https://ambient.example.test:9443" },
+      }),
+    ).profile;
+
+    expect(profile.dashboard).not.toHaveProperty("extraOrigins");
+  });
+
   it("refuses extra origins for another agent instead of dropping them", () => {
     expect(() =>
       buildManagedStartupOnboardProfile(
