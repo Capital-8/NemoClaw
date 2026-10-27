@@ -151,7 +151,7 @@
       "name": "Local llama.cpp (managed)",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Uses repository-owned YAML recipes and exact GGUF verification. The selected runtime-provider boundary owns lifecycle; all currently qualified profiles require Docker. Qualified DGX Spark hosts offer NVIDIA Nemotron 3 Nano 30B-A3B. Qualifying Windows WSL N1x and Station GB300 hosts automatically use managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6 35B-A3B; a compatible explicit recipe selects that managed recipe. The WSL profiles remain pending physical agent qualification."
+      "notes": "Uses repository-owned YAML recipes and exact GGUF verification. The selected runtime-provider boundary owns lifecycle; all currently qualified profiles require Docker. Qualified DGX Spark and qualified Linux x86_64 NVIDIA GPU hosts offer NVIDIA Nemotron 3 Nano 30B-A3B in the interactive provider menu. Qualifying Windows WSL N1x and Station GB300 hosts automatically use managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6 35B-A3B; a compatible explicit recipe selects that managed recipe. The WSL profiles remain pending physical agent qualification."
     },
     {
       "name": "Local NVIDIA NIM",
