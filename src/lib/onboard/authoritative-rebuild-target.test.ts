@@ -9,6 +9,7 @@ import type {
 } from "../adapters/openshell/forward";
 import * as forwardRuntime from "../adapters/openshell/forward-runtime";
 import * as openshellRuntime from "../adapters/openshell/runtime";
+import * as inferenceRouteHealth from "../actions/sandbox/inference-route-health";
 import type { SandboxEntry } from "../state/registry/types";
 import type { OpenShellForwardPortObserver } from "./dashboard-port";
 import {
@@ -499,8 +500,6 @@ describe("authoritative rebuild target preflight", () => {
         retireLegacyForward: vi.fn(),
         verifyForwardRelease: vi.fn(),
       });
-    // Use the same CommonJS module as the production factory's lazy verifier import.
-    const inferenceRouteHealth: typeof import("../actions/sandbox/inference-route-health") = require("../actions/sandbox/inference-route-health");
     const verify = vi
       .spyOn(inferenceRouteHealth, "verifyNativeHostedStatusAttachment")
       .mockResolvedValue(undefined);

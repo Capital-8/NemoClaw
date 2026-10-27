@@ -30,6 +30,7 @@ import type { NativeLocalProviderAttachment } from "../inference/native-local/co
 import { verifyRecordedNativeLocalProviderAttachment } from "../inference/native-local/profile";
 import { createManagedProviderAdapter } from "../adapters/openshell/managed-provider-adapter";
 import { observeSandboxPresenceOnGateway } from "./sandbox-recreate-probe";
+import { verifyNativeHostedStatusAttachment } from "../actions/sandbox/inference-route-health";
 
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
 
@@ -332,10 +333,7 @@ export function runtimePreflightDependencies(
   return {
     getSandbox: context.getSandbox,
     observeSandboxPresence: observeSandboxPresenceOnGateway,
-    verifyNativeProviderAttachment: (input) => {
-      const inferenceRouteHealth: typeof import("../actions/sandbox/inference-route-health") = require("../actions/sandbox/inference-route-health");
-      return inferenceRouteHealth.verifyNativeHostedStatusAttachment(input);
-    },
+    verifyNativeProviderAttachment: verifyNativeHostedStatusAttachment,
     observeForwardPorts: createOpenShellForwardPortObserver({
       adapter: createOpenShellForwardAdapterForAuthority(authority),
       forwardForPort: (port) =>
