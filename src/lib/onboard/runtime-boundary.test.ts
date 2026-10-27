@@ -202,6 +202,7 @@ describe("OnboardRuntimeBoundary", () => {
       sandboxName: "review-interrupted",
       provider: "ollama-local",
       model: "qwen3.5:9b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
     });
     await boundary.recordStepFailed(
       "provider_selection",
@@ -212,6 +213,7 @@ describe("OnboardRuntimeBoundary", () => {
       sandboxName: "review-interrupted",
       provider: "ollama-local",
       model: "qwen3.5:9b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
       steps: { provider_selection: { status: "failed" } },
     });
   });

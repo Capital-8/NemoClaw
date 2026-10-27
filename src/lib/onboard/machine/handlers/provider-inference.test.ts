@@ -69,6 +69,7 @@ describe("handleProviderInferenceState", () => {
     expect(calls.startStep).toHaveBeenNthCalledWith(2, "provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
     });
     expect(calls.startStep).toHaveBeenNthCalledWith(3, "inference", {
       provider: "nvidia-prod",

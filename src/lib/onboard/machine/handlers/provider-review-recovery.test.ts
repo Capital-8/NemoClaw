@@ -24,6 +24,7 @@ describe("provider inference review recovery", () => {
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
     });
     expect(calls.rejected).toHaveBeenCalledWith("provider_selection");
     expect(calls.exit).toHaveBeenCalledWith(1);
@@ -220,6 +221,7 @@ describe("provider inference review recovery", () => {
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
     });
     expect(calls.resolveHostLocalInferenceStartupSelection).not.toHaveBeenCalled();
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
@@ -261,6 +263,7 @@ describe("provider inference review recovery", () => {
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "ollama-local",
       model: "qwen3.5:9b",
+      endpointUrl: "http://127.0.0.1:11435/v1",
     });
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
@@ -312,6 +315,7 @@ describe("provider inference review recovery", () => {
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection", {
       provider: "nvidia-prod",
       model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
     });
     expect(calls.setupInference).toHaveBeenCalled();
   });
@@ -321,6 +325,7 @@ describe("provider inference review recovery", () => {
       sandboxName: "review-interrupted",
       provider: "ollama-local",
       model: "qwen3.5:9b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
       sandboxPromptProgress: {
         sandboxName: true,
         webSearch: false,
@@ -353,7 +358,7 @@ describe("provider inference review recovery", () => {
       "review-interrupted",
       "qwen3.5:9b",
       "ollama-local",
-      null,
+      "http://host.openshell.internal:11435/v1",
       null,
       null,
       [],
@@ -382,7 +387,7 @@ describe("provider inference review recovery", () => {
       "review-interrupted",
       "qwen3.5:9b",
       "ollama-local",
-      null,
+      "http://host.openshell.internal:11435/v1",
       null,
       null,
       [],
@@ -392,6 +397,7 @@ describe("provider inference review recovery", () => {
       sandboxName: "review-interrupted",
       provider: "ollama-local",
       model: "qwen3.5:9b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
     });
   });
 });

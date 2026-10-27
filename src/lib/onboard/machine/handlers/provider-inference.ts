@@ -275,7 +275,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ) => Promise<boolean>;
     startRecordedStep(
       stepName: string,
-      updates?: { provider?: string | null; model?: string | null },
+      updates?: { provider?: string | null; model?: string | null; endpointUrl?: string | null },
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     recordStepRejected(stepName: string): Promise<Session>;
@@ -1242,6 +1242,7 @@ interface ConfigurationReviewInput<Agent> {
   agent: Agent;
   provider: string;
   model: string;
+  endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   webSearchConfig: WebSearchConfig | null;
@@ -1281,9 +1282,12 @@ async function reviewProviderConfiguration<Agent>(
     // claiming that provider registration or inference setup completed.
     await deps.checkpointSandboxIdentity(sandboxName, input.agent);
     if (needsSelectionRecovery && !selectionRecoveryStarted) {
+      // Resume reuses this selection without rerunning it, so keep the route
+      // endpoint that later setup and deployment verification compare against.
       await deps.startRecordedStep("provider_selection", {
         provider: input.provider,
         model: input.model,
+        endpointUrl: input.endpointUrl,
       });
       selectionRecoveryStarted = true;
     }
@@ -2284,6 +2288,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           agent,
           provider,
           model,
+          endpointUrl,
           credentialEnv,
           hermesAuthMethod,
           webSearchConfig,
