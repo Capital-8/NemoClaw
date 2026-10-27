@@ -408,12 +408,12 @@ childProcess.spawn = (...args) => {
   });
   return child;
 };
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "base-image.ts"))}).pullAndResolveBaseImageDigest = () => ({ ref: "fixture-base", digest: null });
 require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))}).prebuildSandboxImageIfEligible = async () => ({
   createArgs: [], sourceReference: "nemoclaw-sandbox-local:fixture-messaging",
   imageRef: "nemoclaw-sandbox-local:fixture-messaging", imageId: "sha256:" + "a".repeat(64),
 });
 const { createSandbox } = require(${onboardPath});
-
 (async () => {
   for (const key of nonSlackMessagingEnvKeys) delete process.env[key];
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -759,7 +759,7 @@ childProcess.spawn = (...args) => {
   });
   return child;
 };
-
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "base-image.ts"))}).pullAndResolveBaseImageDigest = () => ({ ref: "fixture-base", digest: null });
 require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))}).prebuildSandboxImageIfEligible = async (input) => {
   dockerfileContent = fs.readFileSync(require("node:path").join(input.buildCtx, "Dockerfile"), "utf-8");
   return { createArgs: [], sourceReference: "nemoclaw-sandbox-local:fixture-messaging",
@@ -915,7 +915,7 @@ childProcess.spawn = (...args) => {
   });
   return child;
 };
-
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "base-image.ts"))}).pullAndResolveBaseImageDigest = () => ({ ref: "fixture-base", digest: null });
 require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))}).prebuildSandboxImageIfEligible = async (input) => {
   dockerfileContent = fs.readFileSync(require("node:path").join(input.buildCtx, "Dockerfile"), "utf-8");
   return { createArgs: [], sourceReference: "nemoclaw-sandbox-local:fixture-messaging",
@@ -1083,7 +1083,7 @@ childProcess.spawn = (...args) => {
   });
   return child;
 };
-
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "base-image.ts"))}).pullAndResolveBaseImageDigest = () => ({ ref: "fixture-base", digest: null });
 require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "sandbox-prebuild.ts"))}).prebuildSandboxImageIfEligible = async (input) => {
   dockerfileContent = fs.readFileSync(require("node:path").join(input.buildCtx, "Dockerfile"), "utf-8");
   return { createArgs: [], sourceReference: "nemoclaw-sandbox-local:fixture-messaging",
