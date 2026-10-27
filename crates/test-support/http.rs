@@ -35,11 +35,20 @@ impl Fixture {
     /// prefixes are removed before the handler sees them.
     #[cfg(unix)]
     pub async fn start(
-        mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+        handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
     ) -> Self {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("engine.sock");
-        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let mut fixture = Self::start_at(&directory.path().join("engine.sock"), handler).await;
+        fixture._directory = Some(directory);
+        fixture
+    }
+    /// Serve like [`Self::start`] at `path`, which the caller owns and removes.
+    #[cfg(unix)]
+    pub async fn start_at(
+        path: &std::path::Path,
+        mut handler: impl FnMut(Request) -> Option<(u16, Vec<u8>)> + Send + 'static,
+    ) -> Self {
+        let listener = tokio::net::UnixListener::bind(path).unwrap();
         let task = tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
@@ -48,7 +57,7 @@ impl Fixture {
         });
         Self {
             endpoint: format!("unix://{}", path.display()),
-            _directory: Some(directory),
+            _directory: None,
             task,
         }
     }

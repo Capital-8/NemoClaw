@@ -131,6 +131,7 @@ The fixtures return protocol responses; they do not establish agent inference, n
 | `travel_example` | `examples/hcl/travel` applied unchanged as plain HCL from the bundle's provider mirror: Ollama placed from its runtime launch on a simulated SSH engine, endpoint readiness against a fake model server, OpenShell objects and the Pi agent on the fixture gateway, agent readiness, and an unchanged second plan |
 | `travel_team_example` | `examples/hcl/travel-team` applied the same way: six Hermes agents in `for_each` sandboxes with per-role providers, grants, toolsets, and models; an unchanged second plan; a hosted-model change replacing only the scheduler's and buyer's sandboxes; and teardown that fails without `destroy = true` and removes everything with it. It reports each OpenTofu command's duration |
 | `helm_recovery` | On Unix, destroy and its recovery against an in-memory Kubernetes API, after failures and cancellation; see [below](#helm-release-recovery) |
+| `hcl_integration` | On Unix, each case in `crates/nemoclaw-e2e/hcl/integration/cases` compiled by the SDK and run under `tofu test` with the Docker provider mocked; see [`tofu test` cases](#tofu-test-cases) |
 
 In `deployment`, `cli_terminal_outputs_preserve_lifecycle_and_json_contract` checks text plans, JSON apply, unchanged text apply, JSON plan completeness, text destroy, and repeated JSON destroy against one fixture state.
 `gateway_change_between_plan_and_apply_preserves_resources_and_allows_teardown` changes the gateway driver after planning to check OpenTofu's apply-time check, recovery, and teardown.
@@ -150,6 +151,44 @@ In `multi_agent`:
   After the label is restored, destroy finishes.
 
 The first two tests end with export, unchanged reapply, and destroy.
+
+### `tofu test` Cases
+
+`hcl_integration` runs each directory in `crates/nemoclaw-e2e/hcl/integration/cases` with one shared runner:
+
+```sh
+cargo build -p nemoclaw-test-fixtures
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-e2e --test integration -- --ignored hcl_integration::
+```
+
+A case holds three files:
+
+| File | Contents |
+|---|---|
+| `nemoclaw.yaml` | The NemoClaw document. The runner points its gateway, engine, and inference endpoints at the fixtures, keeps inference paths, and compiles it with the SDK into `nemoclaw.tf.json` beside the case's files. |
+| `main.tf` | Fixture declarations and observations, through the `fixture` provider. |
+| `integration.tftest.hcl` | Provider mocks, run blocks, and assertions. |
+
+The `fixture` provider, `nemoclaw-fixture-control` in `nemoclaw-test-fixtures`, connects HCL to the runner's fixtures:
+
+| Data source | Purpose |
+|---|---|
+| `fixture_engine` | Declares images and containers that the fake engine reports, such as those a mocked Docker resource would create; containers are found by ID. Returns the engine endpoint. |
+| `fixture_http` | Declares the inference upstream's replies by `METHOD /path`; other requests receive 404. Returns the upstream endpoint. |
+| `fixture_observations` | Returns recorded facts as JSON: OpenShell RPCs, created registrations and sandboxes, sandbox execs, current objects, engine requests and storage, and upstream requests. Credential values are reported only as the environment variable that supplied them. |
+
+Read the declarations in a first run that targets them, before the deployment's first plan reads the engine.
+The engine is a fixed socket, `/tmp/nemoclaw-integration/CASE.sock`, so the generated Docker provider alias and image addresses that `mock_provider` and `override_resource` name do not change between runs.
+OpenTofu removes resources with the providers of the last run that applied them; end with a run that applies the `openshell` and `fabric` providers with `destroy = true`, as the SDK's teardown graph does.
+
+After `tofu test`, the runner checks what no run block can observe: teardown left only storage that the SDK's teardown retains and what it depends on, the gateway holds no objects or Fabric runtimes, the engine received no storage deletion or unrecognized request, and no fixture credential appears in OpenTofu output or provider diagnostics.
+When a case fails, the runner keeps its directory and prints the path of redacted evidence: OpenTofu output, fixture observations, and any state OpenTofu left.
+
+A case that needs an upstream operation the fixtures cannot simulate needs that fixture support once, in the runner and the `fixture` provider.
+A provider error that stops a run, rather than a failed assertion, fails the case.
+`docker-openclaw-hosted` is the Docker, OpenClaw, and NVIDIA hosted inference case with one agent: real OpenShell, Fabric, and host providers initialize gateway storage on the fake engine, read the mocked gateway container and sandbox image, register the inference binding, create the sandbox, and start the agent through `ExecSandbox`; the upstream receives no request.
+It does not invoke the agent or perform inference.
 
 ### Helm Release Recovery
 
