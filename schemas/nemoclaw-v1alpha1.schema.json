@@ -2221,7 +2221,7 @@
           "type": "array"
         },
         "enforcement": {
-          "description": "enforce or audit; omission follows OpenShell defaults.",
+          "description": "enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules.",
           "enum": [
             "enforce",
             "audit"

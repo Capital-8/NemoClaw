@@ -873,7 +873,7 @@ Paths:
 | `allow_encoded_slash` | boolean | No | — | Allow encoded slash path segments when required by the upstream API. |
 | `allowed_ips` | array of string | No | — | Resolved IP addresses or CIDRs allowed by OpenShell destination validation. |
 | `deny_rules` | array of [PolicyMatcher](#policymatcher) | No | — | Application-protocol deny rules, evaluated before allow rules. Constraints: minimum items 1. |
-| `enforcement` | string | No | — | enforce or audit; omission follows OpenShell defaults. Constraints: `"enforce"` or `"audit"`. |
+| `enforcement` | string | No | — | enforce or audit; omission selects OpenShell's default, audit, which logs and forwards requests that break the endpoint's rules. Constraints: `"enforce"` or `"audit"`. |
 | `host` | string | No | — | Destination hostname or DNS glob; may be omitted with allowed_ips. |
 | `json_rpc` | [PolicyJsonRpc](#policyjsonrpc) | No | — | JSON-RPC inspection limits. |
 | `mcp` | [PolicyMcp](#policymcp) | No | — | MCP method and tool inspection settings. |
