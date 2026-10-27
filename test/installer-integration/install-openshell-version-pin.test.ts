@@ -327,6 +327,7 @@ function runVersionPinTarget(options: {
   expectedDecision: RegExp;
   ghDownloadMode: GhDownloadMode;
   installedVersion: string;
+  unsafeActiveDirectory?: { mode: number; location: "bin" | "parent" };
 }): void {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-pin-"));
   try {
@@ -343,6 +344,12 @@ function runVersionPinTarget(options: {
     createFakeTar(fakeBin, "0.0.116");
     createFakeStrings(fakeBin);
     createFakeSha256sum(fakeBin);
+    const unsafeDirectory = options.unsafeActiveDirectory?.location === "parent" ? tmp : fakeBin;
+    const originalBinaries = ["openshell", "openshell-gateway", "openshell-sandbox"].map((name) =>
+      fs.readFileSync(path.join(fakeBin, name), "utf8"),
+    );
+    const unsafeActiveDirectory = options.unsafeActiveDirectory;
+    unsafeActiveDirectory && fs.chmodSync(unsafeDirectory, unsafeActiveDirectory.mode);
 
     const result = spawnSync("bash", [INSTALL_SCRIPT], {
       env: {
@@ -355,41 +362,54 @@ function runVersionPinTarget(options: {
       timeout: 60_000,
     });
 
-    // Assertion 1: installer-exits-zero — the selected replacement path
-    // completes instead of stopping before the download.
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toMatch(options.expectedDecision);
+    const assertUnsafe = (): void => {
+      expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
+      expect(result.stderr).toContain(`Unsafe executable directory ${unsafeDirectory}`);
+      expect(fs.statSync(unsafeDirectory).mode & 0o777).toBe(unsafeActiveDirectory?.mode);
+      expect(
+        ["openshell", "openshell-gateway", "openshell-sandbox"].map((name) =>
+          fs.readFileSync(path.join(fakeBin, name), "utf8"),
+        ),
+      ).toEqual(originalBinaries);
+    };
+    const assertSuccessful = (): void => {
+      // Assertion 1: installer-exits-zero — the selected replacement path
+      // completes instead of stopping before the download.
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toMatch(options.expectedDecision);
 
-    // Assertion 2: download-log-contains-v0.0.116 — pinned release tag was
-    // requested from the release host.
-    const downloads = fs.readFileSync(downloadLog, "utf-8");
-    expect(downloads).toContain("v0.0.116");
+      // Assertion 2: download-log-contains-v0.0.116 — pinned release tag was
+      // requested from the release host.
+      const downloads = fs.readFileSync(downloadLog, "utf-8");
+      expect(downloads).toContain("v0.0.116");
 
-    // Assertion 3: download-log-excludes-installed-version — the existing
-    // release is never re-fetched in place of the pinned replacement.
-    expect(downloads).not.toContain(`v${options.installedVersion}`);
+      // Assertion 3: download-log-excludes-installed-version — the existing
+      // release is never re-fetched in place of the pinned replacement.
+      expect(downloads).not.toContain(`v${options.installedVersion}`);
 
-    if (options.ghDownloadMode === "fail") {
-      // Assertion 3b: curl-fallback-observed — the installer must recover from
-      // gh download failure by re-requesting the pinned assets via curl.
-      expect(downloads).toContain("gh download-fail v0.0.116");
-      expect(downloads).toContain("curl ");
-    } else {
-      expect(downloads).toContain("gh download v0.0.116");
-      expect(downloads).not.toContain("curl ");
-    }
+      if (options.ghDownloadMode === "fail") {
+        // Assertion 3b: curl-fallback-observed — the installer must recover from
+        // gh download failure by re-requesting the pinned assets via curl.
+        expect(downloads).toContain("gh download-fail v0.0.116");
+        expect(downloads).toContain("curl ");
+      } else {
+        expect(downloads).toContain("gh download v0.0.116");
+        expect(downloads).not.toContain("curl ");
+      }
 
-    // Assertion 4: replaced-openshell-reports-0.0.116 — the binary on disk in
-    // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-    // there and it is writable) was overwritten with the pinned 0.0.116 build.
-    const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
-      encoding: "utf8",
-      killSignal: "SIGKILL",
-      timeout: 30_000,
-    });
-    expect(replacedVersion.status).toBe(0);
-    expect(replacedVersion.stdout).toContain("0.0.116");
-    expect(replacedVersion.stdout).not.toContain(options.installedVersion);
+      // Assertion 4: replaced-openshell-reports-0.0.116 — the binary on disk in
+      // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
+      // there and it is writable) was overwritten with the pinned 0.0.116 build.
+      const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
+        encoding: "utf8",
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+      expect(replacedVersion.status).toBe(0);
+      expect(replacedVersion.stdout).toContain("0.0.116");
+      expect(replacedVersion.stdout).not.toContain(options.installedVersion);
+    };
+    (unsafeActiveDirectory ? assertUnsafe : assertSuccessful)();
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -433,6 +453,23 @@ test(
       expectedDecision: /below minimum 0\.0\.116.*upgrading/u,
       ghDownloadMode: "success",
       installedVersion: "0.0.106",
+    });
+  },
+);
+
+test.each([
+  { mode: 0o775, location: "bin" as const },
+  { mode: 0o777, location: "bin" as const },
+  { mode: 0o775, location: "parent" as const },
+])(
+  "keeps active OpenShell binaries when the $location directory is mode $mode (#12496)",
+  { timeout: TEST_TIMEOUT_MS },
+  (unsafeActiveDirectory) => {
+    runVersionPinTarget({
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
+      ghDownloadMode: "success",
+      installedVersion: "0.0.117",
+      unsafeActiveDirectory,
     });
   },
 );

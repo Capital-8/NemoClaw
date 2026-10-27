@@ -1066,6 +1066,9 @@ user_local_executable_directory_safe() {
 }
 
 if [ -w "$target_dir" ]; then
+  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   install_bins "$target_dir"
 elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"

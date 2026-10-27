@@ -130,6 +130,16 @@ export function installerReleaseTemplate(source: string, version: string): strin
   // direct-install permission fix. The current candidate is checked separately.
   const safetyHelper = "user_local_executable_directory_safe() {\n";
   if (source.includes(safetyHelper)) {
+    const activeDirectorySafetyCheck = `  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+`;
+    assert.equal(
+      source.split(activeDirectorySafetyCheck).length - 1,
+      1,
+      "active directory guard call",
+    );
+    source = source.replace(activeDirectorySafetyCheck, "");
     const start = source.indexOf(safetyHelper);
     const end = source.indexOf('if [ -w "$target_dir" ]; then', start);
     assert.ok(end > start, "user-local directory guard fixture boundaries");
