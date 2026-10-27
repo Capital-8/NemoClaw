@@ -643,7 +643,7 @@ export function buildCompatibleEndpointSandboxSmokeCommand(model: string): strin
 
 /**
  * Runs a Python standard-library request inside the sandbox, proving a real
- * chat response through the selected endpoint and explicit denial outside its policy.
+ * chat response through the selected endpoint and unavailable direct host access.
  */
 export function buildProviderNeutralInferenceSandboxSmokeScript(
   model: string,
@@ -850,10 +850,31 @@ try:
         if family in (socket.AF_INET, socket.AF_INET6)
     ))
 except OSError:
-    direct_addresses = []
-if not direct_addresses:
-    print("direct host inference deny could not be proven", file=sys.stderr)
+    print("direct host inference deny could not be proven; address resolution failed", file=sys.stderr)
     sys.exit(1)
+if not direct_addresses:
+    print("direct host inference deny could not be proven; no usable address", file=sys.stderr)
+    sys.exit(1)
+direct_probe_outcomes = []
+direct_probe_omitted_outcomes = 0
+
+def record_direct_outcome(sockaddr, outcome):
+    global direct_probe_omitted_outcomes
+    entry = "%s (%s)" % (sockaddr[0], outcome)
+    # Keep the first seven outcomes and the latest result within the error budget.
+    if len(direct_probe_outcomes) < 8:
+        direct_probe_outcomes.append(entry)
+    else:
+        direct_probe_outcomes[-1] = entry
+        direct_probe_omitted_outcomes += 1
+
+def fail_direct(message):
+    summary = ", ".join(direct_probe_outcomes)
+    if direct_probe_omitted_outcomes:
+        summary += ", %s earlier outcomes omitted" % direct_probe_omitted_outcomes
+    print("%s; direct outcomes: %s" % (message, summary), file=sys.stderr)
+    sys.exit(1)
+
 direct_body = json.dumps({
     "model": model,
     "messages": [{"role": "user", "content": "Prove direct inference is denied."}],
@@ -863,17 +884,23 @@ direct_deadline = time.monotonic() + direct_deny_timeout_seconds
 for family, sockaddr in direct_addresses:
     remaining = direct_deadline - time.monotonic()
     if remaining <= 0:
-        print("direct host inference deny could not be proven", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "deadline-exceeded")
+        fail_direct("direct host inference deny could not be proven")
     with socket.socket(family, socket.SOCK_STREAM) as direct_socket:
         direct_socket.settimeout(remaining)
         try:
             direct_socket.connect(sockaddr)
         except OSError as error:
-            if error.errno in (errno.ECONNREFUSED, errno.ENETUNREACH, errno.EHOSTUNREACH):
+            transport_outcome = {
+                errno.ECONNREFUSED: "connection-refused",
+                errno.ENETUNREACH: "network-unreachable",
+                errno.EHOSTUNREACH: "host-unreachable",
+            }.get(error.errno)
+            if transport_outcome:
+                record_direct_outcome(sockaddr, transport_outcome)
                 continue
-            print("direct host inference deny could not be proven", file=sys.stderr)
-            sys.exit(1)
+            record_direct_outcome(sockaddr, "connection-error")
+            fail_direct("direct host inference deny could not be proven")
         direct_connection = http.client.HTTPConnection(
             direct_target.hostname, direct_target.port, timeout=remaining
         )
@@ -888,38 +915,38 @@ for family, sockaddr in direct_addresses:
             direct_response = direct_connection.getresponse()
             denial_bytes = direct_response.read(max_response_bytes + 1)
         except (OSError, http.client.HTTPException):
-            print("direct host inference deny could not be proven", file=sys.stderr)
-            sys.exit(1)
+            record_direct_outcome(sockaddr, "request-error")
+            fail_direct("direct host inference deny could not be proven")
         finally:
             direct_connection.close()
     if len(denial_bytes) > max_response_bytes:
-        print("direct host inference policy-denial response exceeded byte limit", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "response-too-large")
+        fail_direct("direct host inference policy-denial response exceeded byte limit")
     try:
         denial_text = denial_bytes.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
-        print("direct host inference policy-denial response was not valid UTF-8", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "invalid-utf8")
+        fail_direct("direct host inference policy-denial response was not valid UTF-8")
     try:
         denial = json.loads(denial_text)
     except json.JSONDecodeError:
-        print("direct host inference policy-denial response was not valid JSON", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "invalid-json")
+        fail_direct("direct host inference policy-denial response was not valid JSON")
     detail = denial.get("detail") if isinstance(denial, dict) else None
     if (
         direct_response.status != direct_denial_http_status
         or not isinstance(denial, dict)
         or denial.get("error") != direct_denial_error
     ):
-        print("direct host inference response was not an OpenShell policy denial", file=sys.stderr)
-        sys.exit(1)
+        record_direct_outcome(sockaddr, "unexpected-response")
+        fail_direct("direct host inference response was not an OpenShell policy denial")
     if detail != direct_denial_detail:
-        print(
+        record_direct_outcome(sockaddr, "policy-format-drift")
+        fail_direct(
             "direct host inference OpenShell policy-denial contract v%s format drifted"
-            % direct_denial_contract_version,
-            file=sys.stderr,
+            % direct_denial_contract_version
         )
-        sys.exit(1)
+    record_direct_outcome(sockaddr, "policy-denied")
 
 print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 `.trim();

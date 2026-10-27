@@ -799,7 +799,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
   );
 
   it.each(allAgentProofAuthorities)(
-    "accepts exact connection refusal as a direct-host deny proof for $agentName (#9211)",
+    "accepts refused direct access after authorized inference for $agentName (#9211)",
     ({ authority }) => {
       const result = runProviderNeutralScript({ authority, directError: "connection-refused" });
 
@@ -842,6 +842,8 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stderr).toContain(
       "direct host inference response was not an OpenShell policy denial",
     );
+    expect(result.stderr).toContain("fdc4:f303:9324::254 (network-unreachable)");
+    expect(result.stderr).toContain("192.168.65.254 (unexpected-response)");
     expect(result.stdout).toContain("DIRECT_REQUEST_ADDRESSES=fdc4:f303:9324::254,192.168.65.254");
   });
 
@@ -856,7 +858,29 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stderr).toContain(
       "direct host inference response was not an OpenShell policy denial",
     );
+    expect(result.stderr).toContain("fdc4:f303:9324::254 (policy-denied)");
+    expect(result.stderr).toContain("192.168.65.254 (unexpected-response)");
     expect(result.stdout).toContain("DIRECT_REQUEST_ADDRESSES=fdc4:f303:9324::254,192.168.65.254");
+  });
+
+  it("keeps direct failure diagnostics bounded and names the failing address", () => {
+    const directAddresses = Array.from({ length: 10 }, (_, index) => `192.0.2.${index + 1}`);
+    const directOutcomes: Record<string, "network-unreachable" | "http-200"> = Object.fromEntries(
+      directAddresses.map((address) => [address, "network-unreachable"]),
+    );
+    directOutcomes["192.0.2.10"] = "http-200";
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[0].authority,
+      directAddresses,
+      directOutcomes,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("192.0.2.1 (network-unreachable)");
+    expect(result.stderr).toContain("192.0.2.10 (unexpected-response)");
+    expect(result.stderr).toContain("2 earlier outcomes omitted");
+    expect(result.stderr).not.toContain("192.0.2.8 (");
+    expect(result.stderr.length).toBeLessThan(600);
   });
 
   it.each(["dns", "timeout"] as const)(
