@@ -6,7 +6,6 @@ import { getNameValidationGuidance } from "../name-validation";
 export { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import { beginAuthoritativeRebuildRuntimeSelectionScope } from "./authoritative-rebuild-target";
 import { cliDisplayName } from "./branding";
-import { localInferenceTimeoutRangeError } from "./env";
 import {
   canonicalPlaceholderKeys,
   EXTRA_PLACEHOLDER_KEYS_ENV,
@@ -371,11 +370,6 @@ export function resolveOnboardEntryOptions(
   // (fresh wins, see below), so it must not trip this guard.
   if (explicitResume && fresh) {
     deps.error("  --resume and --fresh cannot both be set.");
-    deps.exitProcess(1);
-  }
-  const timeoutRangeError = localInferenceTimeoutRangeError(input.env);
-  if (timeoutRangeError) {
-    deps.error(`  ${timeoutRangeError}`);
     deps.exitProcess(1);
   }
   // Auto-detect resume from a persisted in_progress session so a re-run of

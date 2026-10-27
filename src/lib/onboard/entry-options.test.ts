@@ -192,26 +192,6 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.error).toHaveBeenCalledWith("  --resume and --fresh cannot both be set.");
   });
 
-  it("rejects an unsupported local inference timeout before any onboarding step (#13734)", () => {
-    const deps = createDeps();
-    const input = (value: string) => ({
-      opts: { sandboxName: "test-a" },
-      env: { NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: value },
-      stdinIsTty: true,
-      stdoutIsTty: true,
-    });
-
-    expect(() => resolveOnboardEntryOptions(input("3601"), deps)).toThrow(ExitError);
-    expect(deps.exitProcess).toHaveBeenCalledWith(1);
-    expect(deps.error).toHaveBeenCalledWith(
-      '  NEMOCLAW_LOCAL_INFERENCE_TIMEOUT must be from 1 to 3600 seconds; got "3601".',
-    );
-    expect(deps.validateName).not.toHaveBeenCalled();
-    expect(resolveOnboardEntryOptions(input("3600"), createDeps()).requestedSandboxName).toBe(
-      "test-a",
-    );
-  });
-
   it("uses non-interactive env defaults for Dockerfile and sandbox name", () => {
     const deps = createDeps({
       isNonInteractive: vi.fn(() => true),

@@ -25,6 +25,13 @@ export function envInt(
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 export const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
 
+/** Providers whose shared OpenShell route request timeout is the local inference timeout. */
+export const LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS: readonly string[] = [
+  "compatible-endpoint",
+  "ollama-local",
+  "vllm-local",
+];
+
 /**
  * The local inference timeout is also the OpenShell route request timeout, which
  * NemoClaw accepts only from 1 to MAX_INFERENCE_ROUTE_TIMEOUT_SECONDS. Name the
