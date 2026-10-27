@@ -9,6 +9,8 @@ import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
+  HERMES_TARGET,
+  OPENCLAW_TARGET,
 } from "../../../test/helpers/inference-set";
 
 const OPENAI_PROFILE_OUTPUT = JSON.stringify({
@@ -749,77 +751,83 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha", "nemoclaw");
   });
 
-  it("accepts admitted compatible Anthropic endpoint metadata for provider-family switches", async () => {
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: { providers: { inference: { api: "openai-completions", models: [] } } },
-    };
-    const captureOpenshell = createCompatibleProviderCapture({
-      name: "compatible-anthropic-endpoint",
-      type: "anthropic",
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      configKey: "ANTHROPIC_BASE_URL",
-      initiallyPresent: false,
-    });
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-      },
-      session: baseSession({
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-        endpointUrl: "https://integrate.api.nvidia.com/v1",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      }),
-      captureOpenshell,
-    });
-
-    await runInferenceSet(
-      {
-        provider: "compatible-anthropic-endpoint",
-        model: "mock-anthropic-model",
-        endpointUrl: "https://anthropic.example/v1",
+  it.each([OPENCLAW_TARGET, HERMES_TARGET])(
+    "persists admitted Anthropic API metadata for $agentName provider switches",
+    async (target) => {
+      const inferenceApi =
+        target.agentName === "hermes" ? "openai-completions" : "anthropic-messages";
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      };
+      const captureOpenshell = createCompatibleProviderCapture({
+        name: "compatible-anthropic-endpoint",
+        type: target.agentName === "hermes" ? "openai" : "anthropic",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        inferenceApi: "anthropic-messages",
-      },
-      deps,
-    );
+        configKey: target.agentName === "hermes" ? "OPENAI_BASE_URL" : "ANTHROPIC_BASE_URL",
+        initiallyPresent: false,
+      });
+      const deps = createDeps({
+        config,
+        target,
+        entry: {
+          name: "alpha",
+          agent: target.agentName,
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+        },
+        session: baseSession({
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        }),
+        captureOpenshell,
+      });
 
-    expect(
-      deps.calls.updateSandbox.mock.calls
-        .filter(([, fields]) => fields.provider !== undefined)
-        .at(-1),
-    ).toEqual([
-      "alpha",
-      expect.objectContaining({
-        provider: "compatible-anthropic-endpoint",
-        model: "mock-anthropic-model",
-        endpointUrl: "http://host.openshell.internal:11438/route/test-route",
-        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        preferredInferenceApi: "anthropic-messages",
-        nimContainer: null,
-      }),
-    ]);
-    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
-    expect(captureOpenshell).toHaveBeenCalledWith(
-      [
-        "inference",
-        "set",
-        "-g",
-        "nemoclaw",
-        "--no-verify",
-        "--provider",
-        "compatible-anthropic-endpoint",
-        "--model",
-        "mock-anthropic-model",
-      ],
-      expect.objectContaining({ ignoreError: true }),
-    );
-  });
+      await runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "mock-anthropic-model",
+          endpointUrl: "https://anthropic.example/v1",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          inferenceApi,
+        },
+        deps,
+      );
+
+      expect(
+        deps.calls.updateSandbox.mock.calls
+          .filter(([, fields]) => fields.provider !== undefined)
+          .at(-1),
+      ).toEqual([
+        "alpha",
+        expect.objectContaining({
+          provider: "compatible-anthropic-endpoint",
+          model: "mock-anthropic-model",
+          endpointUrl: "http://host.openshell.internal:11438/route/test-route",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          preferredInferenceApi: inferenceApi,
+          nimContainer: null,
+        }),
+      ]);
+      expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+      expect(captureOpenshell).toHaveBeenCalledWith(
+        [
+          "inference",
+          "set",
+          "-g",
+          "nemoclaw",
+          "--no-verify",
+          "--provider",
+          "compatible-anthropic-endpoint",
+          "--model",
+          "mock-anthropic-model",
+        ],
+        expect.objectContaining({ ignoreError: true }),
+      );
+    },
+  );
 
   it("rejects an unverified host bridge before provider or route mutation", async () => {
     const captureOpenshell = vi.fn();

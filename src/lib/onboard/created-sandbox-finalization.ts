@@ -126,6 +126,7 @@ type RegistrationSeed = Omit<
 >;
 
 export interface CreatedSandboxCompletionOptions {
+  readonly onRegistered?: () => void;
   readonly finalization: CreatedSandboxFinalizationOptions;
   readonly registration: RegistrationSeed;
   readonly policy: {
@@ -564,6 +565,7 @@ export function createCreatedSandboxCompletionActions(
                   prepared,
                 )
               : (deps.registerCreatedSandbox ?? registerCreatedSandbox)(input);
+            options.onRegistered?.();
             // Reservation is too early: the former sandbox may still need its provider.
             // Retirement failure retains the committed selection and cleanup authority.
             await retireUnselectedCreatedSandboxProviders(
@@ -633,6 +635,8 @@ type OnboardResolvedCreateIntent = {
 type OnboardCreateContext = {
   readonly createIntent: OnboardCreateIntent;
   readonly resolvedCreateIntent: OnboardResolvedCreateIntent;
+  readonly getRegisteredInferenceProviderAttachment?: () => SandboxEntry["registeredInferenceProviderAttachment"];
+  readonly onRegistered?: () => void;
   readonly reconcileOpenClawInference?: boolean;
 };
 type OnboardAgentFlags = {
@@ -765,6 +769,7 @@ export function createOnboardCreatedSandboxCompletion(
   }
   return createCreatedSandboxCompletionActions(
     {
+      onRegistered: createContext.onRegistered,
       finalization: {
         sandboxName,
         gatewayName: gateway.gatewayName,
@@ -779,8 +784,12 @@ export function createOnboardCreatedSandboxCompletion(
         model,
         preferredInferenceApi,
         endpointUrl: resolvedCreateIntent.nativeLocalProviderAttachment?.endpointUrl ?? endpointUrl,
-        registeredInferenceProviderAttachment:
-          resolvedCreateIntent.registeredInferenceProviderAttachment,
+        get registeredInferenceProviderAttachment() {
+          return (
+            createContext.getRegisteredInferenceProviderAttachment?.() ??
+            resolvedCreateIntent.registeredInferenceProviderAttachment
+          );
+        },
         nativeProvider: Boolean(
           resolvedCreateIntent.registeredInferenceProviderAttachment ||
           resolvedCreateIntent.nativeLocalProviderAttachment ||
@@ -790,6 +799,12 @@ export function createOnboardCreatedSandboxCompletion(
       },
       registration: {
         sandboxName,
+        get registeredInferenceProviderAttachment() {
+          return (
+            createContext.getRegisteredInferenceProviderAttachment?.() ??
+            resolvedCreateIntent.registeredInferenceProviderAttachment
+          );
+        },
         inferenceSelection: selection(
           sandboxName,
           provider,

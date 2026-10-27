@@ -49,8 +49,11 @@ OpenShell authorizes model-list and Chat Completions requests and supplies the p
 NemoClaw verifies the recorded router process, port, and credential identity before publishing the selection.
 Remaining shared custom selections and unchanged published Pi shared local selections retain the shared route.
 Shared `inference.local` routes require OpenShell `0.0.x`.
-OpenShell `0.1.5` removes that route; migration of the remaining selections is incomplete and blocks this upgrade.
-Native local onboarding on `0.1.5` remains unqualified for this upgrade.
+Fresh installations without retained legacy state can install OpenShell `0.1.5` and use sandbox-attached native providers.
+The installer refuses to migrate registered OpenShell `0.0.x` sandboxes, including shared `inference.local` routes, and preserves their state.
+OpenShell `0.1.5` removes the shared route.
+GPU compatibility and native local lifecycle qualification remain incomplete.
+Follow the [OpenShell upgrade restrictions](../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before changing an existing installation.
 Hermes live qualification for the new local lifecycle remains pending.
 
 ```text

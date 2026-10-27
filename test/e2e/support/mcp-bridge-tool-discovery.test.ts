@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { shouldRetryMcpMutationAfterConcurrencyConflict } from "../live/mcp-bridge-cleanup.ts";
 import {
   type FakeMcpHttpsServer,
   type FakeMcpRequest,
@@ -1257,6 +1256,37 @@ describe("Hermes initial MCP readiness", () => {
   });
 });
 
+describe("Deep Agents progressive MCP diagnostics", () => {
+  it("reports bounded known tool names without exposing unexpected names (#13754)", async () => {
+    compatibleMock = await startCompatibleMock({
+      apiKey: COMPATIBLE_API_KEY,
+      model: COMPATIBLE_MODEL,
+      progressiveToolSearch: { toolName: "fake_fake_echo", query: "authenticated MCP" },
+    });
+    const response = await fetch(`http://127.0.0.1:${compatibleMock.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${COMPATIBLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: COMPATIBLE_MODEL,
+        messages: [{ role: "user", content: "discover the fake tool" }],
+        tools: [
+          { type: "function", function: { name: "ls" } },
+          { type: "function", function: { name: "secret-shaped-unexpected-name" } },
+        ],
+      }),
+    });
+    const payload = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = payload.choices?.[0]?.message?.content ?? "";
+    expect(content).toContain("visible known tools: ls; other tool count: 1");
+    expect(content).not.toContain("secret-shaped-unexpected-name");
+  });
+});
+
 describe("Hermes deferred MCP tool discovery", () => {
   it("uses one tool_search, tool_describe, and tool_call when the deferred target is present", async () => {
     compatibleMock = await startDeferredCompatibleMock();
@@ -1460,23 +1490,5 @@ describe("Hermes deferred MCP tool discovery", () => {
       content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
     });
     expect(terminalMessage.tool_calls).toBeUndefined();
-  });
-});
-
-describe("MCP mutation concurrency retry", () => {
-  it("retries the explicit OpenShell optimistic-concurrency response", () => {
-    expect(
-      shouldRetryMcpMutationAfterConcurrencyConflict(
-        "Failed to detach provider: sandbox was modified by another operation.\nPlease retry the command.",
-      ),
-    ).toBe(true);
-  });
-
-  it.each([
-    "Failed to detach provider: permission denied",
-    "sandbox was modified by another operation.",
-    "Please retry the command.",
-  ])("does not retry another failure: %s", (output) => {
-    expect(shouldRetryMcpMutationAfterConcurrencyConflict(output)).toBe(false);
   });
 });

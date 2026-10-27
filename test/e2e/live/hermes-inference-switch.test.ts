@@ -282,6 +282,7 @@ test(
       },
     );
     expect(health.exitCode, resultText(health)).toBe(0);
+    expect(JSON.parse(health.stdout).status).toBe("ok");
 
     const route = await host.command("node", [CLI, "inference", "get"], {
       artifactName: "nemoclaw-inference-route",
@@ -392,9 +393,7 @@ test(
       canonicalEndpoint(durableEndpointUrl),
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? null : RUNTIME_SWITCH_API,
-    );
+    // API metadata persistence is covered by inference-set-compatible-provider tests.
     progress.phase("exercise sandbox inference and Hermes API");
     const inferenceLocalPayload = JSON.stringify({
       model: SWITCH_MODEL,

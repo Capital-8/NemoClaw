@@ -295,8 +295,11 @@ Deep Agents Code normally creates the `/sandbox/.deepagents/agent/` paths below 
 | `/sandbox/.deepagents/.env` | User-managed Deep Agents Code environment file. It persists as agent-written native-home state; do not place raw credentials here when an OpenShell credential binding is available. |
 
 <Note>
-OpenShell `0.1.5` removes the shared `inference.local` route; migration of the remaining selections is incomplete and blocks this upgrade.
-Native local onboarding on `0.1.5` remains unqualified for this upgrade.
+Fresh installations without retained legacy state can install OpenShell `0.1.5` and use sandbox-attached native providers.
+The installer refuses to migrate registered OpenShell `0.0.x` sandboxes, including shared `inference.local` routes, and preserves their state.
+OpenShell `0.1.5` removes the shared route.
+GPU compatibility and native local lifecycle qualification remain incomplete.
+Follow the [OpenShell upgrade restrictions](../operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before changing an existing installation.
 </Note>
 
 Project-level Deep Agents files can also exist inside the working repository, such as `.deepagents/AGENTS.md`, `.deepagents/skills/`, and `.deepagents/.mcp.json`.

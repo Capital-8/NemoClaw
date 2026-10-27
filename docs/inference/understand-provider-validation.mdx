@@ -60,8 +60,11 @@ Onboarding continues only when a retry returns a structured tool call.
 If the last retry fails or times out, validation stops without another Chat Completions attempt.
 
 <Note>
-OpenShell `0.1.5` removes the shared `inference.local` route; migration of the remaining selections is incomplete and blocks this upgrade.
-Native local onboarding on `0.1.5` remains unqualified for this upgrade.
+Fresh installations without retained legacy state can install OpenShell `0.1.5` and use sandbox-attached native providers.
+The installer refuses to migrate registered OpenShell `0.0.x` sandboxes, including shared `inference.local` routes, and preserves their state.
+OpenShell `0.1.5` removes the shared route.
+GPU compatibility and native local lifecycle qualification remain incomplete.
+Follow the [OpenShell upgrade restrictions](../../manage-sandboxes/operate-sandboxes/update-sandboxes#use-the-automatic-upgrade-path) before changing an existing installation.
 </Note>
 
 <AgentOnly variant="deepagents">

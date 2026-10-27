@@ -234,6 +234,7 @@ export async function verifyRegisteredInferenceProviderAttachment(input: {
 export async function attachRegisteredInferenceProvider(input: {
   adapter: OpenShellProviderAdapter;
   expected: RegisteredInferenceProviderAttachment;
+  revalidateSandboxIdentity?: (operation: string) => void;
 }): Promise<{ attachment: RegisteredInferenceProviderAttachment; changed: boolean }> {
   const expected = requireBinding(input.expected);
   const before = await inspectBinding(input.adapter, expected);
@@ -250,6 +251,7 @@ export async function attachRegisteredInferenceProvider(input: {
   }
   const policy = await input.adapter.ensureProviderPolicyComposition(request);
   if (!policy.ok) throw new Error("Registered provider policy composition could not be verified");
+  input.revalidateSandboxIdentity?.("attaching registered inference provider");
   const attached = await input.adapter.attachProvider(request);
   // An uncertain runtime mutation must never become an inferred successful attachment.
   if (!attached.ok)
@@ -264,6 +266,7 @@ export async function attachRegisteredInferenceProvider(input: {
     await verifyRegisteredInferenceProviderAttachment({ ...input, expected: attachment });
     return { attachment, changed: true };
   } catch (error) {
+    input.revalidateSandboxIdentity?.("rolling back unverified registered inference attachment");
     await detachRegisteredInferenceProvider({ ...input, expected: attachment });
     throw error;
   }

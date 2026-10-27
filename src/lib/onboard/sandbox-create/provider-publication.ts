@@ -514,5 +514,6 @@ export async function publishAttachedProvidersBeforeDockerSandboxCreation(
 
 export {
   attachRegisteredInferenceProvider,
+  detachRegisteredInferenceProvider,
   registeredInferenceProviderRevision,
 } from "../../inference/native-provider/registered";
