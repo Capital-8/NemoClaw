@@ -72,17 +72,22 @@ export async function refreshMcpPublicPolicyPins(
   entry: McpSourceEntry,
   target: McpBridgeTargetValidation,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  additionalEntries: readonly McpSourceEntry[] = [],
 ): Promise<void> {
-  assertGeneratedPolicyMutationSafe(sandboxName, entry);
-  if (entry.trustedPrivateHost) {
-    throw new McpBridgeError("Trusted-private pins require explicit remove-and-add approval.", 2);
-  }
-  const policyPins = [
-    ...new Set((entry.allowedIps ?? []).map((address) => address.toLowerCase())),
-  ].sort();
-  const url = parseMcpUrlWithValidatedTarget(entry.url, { addresses: policyPins });
-  assertMcpBridgePolicyTarget(entry, target);
-  parseMcpUrlWithValidatedTarget(entry.url, target);
+  const entries = [entry, ...additionalEntries];
+  const validatedEntries = entries.map((candidate) => {
+    assertGeneratedPolicyMutationSafe(sandboxName, candidate);
+    if (candidate.trustedPrivateHost) {
+      throw new McpBridgeError("Trusted-private pins require explicit remove-and-add approval.", 2);
+    }
+    const policyPins = [
+      ...new Set((candidate.allowedIps ?? []).map((address) => address.toLowerCase())),
+    ].sort();
+    const url = parseMcpUrlWithValidatedTarget(candidate.url, { addresses: policyPins });
+    assertMcpBridgePolicyTarget(candidate, target);
+    parseMcpUrlWithValidatedTarget(candidate.url, target);
+    return { entry: candidate, policyPins, url };
+  });
   const operation = `refresh public address pins for MCP server '${entry.server}'`;
   const context = await policies.inspectPolicyMutationContext(
     sandboxName,
@@ -91,36 +96,78 @@ export async function refreshMcpPublicPolicyPins(
     runtimeSelection,
   );
   const document = YAML.parseDocument(context.basePolicyDocument);
-  const endpoints = document.getIn(
-    ["network_policies", buildMcpBridgePolicyKey(entry.server), "endpoints"],
-    true,
-  );
-  const mcpEndpoints = YAML.isSeq(endpoints)
-    ? endpoints.items.filter((node) => YAML.isMap(node) && node.get("protocol") === "mcp")
-    : [];
-  const endpoint = mcpEndpoints[0];
-  if (document.errors.length > 0 || mcpEndpoints.length !== 1 || !YAML.isMap(endpoint)) {
+  if (document.errors.length > 0) {
     throw new McpBridgeError(
       "Public-pin refresh requires one unambiguous live MCP policy endpoint. No policy was changed.",
     );
   }
-  const binding = endpoint.get("credential_binding", true);
-  const pins = endpoint.get("allowed_ips", true);
-  if (
-    String(endpoint.get("host")).toLowerCase() !== url.hostname ||
-    endpoint.get("port") !== Number(url.port || 443) ||
-    endpoint.get("path") !== (url.pathname || "/") ||
-    !YAML.isMap(binding) ||
-    binding.get("provider") !== entry.providerName ||
-    !YAML.isSeq(pins) ||
-    !isDeepStrictEqual(pins.toJSON(), entry.allowedIps)
-  ) {
-    throw new McpBridgeError(
-      "The live MCP endpoint or pins changed during public-pin refresh. No policy was changed; rerun against the current sources.",
-    );
+  const endpointsToUpdate: YAML.YAMLMap[] = [];
+  const expectedPolicyKeys = new Set<string>();
+  for (const { entry: candidate, url } of validatedEntries) {
+    const policyKey = buildMcpBridgePolicyKey(candidate.server);
+    expectedPolicyKeys.add(policyKey);
+    const endpoints = document.getIn(["network_policies", policyKey, "endpoints"], true);
+    const mcpEndpoints = YAML.isSeq(endpoints)
+      ? endpoints.items.filter((node) => YAML.isMap(node) && node.get("protocol") === "mcp")
+      : [];
+    const endpoint = mcpEndpoints[0];
+    if (mcpEndpoints.length !== 1 || !YAML.isMap(endpoint)) {
+      throw new McpBridgeError(
+        "Public-pin refresh requires one unambiguous live MCP policy endpoint. No policy was changed.",
+      );
+    }
+    const binding = endpoint.get("credential_binding", true);
+    const pins = endpoint.get("allowed_ips", true);
+    if (
+      String(endpoint.get("host")).toLowerCase() !== url.hostname ||
+      endpoint.get("port") !== Number(url.port || 443) ||
+      endpoint.get("path") !== (url.pathname || "/") ||
+      !YAML.isMap(binding) ||
+      binding.get("provider") !== candidate.providerName ||
+      !YAML.isSeq(pins) ||
+      !isDeepStrictEqual(pins.toJSON(), candidate.allowedIps)
+    ) {
+      throw new McpBridgeError(
+        "The live MCP endpoint or pins changed during public-pin refresh. No policy was changed; rerun against the current sources.",
+      );
+    }
+    endpointsToUpdate.push(endpoint);
   }
-  if (isDeepStrictEqual(policyPins, target.addresses)) return;
-  endpoint.set("allowed_ips", target.addresses);
+  const primaryUrl = validatedEntries[0].url;
+  const primaryPort = Number(primaryUrl.port || 443);
+  const networkPolicies = document.getIn(["network_policies"], true);
+  if (YAML.isMap(networkPolicies)) {
+    for (const pair of networkPolicies.items) {
+      const key = YAML.isScalar(pair.key) ? String(pair.key.value) : "";
+      if (
+        !key.startsWith("mcp_bridge_") ||
+        expectedPolicyKeys.has(key) ||
+        !YAML.isMap(pair.value)
+      ) {
+        continue;
+      }
+      const endpoints = pair.value.get("endpoints", true);
+      if (!YAML.isSeq(endpoints)) continue;
+      const overlapsTargetHost = endpoints.items.some(
+        (node) =>
+          YAML.isMap(node) &&
+          node.get("protocol") === "mcp" &&
+          String(node.get("host")).toLowerCase() === primaryUrl.hostname &&
+          node.get("port") === primaryPort,
+      );
+      if (overlapsTargetHost) {
+        throw new McpBridgeError(
+          "The live MCP endpoint or pins changed during public-pin refresh. No policy was changed; rerun against the current sources.",
+        );
+      }
+    }
+  }
+  if (validatedEntries.every(({ policyPins }) => isDeepStrictEqual(policyPins, target.addresses))) {
+    return;
+  }
+  for (const endpoint of endpointsToUpdate) {
+    endpoint.set("allowed_ips", target.addresses);
+  }
   if (
     !(await policies.setPolicyDocument(sandboxName, document.toString(), {
       nonFatal: true,

@@ -152,7 +152,7 @@ unset GITHUB_MCP_TOKEN
 
 `remove` deletes the agent-native registration and detaches the exact managed provider, but conservatively preserves the provider object. Remove that preserved provider explicitly after confirming no sandbox uses it; then `add` creates a new provider with the replacement credential and reconnects the native registration.
 
-For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`; NemoClaw resolves and records the replacement pins again. For a public entry, `add` resolves the hostname and creates a policy for the current validated public addresses.
+For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`; NemoClaw resolves and records the replacement pins again. For a public entry, `add` resolves the hostname and creates a policy for the current validated public addresses. If another managed MCP server in the sandbox uses the same host and port, `add` reuses that server's recorded pins instead. For a trusted-private entry on a shared host and port, current DNS must match the other server's recorded pins. Otherwise `add` fails, and the removed server stays removed.
 
 The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config. Revoke the old credential upstream after the new add succeeds.
 
@@ -174,7 +174,7 @@ $$nemoclaw my-sandbox mcp update doordash \
 
 The command changes only the live OpenShell policy. It does not change the agent-native endpoint, credential reference, provider, attachment, or agent adapter. Live policy is the enforcement source of truth; NemoClaw does not retain a second denied-tool intent record.
 
-NemoClaw validates the current source entry and endpoint pins, removes the existing route, and then applies the replacement. This keeps an interrupted stricter update fail-closed. If replacement activation fails, the MCP route remains blocked and the error prints the exact `mcp update` command to retry. Rebuild captures and restores the complete live policy, including denied-tool rules, without regenerating it from registry state.
+NemoClaw validates the current source entry and endpoint pins, removes the existing route, and then applies the replacement. If other managed MCP servers use the same host and port, the update reuses their recorded pins. If those servers' pins conflict, the command changes no policy and prints the `--refresh-public-pins` command to run first. This keeps an interrupted stricter update fail-closed. If replacement activation fails, the MCP route remains blocked and the error prints the exact `mcp update` command to retry. Rebuild captures and restores the complete live policy, including denied-tool rules, without regenerating it from registry state.
 
 Clear every denied-tool rule explicitly:
 
@@ -193,12 +193,14 @@ $$nemoclaw my-sandbox mcp update github --refresh-public-pins
 $$nemoclaw my-sandbox mcp status github --tools
 ```
 
-The refresh validates the current DNS answers and replaces only `allowed_ips` on the existing MCP endpoint in the live OpenShell policy.
+The refresh validates current DNS answers. It then replaces only `allowed_ips` in the live OpenShell policy, for this server and every other managed MCP server on the same host and port.
 It preserves denied tools, methods, binary grants, credential bindings, and every other policy field.
 Agent configuration, providers, and attachments remain unchanged, and NemoClaw retains no separate MCP pin record.
 Status, restart, rebuild, and restore do not refresh these pins.
 
 Refresh requires an existing public endpoint with exact public pins and matching agent and policy sources.
+Every managed MCP server on the same host and port must meet these requirements.
+Otherwise, refresh changes no policy.
 It rejects private or special-use DNS answers and policies with address ranges.
 Correct a reported source conflict before retrying.
 If the write cannot be confirmed, inspect `mcp status` and the live OpenShell policy before retrying.
@@ -218,7 +220,7 @@ $$nemoclaw my-sandbox mcp add local-tools \
 unset LOCAL_MCP_TOKEN
 ```
 
-Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
+Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set. If other trusted-private servers use the same host and port, remove all of them before you add any of them again. NemoClaw rejects new pins that differ from a remaining server's recorded pins.
 
 ## Remove a Server
 

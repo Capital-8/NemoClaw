@@ -284,6 +284,134 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     },
   );
 
+  it(
+    "reuses recorded sibling pins when a second server is added on a rotating public host",
+    {
+      timeout: 40_000,
+    },
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shared-host-mcp-add-"));
+      const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
+      const script = `
+process.env.HOME = ${JSON.stringify(home)};
+process.env.T_MCP_02 = "host-only-secret-02";
+require("node:dns/promises").lookup = async () => [{ address: "8.8.4.4", family: 4 }];
+const replace = (module, name, value) => Object.defineProperty(module, name, {
+  configurable: true, enumerable: true, value, writable: true,
+});
+const registry = require("./src/lib/state/registry.js");
+const policies = require("./src/lib/policy/index.js");
+const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
+const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
+const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
+const srv01 = {
+  server: "srv01",
+  agent: "openclaw",
+  adapter: "openclaw-config",
+  url: "https://api.githubcopilot.com/mcp/one",
+  env: ["T_MCP_01"],
+  allowedIps: ["8.8.8.8"],
+  providerName: "alpha-mcp-srv01",
+  providerId: "11111111-2222-4333-8444-555555555555",
+  policyName: "mcp-bridge-srv01",
+  source: "native",
+};
+let admittedTarget;
+let registeredEntry;
+replace(policies, "getPresetContentGatewayState", () => "absent");
+replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
+replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
+replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", (_sandbox, _adapter, entry) => {
+  registeredEntry = entry;
+  return "v1";
+});
+replace(policy, "applyGeneratedPolicy", (_sandbox, _entry, target) => {
+  admittedTarget = target;
+});
+replace(state, "ensureSandboxGatewaySelected", async () => {});
+replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
+replace(provider, "assertNoProviderCredentialCollisions", () => {});
+replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({
+  gatewayName: "nemoclaw-9090", workspace: "default",
+}));
+replace(provider, "ensureMcpBridgeProviderProfile", () => {});
+replace(provider, "inspectMcpProvider", () => ({
+  credentialKeys: null, exists: false, id: null, resourceVersion: null, type: null,
+}));
+replace(provider, "inspectMcpProviderAttachments", () => ({ attachments: [] }));
+replace(provider, "upsertMcpProvider", () => ({
+  action: "created",
+  inspection: {
+    credentialKeys: ["T_MCP_02"], exists: true,
+    id: "22222222-2222-4333-8444-555555555555", resourceVersion: 1, type: "nemoclaw-mcp-v1",
+  },
+}));
+replace(provider, "attachProvider", () => {});
+replace(provider, "refreshMcpProviderEnvironment", () => {});
+replace(provider, "observeMcpCredentialRevision", () => "v1");
+replace(provider, "waitForAttachedMcpCredential", () => "v1");
+replace(processRecovery, "restartSandboxGateway", () => ({
+  ok: true, restarted: true, healthPassed: true, forwardRecovered: true,
+}));
+replace(sourceState, "inspectSourceBridgeState", () => ({
+  bridges: { srv01 },
+  sources: { native: { srv01 }, legacy: {} },
+}));
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
+});
+require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
+  server: "srv02",
+  url: "https://api.githubcopilot.com/mcp/two",
+  env: [{ name: "T_MCP_02" }],
+}).then(() => {
+  process.stdout.write(JSON.stringify({
+    entry: registeredEntry,
+    target: admittedTarget,
+  }), () => process.exit(0));
+}, (error) => {
+  process.stderr.write(error.stack || error.message, () => process.exit(1));
+});
+`;
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
+              .filter(Boolean)
+              .join(" "),
+          },
+          timeout: 30_000,
+        });
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        const payload = JSON.parse(result.stdout) as {
+          entry: Record<string, unknown>;
+          target: Record<string, unknown>;
+        };
+        expect(payload.entry).toMatchObject({
+          server: "srv02",
+          url: "https://api.githubcopilot.com/mcp/two",
+          allowedIps: ["8.8.8.8"],
+        });
+        expect(payload.target).toEqual({
+          addresses: ["8.8.8.8"],
+        });
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("does not adopt a retained same-name provider after remove then add", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-retained-provider-"));
     const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");

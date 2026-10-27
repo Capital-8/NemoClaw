@@ -114,6 +114,118 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
   );
 }
 
+function mcpEndpointHostPort(rawUrl: string): { host: string; port: number; label: string } | null {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase();
+    const port = Number.parseInt(parsed.port || (parsed.protocol === "https:" ? "443" : "80"), 10);
+    if (!host || !Number.isSafeInteger(port) || port <= 0) return null;
+    return { host, port, label: `${host}:${String(port)}` };
+  } catch {
+    return null;
+  }
+}
+
+function findSharedHostMcpBridges(
+  bridges: Readonly<Record<string, McpSourceEntry>>,
+  server: string,
+  rawUrl: string,
+): McpSourceEntry[] {
+  const targetEndpoint = mcpEndpointHostPort(rawUrl);
+  if (!targetEndpoint) return [];
+  return Object.values(bridges)
+    .filter((candidate) => {
+      if (candidate.server === server) return false;
+      const candidateEndpoint = mcpEndpointHostPort(candidate.url);
+      return (
+        candidateEndpoint !== null &&
+        candidateEndpoint.host === targetEndpoint.host &&
+        candidateEndpoint.port === targetEndpoint.port
+      );
+    })
+    .sort((left, right) => left.server.localeCompare(right.server));
+}
+
+function sameAddressPinSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((address, index) => address === right[index]);
+}
+
+function resolveSharedHostMcpTarget(
+  sandboxName: string,
+  server: string,
+  normalizedUrl: string,
+  preflightTarget: McpBridgeTargetValidation,
+  matchingTrustedPrivateHosts: readonly string[],
+  siblings: readonly McpSourceEntry[],
+): McpBridgeTargetValidation {
+  if (siblings.length === 0) return preflightTarget;
+  const endpointLabel =
+    mcpEndpointHostPort(normalizedUrl)?.label ?? new URL(normalizedUrl).hostname.toLowerCase();
+  const requestedPrivate = Boolean(preflightTarget.trustedPrivateHost);
+  let sharedTarget: McpBridgeTargetValidation | null = null;
+  let sharedOwner: McpSourceEntry | null = null;
+
+  for (const sibling of siblings) {
+    if (sibling.policyConflict) {
+      throw new McpBridgeError(
+        `MCP server '${sibling.server}' on '${endpointLabel}' has conflicting live policy. Resolve '${sibling.server}' before mutating '${server}' on the same host and port.`,
+        2,
+      );
+    }
+    const siblingPrivate = Boolean(sibling.trustedPrivateHost);
+    if (siblingPrivate !== requestedPrivate) {
+      throw new McpBridgeError(
+        `MCP server '${server}' cannot use ${requestedPrivate ? "trusted-private" : "public"} address pins on '${endpointLabel}' while existing MCP server '${sibling.server}' uses ${siblingPrivate ? "trusted-private" : "public"} pins.`,
+        2,
+      );
+    }
+    if (!sibling.allowedIps || sibling.allowedIps.length === 0) continue;
+    let siblingTarget: McpBridgeTargetValidation | null;
+    if (sibling.trustedPrivateHost) {
+      siblingTarget = replayMcpAddTarget(sibling, normalizedUrl, matchingTrustedPrivateHosts);
+      if (!siblingTarget) continue;
+      if (!sameAddressPinSet(siblingTarget.addresses, preflightTarget.addresses)) {
+        throw new McpBridgeError(
+          `MCP server '${server}' resolved trusted-private address pins (${preflightTarget.addresses.join(", ")}) for '${endpointLabel}' that differ from existing MCP server '${sibling.server}' (${siblingTarget.addresses.join(", ")}). Remove and re-add '${sibling.server}' to approve the changed pins.`,
+          2,
+        );
+      }
+    } else {
+      const canonicalPins = [
+        ...new Set(sibling.allowedIps.map((address) => address.toLowerCase())),
+      ].sort();
+      if (canonicalPins.length !== sibling.allowedIps.length) {
+        throw new McpBridgeError(
+          `MCP server '${sibling.server}' on '${endpointLabel}' has non-canonical public address pins in live policy. Run \`nemoclaw ${sandboxName} mcp update ${sibling.server} --refresh-public-pins\` before mutating '${server}'.`,
+          2,
+        );
+      }
+      siblingTarget = { addresses: canonicalPins };
+      try {
+        parseMcpUrlWithValidatedTarget(normalizedUrl, siblingTarget);
+      } catch {
+        throw new McpBridgeError(
+          `MCP server '${sibling.server}' on '${endpointLabel}' has invalid public address pins in live policy. Run \`nemoclaw ${sandboxName} mcp update ${sibling.server} --refresh-public-pins\` before mutating '${server}'.`,
+          2,
+        );
+      }
+    }
+    if (sharedTarget && sharedOwner) {
+      if (!sameAddressPinSet(sharedTarget.addresses, siblingTarget.addresses)) {
+        throw new McpBridgeError(
+          `Existing MCP servers '${sharedOwner.server}' (${sharedTarget.addresses.join(", ")}) and '${sibling.server}' (${siblingTarget.addresses.join(", ")}) on '${endpointLabel}' have conflicting address pins in live policy. Run \`nemoclaw ${sandboxName} mcp update ${sharedOwner.server} --refresh-public-pins\` to align them before mutating '${server}'.`,
+          2,
+        );
+      }
+      continue;
+    }
+    sharedTarget = siblingTarget;
+    sharedOwner = sibling;
+  }
+
+  return sharedTarget ?? preflightTarget;
+}
+
 function replayMcpAddTarget(
   entry: McpSourceEntry,
   normalizedUrl: string,
@@ -621,34 +733,70 @@ export async function refreshMcpBridgePublicPins(
     const entry = observed.bridges[server];
     if (!entry)
       throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
-    assertAuthenticatedBridgeEntry(entry);
-    if (entry.policyConflict) {
-      throw new McpBridgeError(
-        `MCP server '${server}' has conflicting live policy. Resolve it before refreshing public pins.`,
-        2,
-      );
-    }
-    if (entry.trustedPrivateHost) {
-      throw new McpBridgeError("Trusted-private pins require explicit remove-and-add approval.", 2);
+    const siblingEntries = findSharedHostMcpBridges(observed.bridges, server, entry.url);
+    const entriesToRefresh = [entry, ...siblingEntries];
+    for (const candidate of entriesToRefresh) {
+      assertAuthenticatedBridgeEntry(candidate);
+      if (candidate.policyConflict) {
+        throw new McpBridgeError(
+          `MCP server '${candidate.server}' has conflicting live policy. Resolve it before refreshing public pins.`,
+          2,
+        );
+      }
+      if (candidate.trustedPrivateHost) {
+        throw new McpBridgeError(
+          "Trusted-private pins require explicit remove-and-add approval.",
+          2,
+        );
+      }
     }
     const url = new URL(normalizeMcpServerUrl(entry.url));
     const target = await preflightMcpServerUrlResolvedTarget(url);
     assertMcpCredentialBoundaryRuntimeVersion();
     await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
-    const provider = await assertMcpProviderRecoverable(entry, runtimeSelection);
-    if (provider.exists !== true) {
-      throw new McpBridgeError(
-        "The MCP provider is no longer present. Public-pin refresh does not recreate missing source state.",
-      );
+    for (const candidate of entriesToRefresh) {
+      const provider = await assertMcpProviderRecoverable(candidate, runtimeSelection);
+      if (provider.exists !== true) {
+        throw new McpBridgeError(
+          "The MCP provider is no longer present. Public-pin refresh does not recreate missing source state.",
+        );
+      }
     }
     const current = await inspectAgentMcpSources(sandbox, runtimeSelection);
     assertNoLegacyMcpSources(sandboxName, current.legacy, "refreshing public pins");
-    if (!current.native[server] || !sameMcpRegistration(entry, current.native[server])) {
+    const targetEndpoint = mcpEndpointHostPort(entry.url);
+    const currentSharedHostCount = Object.values(current.native).filter((nativeEntry) => {
+      const endpoint = mcpEndpointHostPort(nativeEntry.url);
+      return (
+        endpoint !== null &&
+        targetEndpoint !== null &&
+        endpoint.host === targetEndpoint.host &&
+        endpoint.port === targetEndpoint.port
+      );
+    }).length;
+    if (
+      currentSharedHostCount !== entriesToRefresh.length ||
+      entriesToRefresh.some(
+        (candidate) =>
+          !current.native[candidate.server] ||
+          !sameMcpRegistration(candidate, current.native[candidate.server]),
+      )
+    ) {
       throw new McpBridgeError(
         "The agent MCP registration changed during public-pin refresh. No policy was changed.",
       );
     }
-    await refreshMcpPublicPolicyPins(sandboxName, entry, target, runtimeSelection);
+    if (siblingEntries.length > 0) {
+      await refreshMcpPublicPolicyPins(
+        sandboxName,
+        entry,
+        target,
+        runtimeSelection,
+        siblingEntries,
+      );
+    } else {
+      await refreshMcpPublicPolicyPins(sandboxName, entry, target, runtimeSelection);
+    }
     console.log(`  Refreshed public address pins for MCP server '${server}'.`);
   });
 }
@@ -676,12 +824,20 @@ async function updateMcpBridgeDenyToolsUnlocked(
     throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
   }
   assertAuthenticatedBridgeEntry(storedEntry);
-  const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
-  if (!target || target.addresses.length === 0) {
+  const preflightTarget = (await preflightMcpEntryTargets([storedEntry])).get(server);
+  if (!preflightTarget || preflightTarget.addresses.length === 0) {
     throw new McpBridgeError(
       `MCP server '${server}' has no validated address pins. No policy was changed.`,
     );
   }
+  const target = resolveSharedHostMcpTarget(
+    sandboxName,
+    server,
+    storedEntry.url,
+    preflightTarget,
+    storedEntry.trustedPrivateHost ? [storedEntry.trustedPrivateHost] : [],
+    findSharedHostMcpBridges(observed.bridges, server, storedEntry.url),
+  );
   const { denyTools: _previousDenyTools, ...entryWithoutDenyTools } = storedEntry;
   const updatedEntry: McpSourceEntry = {
     ...entryWithoutDenyTools,
@@ -770,14 +926,32 @@ async function addMcpBridgeUnlocked(
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
   const existingEntry = observed.bridges[options.server];
+  const siblingEntries = findSharedHostMcpBridges(observed.bridges, options.server, normalizedUrl);
   let target = existingEntry
     ? replayMcpAddTarget(existingEntry, normalizedUrl, matchingTrustedPrivateHosts)
     : null;
   if (!target) {
-    target = await preflightMcpServerUrlResolvedTarget(new URL(normalizedUrl), {
+    const preflightTarget = await preflightMcpServerUrlResolvedTarget(new URL(normalizedUrl), {
       trustedPrivateHosts: matchingTrustedPrivateHosts,
       requireTrustedPrivateEndpoint: explicitTrustedPrivateHosts.length > 0,
     });
+    target = resolveSharedHostMcpTarget(
+      sandboxName,
+      options.server,
+      normalizedUrl,
+      preflightTarget,
+      matchingTrustedPrivateHosts,
+      siblingEntries,
+    );
+  } else {
+    target = resolveSharedHostMcpTarget(
+      sandboxName,
+      options.server,
+      normalizedUrl,
+      target,
+      matchingTrustedPrivateHosts,
+      siblingEntries,
+    );
   }
 
   const envNames = uniqueEnvNames(options.env);

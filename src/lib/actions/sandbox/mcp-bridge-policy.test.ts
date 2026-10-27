@@ -68,6 +68,95 @@ describe("generated MCP policy", () => {
     expect(YAML.parse(context.basePolicyDocument)).toEqual(policy);
   });
 
+  it("updates all sibling MCP endpoints on the same host and port when refreshing public pins", async () => {
+    const sibling: McpSourceEntry = {
+      ...entry,
+      server: "copilot",
+      url: "https://mcp.example.com/copilot",
+      providerName: "mcp-copilot",
+      policyName: buildMcpBridgePolicyName("copilot"),
+    };
+    const primaryPolicy = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        "github",
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+      ),
+    );
+    const siblingPolicy = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        "copilot",
+        sibling.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-copilot",
+      ),
+    );
+    const combined = {
+      network_policies: {
+        ...primaryPolicy.network_policies,
+        ...siblingPolicy.network_policies,
+      },
+    };
+    const context = {
+      gatewayName: runtimeSelection.gatewayName,
+      basePolicyDocument: YAML.stringify(combined),
+      runtimeSelection,
+    } as policies.PolicyMutationContext;
+    vi.spyOn(policies, "inspectPolicyMutationContext").mockResolvedValue(context);
+    const set = vi.spyOn(policies, "setPolicyDocument").mockResolvedValue(true);
+
+    await refreshMcpPublicPolicyPins("alpha", entry, { addresses: ["1.1.1.1"] }, runtimeSelection, [
+      sibling,
+    ]);
+
+    const written = YAML.parse(set.mock.calls[0][1]);
+    expect(written.network_policies.mcp_bridge_github.endpoints[0].allowed_ips).toEqual([
+      "1.1.1.1",
+    ]);
+    expect(written.network_policies.mcp_bridge_copilot.endpoints[0].allowed_ips).toEqual([
+      "1.1.1.1",
+    ]);
+  });
+
+  it("refuses public-pin refresh when an unlisted MCP policy overlaps the target host and port", async () => {
+    const primaryPolicy = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        "github",
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+      ),
+    );
+    const unlistedPolicy = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        "orphan",
+        "https://mcp.example.com/orphan",
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-orphan",
+      ),
+    );
+    vi.spyOn(policies, "inspectPolicyMutationContext").mockResolvedValue({
+      gatewayName: runtimeSelection.gatewayName,
+      basePolicyDocument: YAML.stringify({
+        network_policies: {
+          ...primaryPolicy.network_policies,
+          ...unlistedPolicy.network_policies,
+        },
+      }),
+    } as policies.PolicyMutationContext);
+    const set = vi.spyOn(policies, "setPolicyDocument").mockResolvedValue(true);
+
+    await expect(
+      refreshMcpPublicPolicyPins("alpha", entry, { addresses: ["1.1.1.1"] }, runtimeSelection),
+    ).rejects.toThrow(/changed during public-pin refresh/);
+    expect(set).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["URL", { host: "changed.example" }],
     ["pins", { allowed_ips: ["9.9.9.9"] }],

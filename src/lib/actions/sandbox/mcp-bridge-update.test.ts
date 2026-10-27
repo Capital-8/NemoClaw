@@ -102,6 +102,106 @@ describe("source-backed MCP denied-tool policy updates", () => {
     }
   });
 
+  it("refreshes sibling MCP servers sharing a host and port together", async () => {
+    const sibling: McpSourceEntry = {
+      ...entry,
+      server: "copilot",
+      url: "https://mcp.example.test/copilot",
+      env: ["COPILOT_TOKEN"],
+      providerName: "alpha-mcp-copilot",
+      providerId: "22222222-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-copilot",
+    };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: entry, copilot: sibling },
+      sources: { native: { github: entry, copilot: sibling }, legacy: {} },
+    });
+    mocks.inspectAgentMcpSources.mockResolvedValueOnce({
+      native: { github: entry, copilot: sibling },
+      legacy: {},
+    });
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    try {
+      await refreshMcpBridgePublicPins("alpha", "github");
+      expect(mocks.refreshMcpPublicPolicyPins).toHaveBeenCalledWith(
+        "alpha",
+        entry,
+        { addresses: ["1.1.1.1"] },
+        { gatewayName: "nemoclaw-9090", workspace: "default" },
+        [sibling],
+      );
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("reuses sibling address pins during denied-tool updates when public DNS rotates", async () => {
+    const sibling: McpSourceEntry = {
+      ...entry,
+      server: "copilot",
+      url: "https://mcp.example.test/copilot",
+      env: ["COPILOT_TOKEN"],
+      allowedIps: ["9.9.9.9"],
+      providerName: "alpha-mcp-copilot",
+      providerId: "22222222-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-copilot",
+    };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: { ...entry, allowedIps: ["9.9.9.9"] }, copilot: sibling },
+      sources: {
+        native: { github: { ...entry, allowedIps: ["9.9.9.9"] }, copilot: sibling },
+        legacy: {},
+      },
+    });
+
+    await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+
+    expect(mocks.applyGeneratedPolicy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ allowedIps: ["9.9.9.9"], denyTools: ["delete_repo"] }),
+      { addresses: ["9.9.9.9"] },
+      { runtimeSelection: { gatewayName: "nemoclaw-9090", workspace: "default" } },
+    );
+  });
+
+  it("refuses denied-tool updates before removing policy when sibling servers have conflicting pins", async () => {
+    const siblingOne: McpSourceEntry = {
+      ...entry,
+      server: "copilot",
+      url: "https://mcp.example.test/copilot",
+      env: ["COPILOT_TOKEN"],
+      allowedIps: ["9.9.9.9"],
+      providerName: "alpha-mcp-copilot",
+      providerId: "22222222-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-copilot",
+    };
+    const siblingTwo: McpSourceEntry = {
+      ...entry,
+      server: "actions",
+      url: "https://mcp.example.test/actions",
+      env: ["ACTIONS_TOKEN"],
+      allowedIps: ["1.1.1.1"],
+      providerName: "alpha-mcp-actions",
+      providerId: "33333333-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-actions",
+    };
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: entry, copilot: siblingOne, actions: siblingTwo },
+      sources: {
+        native: { github: entry, copilot: siblingOne, actions: siblingTwo },
+        legacy: {},
+      },
+    });
+
+    await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
+      /conflicting address pins in live policy/,
+    );
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.applyGeneratedPolicy).not.toHaveBeenCalled();
+  });
+
   it("refuses public-pin refresh when the native registration changes during DNS resolution (#10464)", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")

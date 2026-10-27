@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import dns from "node:dns/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setProviderCommandRuntimeHooksForTest } from "../../adapters/openshell/provider-command";
 import {
   getMcpProviderInspectionRuntimeSelection,
+  preflightMcpEntryTargets,
   resolveSandboxConfigRuntimeSelection,
   inspectMcpProvider,
 } from "./mcp-bridge-provider-inspection";
@@ -268,4 +270,36 @@ describe("MCP provider absence inspection", () => {
       });
     },
   );
+
+  it("deduplicates public DNS lookups across entries sharing a hostname", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never);
+
+    const targets = await preflightMcpEntryTargets([
+      {
+        server: "srv01",
+        agent: "openclaw",
+        adapter: "openclaw-config",
+        url: "https://api.githubcopilot.com/mcp/one",
+        env: ["T_MCP_01"],
+        providerName: "alpha-mcp-srv01",
+        policyName: "mcp-bridge-srv01",
+      },
+      {
+        server: "srv02",
+        agent: "openclaw",
+        adapter: "openclaw-config",
+        url: "https://api.githubcopilot.com/mcp/two",
+        env: ["T_MCP_02"],
+        providerName: "alpha-mcp-srv02",
+        policyName: "mcp-bridge-srv02",
+      },
+    ]);
+
+    expect(lookup).toHaveBeenCalledOnce();
+    expect(targets.get("srv01")).toEqual({ addresses: ["8.8.8.8"] });
+    expect(targets.get("srv02")).toEqual({ addresses: ["8.8.8.8"] });
+  });
 });

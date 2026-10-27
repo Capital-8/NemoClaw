@@ -410,7 +410,7 @@ See [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for t
 
 ## DNS Pins Drift
 
-If `mcp status <server>` reports `public address pins: drift`, refresh only its live policy pins:
+If `mcp status <server>` reports `public address pins: drift`, refresh the live policy pins for that server and every managed MCP server on the same host and port:
 
 ```bash
 $$nemoclaw <sandbox> mcp update <server> --refresh-public-pins
@@ -441,6 +441,9 @@ $$nemoclaw <sandbox> mcp add <server> \
   --trusted-private-host mcp-host.corp.example
 unset LOCAL_MCP_TOKEN
 ```
+
+If other trusted-private servers use the same host and port, remove all of them before you add any of them again.
+NemoClaw rejects new pins that differ from a remaining server's recorded pins.
 
 A `CONNECT 403` after an address change can mean that OpenShell rejected a current DNS answer outside `allowed_ips`.
 Do not add a provider's complete address range or broaden the policy to bypass the denial.

@@ -464,6 +464,7 @@ export async function preflightMcpEntryTargets(
   entries: readonly McpSourceEntry[],
 ): Promise<Map<string, McpBridgeTargetValidation>> {
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
+  const publicTargetByHostname = new Map<string, Promise<McpBridgeTargetValidation>>();
   const results = await Promise.all(
     entries.map(async (entry) => {
       const normalized = normalizeRecordedMcpServerUrl(entry);
@@ -509,7 +510,15 @@ export async function preflightMcpEntryTargets(
         };
         return [entry.server, target] as const;
       }
-      const target = await preflightMcpServerUrlResolvedTarget(new URL(normalized));
+      const parsed = new URL(normalized);
+      const hostnameKey = parsed.hostname.toLowerCase();
+      let pending = publicTargetByHostname.get(hostnameKey);
+      if (!pending) {
+        pending = preflightMcpServerUrlResolvedTarget(parsed);
+        publicTargetByHostname.set(hostnameKey, pending);
+      }
+      const sharedTarget = await pending;
+      const target: McpBridgeTargetValidation = { addresses: [...sharedTarget.addresses] };
       return [entry.server, target] as const;
     }),
   );
