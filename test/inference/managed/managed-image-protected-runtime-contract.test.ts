@@ -262,9 +262,18 @@ function runNativeQualificationProbe(handle: string, model = "fixture-model") {
 describe("protected local inference agent response", () => {
   it.each([
     { response: "", expected: 'response=""' },
-    { response: "unexpected answer", expected: 'response="unexpected answer"' },
-    { response: "fixture-private-value", expected: 'response="<REDACTED>"' },
-    { response: "x".repeat(600), expected: `response="${"x".repeat(512)}"` },
+    {
+      response: "Reply with exactly one word: PONG",
+      expected: 'response="Reply with exactly one word: PONG"',
+    },
+    {
+      response: "Reply with exactly one word: PONG fixture-private-value",
+      expected: 'response="Reply with exactly one word: PONG <REDACTED>"',
+    },
+    {
+      response: `Reply with exactly one word: PONG ${"x".repeat(600)}`,
+      expected: `response="Reply with exactly one word: PONG ${"x".repeat(478)}`,
+    },
   ])("reports bounded, redacted rejected output [%#]", ({ response, expected }) => {
     expect(() =>
       assertLocalInferenceAgentResponse(
@@ -314,9 +323,20 @@ describe("protected local inference agent response", () => {
   it.each([
     [
       "openclaw",
+      JSON.stringify({ ...openclaw, result: { ...openclaw.result, payloads: [{ text: "LONG" }] } }),
+    ],
+    ["hermes", "PING localhost completed successfully.\n"],
+    ["langchain-deepagents-code", JSON.stringify({ data: { ...dcode.data, response: "LONG" } })],
+  ] as const)("accepts a completed %s turn when its answer differs from PONG", (agent, stdout) => {
+    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).not.toThrow();
+  });
+
+  it.each([
+    [
+      "openclaw",
       JSON.stringify({ ...openclaw, result: { ...openclaw.result, payloads: [], prompt: "PONG" } }),
     ],
-    ["hermes", "request failed; prompt was PONG"],
+    ["hermes", "request failed; prompt was Reply with exactly one word: PONG"],
     [
       "langchain-deepagents-code",
       JSON.stringify({ data: { ...dcode.data, response: "", prompt: "PONG" } }),

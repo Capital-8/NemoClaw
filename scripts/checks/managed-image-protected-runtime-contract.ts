@@ -429,11 +429,12 @@ export function assertLocalInferenceAgentResponse(
       throw new Error("LangChain Deep Agents Code did not complete its local inference turn");
     response = envelope.data.response;
   }
-  // Hermes oneshot stdout contains only its final response. JSON agents expose
-  // assistant output separately; a prompt echoed in metadata cannot pass.
-  if (typeof response !== "string" || !/^PONG[.!]?$/iu.test(response.trim()))
+  // The direct provider probe owns the PONG assertion. Agent models may answer
+  // the same prompt differently, so require a completed assistant turn here.
+  const answer = typeof response === "string" ? response.trim() : "";
+  if (!answer || /reply with exactly one word: pong/iu.test(answer))
     throw new Error(
-      `${input.agent} local inference did not return PONG; response=${JSON.stringify(managedImageFailureDetail(response, env).slice(0, 512))}`,
+      `${input.agent} local inference returned no assistant answer; response=${JSON.stringify(managedImageFailureDetail(response, env).slice(0, 512))}`,
     );
 }
 
