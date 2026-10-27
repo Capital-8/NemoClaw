@@ -69,7 +69,7 @@ describe("bundled npm package utilities", () => {
 });
 
 function retainedBackupFixture() {
-  const npmRoot = temporaryDirectory();
+  const npmRoot = fs.realpathSync(temporaryDirectory());
   const backup = path.join(npmRoot, "node_modules", "undici.nemoclaw-backup-123-0123456789abcdef");
   fs.mkdirSync(backup, { recursive: true });
   fs.writeFileSync(path.join(backup, "package.json"), '{"name":"undici","version":"6.27.0"}');
