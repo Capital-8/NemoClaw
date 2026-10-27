@@ -163,7 +163,8 @@ describe("complete native-home backup deadlines", () => {
       });
       const read = vi.spyOn(fs, "readSync").mockImplementation((...args) => {
         const count = Reflect.apply(originalRead, fs, args) as number;
-        readRawHeader ||= listingComplete && args[3] === 512;
+        const readArgs: readonly unknown[] = args;
+        readRawHeader ||= listingComplete && readArgs[3] === 512;
         return count;
       });
       syncBuiltinESMExports();

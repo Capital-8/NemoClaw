@@ -141,3 +141,51 @@ process.stdout.write(args.includes("-tf")
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 });
+
+it("reports a sparse raw header instead of an inventory mismatch", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sparse-inventory-"));
+  const oldPath = process.env.PATH;
+  try {
+    const nativeRoot = path.join(fixture, "native-home");
+    const binDir = path.join(fixture, "bin");
+    fs.mkdirSync(nativeRoot);
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(path.join(nativeRoot, "payload.txt"), "payload");
+    writeSnapshotRegistry(testHome, "sparse-inventory");
+    const backup = sandboxState.backupSandboxState("sparse-inventory", {
+      nativeStateSource: {
+        root: "/sandbox",
+        directory: nativeRoot,
+        assertCurrent: () => undefined,
+      },
+    });
+    expect(backup.success, backup.error).toBe(true);
+    const backupPath = backup.manifest!.backupPath;
+    const archivePath = path.join(backupPath, "native-home.tar");
+    const archive = fs.readFileSync(archivePath);
+    archive[156] = "S".charCodeAt(0);
+    fs.writeFileSync(archivePath, archive);
+    const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      nativeState: { sha256: string };
+    };
+    manifest.nativeState.sha256 = createHash("sha256").update(archive).digest("hex");
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+    writeExecutable(
+      path.join(binDir, "tar"),
+      `#!/usr/bin/env node
+process.stdout.write("./\\n./payload.txt\\n");
+`,
+    );
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+
+    expect(() => sandboxState.inspectNativeSandboxState(backupPath, () => undefined)).toThrow(
+      "native state sparse archive entry",
+    );
+  } finally {
+    oldPath === undefined
+      ? Reflect.deleteProperty(process.env, "PATH")
+      : Reflect.set(process.env, "PATH", oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});

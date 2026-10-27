@@ -1687,7 +1687,10 @@ function scanNativeTarFilePayload(
 }
 
 type NativeArchiveCredentialViolation = string | { entry: string; deadlineExpired: true } | null;
-type RawTarArchiveEntries = string[] | { entry: string; deadlineExpired: true } | null;
+type RawTarArchiveEntries =
+  | string[]
+  | { entry: string; deadlineExpired: true }
+  | { failure: string };
 const NATIVE_ARCHIVE_INSPECTION_TIMEOUT =
   "Native home/workspace archive inspection exceeded its deadline";
 
@@ -1764,7 +1767,16 @@ function walkNativeTarMembers(
 function readRawTarArchiveEntries(descriptor: number, deadlineMs?: number): RawTarArchiveEntries {
   const entries: string[] = [];
   const violation = walkNativeTarMembers(descriptor, entries, undefined, deadlineMs);
-  return violation === null ? entries : typeof violation === "string" ? null : violation;
+  return violation === null
+    ? entries
+    : typeof violation === "string"
+      ? {
+          failure:
+            violation === "native state credential scan"
+              ? "native state archive header could not be parsed"
+              : violation,
+        }
+      : violation;
 }
 
 function readRawTarArchiveEntriesFromPath(
@@ -1775,8 +1787,16 @@ function readRawTarArchiveEntriesFromPath(
   try {
     descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
     return readRawTarArchiveEntries(descriptor, deadlineMs);
-  } catch {
-    return null;
+  } catch (error) {
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      /^[A-Z0-9_]+$/.test(error.code)
+        ? ` (${error.code})`
+        : "";
+    return { failure: `native state archive could not be read${code}` };
   } finally {
     if (descriptor !== null) closeSync(descriptor);
   }
@@ -2175,14 +2195,21 @@ function copyNativeArchiveToPrivateDescriptor(
       },
     );
     const rawInventory = validation.safe ? readRawTarArchiveEntries(descriptor, deadlineMs) : null;
-    if (rawInventory && !Array.isArray(rawInventory)) {
+    if (rawInventory && !Array.isArray(rawInventory) && "deadlineExpired" in rawInventory) {
       throw new Error(NATIVE_ARCHIVE_INSPECTION_TIMEOUT);
     }
     const rawEntries = rawInventory;
     const rawInventoryViolations =
-      validation.safe && !nativeTarInventoriesMatch(rawEntries, validation.entries, nameFormat)
-        ? ["tar raw header inventory did not match archive listing"]
-        : [];
+      rawEntries && !Array.isArray(rawEntries) && "failure" in rawEntries
+        ? [rawEntries.failure]
+        : validation.safe &&
+            !nativeTarInventoriesMatch(
+              Array.isArray(rawEntries) ? rawEntries : null,
+              validation.entries,
+              nameFormat,
+            )
+          ? ["tar raw header inventory did not match archive listing"]
+          : [];
     const symlinkViolations =
       validation.safe && rawInventoryViolations.length === 0
         ? rejectSymlinkExtractionTraversal(
@@ -2203,7 +2230,7 @@ function copyNativeArchiveToPrivateDescriptor(
     const result = {
       descriptor,
       sha256: hash.digest("hex"),
-      entries: rawEntries ?? validation.entries,
+      entries: Array.isArray(rawEntries) ? rawEntries : validation.entries,
       violations: [
         ...validation.violations,
         ...rawInventoryViolations,
@@ -2761,7 +2788,9 @@ function backupNativeSandboxState(
     if (verifiedRawInventory && !Array.isArray(verifiedRawInventory)) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
-        `Native archive validation exceeded the backup deadline at '${verifiedRawInventory.entry}'`,
+        "deadlineExpired" in verifiedRawInventory
+          ? `Native archive validation exceeded the backup deadline at '${verifiedRawInventory.entry}'`
+          : `Native state archive validation failed: ${verifiedRawInventory.failure}`,
       );
     }
     const rawInventoryViolation =
