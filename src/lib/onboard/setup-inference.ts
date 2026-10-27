@@ -920,6 +920,7 @@ function createGatewayRouteStager(input: {
   revalidateSandboxIdentity?: (operation: string) => void;
 }) {
   let stagedRoute: Parameters<OpenShellInferenceRouteMutator["setInferenceRoute"]>[0] | null = null;
+  let reservationDeferred = false;
   const stagedProviderUpserts: Array<
     () => Promise<Awaited<ReturnType<CommonDeps["upsertProvider"]>>>
   > = [];
@@ -977,11 +978,23 @@ function createGatewayRouteStager(input: {
       return true;
     },
     hasStagedRoute: () => stagedRoute !== null,
+    deferReservation: () => {
+      reservationDeferred = true;
+    },
     successResult: (): SetupInferenceResult => {
       if (!stagedRoute) {
         if (stagedProviderUpserts.length > 0)
           throw new Error("The staged inference provider has no deferred route to publish.");
-        return { ok: true };
+        if (!reservationDeferred) return { ok: true };
+        // A sandbox-attached provider leaves the shared route unchanged, but the
+        // published source still owns its registry row until backup succeeds.
+        return {
+          ok: true,
+          deferredInferenceRoute: async (reserve) => {
+            input.revalidateSandboxIdentity?.("reserve the backed-up sandbox inference route");
+            reserve();
+          },
+        };
       }
       const request = stagedRoute;
       const providerUpserts = [...stagedProviderUpserts];
@@ -1268,6 +1281,7 @@ export function createSetupInference(
             // The sandbox phase owns the replacement reservation after its
             // pre-delete backup succeeds. Keep the current source connectable
             // if that backup rejects the workspace.
+            routeStager.deferReservation();
             return true;
           }
           revalidateSandboxIdentity?.("reserve the sandbox inference route");
