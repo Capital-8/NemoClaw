@@ -29,7 +29,7 @@ The readiness timeout does not govern inference requests or provider validation.
 `NEMOCLAW_AGENT_TIMEOUT` requires a positive integer; onboarding rejects any other value.
 `NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` accepts positive finite seconds, rounds fractional values up, and caps higher values at `600` seconds. An unset or invalid value preserves the probe defaults. NemoClaw raises each connection or total deadline only when the value exceeds that deadline.
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` and `NEMOCLAW_SANDBOX_READY_TIMEOUT` accept finite, nonnegative seconds, round fractional values, and use their defaults for invalid or negative values.
-For a compatible endpoint, local Ollama, or local vLLM route, and for the Bedrock Runtime adapter, NemoClaw also passes `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` to OpenShell as the inference route request timeout.
+For a compatible endpoint, local Ollama, or local vLLM route, and for the Bedrock Runtime and OpenRouter Runtime adapters, NemoClaw also passes `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` to OpenShell as the inference route request timeout.
 For those routes, the rounded value must be from `1` to `3600` seconds.
 Onboarding stops with an error that names the variable before it changes the provider or route when the value is outside that range, and `connect` stops the same way for a compatible endpoint, local Ollama, or local vLLM sandbox.
 `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds and preserves fractional values.

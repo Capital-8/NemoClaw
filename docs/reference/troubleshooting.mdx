@@ -2129,7 +2129,7 @@ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $$nemoclaw onboard
 ```
 
-For a compatible endpoint, local Ollama, or local vLLM route, and for the Bedrock Runtime adapter, NemoClaw also uses this value as the inference route request timeout.
+For a compatible endpoint, local Ollama, or local vLLM route, and for the Bedrock Runtime and OpenRouter Runtime adapters, NemoClaw also uses this value as the inference route request timeout.
 For those routes, the rounded value must be from `1` to `3600` seconds.
 Onboarding stops with an error that names the variable when the value is outside that range, and `connect` stops the same way for a compatible endpoint, local Ollama, or local vLLM sandbox.
 Refer to [Configure Inference Timeouts](../inference/manage-inference/configure-inference-timeouts) for the route-specific behavior.
