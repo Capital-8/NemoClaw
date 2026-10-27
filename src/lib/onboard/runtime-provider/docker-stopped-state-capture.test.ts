@@ -182,11 +182,11 @@ describe("stopped Docker recovery capture", () => {
     },
   );
 
-  it("rejects a non-Docker driver before runtime access", () => {
+  it.each(["podman", "vm"])("rejects an explicit %s driver before runtime access", (driver) => {
     const inspect = vi.fn();
     expect(() =>
       prepareStoppedDockerStateCapture(
-        { ...sandbox, openshellDriver: "podman" },
+        { ...sandbox, openshellDriver: driver },
         runtime,
         projection,
         { inspect },
