@@ -336,6 +336,36 @@ describe("installer npm resolution", () => {
     }
   });
 
+  itWithPosixModes(
+    "stops before npm link when a configured .local bin is group-writable (#12496)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-local-link-unsafe-"));
+      try {
+        const fakeBin = createNpmPermissionFixture(tmp);
+        const npmPrefix = path.join(tmp, ".local");
+        const npmBin = path.join(npmPrefix, "bin");
+        const npmCallLog = path.join(tmp, "npm-calls.log");
+        const sourceRoot = path.join(tmp, "source");
+        fs.mkdirSync(npmBin, { recursive: true });
+        fs.mkdirSync(sourceRoot);
+        fs.chmodSync(npmBin, 0o775);
+
+        const result = runInstallerFunction(
+          `link_nemoclaw_cli ${JSON.stringify(sourceRoot)}`,
+          fakeBin,
+          { ACTIVE_NPM_PREFIX: npmPrefix, HOME: tmp, NPM_CALL_LOG: npmCallLog },
+        );
+
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).toContain(npmBin);
+        expect(fs.statSync(npmBin).mode & 0o777).toBe(0o775);
+        expect(fs.existsSync(npmCallLog)).toBe(false);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("keeps an existing user-local npm PATH stable when fixing permissions", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-path-"));
     const fakeBin = path.join(tmp, "bin");
@@ -478,6 +508,29 @@ echo "${cliBin} v0.1.0"
       expect(`${result.stdout}${result.stderr}`).toContain(npmPrefix);
       expect(fs.statSync(npmPrefix).mode & 0o777).toBe(0o775);
       expect(fs.existsSync(path.join(tmp, ".local", "bin", "nemoclaw"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  itWithPosixModes("rejects reuse of an existing shim under a writable ancestor (#12496)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-shim-reuse-unsafe-"));
+    try {
+      const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+      const npmPrefix = path.dirname(prefixBin);
+      const local = path.join(tmp, ".local");
+      const shimPath = path.join(local, "bin", "nemoclaw");
+      const env = { ACTIVE_NPM_PREFIX: npmPrefix, HOME: tmp, NO_COLOR: "1" };
+      const first = runInstallerFunction("_CLI_BIN=nemoclaw; ensure_nemoclaw_shim", fakeBin, env);
+      expect(first.status, `${first.stdout}${first.stderr}`).toBe(0);
+      const shimBefore = fs.readFileSync(shimPath, "utf-8");
+      fs.chmodSync(local, 0o775);
+
+      const second = runInstallerFunction("_CLI_BIN=nemoclaw; ensure_nemoclaw_shim", fakeBin, env);
+      expect(second.status, `${second.stdout}${second.stderr}`).toBe(1);
+      expect(`${second.stdout}${second.stderr}`).toContain(local);
+      expect(fs.readFileSync(shimPath, "utf-8")).toBe(shimBefore);
+      expect(fs.statSync(local).mode & 0o777).toBe(0o775);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -843,6 +896,16 @@ exec ${JSON.stringify(process.execPath)} "$@"
       expect(fs.realpathSync(path.join(shimDir, "nemoclaw-acp"))).toBe(
         fs.realpathSync(packagedCli),
       );
+
+      fs.chmodSync(path.dirname(shimDir), 0o775);
+      const unsafeReuse = runInstallerFunction('ensure_cli_shim "nemoclaw-acp"', fakeBin, {
+        ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+        HOME: tmp,
+        NO_COLOR: "1",
+      });
+      expect(unsafeReuse.status, `${unsafeReuse.stdout}${unsafeReuse.stderr}`).toBe(1);
+      expect(fs.readFileSync(packagedCli)).toEqual(originalContents);
+      expect(fs.statSync(path.dirname(shimDir)).mode & 0o777).toBe(0o775);
     },
   );
 

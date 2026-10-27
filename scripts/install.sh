@@ -2845,10 +2845,10 @@ user_local_executable_directory_safe() {
   done
 }
 
-assert_managed_npm_prefix_safe() {
+assert_user_local_npm_prefix_safe() {
   local npm_prefix="${1:-}"
   case "$npm_prefix" in
-    "$HOME/.npm-global" | "$HOME/.npm-global/"*) ;;
+    "$HOME" | "$HOME/"*) ;;
     *) return 0 ;;
   esac
   local directory
@@ -2884,7 +2884,10 @@ ensure_cli_shim() {
   if [[ -z "$cli_path" || ! -x "$cli_path" ]]; then
     return 1
   fi
-  assert_managed_npm_prefix_safe "${npm_bin%/bin}"
+  assert_user_local_npm_prefix_safe "${npm_bin%/bin}"
+  if ! user_local_executable_directory_safe "$(dirname "$NEMOCLAW_SHIM_DIR")"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   node_dir="$(dirname "$node_path")"
 
   # If npm placed the binary at the same path as the shim target (e.g. when
@@ -2895,6 +2898,10 @@ ensure_cli_shim() {
     refresh_path
     ensure_local_bin_in_profile
     return 0
+  fi
+
+  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
   fi
 
   assert_nemoclaw_acp_shim_replaceable "$cli_bin" "$cli_path"
@@ -2930,9 +2937,6 @@ EOF
   fi
 
   # The shim parent must not become group-writable under a permissive umask.
-  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
-    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
-  fi
   (umask g-w,o-w && mkdir -p "$NEMOCLAW_SHIM_DIR")
   if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
     error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
@@ -3172,17 +3176,17 @@ fix_npm_permissions() {
   if [[ -z "$npm_prefix" ]]; then
     return 0
   fi
-  assert_managed_npm_prefix_safe "$npm_prefix"
+  assert_user_local_npm_prefix_safe "$npm_prefix"
 
   if [[ -w "$npm_prefix" || -w "$npm_prefix/lib" ]]; then
     return 0
   fi
 
   info "npm global prefix '${npm_prefix}' is not writable — configuring user-local installs"
-  assert_managed_npm_prefix_safe "$HOME/.npm-global"
+  assert_user_local_npm_prefix_safe "$HOME/.npm-global"
   (umask g-w,o-w && mkdir -p "$HOME/.npm-global") \
     || error "Could not create the user-local npm directory $HOME/.npm-global."
-  assert_managed_npm_prefix_safe "$HOME/.npm-global"
+  assert_user_local_npm_prefix_safe "$HOME/.npm-global"
   npm config set prefix "$HOME/.npm-global"
 
   # shellcheck disable=SC2016
@@ -3445,11 +3449,11 @@ finish_nemoclaw_install() {
 link_nemoclaw_cli() {
   local source_root="$1" npm_prefix
   npm_prefix="$(npm config get prefix 2>/dev/null || true)"
-  assert_managed_npm_prefix_safe "$npm_prefix"
+  assert_user_local_npm_prefix_safe "$npm_prefix"
   # shellcheck disable=SC2016  # $1 expands in the child shell.
   spin "Linking ${_CLI_DISPLAY} CLI" bash -c \
     'umask g-w,o-w; cd "$1" && npm link --ignore-scripts' _ "$source_root"
-  assert_managed_npm_prefix_safe "$npm_prefix"
+  assert_user_local_npm_prefix_safe "$npm_prefix"
 }
 
 install_nemoclaw() {
