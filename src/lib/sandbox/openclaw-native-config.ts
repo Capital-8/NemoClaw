@@ -153,7 +153,9 @@ function nativeProviderHandleUpdate(updates: readonly OpenClawConfigUpdate[]) {
     return (
       typeof provider === "string" &&
       (Boolean(fixedNativeProvider(provider)) ||
-        isLocalInferenceProvider(provider) ||
+        (isLocalInferenceProvider(provider) &&
+          typeof value.baseUrl === "string" &&
+          Boolean(nativeLocalCredentialReference(provider, value.baseUrl))) ||
         (typeof value.baseUrl === "string" &&
           Boolean(nativeHostedAgentConfig(provider, value.baseUrl))))
     );

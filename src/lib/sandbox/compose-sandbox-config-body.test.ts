@@ -25,7 +25,13 @@ const {
     sandboxName: string,
     updates: Array<{ dotpath: string; value: unknown }>,
     gateway?: string | OpenShellRuntimeSelection,
-  ) => { args: string[]; input: string; env?: Record<string, string>; replaceEnv?: boolean };
+  ) => {
+    args: string[];
+    input: string;
+    nativeHandleUpdate: boolean;
+    env?: Record<string, string>;
+    replaceEnv?: boolean;
+  };
   buildOpenClawNativeConfigSetInvocation: (
     sandboxName: string,
     dotpath: string,
@@ -295,6 +301,22 @@ describe("composeSandboxConfigBody", () => {
     },
   );
 
+  it("preserves a local provider update on the shared route without scoped-handle materialization (#13553)", () => {
+    const update = {
+      dotpath: "models.providers.inference",
+      value: {
+        baseUrl: "https://inference.local/v1",
+        apiKey: "openshell:resolve:env:NEMOCLAW_LOCAL_INFERENCE_TOKEN",
+        headers: { "X-NemoClaw-Upstream-Provider": "ollama-local" },
+      },
+    };
+    const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [update]);
+
+    expect(invocation.nativeHandleUpdate).toBe(false);
+    expect(JSON.parse(invocation.input)).toEqual([{ path: update.dotpath, value: update.value }]);
+    expect(invocation.args.join(" ")).not.toContain("NEMOCLAW_LOCAL_INFERENCE_TOKEN");
+  });
+
   it.each([
     { value: undefined, expectedStatus: 75 },
     { value: "raw-local-secret", expectedStatus: 1 },
@@ -304,10 +326,13 @@ describe("composeSandboxConfigBody", () => {
     "refuses an unavailable or invalid local provider handle $value before config mutation",
     ({ value, expectedStatus }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-config-"));
+      const rejectedConfig = path.join(directory, "rejected-config.json");
       try {
-        fs.writeFileSync(path.join(directory, "openclaw"), '#!/bin/sh\ncat "$4"\n', {
-          mode: 0o700,
-        });
+        fs.writeFileSync(
+          path.join(directory, "openclaw"),
+          '#!/bin/sh\n: > "$NEMOCLAW_REJECTED_CONFIG"\ncat "$4"\n',
+          { mode: 0o700 },
+        );
         const invocation = buildOpenClawNativeConfigBatchInvocation("alpha", [
           {
             dotpath: "models.providers.inference",
@@ -326,12 +351,14 @@ describe("composeSandboxConfigBody", () => {
           env: {
             ...process.env,
             PATH: `${directory}:${process.env.PATH ?? ""}`,
+            NEMOCLAW_REJECTED_CONFIG: rejectedConfig,
             ...(value === undefined
               ? { NEMOCLAW_LOCAL_INFERENCE_TOKEN: undefined }
               : { NEMOCLAW_LOCAL_INFERENCE_TOKEN: value }),
           },
         });
         expect(failed.status).toBe(expectedStatus);
+        expect(fs.existsSync(rejectedConfig)).toBe(false);
       } finally {
         fs.rmSync(directory, { recursive: true, force: true });
       }
