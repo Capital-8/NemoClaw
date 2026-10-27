@@ -29,13 +29,15 @@ import {
 } from "../../inference/local-model-profile/cleanup";
 import {
   discoverOllamaModelOwnership,
+  matchingOllamaModelPeers,
+  type OllamaModelCleanupOwner,
+} from "../../inference/ollama/model-ownership";
+import {
   isLocalOllamaRouteOwner,
   loadPersistedOllamaHost,
-  matchingOllamaModelPeers,
   type OllamaUnloadResult,
   withOllamaModelOwnershipTransaction,
 } from "../../inference/ollama/proxy";
-import type { OllamaModelCleanupOwner } from "../../inference/ollama/model-ownership";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,

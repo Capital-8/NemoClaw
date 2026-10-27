@@ -367,14 +367,9 @@ exit "$status"`,
     expect(reonboard.exitCode, resultText(reonboard)).toBe(0);
     const tokenAfterSecond = fs.readFileSync(TOKEN_FILE, "utf8").trim();
     expect(tokenAfterSecond).toBe(tokenAfterFirst);
+    expect(fs.statSync(TOKEN_FILE).mode & 0o777).toBe(0o600);
 
     progress.phase("validate persisted proxy auth and inference");
-    const liveStatus = await httpStatus(
-      host,
-      `http://127.0.0.1:${PROXY_PORT}/api/tags`,
-      "phase-5-proxy-live-status",
-    );
-    expect(liveStatus.stdout.trim()).toMatch(/^[1-9][0-9]{2}$/);
     const authStatus = await httpStatus(
       host,
       `http://127.0.0.1:${PROXY_PORT}/v1/models`,
