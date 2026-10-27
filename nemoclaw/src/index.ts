@@ -313,7 +313,7 @@ function blocksDisabledSearch(
 export default function register(api: OpenClawPluginApi): void {
   const deniedSearchRuns = new DeniedSearchState(() => {
     api.logger.warn(
-      "Disabled-search identity capacity reached; new turns are refused until retained restrictions clear.",
+      "Disabled-search active-turn capacity reached; new turns are refused until an active turn completes.",
     );
   });
   // 1. Register /nemoclaw slash command (chat interface)
@@ -364,7 +364,7 @@ export default function register(api: OpenClawPluginApi): void {
               "This turn cannot start safely because OpenClaw did not provide a run or session identity. Check the gateway logs before retrying.",
           };
         }
-        if (deniedSearchRuns.canAdmit(identity, identities)) return undefined;
+        if (deniedSearchRuns.admit(identity, identities)) return undefined;
         return {
           outcome: "block",
           reason: "disabled-search turn admission unavailable",

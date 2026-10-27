@@ -12,7 +12,6 @@ import {
   vi,
 } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
-import { SEARCH_DENIAL_IDENTITY_LIMIT } from "./denied-search-state.js";
 
 vi.mock("./runtime-context.js", () => ({
   registerRuntimeContext: vi.fn((api: OpenClawPluginApi) => {
@@ -20,16 +19,14 @@ vi.mock("./runtime-context.js", () => ({
   }),
 }));
 
-const searchStateCapacity = vi.hoisted(() => ({ value: 2 }));
-
-// Most capacity tests use a direct three-turn setup; the regression uses the production limit.
+// Exercise capacity and completion with a two-slot table.
 vi.mock("./denied-search-state.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./denied-search-state.js")>();
   return {
     ...actual,
     DeniedSearchState: class extends actual.DeniedSearchState {
       constructor(onCapacity: () => void) {
-        super(onCapacity, searchStateCapacity.value);
+        super(onCapacity, 2);
       }
     },
   };
@@ -83,7 +80,6 @@ function createMockApi(): OpenClawPluginApi {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  searchStateCapacity.value = 2;
   mockStderrWrite();
 });
 
@@ -758,18 +754,20 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     }
   });
 
-  it("admits more than the denial limit of ordinary turns without retaining them", () => {
-    searchStateCapacity.value = SEARCH_DENIAL_IDENTITY_LIMIT;
+  it("admits more than the capacity of completed ordinary turns without exhausting ownership", async () => {
     const { api, admission } = searchHook(false);
     const tool = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")![1];
+    const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
     const read = { toolName: "read", params: { file_path: "/sandbox/project/README.md" } };
-    const ordinaryTurns = Array.from({ length: SEARCH_DENIAL_IDENTITY_LIMIT + 1 }, (_, index) => {
-      const context = { runId: `ordinary-${index}` };
-      return [admission({}, context), tool(read, context)];
-    });
-    expect(ordinaryTurns).toEqual(
-      Array.from({ length: SEARCH_DENIAL_IDENTITY_LIMIT + 1 }, () => [undefined, undefined]),
-    );
+    expect(admission({}, { runId: "ordinary-first" })).toBeUndefined();
+    expect(tool(read, { runId: "ordinary-first" })).toBeUndefined();
+    await end({ success: true }, { runId: "ordinary-first" });
+    expect(admission({}, { runId: "ordinary-second" })).toBeUndefined();
+    expect(tool(read, { runId: "ordinary-second" })).toBeUndefined();
+    await end({ success: false }, { runId: "ordinary-second" });
+    expect(admission({}, { runId: "ordinary-third" })).toBeUndefined();
+    expect(tool(read, { runId: "ordinary-third" })).toBeUndefined();
+    await end({ success: true }, { runId: "ordinary-third" });
     const denied = { runId: "denied-search" };
     expect(admission({}, denied)).toBeUndefined();
     expect(tool({ toolName: "web_search", params: {} }, denied)).toMatchObject({ block: true });
@@ -788,26 +786,28 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     expect(tool({ toolName: "web_search", params: {} }, { runId: "denied-active" })).toMatchObject({
       block: true,
     });
-    expect(tool({ toolName: "web_search", params: {} }, { runId: "denied-second" })).toMatchObject({
+    expect(admission({}, { runId: "overflow" })).toMatchObject({ outcome: "block" });
+    expect(tool({ toolName: "web_search", params: {} }, { runId: "overflow" })).toMatchObject({
       block: true,
     });
-    expect(admission({}, { runId: "overflow" })).toMatchObject({ outcome: "block" });
     expect(tool(read, { runId: "overflow" })).toMatchObject({ block: true });
-    expect(tool(read, { runId: "ordinary-active" })).toMatchObject({ block: true });
+    expect(tool(read, { runId: "ordinary-active" })).toBeUndefined();
     expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
     // Retrying admission for the same active turn must not erase its denial.
     expect(admission({}, { runId: "denied-active" })).toBeUndefined();
     expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
-    await end({ success: true }, { runId: "denied-second" });
+    await end({ success: true }, { runId: "ordinary-active" });
     expect(admission({}, { runId: "next-turn" })).toBeUndefined();
     expect(tool(read, { runId: "next-turn" })).toBeUndefined();
+    expect(tool(read, { runId: "overflow" })).toMatchObject({ block: true });
     expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
     await end({ success: true }, { runId: "denied-active" });
     await end({ success: false }, { runId: "next-turn" });
+    await end({ success: false }, { runId: "overflow" });
     expect(admission({}, { runId: "unrelated-run" })).toBeUndefined();
     expect(tool(read, { runId: "unrelated-run" })).toBeUndefined();
     expect(api.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("identity capacity reached"),
+      expect.stringContaining("active-turn capacity reached"),
     );
   });
 
@@ -858,10 +858,12 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     await end({ success: true }, { runId: "first", sessionKey: "shared" });
     expect(admission({}, { runId: "new-turn" })).toBeUndefined();
     await end({ success: true }, { runId: "unrelated", sessionKey: "shared" });
-    expect(admission({}, { runId: "excess" })).toBeUndefined();
+    expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
     expect(tool({ toolName: "read", params: {} }, { runId: "second" })).toMatchObject({
       block: true,
     });
+    await end({ success: true }, { runId: "new-turn" });
+    expect(admission({}, { runId: "excess" })).toBeUndefined();
   });
 
   it("rejects a disabled-search turn without correlatable identity", () => {

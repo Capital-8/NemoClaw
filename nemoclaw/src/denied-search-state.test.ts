@@ -29,11 +29,11 @@ describe("denied-search identity retention", () => {
     expect(state.blocks(undefined)).toBe(true);
     state.delete("run-first");
     expect(state.size).toBe(1);
-    expect(state.blocks("run-first")).toBe(false);
+    expect(state.blocks("run-first")).toBe(true);
     expect(state.canAdmit("run-overflow")).toBe(true);
   });
 
-  it("keeps untracked denials blocked after retained turns finish", () => {
+  it("recovers admission after denied turns complete without admitting overflow substitutes", () => {
     state.deny("retained-first");
     state.deny("retained-second");
     state.deny("overflow-first");
@@ -43,11 +43,12 @@ describe("denied-search identity retention", () => {
     state.delete("retained-second");
     state.delete("overflow-second");
     expect(state.blocks("overflow-second")).toBe(true);
-    expect(state.canAdmit("unrelated-run")).toBe(false);
+    expect(state.canAdmit("unrelated-run")).toBe(true);
     expect(state.size).toBe(0);
-    vi.advanceTimersByTime(SEARCH_DENIAL_RETENTION_MS);
-    expect(state.blocks("unrelated-run")).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
+    expect(state.admit("unrelated-run")).toBe(true);
+    expect(state.blocks("unrelated-run")).toBe(false);
+    expect(state.blocks("overflow-second")).toBe(true);
   });
 
   it("expires abandoned denials without another tool call", () => {
@@ -59,19 +60,22 @@ describe("denied-search identity retention", () => {
     vi.advanceTimersByTime(1);
     expect(state.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
+    expect(state.admit("ordinary-run")).toBe(true);
     expect(state.blocks("ordinary-run")).toBe(false);
     expect(state.blocks(undefined)).toBe(true);
     state.deny("new-run");
     expect(state.blocks("new-run")).toBe(true);
-    expect(state.size).toBe(1);
+    expect(state.size).toBe(2);
   });
 
   it("preserves active denial when admission repeats and releases capacity on completion", () => {
-    expect(state.canAdmit("ordinary")).toBe(true);
+    expect(state.admit("ordinary")).toBe(true);
+    expect(state.blocks("ordinary")).toBe(false);
+    state.delete("ordinary");
     state.deny("denied");
     expect(state.canAdmit("denied")).toBe(true);
     expect(state.blocks("denied")).toBe(true);
-    expect(state.blocks("ordinary")).toBe(false);
+    expect(state.blocks("ordinary")).toBe(true);
     expect(state.size).toBe(1);
     state.deny("second-denied");
     expect(state.canAdmit("excess")).toBe(false);
@@ -101,6 +105,60 @@ describe("denied-search identity retention", () => {
     state.clear();
     expect(state.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
+    expect(state.blocks("next")).toBe(true);
+    expect(state.admit("next")).toBe(true);
     expect(state.blocks("next")).toBe(false);
+  });
+
+  it("reserves every concurrent turn before search can exhaust denial ownership", () => {
+    expect(state.admit("runId:first")).toBe(true);
+    expect(state.admit("runId:second")).toBe(true);
+    expect(state.admit("runId:overflow")).toBe(false);
+    state.deny("runId:first");
+    state.deny("runId:second");
+    state.deny("runId:overflow");
+    state.delete("runId:first");
+    expect(state.blocks("runId:second")).toBe(true);
+    expect(state.blocks("runId:overflow")).toBe(true);
+    expect(state.admit("runId:ordinary-next")).toBe(true);
+    expect(state.blocks("runId:ordinary-next")).toBe(false);
+    state.delete("runId:second");
+    state.delete("runId:ordinary-next");
+    expect(state.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps shared-session denials owned through overflow and partial completion", () => {
+    state.admit("runId:first", ["sessionKey:shared"]);
+    state.admit("runId:second", ["sessionKey:shared"]);
+    state.deny("runId:first");
+    state.deny("runId:second");
+    state.deny("runId:overflow", ["sessionKey:shared"]);
+    state.delete(["runId:overflow", "sessionKey:shared"]);
+    state.delete(["sessionKey:shared"]);
+    expect(state.size).toBe(2);
+    state.delete(["runId:first", "sessionKey:shared"]);
+    expect(state.blocks("runId:second")).toBe(true);
+    expect(state.blocks("runId:overflow")).toBe(true);
+    state.delete(["runId:unrelated", "sessionKey:shared"]);
+    expect(state.size).toBe(1);
+    state.delete(["runId:second", "sessionKey:shared"]);
+    expect(state.admit("runId:ordinary-next")).toBe(true);
+    expect(state.blocks("runId:ordinary-next")).toBe(false);
+  });
+
+  it("expires abandoned ordinary ownership and warns once again after recovery", () => {
+    state.admit("runId:first");
+    state.admit("runId:second");
+    expect(state.admit("runId:overflow")).toBe(false);
+    expect(state.admit("runId:another-overflow")).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(SEARCH_DENIAL_RETENTION_MS);
+    expect(state.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    state.admit("runId:next-first");
+    state.admit("runId:next-second");
+    expect(state.admit("runId:next-overflow")).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(2);
   });
 });
