@@ -132,6 +132,7 @@ it.each([
   "sends one anonymous TEST envelope when %s is %j",
   async (key, value, testLabel) => {
     allowLocalTelemetry();
+    vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", value === "1" ? "qa-a:b:attempt-1" : undefined);
     vi.stubEnv(key, value);
     vi.stubEnv("GITHUB_RUN_ID", "12345678901");
     vi.stubEnv("GITHUB_RUN_ATTEMPT", "2");
@@ -174,6 +175,7 @@ it.each([
   ["NEMOCLAW_TELEMETRY_TEST_LABEL", ""],
 ])("does not collect or send when %s is %j", async (key, value) => {
   allowLocalTelemetry();
+  vi.stubEnv("CI", value === "invalid" ? "true" : undefined);
   const fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   vi.stubEnv(key, value);
