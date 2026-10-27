@@ -619,7 +619,7 @@ describe("finalization handlers", () => {
         "",
         "    Status:      nemoclaw my-assistant status",
         "    Logs:        nemoclaw my-assistant logs --follow",
-        "    Model:       nemoclaw onboard --agent langchain-deepagents-code --name my-assistant --fresh (the model is built into the image)",
+        "    Model:       nemoclaw onboard --agent langchain-deepagents-code --name my-assistant --fresh  # the model is built into the image",
         "    Policies:    nemoclaw my-assistant policy add",
         "    Credentials: nemoclaw credentials reset <PROVIDER> && nemoclaw onboard",
       ].join("\n"),

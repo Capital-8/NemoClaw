@@ -224,7 +224,7 @@ function logTerminalReadyBlock(
     log(`  Headless: ${terminalAgent.runtime.headless_command} "<task>"`);
   }
   const agentFlag = typeof terminalAgent.name === "string" ? ` --agent ${terminalAgent.name}` : "";
-  const reonboard = `${CLI_NAME} onboard${agentFlag} --name ${sandboxName} --fresh (the model is built into the image)`;
+  const reonboard = `${CLI_NAME} onboard${agentFlag} --name ${sandboxName} --fresh  # the model is built into the image`;
   for (const line of manageLaterLines(CLI_NAME, sandboxName, reonboard)) log(line);
 }
 
