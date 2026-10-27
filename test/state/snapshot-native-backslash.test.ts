@@ -27,6 +27,22 @@ function restoreEnv(name: string, value: string | undefined): void {
     : Reflect.set(process.env, name, value);
 }
 
+function resolveBsdTar(): string | null {
+  const candidates = [
+    spawnSync("sh", ["-c", "command -v bsdtar"], { encoding: "utf8" }).stdout.trim(),
+    "/usr/bin/bsdtar",
+    "/usr/bin/tar",
+  ].filter(Boolean);
+  return (
+    [...new Set(candidates)].find((candidate) => {
+      const probe = spawnSync(candidate, ["--version"], { encoding: "utf8" });
+      return probe.status === 0 && /bsdtar/iu.test(`${probe.stdout ?? ""}${probe.stderr ?? ""}`);
+    }) ?? null
+  );
+}
+
+const BSD_TAR = resolveBsdTar();
+
 afterAll(() => {
   restoreEnv("HOME", ORIGINAL_HOME);
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
@@ -57,6 +73,81 @@ function createBackslashEnvFixture() {
   return { fixture, relativePath, content, backup };
 }
 
+async function assertBackslashFallbackRoundTrip(
+  installTar: (binDir: string, tarLog: string) => void,
+  verifyTarLog: (tarLog: string) => void,
+) {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-bsdtar-fallback-"));
+  const oldPath = process.env.PATH;
+  const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+  const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
+  try {
+    const binDir = path.join(fixture, "bin");
+    const nativeRoot = path.join(fixture, "native-home");
+    const tarLog = path.join(fixture, "tar-args.log");
+    const relativeDir = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates";
+    const relativeFile = `${relativeDir}/notes.md`;
+    const relativeEnv = `${relativeDir}/.env`;
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(path.dirname(path.join(nativeRoot, relativeFile)), { recursive: true });
+    fs.writeFileSync(path.join(nativeRoot, relativeFile), "fallback-backslash-notes");
+    fs.writeFileSync(path.join(nativeRoot, relativeEnv), "CUSTOM_MODE=enabled\n");
+    writeFakeOpenshell(binDir);
+    writeFakeSsh(binDir);
+    installTar(binDir, tarLog);
+    process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
+    process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+    writeSnapshotRegistry(TMP_HOME, "alpha");
+
+    const backup = sandboxState.backupSandboxState("alpha");
+    expect(backup.success, backup.error).toBe(true);
+    verifyTarLog(tarLog);
+    const fallbackValidation = sandboxState.validateTarEntries(
+      { filePath: path.join(backup.manifest!.backupPath, "native-home.tar") },
+      "/sandbox",
+    );
+    expect(fallbackValidation.safe).toBe(true);
+    expect(
+      fallbackValidation.entries.some((entry: string) =>
+        entry.includes("\\\\ Systems\\\\ \\\\&\\\\ Templates/notes.md"),
+      ),
+    ).toBe(true);
+    sandboxState.inspectNativeSandboxState(
+      backup.manifest!.backupPath,
+      (root: string) => {
+        expect(fs.readFileSync(path.join(root, relativeEnv), "utf8")).toBe("CUSTOM_MODE=enabled\n");
+      },
+      relativeEnv,
+    );
+    fs.writeFileSync(path.join(nativeRoot, relativeFile), "mutated");
+    fs.writeFileSync(path.join(nativeRoot, relativeEnv), "CUSTOM_MODE=disabled\n");
+    const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+    expect(restore.success, restore.error).toBe(true);
+    expect(fs.readFileSync(path.join(nativeRoot, relativeFile), "utf8")).toBe(
+      "fallback-backslash-notes",
+    );
+    expect(fs.readFileSync(path.join(nativeRoot, relativeEnv), "utf8")).toBe(
+      "CUSTOM_MODE=enabled\n",
+    );
+
+    fs.writeFileSync(
+      path.join(nativeRoot, relativeEnv),
+      `OPENAI_API_KEY=${["sk-proj", "fallbackSecret1234567890abcd"].join("-")}\n`,
+    );
+    const rejected = sandboxState.backupSandboxState("alpha");
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toContain("credential-bearing or uninspectable content");
+    expect(rejected.error).toContain(relativeEnv);
+    expect(sandboxState.getLatestBackup("alpha")?.backupPath).toBe(backup.manifest!.backupPath);
+  } finally {
+    restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+    restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
+    restoreEnv("PATH", oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
 describe("native backup of backslash paths across tar quoting modes", () => {
   it("preserves an .env under a backslash directory across host tar implementations", () => {
     const { fixture, relativePath, content, backup } = createBackslashEnvFixture();
@@ -75,96 +166,64 @@ describe("native backup of backslash paths across tar quoting modes", () => {
   });
 
   it("round-trips backslash paths and rejects credential-bearing backslash paths after tar rejects --quoting-style=literal", async () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-bsdtar-fallback-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const nativeRoot = path.join(fixture, "native-home");
-      const tarLog = path.join(fixture, "tar-args.log");
-      const relativeDir = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates";
-      const relativeFile = `${relativeDir}/notes.md`;
-      const relativeEnv = `${relativeDir}/.env`;
-      const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
-        encoding: "utf8",
-      }).stdout.trim();
-      expect(systemTar).not.toBe("");
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(path.dirname(path.join(nativeRoot, relativeFile)), { recursive: true });
-      fs.writeFileSync(path.join(nativeRoot, relativeFile), "fallback-backslash-notes");
-      fs.writeFileSync(path.join(nativeRoot, relativeEnv), "CUSTOM_MODE=enabled\n");
-      writeFakeOpenshell(binDir);
-      writeFakeSsh(binDir);
-      writeExecutable(
-        path.join(binDir, "tar"),
-        [
-          "#!/usr/bin/env node",
-          'const fs = require("node:fs");',
-          'const { spawnSync } = require("node:child_process");',
-          "const args = process.argv.slice(2);",
-          `fs.appendFileSync(${JSON.stringify(tarLog)}, JSON.stringify(args) + "\\n");`,
-          'if (args.includes("--quoting-style=literal")) { process.stderr.write("tar: Option --quoting-style=literal is not supported\\n"); process.exit(1); }',
-          `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" }).status ?? 90);`,
-        ].join("\n"),
-      );
-      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
-      process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
-      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-      writeSnapshotRegistry(TMP_HOME, "alpha");
-
-      const backup = sandboxState.backupSandboxState("alpha");
-      expect(backup.success, backup.error).toBe(true);
-      const loggedInvocations = fs
-        .readFileSync(tarLog, "utf8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as string[]);
-      expect(loggedInvocations).toContainEqual(["--quoting-style=literal", "-tf", "-"]);
-      expect(loggedInvocations).toContainEqual(["-tf", "-"]);
-      const fallbackValidation = sandboxState.validateTarEntries(
-        { filePath: path.join(backup.manifest!.backupPath, "native-home.tar") },
-        "/sandbox",
-      );
-      expect(fallbackValidation.safe).toBe(true);
-      expect(
-        fallbackValidation.entries.some((entry: string) =>
-          entry.includes("\\\\ Systems\\\\ \\\\&\\\\ Templates/notes.md"),
-        ),
-      ).toBe(true);
-      sandboxState.inspectNativeSandboxState(
-        backup.manifest!.backupPath,
-        (root: string) => {
-          expect(fs.readFileSync(path.join(root, relativeEnv), "utf8")).toBe(
-            "CUSTOM_MODE=enabled\n",
-          );
-        },
-        relativeEnv,
-      );
-      fs.writeFileSync(path.join(nativeRoot, relativeFile), "mutated");
-      fs.writeFileSync(path.join(nativeRoot, relativeEnv), "CUSTOM_MODE=disabled\n");
-      const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
-      expect(restore.success, restore.error).toBe(true);
-      expect(fs.readFileSync(path.join(nativeRoot, relativeFile), "utf8")).toBe(
-        "fallback-backslash-notes",
-      );
-      expect(fs.readFileSync(path.join(nativeRoot, relativeEnv), "utf8")).toBe(
-        "CUSTOM_MODE=enabled\n",
-      );
-
-      fs.writeFileSync(
-        path.join(nativeRoot, relativeEnv),
-        `OPENAI_API_KEY=${["sk-proj", "fallbackSecret1234567890abcd"].join("-")}\n`,
-      );
-      const rejected = sandboxState.backupSandboxState("alpha");
-      expect(rejected.success).toBe(false);
-      expect(rejected.error).toContain("credential-bearing or uninspectable content");
-      expect(rejected.error).toContain(relativeEnv);
-    } finally {
-      restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
-      restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
-      restoreEnv("PATH", oldPath);
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
+    const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    expect(systemTar).not.toBe("");
+    const systemTarVersion = `${
+      spawnSync(systemTar, ["--version"], { encoding: "utf8" }).stdout ?? ""
+    }`;
+    await assertBackslashFallbackRoundTrip(
+      (binDir, tarLog) => {
+        writeExecutable(
+          path.join(binDir, "tar"),
+          [
+            "#!/usr/bin/env node",
+            'const fs = require("node:fs");',
+            'const { spawnSync } = require("node:child_process");',
+            "const args = process.argv.slice(2);",
+            `fs.appendFileSync(${JSON.stringify(tarLog)}, JSON.stringify(args) + "\\n");`,
+            'if (args.includes("--quoting-style=literal") || args.includes("--hard-dereference")) { process.stderr.write("tar: Option --quoting-style=literal is not supported\\n"); process.exit(1); }',
+            'const filesFromIndex = args.indexOf("-T");',
+            "if (filesFromIndex >= 0 && args[filesFromIndex + 1]) {",
+            "  const listFile = args[filesFromIndex + 1];",
+            '  const patterns = fs.readFileSync(listFile, "utf8").split("\\0").filter(Boolean);',
+            "  if (patterns.some((pattern) => /(?<!\\\\)\\\\(?!\\\\)/u.test(pattern))) {",
+            '    process.stderr.write("tar: Pattern with unescaped backslash not matched in archive\\n");',
+            "    process.exit(1);",
+            "  }",
+            `  if (!/bsdtar/iu.test(${JSON.stringify(systemTarVersion)})) {`,
+            '    fs.writeFileSync(listFile, Buffer.from(patterns.map((pattern) => pattern.replaceAll("\\\\\\\\", "\\\\")).join("\\0") + "\\0"));',
+            "  }",
+            "}",
+            `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" }).status ?? 90);`,
+          ].join("\n"),
+        );
+      },
+      (tarLog) => {
+        const loggedInvocations = fs
+          .readFileSync(tarLog, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as string[]);
+        expect(loggedInvocations).toContainEqual(["--quoting-style=literal", "-tf", "-"]);
+        expect(loggedInvocations).toContainEqual(["-tf", "-"]);
+        expect(
+          loggedInvocations.filter((args) => args.includes("-T")).length,
+        ).toBeGreaterThanOrEqual(2);
+      },
+    );
   });
+
+  it.skipIf(!BSD_TAR)(
+    "round-trips backslash paths and rejects credential-bearing backslash paths with native BSD tar",
+    async () => {
+      await assertBackslashFallbackRoundTrip(
+        (binDir) => {
+          fs.symlinkSync(BSD_TAR!, path.join(binDir, "tar"));
+        },
+        () => undefined,
+      );
+    },
+  );
 });
