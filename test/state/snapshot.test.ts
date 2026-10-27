@@ -92,7 +92,11 @@ function tarHeader(
   return header;
 }
 
-function writeCraftedCaptureTar(binDir: string, systemTar: string): void {
+function writeCraftedCaptureTar(
+  binDir: string,
+  systemTar: string,
+  forceGlobalPaxListing = false,
+): void {
   writeExecutable(
     path.join(binDir, "tar"),
     `#!/usr/bin/env node
@@ -105,6 +109,14 @@ if (process.env.NEMOCLAW_TEST_TAR_LOG) {
 if (args.includes("-C")) {
   fs.writeFileSync(1, fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
   process.exit(0);
+}
+if (${forceGlobalPaxListing} && args.includes("-tf")) {
+  const result = spawnSync(${JSON.stringify(systemTar)}, args, {
+    input: fs.readFileSync(0), encoding: "utf8",
+  });
+  process.stdout.write(result.stdout.replaceAll("workspace/benign.txt", "workspace/.env"));
+  process.stderr.write(result.stderr);
+  process.exit(result.status ?? 90);
 }
 const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
 process.exit(result.status ?? 90);
@@ -1323,7 +1335,7 @@ process.stdout.write(String(uid) + "\\n");
           craftedArchive,
           kind === "global-pax-credential" ? buildGlobalPaxCredentialTar() : buildSparseTar(kind),
         );
-        writeCraftedCaptureTar(binDir, systemTar);
+        writeCraftedCaptureTar(binDir, systemTar, kind === "global-pax-credential");
         process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
         process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
         process.env.PATH = `${binDir}:${oldPath ?? ""}`;
@@ -1338,10 +1350,10 @@ process.stdout.write(String(uid) + "\\n");
         });
 
         expect(backup.success).toBe(false);
-        expect(backup.error).toMatch(
+        expect(backup.error).toContain(
           kind === "global-pax-credential"
-            ? /credential-bearing or uninspectable content at 'workspace\/\.env'|tar raw header inventory did not match archive listing/u
-            : /native state sparse archive entry/u,
+            ? "credential-bearing or uninspectable content at 'workspace/.env'"
+            : "native state sparse archive entry",
         );
         const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
         expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
