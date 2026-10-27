@@ -938,6 +938,14 @@ test(
         timeoutMs: 5 * 60_000,
       },
     );
+    const sandboxBAfterRetainedDestroy = await sandbox.openshell(
+      ["sandbox", "list", "-g", gatewayB],
+      {
+        artifactName: "phase-3-sandbox-b-absent-after-retained-destroy",
+        env: openshellEnvForGateway(gatewayB),
+        timeoutMs: 30_000,
+      },
+    );
     const listBAfterRetainedDestroy = await command(host, ["list"], {
       artifactName: "phase-3-list-b-after-retained-destroy",
       env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
@@ -957,14 +965,6 @@ test(
       {
         artifactName: "phase-3-gateway-b-retained-after-destroy",
         env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    const sandboxBAfterRetainedDestroy = await sandbox.openshell(
-      ["sandbox", "list", "-g", gatewayB],
-      {
-        artifactName: "phase-3-sandbox-b-absent-after-retained-destroy",
-        env: openshellEnvForGateway(gatewayB),
         timeoutMs: 30_000,
       },
     );
