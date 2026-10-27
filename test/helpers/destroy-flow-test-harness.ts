@@ -98,6 +98,7 @@ export type DestroyHarness = {
   warnSpy: MockInstance;
   withGatewayRouteMutationLockSpy: MockInstance;
   withCurrentPortableHostFenceSpy: MockInstance;
+  withPortableHostFence: typeof import("../../src/lib/state/portable-uninstall-retirement").withPortableHostFence;
   withModelRouterPortLifecycleLockSpy: MockInstance;
 };
 
@@ -889,6 +890,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     warnSpy,
     withGatewayRouteMutationLockSpy,
     withCurrentPortableHostFenceSpy,
+    withPortableHostFence: portableHostFence.withPortableHostFence,
     withModelRouterPortLifecycleLockSpy,
   };
 }

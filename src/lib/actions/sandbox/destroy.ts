@@ -746,6 +746,23 @@ export async function destroySandbox(
   } = {},
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
+  if (await delegateSandboxDestroyBeforeLifecycleBoundary(sandboxName, normalized)) return;
+  try {
+    await destroySandboxInSelectedRoot(sandboxName, normalized, deps);
+  } catch (error) {
+    if (error instanceof SandboxDestroyExitRequest) {
+      process.exit(error.exitCode);
+    }
+    throw error;
+  }
+}
+
+/** Transfer sibling-root destroy before the command acquires its lifecycle fence. */
+export async function delegateSandboxDestroyBeforeLifecycleBoundary(
+  sandboxName: string,
+  options: string[] | DestroySandboxOptions = {},
+): Promise<boolean> {
+  const normalized = normalizeDestroySandboxOptions(options);
   let delegation: SandboxDestroyDelegation;
   try {
     assertSandboxDestroyEndpointAuthority();
@@ -770,22 +787,15 @@ export async function destroySandbox(
   if (delegation.delegated) {
     if (delegation.cancelled) {
       await recordDestroyCompletion(sandboxName, "cancelled", undefined, delegation.gatewayName);
-      return;
+      return true;
     }
     if (delegation.exitCode !== null) {
       await finishTelemetryOperation(delegation.exitCode);
       process.exit(delegation.exitCode);
     }
-    return;
+    return true;
   }
-  try {
-    await destroySandboxInSelectedRoot(sandboxName, normalized, deps);
-  } catch (error) {
-    if (error instanceof SandboxDestroyExitRequest) {
-      process.exit(error.exitCode);
-    }
-    throw error;
-  }
+  return false;
 }
 
 /**

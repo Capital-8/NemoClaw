@@ -604,4 +604,35 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
       }
     },
   );
+
+  it("transfers a sibling-root destroy before the real CLI takes its lifecycle fence", async () => {
+    const registryFile = writeSiblingRegistry(["alpha"]);
+    const harness = createDestroyHarness();
+
+    await harness.destroyCommand.run(["alpha", "--yes", "--no-cleanup-gateway"], process.cwd());
+
+    expect(harness.runOwningRegistryWorkerSpy).toHaveBeenCalledWith(
+      {
+        operation: "destroy",
+        sandboxName: "alpha",
+        options: { yes: true, cleanupGateway: false, force: false },
+      },
+      SIBLING_PORT,
+    );
+    expect(harness.lifecycleLockEvents).toEqual([]);
+    expect(harness.executeSandboxDestroySpy).not.toHaveBeenCalled();
+    expect(registeredNames(registryFile)).toEqual(["alpha"]);
+  });
+
+  it("does not transfer a sibling-root destroy from a CLI already under an unrelated host fence", async () => {
+    writeSiblingRegistry(["alpha"]);
+    const harness = createDestroyHarness();
+
+    await expect(
+      harness.withPortableHostFence(home, () =>
+        harness.destroyCommand.run(["alpha", "--yes"], process.cwd()),
+      ),
+    ).rejects.toThrow("Cannot transfer destroy for 'alpha'");
+    expect(harness.runOwningRegistryWorkerSpy).not.toHaveBeenCalled();
+  });
 });
