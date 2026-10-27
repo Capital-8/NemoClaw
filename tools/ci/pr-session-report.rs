@@ -29,6 +29,7 @@ fn validate(body: &str) -> Result<(), &'static str> {
     let fields = [
         "Harness",
         "Skills",
+        "Instruction files",
         "Tool calls",
         "Session window",
         "Compactions",
@@ -56,7 +57,7 @@ fn validate(body: &str) -> Result<(), &'static str> {
         }
     }
     if seen.len() != fields.len() {
-        return Err("include all seven report fields, even when unavailable");
+        return Err("include all eight report fields, even when unavailable");
     }
     Ok(())
 }
@@ -92,6 +93,7 @@ mod tests {
             "{START}\n| Field | Status | Value | Evidence or limit |\n| --- | --- | --- | --- |\n\
 | Harness | recorded | Codex | Authoring session header |\n\
 | Skills | partial | test-driven-development (complete read) | Earlier context unavailable |\n\
+| Instruction files | partial | AGENTS.md (complete read); WRITING.md (injected) | Full contents retained; earlier injection coverage unavailable |\n\
 | Tool calls | recorded | read: 2; shell: 1 | Recorded invocations, including failed attempts |\n\
 | Session window | recorded | 2026-10-27T12:00Z to 2026-10-27T12:10Z; 10 min | First event through report cutoff |\n\
 | Compactions | recorded | 0 | Complete session record through cutoff |\n\
@@ -126,6 +128,16 @@ mod tests {
     #[test]
     fn recorded_partial_and_unavailable_fields_are_valid() {
         assert!(validate(&report()).is_ok());
+    }
+
+    #[test]
+    fn skills_do_not_replace_the_instruction_files_field() {
+        let body = report()
+            .lines()
+            .filter(|line| !line.starts_with("| Instruction files |"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(validate(&body).is_err());
     }
 
     #[test]
