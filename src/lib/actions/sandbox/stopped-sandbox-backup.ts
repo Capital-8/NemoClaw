@@ -473,6 +473,7 @@ export async function backupStartedSandboxState(
   // SSH is up but the sandbox's boot may still be settling. Run the backup,
   // retrying only when the native capture reports the still-churning process
   // set, and fail closed once the backup share of the transaction expires.
+  let lastChurnResult: sandboxState.BackupResult | undefined;
   while (deps.now() < backupDeadlineMs) {
     const result = deps.backup(
       sandboxName,
@@ -488,7 +489,8 @@ export async function backupStartedSandboxState(
         error: result.error ? `${result.error} ${deadlineError}` : deadlineError,
       };
     }
-    if (!result.nativeChurn) return result;
+    if (!result.nativeChurn || result.success) return result;
+    lastChurnResult = result;
     const remainingBackupMs = Math.floor(backupDeadlineMs - deps.now());
     if (remainingBackupMs <= 0) {
       const deadlineError = "Sandbox backup exceeded its transaction deadline.";
@@ -502,12 +504,12 @@ export async function backupStartedSandboxState(
   }
   const deadlineError = "Sandbox backup exceeded its transaction deadline.";
   return {
+    ...lastChurnResult,
     success: false,
-    backedUpDirs: [],
-    failedDirs: [],
-    backedUpFiles: [],
-    failedFiles: [],
-    nativeChurn: true,
-    error: deadlineError,
+    backedUpDirs: lastChurnResult?.backedUpDirs ?? [],
+    failedDirs: lastChurnResult?.failedDirs ?? [],
+    backedUpFiles: lastChurnResult?.backedUpFiles ?? [],
+    failedFiles: lastChurnResult?.failedFiles ?? [],
+    error: lastChurnResult?.error ? `${lastChurnResult.error} ${deadlineError}` : deadlineError,
   };
 }

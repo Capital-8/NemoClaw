@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-churn-"));
@@ -82,36 +82,66 @@ beforeEach(() => {
   );
 });
 
+function withChurningCaptureFixture(check: () => void): void {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-churn-run-"));
+  const oldPath = process.env.PATH;
+  const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+  const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
+  try {
+    const binDir = path.join(fixture, "bin");
+    const nativeRoot = path.join(fixture, "native-home");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(nativeRoot, { recursive: true });
+    writeFakeOpenshell(binDir);
+    writeFakeSsh(binDir);
+    process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
+    process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+    check();
+  } finally {
+    restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+    restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
+    restoreEnv("PATH", oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
 describe("live SSH native-home capture process churn", () => {
   it("reports a churned capture as retryable native churn, not unreachable (#12867)", () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-churn-run-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    const oldNativeRoot = process.env.NEMOCLAW_TEST_NATIVE_ROOT;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const nativeRoot = path.join(fixture, "native-home");
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(nativeRoot, { recursive: true });
-      writeFakeOpenshell(binDir);
-      writeFakeSsh(binDir);
-      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
-      process.env.NEMOCLAW_TEST_NATIVE_ROOT = nativeRoot;
-      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
-
+    withChurningCaptureFixture(() => {
       const backup = sandboxState.backupSandboxState("alpha");
-
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("Native home/workspace capture failed: exit 21");
       expect(backup.nativeChurn).toBe(true);
       expect(backup.unreachable).toBeUndefined();
       const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
       expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
-    } finally {
-      restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
-      restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
-      restoreEnv("PATH", oldPath);
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
+    });
+  });
+
+  it("does not retry a churned capture when SSH cleanup fails (#12867)", () => {
+    withChurningCaptureFixture(() => {
+      const originalRemove = fs.rmSync;
+      let cleanupDirectory: string | undefined;
+      const remove = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+        if (
+          typeof target === "string" &&
+          path.basename(target).startsWith("nemoclaw-native-state-")
+        ) {
+          cleanupDirectory = target;
+          throw new Error("cleanup blocked");
+        }
+        return originalRemove(target, options);
+      });
+      try {
+        const backup = sandboxState.backupSandboxState("alpha");
+        expect(backup.success).toBe(false);
+        expect(backup.nativeChurn).toBe(false);
+        expect(backup.error).toContain("Remove that directory before retrying.");
+      } finally {
+        remove.mockRestore();
+        if (cleanupDirectory) fs.rmSync(cleanupDirectory, { recursive: true, force: true });
+      }
+    });
   });
 });

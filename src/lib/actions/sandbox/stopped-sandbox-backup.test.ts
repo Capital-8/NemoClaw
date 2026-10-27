@@ -681,7 +681,8 @@ describe("backupStartedSandboxState", () => {
     expect(result).toMatchObject({
       success: false,
       nativeChurn: true,
-      error: "Sandbox backup exceeded its transaction deadline.",
+      error:
+        "Native home/workspace capture failed: exit 21 Sandbox backup exceeded its transaction deadline.",
     });
     // backupDeadline is transaction - 30s stop reserve. The delay walks the
     // clock in 1s steps, so ~300 churned attempts exhaust it, fail closed, and

@@ -2257,6 +2257,8 @@ function withSshCleanupResult<T extends BackupResult | RestoreResult>({
         ...result,
         success: false,
         ...("unreachable" in result ? { unreachable: false } : {}),
+        // A failed SSH cleanup must be repaired before another capture attempt.
+        ...("nativeChurn" in result ? { nativeChurn: false } : {}),
         error: [result.error, `${cleanupError.message}. Remove that directory before retrying.`]
           .filter(Boolean)
           .join(" "),
