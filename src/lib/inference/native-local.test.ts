@@ -488,9 +488,9 @@ describe("native local inference", () => {
     });
     expect(hermes.document.binaries).toEqual([
       "/usr/bin/python3",
+      "/usr/bin/python3.13",
       "/opt/hermes/.venv/bin/python",
       "/opt/hermes/.venv/bin/python3",
-      "/usr/bin/python3.13",
       "/opt/venv/bin/python3",
       "/usr/local/bin/curl",
       "/usr/bin/curl",
