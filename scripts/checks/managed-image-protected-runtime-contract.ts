@@ -461,7 +461,12 @@ export async function readProtectedLocalInferenceCount(
     !/^[a-f0-9]{48}$/u.test(token)
   )
     throw new Error("protected local inference receipt authority is unavailable");
-  const response = await fetch(`http://127.0.0.1:${port}/_nemoclaw/e2e-inference-receipt`, {
+  const model = input.model ?? "";
+  if (ollama && !model) throw new Error("protected local inference receipt model is unavailable");
+  const receiptPath = ollama
+    ? `/_nemoclaw/e2e-inference-receipt?${new URLSearchParams({ model })}`
+    : "/_nemoclaw/e2e-inference-receipt";
+  const response = await fetch(`http://127.0.0.1:${port}${receiptPath}`, {
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(5_000),
   });
@@ -472,7 +477,8 @@ export async function readProtectedLocalInferenceCount(
     typeof receipt !== "object" ||
     !("completedRequests" in receipt) ||
     !Number.isSafeInteger(receipt.completedRequests) ||
-    (receipt.completedRequests as number) < 0
+    (receipt.completedRequests as number) < 0 ||
+    (ollama && (!("model" in receipt) || receipt.model !== model))
   )
     throw new Error("protected local inference receipt is malformed");
   return receipt.completedRequests as number;

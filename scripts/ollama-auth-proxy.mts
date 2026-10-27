@@ -337,9 +337,44 @@ function assertBackendBoundToLoopback(port: number): void {
   process.exit(EXIT_BACKEND_NOT_LOOPBACK);
 }
 
+const RECEIPT_PATH = "/_nemoclaw/e2e-inference-receipt";
+const MAX_RECEIPT_REQUEST_BYTES = 8 * 1024 * 1024;
+const MAX_RECEIPT_MODEL_BYTES = 256;
+const MAX_RECEIPT_MODELS = 64;
+
+function captureChatModel(request: http.IncomingMessage): () => string | null {
+  let chunks: Buffer[] = [];
+  let bytes = 0;
+  let model: string | null = null;
+  request.on("data", (chunk: Buffer) => {
+    bytes += chunk.length;
+    if (bytes <= MAX_RECEIPT_REQUEST_BYTES) chunks.push(chunk);
+    else chunks = [];
+  });
+  request.once("end", () => {
+    if (bytes > MAX_RECEIPT_REQUEST_BYTES) return;
+    try {
+      const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      if (
+        body &&
+        typeof body === "object" &&
+        "model" in body &&
+        typeof body.model === "string" &&
+        Buffer.byteLength(body.model) <= MAX_RECEIPT_MODEL_BYTES
+      ) {
+        model = body.model;
+      }
+    } catch {
+      // An invalid request cannot establish model-scoped completion evidence.
+    }
+    chunks = [];
+  });
+  return () => model;
+}
+
 function buildProxyServer(token: string, backendUrl: URL): http.Server {
   const expectedBuf = Buffer.from(`Bearer ${token}`);
-  let completedChatRequests = 0;
+  const completedChatRequestsByModel = new Map<string, number>();
   const server = http.createServer((clientReq, clientRes) => {
     // Every request must present a valid Bearer token. The proxy binds 0.0.0.0
     // so the OpenShell sandbox container can reach it via the docker bridge —
@@ -391,14 +426,30 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
       return;
     }
 
-    if (clientReq.url === "/_nemoclaw/e2e-inference-receipt") {
+    if (clientReq.url === RECEIPT_PATH || clientReq.url?.startsWith(`${RECEIPT_PATH}?`)) {
       if (clientReq.method !== "GET") {
         clientRes.writeHead(405, { Allow: "GET" });
         clientRes.end();
         return;
       }
+      const models = new URLSearchParams(clientReq.url.slice(RECEIPT_PATH.length + 1)).getAll(
+        "model",
+      );
+      if (
+        models.length !== 1 ||
+        models[0].length === 0 ||
+        Buffer.byteLength(models[0]) > MAX_RECEIPT_MODEL_BYTES
+      ) {
+        clientRes.writeHead(400).end();
+        return;
+      }
       clientRes.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      clientRes.end(JSON.stringify({ completedRequests: completedChatRequests }));
+      clientRes.end(
+        JSON.stringify({
+          model: models[0],
+          completedRequests: completedChatRequestsByModel.get(models[0]) ?? 0,
+        }),
+      );
       return;
     }
 
@@ -406,6 +457,8 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
     const headers = { ...clientReq.headers };
     delete headers.authorization;
     delete headers.host;
+    const chatCompletion = clientReq.method === "POST" && clientReq.url === "/v1/chat/completions";
+    const requestModel = chatCompletion ? captureChatModel(clientReq) : () => null;
 
     const handleBackendError = (err: Error): void => {
       if (clientRes.destroyed || clientRes.writableEnded) return;
@@ -428,13 +481,17 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
       (proxyRes: http.IncomingMessage) => {
         proxyRes.once("error", handleBackendError);
         if (
-          clientReq.method === "POST" &&
-          clientReq.url === "/v1/chat/completions" &&
+          chatCompletion &&
           (proxyRes.statusCode ?? 500) >= 200 &&
           (proxyRes.statusCode ?? 500) < 300
         ) {
           clientRes.once("finish", () => {
-            completedChatRequests += 1;
+            const model = requestModel();
+            if (!model) return;
+            const previous = completedChatRequestsByModel.get(model);
+            if (previous === undefined && completedChatRequestsByModel.size >= MAX_RECEIPT_MODELS)
+              return;
+            completedChatRequestsByModel.set(model, (previous ?? 0) + 1);
           });
         }
         clientRes.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);

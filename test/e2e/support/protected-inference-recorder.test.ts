@@ -52,7 +52,9 @@ it("records only authenticated completed requests to the expected local model", 
     expect((await request("expected-model", "wrong-token")).status).toBe(401);
     expect(backendRequests).toBe(0);
     expect((await request("other-model")).status).toBe(200);
-    expect((await request("expected-model", recorder.token, true)).status).toBe(500);
+    const failed = await request("expected-model", recorder.token, true);
+    expect(failed.status).toBe(500);
+    expect(failed.headers.get("content-type")).toBe("application/json");
     expect((await receipt()).completedRequests).toBe(0);
     const accepted = await request("expected-model");
     expect(accepted.status).toBe(200);
