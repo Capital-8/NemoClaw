@@ -2845,6 +2845,20 @@ user_local_executable_directory_safe() {
   done
 }
 
+assert_managed_npm_prefix_safe() {
+  local npm_prefix="${1:-}"
+  case "$npm_prefix" in
+    "$HOME/.npm-global" | "$HOME/.npm-global/"*) ;;
+    *) return 0 ;;
+  esac
+  local directory
+  for directory in "$npm_prefix" "$npm_prefix/bin" "$npm_prefix/lib" "$npm_prefix/lib/node_modules"; do
+    if ! user_local_executable_directory_safe "$directory"; then
+      error "Unsafe user-local npm directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+    fi
+  done
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path expected_shim temp_shim=""
@@ -2870,6 +2884,7 @@ ensure_cli_shim() {
   if [[ -z "$cli_path" || ! -x "$cli_path" ]]; then
     return 1
   fi
+  assert_managed_npm_prefix_safe "${npm_bin%/bin}"
   node_dir="$(dirname "$node_path")"
 
   # If npm placed the binary at the same path as the shim target (e.g. when
@@ -3157,13 +3172,17 @@ fix_npm_permissions() {
   if [[ -z "$npm_prefix" ]]; then
     return 0
   fi
+  assert_managed_npm_prefix_safe "$npm_prefix"
 
   if [[ -w "$npm_prefix" || -w "$npm_prefix/lib" ]]; then
     return 0
   fi
 
   info "npm global prefix '${npm_prefix}' is not writable — configuring user-local installs"
-  mkdir -p "$HOME/.npm-global"
+  assert_managed_npm_prefix_safe "$HOME/.npm-global"
+  (umask g-w,o-w && mkdir -p "$HOME/.npm-global") \
+    || error "Could not create the user-local npm directory $HOME/.npm-global."
+  assert_managed_npm_prefix_safe "$HOME/.npm-global"
   npm config set prefix "$HOME/.npm-global"
 
   # shellcheck disable=SC2016
@@ -3423,6 +3442,16 @@ finish_nemoclaw_install() {
   ensure_nemoclaw_shim || true
 }
 
+link_nemoclaw_cli() {
+  local source_root="$1" npm_prefix
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  assert_managed_npm_prefix_safe "$npm_prefix"
+  # shellcheck disable=SC2016  # $1 expands in the child shell.
+  spin "Linking ${_CLI_DISPLAY} CLI" bash -c \
+    'umask g-w,o-w; cd "$1" && npm link --ignore-scripts' _ "$source_root"
+  assert_managed_npm_prefix_safe "$npm_prefix"
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   local repo_root package_json
@@ -3449,7 +3478,7 @@ install_nemoclaw() {
     spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check"
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link --ignore-scripts"
+    link_nemoclaw_cli "$NEMOCLAW_SOURCE_ROOT"
 
     _NEMOCLAW_CLI_INSTALL_MODE=source
   else
@@ -3496,7 +3525,7 @@ install_nemoclaw() {
       spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && node scripts/lib/openshell-sdk-install.mts prepare && npm install --ignore-scripts --prefer-offline --include=optional --@nvidia:registry=https://npm.pkg.github.com && node scripts/lib/openshell-sdk-install.mts check"
       spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
       spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-      spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link --ignore-scripts"
+      link_nemoclaw_cli "$nemoclaw_src"
       restore_managed_source_lockfile "$nemoclaw_src" \
         || warn "Could not restore package-lock.json in ${nemoclaw_src} — the next install re-clones that checkout instead of reusing it."
     fi

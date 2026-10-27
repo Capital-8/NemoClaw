@@ -72,6 +72,32 @@ function writeNodeForwarder(target: string): void {
   writeExecutable(target, `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
 }
 
+function createNpmPermissionFixture(tmp: string): string {
+  const fakeBin = path.join(tmp, "bin");
+  fs.mkdirSync(fakeBin);
+  writeExecutable(path.join(fakeBin, "uname"), "#!/usr/bin/env bash\nprintf 'Linux\\n'\n");
+  writeExecutable(
+    path.join(fakeBin, "npm"),
+    `#!/usr/bin/env bash
+if [[ "$1 $2 $3" == "config get prefix" ]]; then
+  printf '%s\\n' "$ACTIVE_NPM_PREFIX"
+  exit 0
+fi
+if [[ "$1 $2 $3" == "config set prefix" ]]; then
+  printf '%s\\n' "$*" >> "$NPM_CALL_LOG"
+  exit 0
+fi
+if [[ "$1" == link ]]; then
+  [[ -z "\${NPM_CALL_LOG:-}" ]] || printf '%s\\n' "$*" >> "$NPM_CALL_LOG"
+  mkdir -p "$ACTIVE_NPM_PREFIX/bin" "$ACTIVE_NPM_PREFIX/lib/node_modules"
+  exit 0
+fi
+exit 99
+`,
+  );
+  return fakeBin;
+}
+
 function createPackagedCliTree(prefix: string): {
   fakeBin: string;
   prefixBin: string;
@@ -211,6 +237,105 @@ function runVerifyNemoclaw(
 }
 
 describe("installer npm resolution", () => {
+  itWithPosixModes("creates a private npm fallback under umask 0002 (#12496)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-prefix-umask-"));
+    try {
+      const fakeBin = createNpmPermissionFixture(tmp);
+      const npmCallLog = path.join(tmp, "npm-calls.log");
+      const result = runInstallerFunction("umask 0002; fix_npm_permissions", fakeBin, {
+        ACTIVE_NPM_PREFIX: "/System/nemoclaw",
+        HOME: tmp,
+        NPM_CALL_LOG: npmCallLog,
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.statSync(path.join(tmp, ".npm-global")).mode & 0o022).toBe(0);
+      expect(fs.readFileSync(npmCallLog, "utf-8")).toContain("config set prefix");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  itWithPosixModes(
+    "preserves an unsafe existing npm fallback and stops before configuration (#12496)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-prefix-unsafe-"));
+      try {
+        const fakeBin = createNpmPermissionFixture(tmp);
+        const npmPrefix = path.join(tmp, ".npm-global");
+        const npmCallLog = path.join(tmp, "npm-calls.log");
+        fs.mkdirSync(npmPrefix);
+        fs.chmodSync(npmPrefix, 0o775);
+        const result = runInstallerFunction("fix_npm_permissions", fakeBin, {
+          ACTIVE_NPM_PREFIX: "/System/nemoclaw",
+          HOME: tmp,
+          NPM_CALL_LOG: npmCallLog,
+        });
+
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).toContain(npmPrefix);
+        expect(fs.statSync(npmPrefix).mode & 0o777).toBe(0o775);
+        expect(fs.existsSync(npmCallLog)).toBe(false);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  itWithPosixModes("links into a private npm fallback under umask 0002 (#12496)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-link-umask-"));
+    try {
+      const fakeBin = createNpmPermissionFixture(tmp);
+      const npmPrefix = path.join(tmp, ".npm-global");
+      const sourceRoot = path.join(tmp, "source");
+      fs.mkdirSync(sourceRoot);
+      const result = runInstallerFunction(
+        `umask 0002; link_nemoclaw_cli ${JSON.stringify(sourceRoot)}`,
+        fakeBin,
+        { ACTIVE_NPM_PREFIX: npmPrefix, HOME: tmp },
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      for (const directory of [
+        npmPrefix,
+        path.join(npmPrefix, "bin"),
+        path.join(npmPrefix, "lib"),
+        path.join(npmPrefix, "lib", "node_modules"),
+      ]) {
+        expect(fs.statSync(directory).mode & 0o022).toBe(0);
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  itWithPosixModes("stops before npm link when the fallback bin is group-writable (#12496)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-link-unsafe-"));
+    try {
+      const fakeBin = createNpmPermissionFixture(tmp);
+      const npmPrefix = path.join(tmp, ".npm-global");
+      const npmBin = path.join(npmPrefix, "bin");
+      const npmCallLog = path.join(tmp, "npm-calls.log");
+      const sourceRoot = path.join(tmp, "source");
+      fs.mkdirSync(npmBin, { recursive: true });
+      fs.mkdirSync(sourceRoot);
+      fs.chmodSync(npmBin, 0o775);
+
+      const result = runInstallerFunction(
+        `link_nemoclaw_cli ${JSON.stringify(sourceRoot)}`,
+        fakeBin,
+        { ACTIVE_NPM_PREFIX: npmPrefix, HOME: tmp, NPM_CALL_LOG: npmCallLog },
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(npmBin);
+      expect(fs.statSync(npmBin).mode & 0o777).toBe(0o775);
+      expect(fs.existsSync(npmCallLog)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps an existing user-local npm PATH stable when fixing permissions", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-path-"));
     const fakeBin = path.join(tmp, "bin");
@@ -332,6 +457,31 @@ echo "${cliBin} v0.1.0"
       }
     },
   );
+
+  itWithPosixModes("rejects an unsafe npm fallback before publishing a shim (#12496)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-unsafe-npm-shim-"));
+    try {
+      const { fakeBin } = createPackagedCliTree(tmp);
+      const npmPrefix = path.join(tmp, ".npm-global");
+      const npmBin = path.join(npmPrefix, "bin");
+      fs.mkdirSync(npmBin, { recursive: true });
+      fs.chmodSync(npmPrefix, 0o775);
+      writeExecutable(path.join(npmBin, "nemoclaw"), "#!/usr/bin/env bash\nexit 0\n");
+
+      const result = runInstallerFunction("_CLI_BIN=nemoclaw; ensure_nemoclaw_shim", fakeBin, {
+        ACTIVE_NPM_PREFIX: npmPrefix,
+        HOME: tmp,
+        NO_COLOR: "1",
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(npmPrefix);
+      expect(fs.statSync(npmPrefix).mode & 0o777).toBe(0o775);
+      expect(fs.existsSync(path.join(tmp, ".local", "bin", "nemoclaw"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 
   itWithPosixModes(
     "rejects a root-owned sticky shim target without publishing an executable (#12496)",
