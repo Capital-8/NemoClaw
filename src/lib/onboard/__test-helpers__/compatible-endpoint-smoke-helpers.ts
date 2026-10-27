@@ -256,6 +256,10 @@ class FakeOpener:
             inference_request_tokens.append(
                 request_data.get("max_tokens", request_data.get("max_completion_tokens"))
             )
+            if responses[0] == "__timeout__":
+                raise TimeoutError("timed out after %s seconds" % timeout)
+            if responses[0] == "__wrapped_timeout__":
+                raise urllib.error.URLError(TimeoutError("timed out after %s seconds" % timeout))
             if inference_error:
                 private_detail = "private-credential-value"
                 reason = {
