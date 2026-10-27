@@ -55,6 +55,18 @@
   },
   "canonical_labels": [
     {
+      "name": "v1",
+      "family": "architecture_refactor",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Membership in the next NemoClaw architecture refactor on the v1 branch.",
+      "positive_signals": ["PR base branch is exactly v1", "issue explicitly targets the v1 implementation", "feature Epic or Task belongs to a documented v1 workstream", "issue records testing against an identified v1 build or revision"],
+      "negative_signals": ["/v1 API URL alone", "schema version alone", "model or provider name alone", "generic architecture or new-feature language without v1 scope evidence", "work explicitly limited to main without separate v1 evidence"],
+      "scope_references": ["https://github.com/NVIDIA/NemoClaw/blob/v1/docs/design/scope.md", "https://github.com/NVIDIA/NemoClaw/blob/v1/docs/design/architecture.md"],
+      "triage_recommendation_allowed": true,
+      "application_policy": "Supplement existing classification and routing. Record membership evidence in the rationale. Verify the live label before applying an approved write set.",
+      "mutually_exclusive_group": null
+    },
+    {
       "name": "bug-fix",
       "family": "pr_type",
       "item_kinds": ["pull_request"],
