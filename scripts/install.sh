@@ -2845,18 +2845,22 @@ user_local_executable_directory_safe() {
   done
 }
 
-assert_user_local_npm_prefix_safe() {
+assert_npm_executable_prefix_safe() {
   local npm_prefix="${1:-}"
-  case "$npm_prefix" in
-    "$HOME" | "$HOME/"*) ;;
-    *) return 0 ;;
-  esac
+  [[ -n "$npm_prefix" ]] || error "Could not resolve the active npm executable directory."
   local directory
   for directory in "$npm_prefix" "$npm_prefix/bin" "$npm_prefix/lib" "$npm_prefix/lib/node_modules"; do
     if ! user_local_executable_directory_safe "$directory"; then
-      error "Unsafe user-local npm directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+      error "Unsafe npm executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
     fi
   done
+}
+
+assert_user_local_npm_prefix_safe() {
+  local npm_prefix="${1:-}"
+  case "$npm_prefix" in
+    "$HOME" | "$HOME/"*) assert_npm_executable_prefix_safe "$npm_prefix" ;;
+  esac
 }
 
 ensure_cli_shim() {
@@ -2884,7 +2888,7 @@ ensure_cli_shim() {
   if [[ -z "$cli_path" || ! -x "$cli_path" ]]; then
     return 1
   fi
-  assert_user_local_npm_prefix_safe "${npm_bin%/bin}"
+  assert_npm_executable_prefix_safe "${npm_bin%/bin}"
   if ! user_local_executable_directory_safe "$(dirname "$NEMOCLAW_SHIM_DIR")"; then
     error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
   fi
@@ -3449,11 +3453,11 @@ finish_nemoclaw_install() {
 link_nemoclaw_cli() {
   local source_root="$1" npm_prefix
   npm_prefix="$(npm config get prefix 2>/dev/null || true)"
-  assert_user_local_npm_prefix_safe "$npm_prefix"
+  assert_npm_executable_prefix_safe "$npm_prefix"
   # shellcheck disable=SC2016  # $1 expands in the child shell.
   spin "Linking ${_CLI_DISPLAY} CLI" bash -c \
     'umask g-w,o-w; cd "$1" && npm link --ignore-scripts' _ "$source_root"
-  assert_user_local_npm_prefix_safe "$npm_prefix"
+  assert_npm_executable_prefix_safe "$npm_prefix"
 }
 
 install_nemoclaw() {
