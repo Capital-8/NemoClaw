@@ -351,7 +351,9 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     expect(newlinePath).toEqual({
       safe: false,
       entries: [],
-      violations: ["tar listing failed: archive entry contains a line break"],
+      violations: [
+        'tar listing failed: archive entry contains a line break: "workspace/line\\nbreak.txt"',
+      ],
     });
 
     const carriageReturnTarget = validateTarEntries(
@@ -361,7 +363,7 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     expect(carriageReturnTarget).toEqual({
       safe: false,
       entries: [],
-      violations: ["tar listing failed: archive entry contains a line break"],
+      violations: ['tar listing failed: archive entry contains a line break: "target\\rname"'],
     });
   });
 
@@ -380,7 +382,9 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     expect(validateTarEntries(linkpathTar, targetDir)).toEqual({
       safe: false,
       entries: [],
-      violations: ["tar listing failed: archive entry contains a line break"],
+      violations: [
+        'tar listing failed: archive entry contains a line break: "workspace/line\\nbreak"',
+      ],
     });
 
     const sparseNameTar = buildTar([
@@ -395,7 +399,9 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     expect(validateTarEntries(sparseNameTar, targetDir)).toEqual({
       safe: false,
       entries: [],
-      violations: ["tar listing failed: archive entry contains a line break"],
+      violations: [
+        'tar listing failed: archive entry contains a line break: "workspace/sparse\\r\\nname"',
+      ],
     });
   });
 
@@ -410,7 +416,9 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     expect(validateTarEntries(tar, targetDir)).toEqual({
       safe: false,
       entries: [],
-      violations: ["tar listing failed: archive entry contains a line break"],
+      violations: [
+        'tar listing failed: archive entry contains a line break: "workspace/long\\nlink"',
+      ],
     });
   });
 

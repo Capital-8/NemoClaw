@@ -115,9 +115,9 @@ function isUnsupportedQuotingStyle(result: SpawnSyncReturns<string>): boolean {
   return tarExitStatus(result) !== 0 && /quoting-style/iu.test(result.stderr || "");
 }
 
-/** Return true when a header value contains a line break (CR or LF), which would split a line-delimited listing. */
-function hasHeaderLineBreak(value: string): boolean {
-  return value.includes("\n") || value.includes("\r");
+/** Return a bounded JSON-encoded identifier when a header value contains a line break (CR or LF). */
+function findHeaderLineBreakIdentifier(value: string): string | null {
+  return value.includes("\n") || value.includes("\r") ? JSON.stringify(value.slice(0, 240)) : null;
 }
 
 /** Read a NUL-padded UTF-8 field from a 512-byte ustar header block. */
@@ -144,7 +144,7 @@ export function tarHeaderSize(header: Buffer): number | null {
 
 type TarHeaderLineBreakInspection =
   | "clean"
-  | "line-break"
+  | { kind: "line-break"; identifier: string }
   | "uninspectable"
   | "limit-exceeded"
   | "timeout";
@@ -164,11 +164,9 @@ function inspectPaxHeaderForLineBreaks(payload: Buffer): TarHeaderLineBreakInspe
     const equals = record.indexOf("=");
     if (equals <= 0) return "uninspectable";
     const key = record.slice(0, equals);
-    if (
-      (key === "path" || key === "linkpath" || key === "GNU.sparse.name") &&
-      hasHeaderLineBreak(record.slice(equals + 1))
-    ) {
-      return "line-break";
+    if (key === "path" || key === "linkpath" || key === "GNU.sparse.name") {
+      const identifier = findHeaderLineBreakIdentifier(record.slice(equals + 1));
+      if (identifier !== null) return { kind: "line-break", identifier };
     }
     cursor += length;
   }
@@ -196,12 +194,14 @@ function inspectArchiveHeadersForLineBreaks(
     if (header === "timeout") return "timeout";
     if (!header) return "uninspectable";
     if (header.every((byte) => byte === 0)) return "clean";
-    if (
-      hasHeaderLineBreak(tarHeaderString(header, 0, 100)) ||
-      hasHeaderLineBreak(tarHeaderString(header, 157, 100)) ||
-      hasHeaderLineBreak(tarHeaderString(header, 345, 155))
-    ) {
-      return "line-break";
+    const name = tarHeaderString(header, 0, 100);
+    const prefix = tarHeaderString(header, 345, 155);
+    const headerPath = prefix ? `${prefix}/${name}` : name;
+    const headerIdentifier =
+      findHeaderLineBreakIdentifier(headerPath) ??
+      findHeaderLineBreakIdentifier(tarHeaderString(header, 157, 100));
+    if (headerIdentifier !== null) {
+      return { kind: "line-break", identifier: headerIdentifier };
     }
     const size = tarHeaderSize(header);
     if (size === null) return "uninspectable";
@@ -222,7 +222,8 @@ function inspectArchiveHeadersForLineBreaks(
       } else {
         const longValue = metadata.toString("utf8").replace(/\0.*$/su, "");
         if (!longValue) return "uninspectable";
-        if (hasHeaderLineBreak(longValue)) return "line-break";
+        const longIdentifier = findHeaderLineBreakIdentifier(longValue);
+        if (longIdentifier !== null) return { kind: "line-break", identifier: longIdentifier };
       }
     }
     offset = nextOffset;
@@ -411,8 +412,8 @@ export function runTarListing(
       closeSync(headerFd);
       headerFd = null;
     }
-    if (headerInspection === "line-break") {
-      return `${failureLabel} failed: archive entry contains a line break`;
+    if (typeof headerInspection === "object") {
+      return `${failureLabel} failed: archive entry contains a line break: ${headerInspection.identifier}`;
     }
     if (headerInspection === "limit-exceeded") {
       return `${failureLabel} failed: archive header inspection exceeded the metadata-byte limit`;
