@@ -2548,8 +2548,13 @@ Its separate environment, process, filesystem, and canary checks are replaced by
 support tests cover leak detection and control cleanup.
 
 OpenRouter onboards OpenClaw and starts a fresh agent process.
-The `hosted-inference-openrouter` target also onboards Deep Agents Code with the same
-OpenRouter key and model. Its six-assertion case checks onboarding, credential isolation,
+The `hosted-inference-openrouter` target also onboards Hermes and Deep Agents Code with the same
+OpenRouter key and model. The Hermes case requires a real turn before rebuild, a successful
+`connect --probe-only`, and an immediate real turn after rebuilding without a fresh host credential.
+If that turn fails, it records only bounded classifications of the sandbox credential environment,
+managed config slots, and OpenShell provider attachment. It checks the reply even when
+`hermes -z` exits zero.
+The Deep Agents Code six-assertion case checks onboarding, credential isolation,
 the native TOML route, and one fresh `dcode -n --json` response.
 The OpenClaw case checks the native endpoint, credential placeholder,
 selected adapter, response model, and nonempty answer.
@@ -2576,7 +2581,7 @@ sandbox isolation, restart, and failed-operation recovery.
 The smoke requires the approved `NEMOCLAW_OPENROUTER_MODEL`; it does not select a default model.
 Credentials remain in the test host environment and OpenShell provider store; artifacts redact them.
 The cleanup helper destroys each test sandbox. The Deep Agents Code case checks sandbox absence even if onboarding fails.
-The OpenClaw case checks absence after successful onboarding; failed onboarding uses best-effort cleanup.
+The OpenClaw and Hermes cases check absence after successful onboarding; failed onboarding uses best-effort cleanup.
 Neither path proves removal of credentials from the OpenShell provider store.
 Discard the approved disposable gateway after each run, including failed onboarding. Use a fresh gateway for a retry.
 

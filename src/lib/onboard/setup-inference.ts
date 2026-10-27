@@ -52,6 +52,7 @@ import {
   ensureNativeNvidiaProvider,
   isNativeNvidiaProvider,
   NVIDIA_HOSTED_CREDENTIAL_ENV,
+  NVIDIA_HOSTED_NATIVE_ENDPOINT,
   normalizeNativeNvidiaProviderAttachment,
   persistNativeNvidiaProviderAuthority,
   resolveGatewayNativeNvidiaProviderAuthority,
@@ -1330,7 +1331,7 @@ export function createSetupInference(
         let hostLocalInferenceRuntimeProviderId: string | undefined;
         let nativeLocalRecreationSource: SandboxEntry | undefined;
         let nativeLocalProviderAttachment: NativeLocalProviderAttachment | undefined;
-        let nativeHostedEndpoint: string | undefined;
+        let nativeProviderEndpoint: string | undefined;
         let nativeHostedCredentialEnv: string | undefined;
         let nativeHostedProviderAttachment: NativeProviderAttachment | undefined;
         let retainedNativeHostedCredential = false;
@@ -1366,7 +1367,8 @@ export function createSetupInference(
           const route: Parameters<SetupInferenceDeps["updateSandbox"]>[1] = {
             provider: selectedProvider,
             model: selectedModel,
-            endpointUrl: nativeHostedEndpoint ?? hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
+            endpointUrl:
+              nativeProviderEndpoint ?? hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
             endpointSource: hostLocalRoute ? "inference-set" : endpointSource,
             credentialEnv: nativeHostedCredentialEnv ?? credentialEnv,
             preferredInferenceApi: selectedInferenceApi,
@@ -1687,7 +1689,7 @@ export function createSetupInference(
                     readAuthority: deps.getNativeHostedProviderAuthority,
                     writeAuthority: deps.setNativeHostedProviderAuthority,
                   });
-                  nativeHostedEndpoint =
+                  nativeProviderEndpoint =
                     nativeHostedProviderAttachment.endpointUrl ??
                     hostedNativeProvider(provider)!.endpoint;
                   nativeHostedCredentialEnv = "OPENAI_API_KEY";
@@ -1744,6 +1746,7 @@ export function createSetupInference(
                 ? { recordedSandboxName: recordedSandbox.name }
                 : {}),
             });
+            nativeProviderEndpoint = NVIDIA_HOSTED_NATIVE_ENDPOINT;
             // The retained gateway credential is unavailable to a host-side smoke.
             retainedNativeHostedCredential = !credentialValue;
             if (deps.getNativeNvidiaProviderAuthority && deps.setNativeNvidiaProviderAuthority) {
@@ -1977,7 +1980,7 @@ export function createSetupInference(
               provider,
               model,
               endpointUrl:
-                nativeHostedEndpoint ??
+                nativeProviderEndpoint ??
                 nativeHostedProviderAttachment?.endpointUrl ??
                 hostedNativeProvider(provider)?.endpoint ??
                 endpointUrl,
