@@ -399,6 +399,8 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" in \
         *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER must be root or sandbox" >&2; exit 1 ;; \
     esac \
     && command -v setpriv >/dev/null 2>&1
+# Native restore preserves the old home cache and requires no image-owned collision.
+RUN test ! -e /sandbox/.npm && test ! -L /sandbox/.npm
 USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]
