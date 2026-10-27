@@ -8,9 +8,9 @@ import {
   e2eAssertionBudgetGrowthViolations,
 } from "../../helpers/growth-guardrail-checks";
 import { testOnly } from "../../helpers/growth-guardrail-diff";
+import { e2eAssertionBudget } from "../../helpers/e2e-assertion-budget";
 import { e2eBudgetChangeDigest } from "../../helpers/e2e-budget-approval";
 import {
-  assertionBudget,
   BUDGET,
   GrowthRepository,
   POLICY,
@@ -74,7 +74,7 @@ describe("growth checks against the proposed merge", () => {
   it("rejects a candidate budget increase and its own approval policy", async () => {
     const base = repository.git(repository.origin, "rev-parse", "HEAD");
     repository.startCandidate();
-    repository.write(BUDGET, assertionBudget(3));
+    repository.write(BUDGET, e2eAssertionBudget(3));
     repository.write(
       POLICY,
       JSON.stringify({
@@ -82,7 +82,7 @@ describe("growth checks against the proposed merge", () => {
         exceptions: [
           {
             pullRequest: 1,
-            changeSha256: e2eBudgetChangeDigest(assertionBudget(2), assertionBudget(3)),
+            changeSha256: e2eBudgetChangeDigest(e2eAssertionBudget(2), e2eAssertionBudget(3)),
           },
         ],
       }),

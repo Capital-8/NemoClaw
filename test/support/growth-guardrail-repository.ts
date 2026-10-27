@@ -7,52 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { e2eAssertionBudget } from "../helpers/e2e-assertion-budget";
+
 export const RETAINED_TEST = "test/retained.test.ts";
 export const BUDGET = "ci/e2e-assertion-budget.json";
 export const POLICY = "ci/e2e-assertion-growth-exceptions.json";
-
-export function assertionBudget(count: number): string {
-  const metrics = {
-    expectCalls: count,
-    matcherAssertions: count,
-    nodeAssertions: 0,
-    namedAssertionHelpers: 0,
-    failCalls: 0,
-    throwGuards: 0,
-    objectFieldAssertions: 0,
-    assertionPoints: count,
-    generatedProbeBlocks: 0,
-    generatedProbeConditions: 0,
-  };
-  return JSON.stringify({
-    $comment: "fixture",
-    schemaVersion: 1,
-    issue: 10934,
-    epic: 10920,
-    reference: {
-      mainSha: "a".repeat(40),
-      currentMainCollectedTests: 1,
-      epicMainSha: "b".repeat(40),
-      epicCollectedTests: 1,
-      epicDirectExpectCalls: 2,
-      epicLiveExpectCalls: 2,
-    },
-    limits: {
-      testFileCount: 1,
-      liveFileCount: 1,
-      direct: metrics,
-      unique: metrics,
-      fileMetricOrder: [
-        "directExpectCalls",
-        "directAssertionPoints",
-        "transitiveExpectCalls",
-        "transitiveAssertionPoints",
-        "transitiveGeneratedProbeBlocks",
-      ],
-      files: { "test/e2e/live/example.test.ts": [count, count, count, count, 0] },
-    },
-  });
-}
 
 export class GrowthRepository {
   readonly directory = mkdtempSync(path.join(os.tmpdir(), "growth-diff-"));
@@ -64,7 +23,7 @@ export class GrowthRepository {
     mkdirSync(this.origin);
     this.git(this.origin, "init", "--initial-branch=main");
     this.write(RETAINED_TEST, "if (true) {}\n");
-    this.write(BUDGET, assertionBudget(2));
+    this.write(BUDGET, e2eAssertionBudget(2));
     this.write(POLICY, JSON.stringify({ schemaVersion: 1, exceptions: [] }));
     this.ancestor = this.commit("common ancestor");
     this.git(this.origin, "branch", "candidate");
@@ -102,7 +61,7 @@ export class GrowthRepository {
 
   reduceBase(): string {
     this.write(RETAINED_TEST, "// base removed a conditional\n");
-    this.write(BUDGET, assertionBudget(1));
+    this.write(BUDGET, e2eAssertionBudget(1));
     return this.commit("base-only ratchet reduction");
   }
 
