@@ -3,22 +3,15 @@
 
 import path from "node:path";
 
-import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import { CLI_NAME } from "../cli/branding";
 import { GATEWAY_PORT } from "../core/ports";
-import { prompt as askPrompt } from "../credentials/store";
 import { formatFailedBackupItems } from "../domain/backup-failure";
-import {
-  type GarbageCollectImagesOptions,
-  normalizeGarbageCollectImagesOptions,
-} from "../domain/lifecycle/options";
-import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
+import type { GarbageCollectImagesOptions } from "../domain/lifecycle/options";
 import {
   classifyOrphanedRegistrySandboxes,
   orphanedRegistryRemediation,
   orphanedRegistrySummary,
 } from "../domain/maintenance/orphan-detection";
-import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
@@ -31,9 +24,11 @@ import {
   defaultPortableStateDir,
   withPortableHostFence,
 } from "../state/portable-uninstall-retirement";
+import { garbageCollectImagesWithoutPortableAuthority } from "./maintenance/gc";
 import * as snapshotBackup from "./sandbox/snapshot/backup-authority";
 import {
   backupStartedSandboxState,
+  createUnreachableEngineNameLookup,
   isSandboxContainerDefinitivelyAbsent,
   returnSandboxContainerToStopped,
   startedSandboxBackupTransactionDeadline,
@@ -77,6 +72,14 @@ async function withHermesPortableMaintenanceAdmission<T>(
     assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), commandId);
     return operation();
   });
+}
+
+function engineUnavailableBackupSkipMessage(
+  name: string,
+  engineName: string,
+  retry: string,
+): string {
+  return `Skipping '${name}' (${engineName} is not responding, so its stopped container cannot be started; start ${engineName}, then ${retry})`;
 }
 
 function notRunningBackupSkipMessage(name: string): string {
@@ -310,6 +313,11 @@ export async function backupAllUnderPortableHostFence(
   );
 
   const purpose = options.purpose ?? "pre-upgrade";
+  const strictRetry =
+    purpose === "pre-uninstall"
+      ? "rerun the original uninstall command"
+      : `run '${CLI_NAME} backup-all' again`;
+  const unreachableEngineName = createUnreachableEngineNameLookup();
   const skipUnreachable =
     options.skipUnreachable ?? shouldSkipUnreachableSandboxBackup(process.env);
   const requireAll = options.requireAll ?? process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
@@ -319,6 +327,8 @@ export async function backupAllUnderPortableHostFence(
   let skipped = 0;
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
+  const unavailableEngineNames = new Set<string>();
+  let unavailableEngineSkipped = 0;
   const strandedOrphans: string[] = [];
   const backupRegisteredSandbox = async (sb: (typeof sandboxes)[number]): Promise<void> => {
     // Lock acquisition can reject entry before the stopped container path
@@ -388,6 +398,19 @@ export async function backupAllUnderPortableHostFence(
         strandedOrphans.push(sb.name);
         return;
       }
+      // Distinguish "the container is stopped" from "the engine that owns the
+      // container does not respond": only the first is fixed by starting the
+      // sandbox, so the not-running remediation must not be offered (#12749).
+      const unavailableEngineName = unreachableEngineName(sb.name);
+      if (unavailableEngineName) {
+        console.log(
+          `  ${D}${engineUnavailableBackupSkipMessage(sb.name, unavailableEngineName, strictRetry)}${R}`,
+        );
+        unavailableEngineNames.add(unavailableEngineName);
+        skipped++;
+        unavailableEngineSkipped++;
+        return;
+      }
       console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
       skipped++;
       notRunningSkipped++;
@@ -416,9 +439,13 @@ export async function backupAllUnderPortableHostFence(
       const nativeArchive = result.manifest?.nativeState
         ? path.join(result.manifest.backupPath, result.manifest.nativeState.archive)
         : null;
-      const backupDescription = nativeArchive
-        ? `native state archived in ${nativeArchive} (files are inside the archive)`
-        : `${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`;
+      const archiveCounts = result.nativeArchiveCounts;
+      const backupDescription =
+        nativeArchive && archiveCounts
+          ? `${archiveCounts.directories} dirs, ${archiveCounts.files} files → ${nativeArchive}`
+          : nativeArchive
+            ? `native state archived in ${nativeArchive} (entry counts unavailable)`
+            : `${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`;
       console.log(`  ${G}✓${R} ${sb.name}: ${backupDescription}`);
       backed++;
     } else {
@@ -475,10 +502,6 @@ export async function backupAllUnderPortableHostFence(
   console.log(
     `  ${purposeLabel} backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`,
   );
-  const strictRetry =
-    purpose === "pre-uninstall"
-      ? "rerun the original uninstall command"
-      : `run '${CLI_NAME} backup-all' again`;
   if (backed > 0) {
     console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
   }
@@ -511,6 +534,15 @@ export async function backupAllUnderPortableHostFence(
     console.error(
       `  Strict ${purpose} backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
     );
+    if (unavailableEngineSkipped > 0) {
+      const engineLabel = [...unavailableEngineNames].sort().join(" and ");
+      const cleanupConsequence =
+        purpose === "pre-uninstall" ? " and their containers cannot be cleaned up" : "";
+      console.error(
+        `  ${unavailableEngineSkipped} skipped sandbox(es) could not be started for backup because ${engineLabel} did not respond${cleanupConsequence}.`,
+      );
+      console.error(`  Start ${engineLabel}, then ${strictRetry}.`);
+    }
     if (notRunningSkipped > 0) {
       console.error(
         `  ${notRunningSkipped} skipped sandbox(es) were not running. Start each sandbox/container, then ${
@@ -528,85 +560,11 @@ export async function backupAllUnderPortableHostFence(
 export async function garbageCollectImages(
   options: string[] | GarbageCollectImagesOptions = {},
 ): Promise<void> {
-  return withHermesPortableMaintenanceAdmission("gc", () =>
-    garbageCollectImagesWithoutPortableAuthority(options),
+  // Reject unsupported state before even listing host images. The same check
+  // runs again inside deletion admission after confirmation to cover changes
+  // that occur while the prompt is open.
+  assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), "gc");
+  return garbageCollectImagesWithoutPortableAuthority(options, (operation) =>
+    withHermesPortableMaintenanceAdmission("gc", async () => await operation()),
   );
-}
-
-async function garbageCollectImagesWithoutPortableAuthority(
-  options: string[] | GarbageCollectImagesOptions = {},
-): Promise<void> {
-  const normalized = normalizeGarbageCollectImagesOptions(options);
-  const dryRun = normalized.dryRun === true;
-  const skipConfirm = normalized.yes === true || normalized.force === true;
-
-  let imagesOutput = "";
-  try {
-    // Scan every sandbox image repo, not just sandbox-from; see
-    // SANDBOX_IMAGE_REPOS for why local prebuilds were missed (#6301).
-    imagesOutput = SANDBOX_IMAGE_REPOS.map((repo) =>
-      dockerListImagesFormat(repo, "{{.Repository}}:{{.Tag}}\t{{.Size}}"),
-    ).join("\n");
-  } catch {
-    console.error("  Failed to query Docker images. Is Docker running?");
-    process.exit(1);
-  }
-
-  const allImages = parseSandboxImageRows(imagesOutput);
-
-  if (allImages.length === 0) {
-    console.log("  No sandbox images found on the host.");
-    return;
-  }
-
-  const { sandboxes } = registry.listSandboxes();
-  const orphans = findOrphanedSandboxImages(allImages, sandboxes);
-
-  if (orphans.length === 0) {
-    console.log(`  All ${allImages.length} sandbox image(s) are in use. Nothing to clean up.`);
-    return;
-  }
-
-  console.log(`  Found ${orphans.length} orphaned sandbox image(s):\n`);
-  for (const img of orphans) {
-    console.log(`    ${img.tag}  ${D}(${img.size})${R}`);
-  }
-  console.log("");
-
-  if (dryRun) {
-    console.log(`  --dry-run: would remove ${orphans.length} image(s).`);
-    return;
-  }
-
-  if (!skipConfirm) {
-    const answer = await askPrompt(`  Remove ${orphans.length} orphaned image(s)? [y/N]: `);
-    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-      console.log("  Cancelled.");
-      return;
-    }
-  }
-
-  let removed = 0;
-  let failed = 0;
-  for (const img of orphans) {
-    const rmiResult = dockerRmi(img.tag, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (rmiResult.status === 0) {
-      console.log(`  ${G}✓${R} Removed ${img.tag}`);
-      removed++;
-    } else {
-      const details = `${rmiResult.stderr || rmiResult.stdout || ""}`.trim();
-      console.error(`  ${YW}⚠${R} Failed to remove ${img.tag}${details ? `: ${details}` : ""}`);
-      failed++;
-    }
-  }
-
-  console.log("");
-  if (removed > 0) console.log(`  ${G}✓${R} Removed ${removed} orphaned image(s).`);
-  if (failed > 0) console.log(`  ${YW}⚠${R} Failed to remove ${failed} image(s).`);
-  if (failed > 0) process.exit(1);
 }

@@ -305,6 +305,7 @@ describe("onboard command options", () => {
       agent: "langchain-deepagents-code",
       agentsManifest: null,
       toolDisclosure: "direct",
+      dcodeAutoApprovalMode: null,
       observabilityEnabled: true,
       controlUiPort: 18790,
       deferProcessExit: true,
@@ -353,6 +354,7 @@ describe("onboard command options", () => {
       agent: null,
       agentsManifest: null,
       toolDisclosure: null,
+      dcodeAutoApprovalMode: null,
       observabilityEnabled: null,
       controlUiPort: null,
       deferProcessExit: true,
@@ -503,6 +505,8 @@ describe("onboard command options", () => {
               checkpointUpdatedAt: "2026-08-13T00:00:00.000Z",
               machineRevision: 1,
               profile: "portable",
+              recordedAgent: null,
+              recordedCustomImage: false,
             },
           },
         },
@@ -788,11 +792,11 @@ describe("onboard command options", () => {
         checkpointUpdatedAt: "2026-08-13T20:00:00.000Z",
         machineRevision: 2,
         profile: "default" as const,
+        recordedAgent: "openclaw",
+        recordedCustomImage: false,
       },
     }));
-    const runOnboard = vi.fn(async () => {
-      throw new OnboardResumeIntentRaceError();
-    });
+    const runOnboard = vi.fn().mockRejectedValue(new OnboardResumeIntentRaceError());
     const errors: string[] = [];
 
     await expect(

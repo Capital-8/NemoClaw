@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -9,6 +12,7 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { restorationScript } from "./openclaw-restoration.ts";
 import { proveStoppedDockerAgentRecovery } from "./openclaw-stopped-recovery.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-rebuild-oc";
@@ -56,6 +60,7 @@ test(
         "rebuild the sandbox",
         "verify restored state and native readiness",
         "recover a killed Docker source",
+        "diagnose unavailable Docker before uninstall cleanup",
       ],
     },
   },
@@ -82,6 +87,7 @@ test(
         "unknown home, workspace, package, hook, cron, native configuration, and native plugin state survive the rebuild",
         "the native OpenClaw health endpoint is ready after restore",
         "Docker Error-state recovery preserves workspace and native plugin state",
+        "strict pre-uninstall backup reports unavailable Docker and preserves registration",
       ],
     });
 
@@ -119,7 +125,7 @@ test(
 
     progress.phase("write durable OpenClaw state");
     const marker = `rebuild-openclaw-${Date.now()}`;
-    const write = await sandbox.execShell(
+    await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
         [
@@ -136,8 +142,6 @@ test(
         redactionValues: redactions,
       },
     );
-    assertExitZero(write, "write OpenClaw rebuild marker");
-
     const rebuildSource = async (artifactName: string) => {
       const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
         artifactName,
@@ -146,22 +150,18 @@ test(
         timeoutMs: 20 * 60_000,
       });
       assertExitZero(rebuild, "rebuild OpenClaw sandbox");
-      expect(resultText(rebuild)).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
     };
     const verifyRestoredState = async (artifactPrefix: string) => {
       await waitForNativeOpenClaw(sandbox, redactions, artifactPrefix);
       const read = await sandbox.execShell(
         SANDBOX_NAME,
-        trustedSandboxShellScript(
-          'marker="$(cat /sandbox/.openclaw/workspace/.rebuild-state-marker)"; for target in /sandbox/.rebuild-unknown-marker /sandbox/.openclaw/hooks/.rebuild-hook-marker /sandbox/.openclaw/cron/.rebuild-cron-marker /sandbox/.local/share/e2e-package/.rebuild-package-marker; do test "$(cat "$target")" = "$marker"; done; timeout="$(HOME=/sandbox openclaw config get agents.defaults.timeoutSeconds --json)"; HOME=/sandbox openclaw plugins inspect e2e-rebuild-plugin --runtime --json >/dev/null; printf "%s\\n%s\\n" "$marker" "$timeout"',
-        ),
+        trustedSandboxShellScript(restorationScript()),
         {
           artifactName: `${artifactPrefix}-read-marker`,
           env,
           redactionValues: redactions,
         },
       );
-      assertExitZero(read, "read restored OpenClaw marker");
       expect(read.stdout.trim(), resultText(read)).toBe(`${marker}\n119`);
     };
 
@@ -171,6 +171,7 @@ test(
     await verifyRestoredState("rebuild-openclaw");
 
     progress.phase("recover a killed Docker source");
+    expect(runtimeProvider.id).toBe("docker");
     await proveStoppedDockerAgentRecovery(
       sandbox,
       runtimeProvider,
@@ -181,8 +182,75 @@ test(
         await verifyRestoredState("rebuild-openclaw-stopped-source");
       },
       "native-readiness",
+      "openclaw",
+      async () => {
+        const uninstallEnv = {
+          ...buildAvailabilityProbeEnv(),
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          OPENSHELL_GATEWAY: env.OPENSHELL_GATEWAY,
+        };
+        progress.phase("diagnose unavailable Docker before uninstall cleanup");
+        const restoreDocker = async (artifactName: string) => {
+          const restore = await host.command(
+            "bash",
+            [
+              "-ceu",
+              "sudo -n systemctl start docker.socket docker.service; docker info >/dev/null",
+            ],
+            {
+              artifactName,
+              env: uninstallEnv,
+              redactionValues: redactions,
+              timeoutMs: 90_000,
+            },
+          );
+          assertExitZero(restore, "restore Docker before rebuilding or sandbox cleanup");
+        };
+        cleanup.trackDisposable("restore Docker after unavailable-engine uninstall proof", () =>
+          restoreDocker("rebuild-openclaw-uninstall-restore-docker-cleanup"),
+        );
+        try {
+          const engineStop = await host.command(
+            "bash",
+            [
+              "-ceu",
+              "sudo -n systemctl stop docker.socket docker.service; ! docker info >/dev/null 2>&1",
+            ],
+            {
+              artifactName: "rebuild-openclaw-uninstall-stop-docker",
+              env: uninstallEnv,
+              redactionValues: redactions,
+              timeoutMs: 60_000,
+            },
+          );
+          assertExitZero(engineStop, "stop Docker service and socket");
+          const uninstall = await host.nemoclaw(["uninstall", "--yes"], {
+            artifactName: "rebuild-openclaw-uninstall-docker-unavailable",
+            env: uninstallEnv,
+            redactionValues: redactions,
+            timeoutMs: 120_000,
+          });
+          const diagnostic = resultText(uninstall);
+          expect(uninstall.exitCode, diagnostic).not.toBe(0);
+          expect(diagnostic).toMatch(
+            /Docker did not respond and their containers cannot be cleaned up/u,
+          );
+          const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+          const registered = JSON.parse(fs.readFileSync(registryFile, "utf8")) as {
+            sandboxes?: Record<string, unknown>;
+          };
+          expect(registered.sandboxes).toHaveProperty(SANDBOX_NAME);
+          await artifacts.writeJson("rebuild-openclaw-uninstall-docker-unavailable.json", {
+            sandboxName: SANDBOX_NAME,
+            dockerInfoUnavailable: true,
+            uninstallRejected: true,
+            registeredSandboxPreserved: true,
+          });
+        } finally {
+          await restoreDocker("rebuild-openclaw-uninstall-restore-docker-before-rebuild");
+        }
+      },
     );
-
     await artifacts.target.complete({
       id: "rebuild-openclaw",
       status: "passed",

@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { approvalPackageSources } from "../../helpers/langchain-deepagents-code-patch-fixture";
+
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const middlewarePath = path.join(agentDir, "progressive_tool_disclosure.py");
@@ -20,14 +22,14 @@ const harnessPath = path.join(
 );
 
 const MAIN_ANCHOR = "    args = parser.parse_args()\n";
-const ENTRYPOINT_ANCHOR = "from deepagents_code.main import cli_main\n";
+const ENTRYPOINT_ANCHOR = "from deepagents_code import cli_main\n";
 const HARDENING_MARKER = "NemoClaw-managed Deep Agents Code hardening v2.";
 const DISCLOSURE_MARKER = "NemoClaw-managed progressive tool disclosure.";
 const OBSERVABILITY_MARKER = "NemoClaw-managed backend-neutral observability.";
 
 const PACKAGE_SOURCES: Record<string, string> = {
-  "__init__.py": `"""Deep Agents Code 0.1.55 test package."""`,
-  "__main__.py": `from deepagents_code.main import cli_main
+  "__init__.py": `"""Deep Agents Code 0.1.71 test package."""`,
+  "__main__.py": `from deepagents_code import cli_main
 
 if __name__ == "__main__":
     cli_main()
@@ -204,6 +206,7 @@ async def _two(): return await _run_install_subprocess("two")
 async def _three(): return await _run_install_subprocess("three")
 async def _four(): return await _run_install_subprocess("four")
 async def _five(): return await _run_install_subprocess("five")
+async def _six(): return await _run_install_subprocess("six")
 `,
   "integrations/__init__.py": `"""Test integrations."""`,
   "integrations/openai_codex.py": `from __future__ import annotations
@@ -258,12 +261,7 @@ class ModelSelectorScreen:
 
 def should_run_onboarding(state_dir=None): return True
 `,
-  "tui/widgets/approval.py": `from __future__ import annotations
-
-class ApprovalMenu:
-    def _build_options(self): return []
-    def _handle_selection(self, option, *, reject_message=None): pass
-`,
+  ...approvalPackageSources,
   "tui/widgets/status.py": `from __future__ import annotations
 
 class StatusBar:
@@ -320,6 +318,8 @@ class HooksManager:
 `,
   "client/non_interactive.py": `from __future__ import annotations
 
+def _resolve_shell_allow_list(): return ["bash"]
+
 async def run_non_interactive(*args, **kwargs):
     try:
         return kwargs
@@ -354,7 +354,7 @@ function writeFixtureFile(root: string, relativePath: string, content: string): 
   return target;
 }
 
-function makePatchFixture(version = "0.1.55"): PatchFixture {
+function makePatchFixture(version = "0.1.71"): PatchFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-disclosure-"));
   const packageDir = path.join(root, "deepagents_code");
   const sourcePaths = Object.entries(PACKAGE_SOURCES).map(([relativePath, source]) =>
@@ -767,9 +767,11 @@ describe("Deep Agents progressive tool disclosure", () => {
   });
 });
 
-describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
+describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
   it("patches the complete package and isolated main/subagent wiring idempotently", () => {
     const fixture = makePatchFixture();
+    const rendererPath = path.join(fixture.packageDir, "tui/widgets/tool_renderers.py");
+    const rendererSource = fs.readFileSync(rendererPath, "utf8");
     const first = runPatcher(fixture);
     expect(first.status, first.stderr).toBe(0);
 
@@ -783,6 +785,7 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     const second = runPatcher(fixture);
     expect(second.status, second.stderr).toBe(0);
     expect(snapshot(managedPaths)).toEqual(firstBytes);
+    expect(firstBytes[rendererPath]).toBe(rendererSource);
 
     expect(
       fixture.sourcePaths
@@ -790,7 +793,8 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
           (sourcePath) =>
             !sourcePath.endsWith("/__init__.py") &&
             !sourcePath.endsWith("/onboarding.py") &&
-            !sourcePath.endsWith("/hooks/legacy.py"),
+            !sourcePath.endsWith("/hooks/legacy.py") &&
+            !sourcePath.endsWith("/tool_renderers.py"),
         )
         .every(
           (file) =>
@@ -876,7 +880,7 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     const result = runPatcher(fixture);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Expected deepagents-code==0.1.55");
+    expect(result.stderr).toContain("Expected deepagents-code==0.1.71");
     expect(snapshot(fixture.sourcePaths)).toEqual(before);
     expect(fs.existsSync(fixture.modulePath)).toBe(false);
   });

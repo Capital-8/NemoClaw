@@ -74,10 +74,19 @@ describe("cleanup resources", () => {
     const cleanup = new CleanupRegistry();
     cleanup.trackGateway(host, "nemoclaw");
     cleanup.trackSandbox(host, "e2e-resource");
+    // A later engine restoration must run before cleanup deletes its sandbox.
+    cleanup.trackDisposable("restore Docker", () => {
+      calls.push("restore-docker");
+    });
     cleanup.trackForward(host, 18789);
 
     const result = await cleanup.runAll();
-    expect(calls).toEqual(["forward:18789", "sandbox:e2e-resource", "gateway:nemoclaw"]);
+    expect(calls).toEqual([
+      "forward:18789",
+      "restore-docker",
+      "sandbox:e2e-resource",
+      "gateway:nemoclaw",
+    ]);
     expect(result.failures).toEqual([]);
   });
 
@@ -167,6 +176,24 @@ describe("cleanup resources", () => {
       );
     },
   );
+
+  it("registers cleanup for the concurrent-gateway GC orphan tag before invoking GC (#12582)", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "..", "live", "concurrent-gateway-ports.test.ts"),
+      "utf8",
+    );
+    const tagImage = source.indexOf('["image", "tag", registeredImageTag, orphanTag]');
+    const registerCleanup = source.indexOf(
+      'cleanup.trackDisposable("remove temporary concurrent gateway GC tag"',
+    );
+    const runGc = source.indexOf('["gc", "--yes"]');
+    const cleanupRemovesTag = source.indexOf('["image", "rm", orphanTag]', registerCleanup);
+
+    expect(tagImage).toBeGreaterThanOrEqual(0);
+    expect(registerCleanup).toBeGreaterThan(tagImage);
+    expect(cleanupRemovesTag).toBeGreaterThan(registerCleanup);
+    expect(runGc).toBeGreaterThan(registerCleanup);
+  });
 
   it("continues typed cleanup after a resource failure", async () => {
     const calls: string[] = [];

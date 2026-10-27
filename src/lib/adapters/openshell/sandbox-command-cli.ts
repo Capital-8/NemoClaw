@@ -10,6 +10,10 @@ import {
 } from "../../core/process-session";
 import { spawnExitCode } from "../../core/process-exit";
 import { buildSubprocessEnv } from "../../subprocess-env";
+import {
+  buildOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "./runtime-selection";
 import type { OpenshellAsyncCaptureSignalSource } from "./client";
 import { captureOpenshellCommandAsyncResult } from "./command-execution";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
@@ -33,7 +37,11 @@ import {
 
 export { assertCliOpenShellSandboxName, assertCliOpenShellTarget } from "./target-validation";
 
-import { runCapturedProcess, type CapturedProcessChild } from "../../core/process-capture";
+import {
+  feedCapturedProcessStdin,
+  runCapturedProcess,
+  type CapturedProcessChild,
+} from "../../core/process-capture";
 import type {
   OpenShellSandboxSessionExecutor,
   OpenShellSandboxSessionOutcome,
@@ -257,6 +265,16 @@ function unavailableBinary(): OpenShellSandboxCommandCompletion {
   };
 }
 
+/** Apply the same filtered environment and recorded runtime to native sandbox probes. */
+export function buildSandboxCommandEnvironment(
+  runtimeSelection?: OpenShellRuntimeSelection,
+  runtimeEnv?: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return runtimeSelection
+    ? buildOpenShellRuntimeSelectionEnv(buildSubprocessEnv(), runtimeSelection)
+    : (runtimeEnv ?? buildSubprocessEnv());
+}
+
 export function createCliOpenShellSandboxCommandExecutor(
   deps: CliOpenShellSandboxCommandExecutorDeps = {},
 ): OpenShellSandboxCommandExecutor & OpenShellSandboxBufferedCommandExecutor {
@@ -297,7 +315,10 @@ export function createCliOpenShellSandboxCommandExecutor(
     },
     runBuffered: async (request) => {
       assertCliOpenShellSandboxName(request.sandboxName);
-      const environment = request.environment ?? deps.hostEnv ?? buildSubprocessEnv();
+      const environment = buildSandboxCommandEnvironment(
+        undefined,
+        request.environment ?? deps.hostEnv,
+      );
       assertCliOpenShellTarget(request.target, environment);
       const binary = resolveBinary();
       if (!binary) {
@@ -357,6 +378,11 @@ export function createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor
       }
     },
   };
+}
+
+function sessionStdinMode(input: boolean | Buffer | undefined): "pipe" | "ignore" | "inherit" {
+  if (Buffer.isBuffer(input)) return "pipe";
+  return input === false ? "ignore" : "inherit";
 }
 
 export type CliOpenShellSessionChild = CapturedProcessChild;
@@ -484,6 +510,7 @@ export function createCliOpenShellSandboxSessionExecutor(
       const stdinIsTty = (deps.stdinIsTty ?? (() => Boolean(process.stdin.isTTY)))();
       let cancelled = false;
       let finished = false;
+      let stdinError: Error | undefined;
       let child: CliOpenShellSessionChild | undefined;
       const spawnSession = (executable: string, argv: readonly string[], stdio: StdioOptions) => {
         const spawnChild: CliOpenShellSessionSpawner =
@@ -504,12 +531,19 @@ export function createCliOpenShellSandboxSessionExecutor(
               { spawnChild: spawnSession, signalSource: deps.signalSource },
             )
           : superviseProcessSession(
-              () =>
-                spawnSession(binary, args, [
-                  request.kind === "command" && request.stdin === false ? "ignore" : "inherit",
+              () => {
+                const input = request.kind === "command" ? request.stdin : undefined;
+                const session = spawnSession(binary, args, [
+                  sessionStdinMode(input),
                   "inherit",
                   "inherit",
-                ]),
+                ]);
+                if (Buffer.isBuffer(input))
+                  feedCapturedProcessStdin(session, input, (error) => {
+                    stdinError ??= error;
+                  });
+                return session;
+              },
               deps.signalSource,
               { forwardSigint: !stdinIsTty },
             );
@@ -523,7 +557,10 @@ export function createCliOpenShellSandboxSessionExecutor(
           }
         }
         return {
-          outcome: sessionOutcome(result, cancelled),
+          outcome: sessionOutcome(
+            stdinError ? { ...result, error: result.error ?? stdinError } : result,
+            cancelled,
+          ),
           stdout: result.stdout ?? "",
           stderr: result.stderr ?? "",
           release: result.releaseSignals ?? (() => {}),
