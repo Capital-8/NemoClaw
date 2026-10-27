@@ -2346,6 +2346,7 @@ function capturePreparedNativeState(
       {
         env: {
           ...process.env,
+          COPYFILE_DISABLE: "1",
           NEMOCLAW_NATIVE_CAPTURE_LIMIT_PLUS_ONE: String(maxBytes + 1),
         },
         stdio: ["ignore", archiveDescriptor, "pipe"],

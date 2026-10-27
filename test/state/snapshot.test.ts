@@ -1447,6 +1447,57 @@ process.stdout.write(String(uid) + "\\n");
     }
   });
 
+  it("rejects an archive member omitted from the tar listing before inspection", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unlisted-native-member-"));
+    const oldPath = process.env.PATH;
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const binDir = path.join(fixture, "bin");
+      fs.mkdirSync(nativeRoot);
+      fs.mkdirSync(binDir);
+      fs.writeFileSync(path.join(nativeRoot, "original.txt"), "original");
+      writeSandboxRegistry("alpha");
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+      expect(backup.success, backup.error).toBe(true);
+      const archive = Buffer.concat([
+        tarHeader("workspace/visible.txt", Buffer.alloc(0)),
+        tarHeader("workspace/unlisted.txt", Buffer.alloc(0)),
+        Buffer.alloc(1024),
+      ]);
+      replacePublishedNativeArchive(backup.manifest!.backupPath, archive);
+      const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      writeExecutable(
+        path.join(binDir, "tar"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+const result = spawnSync(${JSON.stringify(systemTar)}, args, {
+  input: fs.readFileSync(0), encoding: "utf8",
+});
+if (result.status !== 0) { process.stderr.write(result.stderr || ""); process.exit(result.status || 1); }
+process.stdout.write(result.stdout.split("\\n").filter((line) => !line.includes("unlisted.txt")).join("\\n"));
+`,
+      );
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+
+      expect(() =>
+        sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, () => undefined),
+      ).toThrow("tar raw header inventory did not match archive listing");
+    } finally {
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("preserves a native archive with more than 65,536 valid members", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-many-members-"));
     const oldPath = process.env.PATH;
