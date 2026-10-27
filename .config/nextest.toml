@@ -47,6 +47,7 @@ default-filter = '''
     | test(/^remote_service::/) | test(/^helm_recovery::/)
     | test(/^travel_example::/)
     | test(/^travel_team_example::/)
+    | test(/^tofu_integration::/)
 ))
 '''
 

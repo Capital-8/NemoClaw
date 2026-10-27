@@ -34,6 +34,9 @@ pub struct State {
     pub profiles: HashMap<String, p::ProviderProfile>,
     pub providers: HashMap<String, p::Provider>,
     pub sandboxes: HashMap<String, p::Sandbox>,
+    /// Created objects retained as request evidence after teardown.
+    pub provider_creates: Vec<p::Provider>,
+    pub sandbox_creates: Vec<p::Sandbox>,
     pub active_policy: Option<p::SandboxPolicy>,
     pub sandbox_phase: Option<p::SandboxPhase>,
     pub sandbox_conditions: Vec<p::SandboxCondition>,
@@ -453,6 +456,7 @@ fn create_provider(
         state.metadata(meta.name, workspace(&q.workspace_scope)?, meta.labels);
     created_metadata.annotations = meta.annotations;
     provider.metadata = Some(created_metadata);
+    state.provider_creates.push(provider.clone());
     state.providers.insert(key, provider.clone());
     state.created("provider");
     if std::mem::take(&mut state.lose_create) {
@@ -642,6 +646,7 @@ fn create_sandbox(
         }
         execution.create(&sandbox, &credentials)?;
     }
+    state.sandbox_creates.push(sandbox.clone());
     state.sandboxes.insert(key.clone(), sandbox.clone());
     if let Some((field, value)) = state.substitute_sandbox_after_create.take() {
         let metadata = state

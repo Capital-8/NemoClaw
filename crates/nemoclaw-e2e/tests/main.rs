@@ -61,6 +61,7 @@ mod remote_service;
 mod spark;
 #[path = "tls.rs"]
 mod tls;
+mod tofu_integration;
 #[path = "../../test-support/http.rs"]
 mod transport;
 #[path = "travel_example.rs"]
