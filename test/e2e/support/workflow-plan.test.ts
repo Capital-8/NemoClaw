@@ -672,23 +672,19 @@ describe("E2E workflow plan", () => {
     });
   });
 
-  it("routes GPU targets through their profile-specific workflow matrices", () => {
+  it("routes credential-free GPU targets through the standard workflow matrix", () => {
     const targetIds = ["gpu-double-onboard", "gpu-e2e", "llama-cpp-generic-gpu"];
     const expectedRunner = "linux-amd64-gpu-rtxpro6000-latest-1";
     const plan = buildE2eWorkflowPlan({ jobs: targetIds.join(",") });
 
     expect(plan.catalogueMatrices.standard).toEqual(
-      ["gpu-e2e", "llama-cpp-generic-gpu"].map((id) =>
-        expect.objectContaining({ id, runner: expectedRunner }),
-      ),
+      targetIds.map((id) => expect.objectContaining({ id, runner: expectedRunner })),
     );
-    expect(plan.catalogueMatrices["nvidia-api"]).toEqual([
-      expect.objectContaining({ id: "gpu-double-onboard", runner: expectedRunner }),
-    ]);
+    expect(plan.catalogueMatrices["nvidia-api"]).toEqual([]);
     expect(plan.catalogueMatrices.standard.find((row) => row.id === "gpu-e2e")).not.toHaveProperty(
       "selector",
     );
-    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api", "catalogue-standard"]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard"]);
   });
 
   it("selects the complete GPU reply target when its Hermes helper changes", () => {

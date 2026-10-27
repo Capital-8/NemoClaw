@@ -30,22 +30,17 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
-  it("routes the GPU provider-switch target through guarded NVIDIA API credentials", () => {
-    expect(catalogueTarget("gpu-double-onboard").profile).toBe("nvidia-api");
-    expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
-  });
-
   it(
-    "routes the GPU Ollama provider-switch target through the guarded NVIDIA API profile",
+    "routes the credential-free GPU Ollama provider-switch target through the standard profile",
     { timeout: 30_000 },
     () => {
       const targetId = "gpu-double-onboard";
       const plan = buildE2eWorkflowPlan({ targets: targetId });
 
-      expect(catalogueTarget(targetId).profile).toBe("nvidia-api");
-      expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual([targetId]);
-      expect(plan.catalogueMatrices.standard).toEqual([]);
-      expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
+      expect(catalogueTarget(targetId).profile).toBe("standard");
+      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual([targetId]);
+      expect(plan.catalogueMatrices["nvidia-api"]).toEqual([]);
+      expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard"]);
     },
   );
 
@@ -58,8 +53,8 @@ describe("standard E2E execution profile", () => {
       expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
         targetId,
       );
-      expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toContain(targetId);
-      expect(selectedWorkflowJobs(plan)).toContain("catalogue-nvidia-api");
+      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toContain(targetId);
+      expect(selectedWorkflowJobs(plan)).toContain("catalogue-standard");
     },
   );
 

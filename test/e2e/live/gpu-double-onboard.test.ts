@@ -17,18 +17,16 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { nativeLocalChatCommand } from "../fixtures/native-local-chat.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  PUBLIC_NVIDIA_SWITCH_MODEL,
-  PUBLIC_NVIDIA_SWITCH_PROVIDER,
-  requirePublicNvidiaSwitchKey,
-} from "./public-nvidia-switch-provider.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-double";
 const PROXY_PORT = process.env.NEMOCLAW_OLLAMA_PROXY_PORT ?? "11435";
 const GPU_E2E_MODEL = process.env.NEMOCLAW_MODEL ?? "qwen3.5:9b";
+const SWITCH_MODEL = "nemoclaw-e2e-after-ollama";
+const SWITCH_API_KEY = "sk-compatible-TEST-NOT-A-REAL-VALUE";
 const TOKEN_FILE = path.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
 const LIVE_TIMEOUT_MS = testTimeout(90 * 60_000);
 
@@ -199,7 +197,6 @@ test(
     progress,
     runtimeProvider,
     sandbox,
-    secrets,
     skip,
   }) => {
     await artifacts.target.declare({
@@ -214,12 +211,11 @@ test(
         "the running proxy accepts the persisted token after re-onboard and rejects unauthenticated/wrong-token requests",
         "the sandbox-owned native provider reaches Ollama after first onboard and re-onboard",
         "Ollama reports the selected model as active before the provider switch",
-        "nemoclaw inference set switches the sandbox to the public NVIDIA provider",
+        "nemoclaw inference set switches the sandbox to a local compatible endpoint",
         "sandbox inference succeeds through the new provider and host ollama ps no longer reports the superseded model",
       ],
     });
 
-    const publicApiKey = requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"));
     await runtimeProvider.requireAvailable({
       artifactName: "phase-0-runtime-info",
       scenarioLabel: "GPU double-onboard",
@@ -414,6 +410,27 @@ exit "$status"`,
     expect(activeModelsBeforeSwitch.exitCode, resultText(activeModelsBeforeSwitch)).toBe(0);
     expect(activeModelsBeforeSwitch.stdout).toContain(model);
 
+    const fake = await startFakeOpenAiCompatibleServer({
+      apiKey: SWITCH_API_KEY,
+      chatContent: "42",
+      host: "0.0.0.0",
+      model: SWITCH_MODEL,
+      port: 8000,
+      progress,
+      publicHost: "localhost",
+      requireAuth: true,
+      requireAuthModels: true,
+    });
+    cleanupRegistry.trackDisposable("close switched compatible endpoint", async () => {
+      try {
+        await artifacts.writeJson("phase-9-compatible-endpoint-requests.json", fake.requests());
+      } finally {
+        await fake.close();
+      }
+    });
+    // Inference set accepts this explicit sandbox-to-host bridge, while a raw
+    // localhost URL is deliberately rejected at its SSRF boundary.
+    const switchEndpointUrl = fake.baseUrl.replace("localhost", "host.openshell.internal");
     progress.phase("switch inference to a non-Ollama provider");
     const providerSwitch = await nemoclaw(
       host,
@@ -421,23 +438,30 @@ exit "$status"`,
         "inference",
         "set",
         "--provider",
-        PUBLIC_NVIDIA_SWITCH_PROVIDER,
+        "compatible-endpoint",
         "--model",
-        PUBLIC_NVIDIA_SWITCH_MODEL,
+        SWITCH_MODEL,
         "--sandbox",
         SANDBOX_NAME,
+        "--endpoint-url",
+        switchEndpointUrl,
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
       ],
       "phase-8-inference-set-away-from-ollama",
-      { NVIDIA_INFERENCE_API_KEY: publicApiKey },
+      { COMPATIBLE_API_KEY: SWITCH_API_KEY },
       execTimeout(5 * 60_000),
-      [publicApiKey],
+      [SWITCH_API_KEY],
     );
     expect(providerSwitch.exitCode, resultText(providerSwitch)).toBe(0);
 
     progress.phase("verify new-provider inference and confirm Ollama unloaded the old model");
+    const switchedRequestOffset = fake.requests().length;
     const switchedInference = await querySandboxForAnswer(
       sandbox,
-      PUBLIC_NVIDIA_SWITCH_MODEL,
+      SWITCH_MODEL,
       "phase-9-sandbox-inference-after-provider-switch",
       true,
     );
@@ -445,6 +469,18 @@ exit "$status"`,
     expect(containsAnswer(switchedInference.stdout, "42"), resultText(switchedInference)).toBe(
       true,
     );
+    expect(
+      fake
+        .requests()
+        .slice(switchedRequestOffset)
+        .some(
+          (request) =>
+            request.auth === "ok" &&
+            request.method === "POST" &&
+            request.path === "/v1/chat/completions" &&
+            request.model === SWITCH_MODEL,
+        ),
+    ).toBe(true);
     const activeModelsAfterSwitch = await host.command("ollama", ["ps"], {
       artifactName: "phase-9-ollama-ps-after-provider-switch",
       env: env(),
