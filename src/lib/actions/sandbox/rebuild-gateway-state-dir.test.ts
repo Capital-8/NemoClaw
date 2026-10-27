@@ -103,6 +103,107 @@ function replaceCertificateWithInvalidDates(
   }
 }
 
+function replaceClientWithUnrelatedPair(stateDir: string): void {
+  const clientDir = path.join(stateDir, "tls", "client");
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "ec",
+      "-pkeyopt",
+      "ec_paramgen_curve:prime256v1",
+      "-nodes",
+      "-subj",
+      "/CN=nemoclaw-test",
+      "-days",
+      "1",
+      "-keyout",
+      path.join(clientDir, "tls.key"),
+      "-out",
+      path.join(clientDir, "tls.crt"),
+    ],
+    { stdio: "ignore" },
+  );
+}
+
+function replaceWithCaSignedClientPair(stateDir: string): void {
+  const signingDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-signed-client-"));
+  try {
+    const caCert = path.join(signingDir, "ca.crt");
+    const caKey = path.join(signingDir, "ca.key");
+    const clientKey = path.join(signingDir, "client.key");
+    const clientRequest = path.join(signingDir, "client.csr");
+    const clientCert = path.join(signingDir, "client.crt");
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        "-nodes",
+        "-subj",
+        "/CN=nemoclaw-test-ca",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-days",
+        "1",
+        "-keyout",
+        caKey,
+        "-out",
+        caCert,
+      ],
+      { stdio: "ignore" },
+    );
+    execFileSync(
+      "openssl",
+      [
+        "req",
+        "-newkey",
+        "ec",
+        "-pkeyopt",
+        "ec_paramgen_curve:prime256v1",
+        "-nodes",
+        "-subj",
+        "/CN=nemoclaw-test-client",
+        "-keyout",
+        clientKey,
+        "-out",
+        clientRequest,
+      ],
+      { stdio: "ignore" },
+    );
+    execFileSync(
+      "openssl",
+      [
+        "x509",
+        "-req",
+        "-in",
+        clientRequest,
+        "-CA",
+        caCert,
+        "-CAkey",
+        caKey,
+        "-CAcreateserial",
+        "-days",
+        "1",
+        "-out",
+        clientCert,
+      ],
+      { stdio: "ignore" },
+    );
+    fs.copyFileSync(caCert, path.join(stateDir, "tls", "ca.crt"));
+    fs.copyFileSync(clientCert, path.join(stateDir, "tls", "client", "tls.crt"));
+    fs.copyFileSync(clientKey, path.join(stateDir, "tls", "client", "tls.key"));
+  } finally {
+    fs.rmSync(signingDir, { recursive: true, force: true });
+  }
+}
+
 describe("rebuild gateway state directory preflight (#13330)", () => {
   installRebuildFlowTestHooks();
   afterEach(() => {
@@ -132,6 +233,24 @@ describe("rebuild gateway state directory preflight (#13330)", () => {
   it("continues when the configured state directory belongs to the sandbox gateway", async () => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
     process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = sandboxGatewayStateDir();
+    try {
+      const harness = createRebuildFlowHarness();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("continues when the client certificate chains to a distinct gateway CA", async () => {
+    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+    const stateDir = sandboxGatewayStateDir();
+    replaceWithCaSignedClientPair(stateDir);
+    process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
     try {
       const harness = createRebuildFlowHarness();
 
@@ -177,6 +296,27 @@ describe("rebuild gateway state directory preflight (#13330)", () => {
 
       const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(errors).toContain("gateway TLS credentials");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("stops before backup or delete when the client certificate has a different CA", async () => {
+    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+    const stateDir = sandboxGatewayStateDir();
+    replaceClientWithUnrelatedPair(stateDir);
+    process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
+    try {
+      const harness = createRebuildFlowHarness();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/Configured OpenShell gateway state directory is unusable/u);
+
+      const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errors).toContain("Gateway client certificate is not signed by the gateway CA");
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     } finally {

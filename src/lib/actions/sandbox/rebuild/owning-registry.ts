@@ -111,12 +111,13 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_DISABLE_TELEMETRY",
 ] as const;
 
-function assertCertificatesCurrentlyValid(pem: Buffer, label: string): void {
+function assertCertificatesCurrentlyValid(pem: Buffer, label: string): X509Certificate[] {
   const blocks = pem
     .toString("utf8")
     .match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/gu);
   if (!blocks?.length) throw new Error(`${label} has no PEM certificate`);
   const now = Date.now();
+  const certificates: X509Certificate[] = [];
   for (const block of blocks) {
     const certificate = new X509Certificate(block);
     const validFrom = Date.parse(certificate.validFrom);
@@ -129,7 +130,31 @@ function assertCertificatesCurrentlyValid(pem: Buffer, label: string): void {
     ) {
       throw new Error(`${label} certificate is expired or not yet valid`);
     }
+    certificates.push(certificate);
   }
+  return certificates;
+}
+
+function assertClientCertificateTrustedByGatewayCa(
+  clientCertificates: readonly X509Certificate[],
+  caCertificates: readonly X509Certificate[],
+): void {
+  const trusted = new Set(caCertificates.map((certificate) => certificate.fingerprint256));
+  const possibleIssuers = [...clientCertificates.slice(1), ...caCertificates];
+  const pending = [clientCertificates[0]];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const certificate = pending.pop()!;
+    if (trusted.has(certificate.fingerprint256)) return;
+    if (visited.has(certificate.fingerprint256)) continue;
+    visited.add(certificate.fingerprint256);
+    for (const issuer of possibleIssuers) {
+      if (issuer.ca && certificate.checkIssued(issuer) && certificate.verify(issuer.publicKey)) {
+        pending.push(issuer);
+      }
+    }
+  }
+  throw new Error("Gateway client certificate is not signed by the gateway CA");
 }
 
 /**
@@ -161,13 +186,17 @@ export function rebuildGatewayStateDirIssue(
     try {
       // The SDK hands these to Node TLS; reject malformed or mismatched material here.
       const credentials = readManagedOpenShellSdkTls(stateDir);
-      assertCertificatesCurrentlyValid(credentials.caCert, "Gateway CA");
-      assertCertificatesCurrentlyValid(credentials.clientCert, "Gateway client");
+      const caCertificates = assertCertificatesCurrentlyValid(credentials.caCert, "Gateway CA");
+      const clientCertificates = assertCertificatesCurrentlyValid(
+        credentials.clientCert,
+        "Gateway client",
+      );
       tls.createSecureContext({
         ca: credentials.caCert,
         cert: credentials.clientCert,
         key: credentials.clientKey,
       });
+      assertClientCertificateTrustedByGatewayCa(clientCertificates, caCertificates);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       return `The gateway TLS credentials in ${stateDir}/tls are unusable: ${detail}`;
