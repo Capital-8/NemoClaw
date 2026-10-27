@@ -1020,6 +1020,16 @@ Newer Colima versions use the XDG base directory (`~/.config/colima/default/dock
 colima status
 ```
 
+### Onboarding Finds an OpenShell Provider Without a NemoClaw Ownership Receipt
+
+NemoClaw refuses to change an existing native OpenShell provider when it cannot find the matching ownership receipt. The provider can remain after you remove NemoClaw state but preserve OpenShell, such as after uninstalling with `--keep-openshell`.
+
+First, check whether a sandbox on the named gateway uses that provider. If none does, run the `openshell provider delete` command from the error, then rerun onboarding. The command names and shell-quotes the target gateway and provider.
+
+<Warning>
+Do not delete the provider if any sandbox uses it. Deleting it can stop inference for that sandbox.
+</Warning>
+
 ### Sandbox build is slow or hangs (under-provisioned container runtime)
 
 Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headroom for the BuildKit-driven sandbox image build. On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
