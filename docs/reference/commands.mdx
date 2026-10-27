@@ -3883,7 +3883,8 @@ A rebuild restores the previous native `openclaw.json`, so it does not repair th
 <AgentOnly variant="hermes">
 
 If the in-sandbox config write or integrity hash update fails, the selected inference path and NemoClaw registry remain committed, but the command exits with status `1`.
-Follow the printed `$$nemoclaw <name> rebuild` hint.
+For an existing registered provider, retry the same `inference set` command to finish configuration sync.
+For other providers, follow the printed `$$nemoclaw <name> rebuild` hint.
 
 </AgentOnly>
 
