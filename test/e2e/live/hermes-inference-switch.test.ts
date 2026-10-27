@@ -520,7 +520,12 @@ test(
       run: (attempt) =>
         sandbox.execShell(
           SANDBOX_NAME,
-          trustedSandboxShellScript(sandboxInferenceCommand(inferenceLocalPayload)),
+          trustedSandboxShellScript(
+            sandboxInferenceCommand(
+              inferenceLocalPayload,
+              switchEndpointUrl ?? NVIDIA_HOSTED_NATIVE_ENDPOINT,
+            ),
+          ),
           {
             artifactName: `hermes-sandbox-inference-after-cli-${attempt}`,
             env: env(),
