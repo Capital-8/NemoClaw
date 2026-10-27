@@ -2247,6 +2247,12 @@ Direct `main` runs use the same publication workflow and artifact contract.
 Protected managed-image build jobs apply a separate rule to their reusable base receipt.
 The producer must be from the same workflow run and no later than the consumer attempt.
 Receipt verification remains bound to the producer attempt.
+For a manual PR run, the protected startup job uses a trusted resolver to compare
+the candidate's OpenClaw base Dockerfile and its inputs with the published base's
+source revision. Matching inputs permit an immutable published base reference.
+Changed or unverified inputs use a base built from the exact candidate instead.
+The final managed image always builds from the selected candidate commit, and the
+GPU job verifies the same-run build-cache identity before its offline rebuild.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.

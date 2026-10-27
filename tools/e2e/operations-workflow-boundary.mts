@@ -649,7 +649,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedManagedImageMultiarchResolverCheckout =
         jobName === "managed-image-multiarch-startup" &&
-        step.name === "Checkout trusted Hermes resolver" &&
+        (step.name === "Checkout trusted Hermes resolver" ||
+          step.name === "Checkout trusted OpenClaw base resolver") &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedJetsonControllerCheckout =
