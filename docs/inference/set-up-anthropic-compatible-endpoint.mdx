@@ -30,7 +30,7 @@ For AWS Bedrock Runtime, a host-local adapter holds the AWS credentials and Open
 
 New qualifying custom endpoints use a sandbox-attached OpenShell provider.
 Use a public endpoint or an explicitly trusted private hostname or IP address.
-NemoClaw rejects an unverified Anthropic-compatible route that uses `host.openshell.internal` because the alias does not prove which process owns the selected port.
+NemoClaw rejects an Anthropic-compatible route that uses `host.openshell.internal` because the alias does not prove which process owns the selected port.
 Follow the [custom endpoint security requirements](custom-endpoint-security) for private destinations and address pinning.
 
 The native route binds the endpoint, API, and credential source to the selected sandbox.
