@@ -1626,6 +1626,7 @@ Host-side config, inference, gateway recovery, backup, policy, channel, and sand
 
 Restore sandbox readiness and re-establish host-side forwards without opening an SSH session.
 Use this after a sandbox crash or when `$$nemoclaw <name> status` reports a stopped sandbox or an unhealthy forward.
+The output identifies the target gateway before readiness checks.
 
 For a stopped standard sandbox, `recover` asks OpenShell to start that exact sandbox before it waits for readiness. If provider state appears active while OpenShell reports `Stopped`, recovery still submits the start through OpenShell so one lifecycle owner repairs the phase. If OpenShell cannot start the sandbox, recovery reports the failure and does not fall back to a direct provider-container mutation.
 
