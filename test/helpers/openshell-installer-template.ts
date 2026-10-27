@@ -130,6 +130,14 @@ export function installerReleaseTemplate(source: string, version: string): strin
   // direct-install permission fix. The current candidate is checked separately.
   const safetyHelper = "user_local_executable_directory_safe() {\n";
   if (source.includes(safetyHelper)) {
+    const systemTargetFallback = `if [ "$target_dir" = "/usr/local/bin" ] && [ -w "$target_dir" ] \\
+  && [ -z "$ACTIVE_OPENSHELL_BIN" ] && ! user_local_executable_directory_safe "$target_dir"; then
+  target_dir="\${XDG_BIN_HOME:-$HOME/.local/bin}"
+fi
+
+`;
+    assert.equal(source.split(systemTargetFallback).length - 1, 1, "system target fallback");
+    source = source.replace(systemTargetFallback, "");
     const activeDirectorySafetyCheck = `  if ! user_local_executable_directory_safe "$target_dir"; then
     fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
   fi

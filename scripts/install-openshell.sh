@@ -1056,7 +1056,7 @@ user_local_executable_directory_safe() {
       mode_value=$((8#$mode))
       [[ "$owner" == "$uid" || "$owner" == 0 ]] || return 1
       if ((mode_value & 022)); then
-        [[ "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
+        [[ "$current" != "$1" && "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
       fi
     fi
     [[ "$current" != / ]] || return 0
@@ -1064,6 +1064,11 @@ user_local_executable_directory_safe() {
     [[ -n "$current" ]] || current=/
   done
 }
+
+if [ "$target_dir" = "/usr/local/bin" ] && [ -w "$target_dir" ] \
+  && [ -z "$ACTIVE_OPENSHELL_BIN" ] && ! user_local_executable_directory_safe "$target_dir"; then
+  target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+fi
 
 if [ -w "$target_dir" ]; then
   if ! user_local_executable_directory_safe "$target_dir"; then

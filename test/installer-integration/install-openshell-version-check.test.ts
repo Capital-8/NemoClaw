@@ -1010,7 +1010,45 @@ exit 1`,
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
+  it("falls back from a writable unsafe system default before publishing new binaries (#12496)", () => {
+    const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+    try {
+      fs.rmSync(path.join(fakeBin, "openshell"));
+      const localBin = path.join(tmp, ".local", "bin");
+      const bashEnv = path.join(tmp, "unsafe-system-target.sh");
+      fs.writeFileSync(
+        bashEnv,
+        `function [ {
+  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then return 0; fi
+  builtin [ "$@"
+}
+function stat {
+  if [[ " $* " == *" /usr/local/bin "* ]]; then printf "0 775\\n"; return 0; fi
+  command stat "$@"
+}
+`,
+      );
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          BASH_ENV: bashEnv,
+          HOME: tmp,
+          XDG_BIN_HOME: "",
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(localBin, "openshell"))).toBe(true);
+      expect(fs.existsSync(path.join(localBin, "openshell-gateway"))).toBe(true);
+      expect(fs.existsSync(path.join(localBin, "openshell-sandbox"))).toBe(true);
+      expect(fs.statSync(localBin).mode & 0o777).toBe(0o755);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
   it.each(["writable ancestor", "symlinked bin"])(
     "rejects a %s before publishing a direct user-local binary (#12496)",
     (unsafePath) => {

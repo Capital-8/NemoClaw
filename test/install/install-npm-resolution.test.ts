@@ -325,6 +325,42 @@ echo "${cliBin} v0.1.0"
     }
   });
 
+  it("rejects a root-owned sticky shim target without publishing an executable (#12496)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-sticky-shim-"));
+    try {
+      const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+      const sticky = path.join(tmp, "sticky");
+      fs.mkdirSync(sticky, { mode: 0o1777 });
+      fs.chmodSync(sticky, 0o1777);
+      const bashEnv = path.join(tmp, "root-sticky-stat.sh");
+      fs.writeFileSync(
+        bashEnv,
+        `function stat {
+  if [[ " $* " == *" $NEMOCLAW_TEST_ROOT_STICKY_DIR "* ]]; then printf '0 1777\\n'; return 0; fi
+  command stat "$@"
+}
+`,
+      );
+      const result = runInstallerFunction(
+        '_CLI_BIN=nemoclaw; NEMOCLAW_SHIM_DIR="$NEMOCLAW_TEST_ROOT_STICKY_DIR"; ensure_nemoclaw_shim',
+        fakeBin,
+        {
+          ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+          BASH_ENV: bashEnv,
+          HOME: tmp,
+          NEMOCLAW_TEST_ROOT_STICKY_DIR: sticky,
+          NO_COLOR: "1",
+        },
+      );
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(sticky);
+      expect(fs.readdirSync(sticky)).toEqual([]);
+      expect(fs.statSync(sticky).mode & 0o1777).toBe(0o1777);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("leaves a foreign nemoclaw-acp executable untouched and stops before creating sibling shims (#10947)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-collision-"));
     const { fakeBin, prefixBin } = createPackagedCliTree(tmp);

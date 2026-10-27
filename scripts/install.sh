@@ -2800,7 +2800,7 @@ user_local_executable_directory_safe() {
       mode_value=$((8#$mode))
       [[ "$owner" == "$uid" || "$owner" == 0 ]] || return 1
       if ((mode_value & 022)); then
-        [[ "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
+        [[ "$current" != "$1" && "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
       fi
     fi
     [[ "$current" != / ]] || return 0
