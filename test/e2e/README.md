@@ -1409,6 +1409,15 @@ OpenClaw and Hermes discovery before and after gateway restart. Deterministic
 state-restore tests prove complete native directories are archived without
 image-plugin exclusions.
 
+Before rebuilding the stopped OpenClaw source, the same target stops Docker and confirms that
+`docker info` fails. It then requires `nemoclaw uninstall --yes` to fail with the Docker-unavailable
+container-cleanup diagnostic while the sandbox remains registered. The target restores Docker and
+verifies `docker info` before rebuilding; cleanup repeats restoration before deleting the sandbox
+if the proof fails. The existing stopped-source proof supplies the registered `Error` state;
+the target does not kill and observe a second source. The removed rebuild completion-text check
+repeated the exit and restored-state checks. The removed fixture-write and restored-marker exit
+checks are covered by the retained exact restored marker, configuration, and loaded-plugin proof.
+
 On Docker and rootless Podman, managed-image activation also adopts the
 published OpenClaw and Hermes digests through `--from-image`. It confirms
 OpenShell readiness, the durable external-image receipt, identity-drift
@@ -2329,6 +2338,13 @@ or automatically replay the base.
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
+The 75-minute job records its start before checkout. Setup and provider qualification share the first
+45 minutes; rollback and final inventory share the next 15 minutes. Commands retain their individual
+limits and are capped by the remaining phase budget. The fixture reserves five minutes for cleanup,
+and the workflow reserves eight minutes for registry removal, source restoration, artifact upload,
+and Docker credential cleanup, with two minutes of runner headroom. A late setup or exhausted phase
+fails qualification; it cannot publish a passing receipt by skipping agent or cleanup assertions.
+NIM login and image preparation run in a supervised child so registry waits obey the same deadline.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
