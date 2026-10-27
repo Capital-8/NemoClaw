@@ -19,6 +19,9 @@ They apply to Issue Type, labels, Project fields, comments, and questions.
 - Do not add `needs: triage` during triage.
   Use `questions_for_author` without a `needs:*` label when the item can still progress.
 - Do not recommend `PRR` during triage. Maintainers and PRR workflows reserve this label for Product Readiness Reviews.
+- Add `v1` for PRs targeting `v1`, feature issues (including Epics and Tasks) intended for v1,
+  or issues tested against an identified v1 build, regardless of outcome.
+  API/schema versions, model names, and planned tests alone do not qualify.
 
 ## Issue Flow
 
@@ -49,26 +52,6 @@ They apply to Issue Type, labels, Project fields, comments, and questions.
 7. Add `needs: info` only when contributor action blocks review.
    If the existing content supports routing, ask optional questions without this label.
 8. Daily `v0.0.x` labels activate PRs for daily release work. A label does not state that the PR is ready.
-
-## V1 Architecture Refactor
-
-Consider `v1` for issues and PRs using the architecture-refactor rules in `label-taxonomy.md`.
-For PRs, read the current base branch before classifying membership.
-A PR targeting `v1` qualifies regardless of its PR type, draft state, or merge state.
-For issues, check the target implementation, linked feature Epic or Task, and test evidence.
-Testing must identify a v1 branch, revision, build artifact, or test run.
-The test outcome does not affect membership; a planned test alone does not qualify.
-Feature work needs a documented v1 target; a generic feature request does not establish one.
-If the target is unclear, record a question instead of guessing membership.
-
-Include the evidence in `rationale.v1` when recommending this label.
-Retain native Issue Type and useful routing labels.
-Remove `needs: triage` when processing an inbox item that carries it.
-A membership-only backfill adds `v1` and preserves the item's other labels and metadata.
-Search already-triaged items during a requested backfill, using the requested dates and states.
-Present additions in batches of up to 30 for approval before application.
-Check that the approved lowercase label exists on GitHub before writing.
-This tag does not authorize implementation or activate a daily release.
 
 ## Minimal Labeling
 

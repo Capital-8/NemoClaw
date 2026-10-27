@@ -7,46 +7,6 @@ These examples show the expected shape of agent recommendations. They are exampl
 
 ## Issue Triage Examples
 
-### V1 Membership
-
-Positive examples:
-
-- A draft documentation PR targets `v1`: recommend `v1` and retain existing PR type and routing labels.
-- A feature Task links an accepted v1 Epic: recommend `v1`, retaining the child's own native Issue Type.
-- A bug report identifies the tested v1 revision: recommend `v1`, retaining native Issue Type `Bug`.
-- A failed v1 test qualifies even when the bug is later closed as superseded.
-- A successful v1 test qualifies without changing the issue's status or claiming readiness.
-
-Negative examples:
-
-- A provider error contains `/v1/models` but identifies no v1 implementation: omit `v1`.
-- A generic feature request has no target implementation: ask whether it belongs to v1.
-- A refactor explicitly targets only `main`: omit `v1` unless separate evidence establishes v1 membership.
-
-For an already-triaged bug with verified v1 build evidence, a membership-only backfill proposes:
-
-```json
-{
-  "item_number": 123,
-  "item_kind": "issue",
-  "issue_type_to_set": null,
-  "labels_to_add": ["v1"],
-  "labels_to_remove": [],
-  "labels_to_create": [],
-  "labels_to_delete": [],
-  "issue_fields_to_set": {},
-  "project_fields_to_set": {},
-  "recommended_action": "triage",
-  "confidence": "high",
-  "rationale": {"v1": "The linked test run identifies the tested v1 build."},
-  "questions_for_author": [],
-  "human_review_required": true
-}
-```
-
-The example assumes the existing native Issue Type is already `Bug`.
-Ordinary inbox triage still sets native Type when needed and removes an existing `needs: triage` label.
-
 ### Bug Report With Missing Environment
 
 Evidence:

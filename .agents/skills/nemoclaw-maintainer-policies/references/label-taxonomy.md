@@ -43,29 +43,7 @@ Use labels for:
 
 | Label | Applies To | Description |
 |---|---|---|
-| `v1` | Issue, PR | Membership in the next NemoClaw architecture refactor on the `v1` branch. |
-
-Use the lowercase spelling `v1` and the existing GitHub label, whose description is "NemoClaw v1 branch".
-The [accepted scope](https://github.com/NVIDIA/NemoClaw/blob/v1/docs/design/scope.md) and
-[architecture guide](https://github.com/NVIDIA/NemoClaw/blob/v1/docs/design/architecture.md) define the implementation.
-
-Recommend `v1` when at least one condition has evidence:
-
-- The PR's current base branch is exactly `v1`, including draft, merged, and closed PRs.
-- The issue explicitly targets v1, or its feature Epic or Task belongs to a documented v1 workstream.
-- The issue records testing against a v1 build, with an identifiable branch, revision, build artifact, or test run.
-
-Passing, failed, and nonreproducing test results qualify; a planned test does not.
-Record the supporting link or PR base branch in the recommendation rationale.
-New-feature wording or native Issue Type alone does not establish membership.
-Neither do `/v1` API paths, schema versions, model names, or generic architecture discussions.
-For an unclear target, ask which implementation the issue concerns before recommending `v1`.
-
-Keep native Issue Type, PR type, and area routing separate from this tag.
-A bug tested against v1 remains a `Bug`; an Epic's child does not become an `Epic`.
-The tag does not establish scope acceptance, release activation, readiness, or completion.
-Backfills include already-triaged and already-labeled items across the requested states and dates.
-Preserve their other labels and metadata, and present the proposed additions for approval.
+| `v1` | Issue, PR | Work in the next NemoClaw architecture refactor on the `v1` branch. |
 
 ### PR Type
 
