@@ -48,4 +48,12 @@ describe("CLI OpenShell provider detach of a binding-only provider (#13644)", ()
 
     expect(result.ok).toBe(false);
   });
+
+  it("keeps the same message with a different status code as a detach failure", async () => {
+    const result = await detachWith(
+      `Error:   × code: 'The caller does not have permission to execute the specified operation', message: "credential_binding references provider '${PROVIDER}', but that provider is not attached to the sandbox"`,
+    );
+
+    expect(result.ok).toBe(false);
+  });
 });

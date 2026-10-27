@@ -266,9 +266,10 @@ export function reportsExactSandboxNotFound(
 }
 
 // OpenShell reports a provider referenced only by a credential binding as a
-// wrapped precondition failure rather than NotAttached (#13644).
+// wrapped FailedPrecondition rather than NotAttached (#13644). Match only that
+// status so an authorization or other failure is never read as detached.
 const BINDING_ONLY_PROVIDER_PATTERN =
-  /^(?:[×x]\s+)?code:\s*'.*?',\s*message:\s*"credential_binding references provider '([^']+)', but that provider is not attached to the sandbox"$/iu;
+  /^(?:[×x]\s+)?code:\s*'The system is not in a state required for the operation's execution',\s*message:\s*"credential_binding references provider '([^']+)', but that provider is not attached to the sandbox"$/iu;
 
 function bindingOnlyProviderName(output: string): string | null {
   const lines = output
