@@ -17,6 +17,89 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal static class WindowRecoveryControls
 {
+    private static bool recoveryLeaseUnavailable;
+
+    private static Task<T> PendingRecoveryFixture<T>(string agent)
+    {
+        if (agent is not ("openclaw" or "hermes")) throw new InvalidOperationException("Unexpected recovery agent.");
+        if (recoveryLeaseUnavailable) return Task.FromException<T>(new IOException("fixture lease unavailable"));
+        return Task.FromResult((T)Activator.CreateInstance(typeof(T), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, new object[] { true, "0123456789abcdef0123456789abcdef" }, null)!);
+    }
+
+    private static void AssertLiveHelperRecovery(MainWindow window)
+    {
+        var root = Directory.CreateTempSubdirectory("nemoclaw-window-recovery-").FullName;
+        var reader = typeof(MainWindow).GetField("readConfigurationRecovery", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var previousReader = reader.GetValue(window);
+        var responseType = reader.FieldType.GenericTypeArguments[1].GenericTypeArguments[0];
+        var fixture = typeof(WindowRecoveryControls).GetMethod(nameof(PendingRecoveryFixture), BindingFlags.Static | BindingFlags.NonPublic)!.MakeGenericMethod(responseType);
+        reader.SetValue(window, Delegate.CreateDelegate(reader.FieldType, fixture));
+        if (Invoke(window, "TryBeginConfiguration") is not true)
+            throw new InvalidOperationException("Setup rejected the live helper fixture.");
+        var arguments = new List<string>();
+        var launcher = Environment.ProcessPath!;
+        if (Path.GetFileNameWithoutExtension(launcher).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+            arguments.Add(typeof(Program).Assembly.Location);
+        arguments.AddRange(new[] { "--helper-fixture", root, "0", "0", "--transaction" });
+        var operation = NativeSetupOperations.RunSetupHelperAsync(launcher, arguments.ToArray(), Array.Empty<byte>(),
+            observationDeadline: TimeSpan.FromMilliseconds(50), recoveryDeadline: TimeSpan.FromMilliseconds(50),
+            completionUnconfirmed: processId => Invoke(window, "ShowConfigurationUnconfirmed", processId));
+        var visible = (Task<bool>)Invoke(window, "ObserveConfigurationAsync", operation)!;
+        void WaitUntil(Func<bool> done)
+        {
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            while (!done())
+            {
+                if (deadline.Elapsed > TimeSpan.FromSeconds(10)) throw new TimeoutException("Window recovery did not reach its bounded state.");
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+                Thread.Sleep(10);
+            }
+        }
+        try
+        {
+            WaitUntil(() => visible.IsCompleted && File.Exists(Path.Combine(root, "ready")));
+            if (visible.GetAwaiter().GetResult() || operation.IsCompleted)
+                throw new InvalidOperationException("Recovery claimed that the live save completed.");
+            var processId = int.Parse(File.ReadAllText(Path.Combine(root, "ready")));
+            using var helper = System.Diagnostics.Process.GetProcessById(processId);
+            var detail = (TextBlock)window.FindName("FailureDetail");
+            if (!detail.Text.Contains(processId.ToString()) || !detail.Text.Contains("restart Windows"))
+                throw new InvalidOperationException("Recovery omitted its helper identity or maintenance procedure.");
+            var button = (Button)window.FindName("ConfigurationRecoveryButton");
+            recoveryLeaseUnavailable = true;
+            Invoke(window, "CheckConfigurationRecoveryClicked", button, new RoutedEventArgs());
+            WaitUntil(() => button.IsEnabled);
+            if (!detail.Text.Contains("could not be verified") || helper.HasExited ||
+                Invoke(window, "TryBeginConfiguration") is not false)
+                throw new InvalidOperationException("An unavailable lease lost recovery custody.");
+            recoveryLeaseUnavailable = false;
+            Invoke(window, "CheckConfigurationRecoveryClicked", button, new RoutedEventArgs());
+            WaitUntil(() => button.IsEnabled);
+            if (!detail.Text.Contains("0123456789abcdef0123456789abcdef") || helper.HasExited ||
+                operation.IsCompleted || Invoke(window, "TryBeginConfiguration") is not false)
+                throw new InvalidOperationException("Lease reconciliation lost the operation identity or admitted an overlapping save.");
+            try
+            {
+                using var lease = new FileStream(Path.Combine(root, "lease"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                throw new InvalidOperationException("Recovery released the live transaction's lease.");
+            }
+            catch (IOException) { }
+        }
+        finally
+        {
+            File.WriteAllText(Path.Combine(root, "release"), "finish");
+            WaitUntil(() => operation.IsCompleted);
+            Invoke(window, "CompleteConfigurationObservation");
+            reader.SetValue(window, previousReader);
+            recoveryLeaseUnavailable = false;
+            var cleanup = Program.DeleteFixtureDirectoryAsync(root);
+            WaitUntil(() => cleanup.IsCompleted);
+            cleanup.GetAwaiter().GetResult();
+            operation.GetAwaiter().GetResult();
+        }
+    }
+
     private static void AssertCancellationPresentation()
     {
         var type = typeof(MainWindow).Assembly.GetType("Nvidia.NemoClaw.Bootstrapper.NemoClawBootstrapperApplication")!;
@@ -802,6 +885,7 @@ internal static class WindowRecoveryControls
                 AssertSavedLoading(window, "openclaw");
                 AssertSavedLoading(window, "hermes");
                 AssertPresentationLayout(window);
+                AssertLiveHelperRecovery(window);
                 if (Invoke(window, "TryBeginConfiguration") is not true)
                     throw new InvalidOperationException("Setup rejected the fixture save.");
                 Invoke(window, "ShowConfigurationUnconfirmed", Environment.ProcessId);

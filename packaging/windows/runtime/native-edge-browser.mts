@@ -179,7 +179,7 @@ async function nativeIdentity(
   identity?: NativeEdgeIdentityLauncher,
 ) {
   const launcher = identityLauncher(environment, identity);
-  const result = await execFileAsync(launcher, ["--edge-offline-trust", file], {
+  const result = await execFileAsync(launcher, ["--edge-trust", file], {
     env: environment,
     windowsHide: true,
     timeout: 5_000,

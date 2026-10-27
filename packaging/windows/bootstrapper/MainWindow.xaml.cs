@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private (string Agent, string Provider)? activeProviderDraft;
     private readonly HashSet<string> savedChoicesLoaded = new(StringComparer.Ordinal);
     private Func<string, Task<string>> readSavedSettings = NativeSetupOperations.ReadSavedSettingsAsync;
+    private Func<string, Task<NativeConfigurationRecovery>> readConfigurationRecovery = agent => NativeSetupOperations.ReadRecoveryDetailsAsync(agent);
     private bool savedSettingsReady = true;
     private bool readingSavedSettings;
     private int savedSettingsGeneration;
@@ -275,7 +276,12 @@ public partial class MainWindow : Window
         this.HidePanels();
         this.FailurePanel.Visibility = Visibility.Visible;
         this.ConfigurationRecoveryButton.Visibility = Visibility.Visible;
-        this.FailureDetail.Text = $"Settings completion is not confirmed. Setup still owns helper {processId}. Use Check save status. Closing this window minimizes Setup; reopen it from the taskbar to check again. Another save is blocked until the helper finishes. Do not end Setup or its helper in Task Manager.";
+        this.ShowConfigurationMaintenance("Completion is not confirmed; use Check save status.");
+    }
+
+    private void ShowConfigurationMaintenance(string status)
+    {
+        this.FailureDetail.Text = $"{this.SelectedAgent} save, helper {this.configurationObservation.HelperProcessId}: {status} No second save is allowed while this helper is owned. Closing minimizes Setup. If repeated checks cannot confirm completion, record this message, save other work, and restart Windows from Start > Power > Restart. Then reopen NemoClaw Setup, check save status, review your choices and re-enter required keys before saving. Do not end individual Setup processes or delete configuration, lock, or recovery files.";
     }
 
     private async void CheckConfigurationRecoveryClicked(object sender, RoutedEventArgs args)
@@ -294,14 +300,29 @@ public partial class MainWindow : Window
             if (this.configurationObservation.Running)
             {
                 if (!await this.configurationObservation.CheckCompletionAsync(TimeSpan.FromSeconds(5)))
-                    this.FailureDetail.Text = "The original save still owns its helper. No second save has started. You can check again. Closing this window minimizes Setup; reopen it from the taskbar to check again.";
+                {
+                    string status;
+                    try
+                    {
+                        var recovery = await this.readConfigurationRecovery(agent);
+                        status = recovery.NeedsResave
+                            ? $"Operation {recovery.OperationId} remains unfinished. The configuration lease was available during this check, but helper completion is still required."
+                            : "The configuration lease was available and no unfinished record was found, but helper completion is still required.";
+                    }
+                    catch (Exception)
+                    {
+                        status = "The configuration lease or recovery record could not be verified. Completion remains unconfirmed.";
+                    }
+                    if (generation == this.configurationObservation.Generation && agent == this.SelectedAgent && this.configurationObservation.Running)
+                        this.ShowConfigurationMaintenance(status);
+                }
                 // The owning completion path presents success/failure and retains launch intent.
                 return;
             }
-            var pending = await NativeSetupOperations.ReadRecoveryAsync(agent);
+            var pending = await this.readConfigurationRecovery(agent);
             if (generation != this.configurationObservation.Generation || agent != this.SelectedAgent) return;
-            this.ShowConfigurationError(pending
-                ? "The previous save is unfinished, and its configuration lock was available during this check. Review your provider and model, re-enter required keys, then Save to complete recovery."
+            this.ShowConfigurationError(pending.NeedsResave
+                ? $"The previous save operation {pending.OperationId} is unfinished, and its configuration lock was available during this check. Review your provider and model, re-enter required keys, then Save to complete recovery."
                 : "No unfinished save was found and the configuration lock was available. You can review your choices and save again.");
         }
         catch (Exception)

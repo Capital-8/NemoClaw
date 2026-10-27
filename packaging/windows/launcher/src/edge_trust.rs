@@ -384,6 +384,18 @@ fn signer_metadata(state: RawHandle) -> Result<(String, String), u32> {
 }
 
 fn trusted_signer(path: &[u16]) -> Result<(String, String), u32> {
+    trusted_signer_with(
+        path,
+        |action, data| unsafe { WinVerifyTrust(null_mut(), action, data) },
+        signer_metadata,
+    )
+}
+
+fn trusted_signer_with(
+    path: &[u16],
+    mut verify: impl FnMut(&Guid, &mut WintrustData) -> i32,
+    metadata: impl FnOnce(RawHandle) -> Result<(String, String), u32>,
+) -> Result<(String, String), u32> {
     const ACTION_GENERIC_VERIFY_V2: Guid = Guid {
         data1: 0x00aa_c56b,
         data2: 0xcd44,
@@ -394,8 +406,8 @@ fn trusted_signer(path: &[u16]) -> Result<(String, String), u32> {
     const WTD_CHOICE_FILE: u32 = 1;
     const WTD_STATEACTION_VERIFY: u32 = 1;
     const WTD_STATEACTION_CLOSE: u32 = 2;
-    const WTD_REVOCATION_CHECK_NONE: u32 = 0x10;
-    const WTD_CACHE_ONLY_URL_RETRIEVAL: u32 = 0x1000;
+    const WTD_REVOKE_WHOLECHAIN: u32 = 1;
+    const WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT: u32 = 0x80;
 
     let mut file = WintrustFileInfo {
         size: std::mem::size_of::<WintrustFileInfo>() as u32,
@@ -408,24 +420,24 @@ fn trusted_signer(path: &[u16]) -> Result<(String, String), u32> {
         policy_callback: null_mut(),
         sip_client: null_mut(),
         ui_choice: WTD_UI_NONE,
-        revocation_checks: 0,
+        revocation_checks: WTD_REVOKE_WHOLECHAIN,
         union_choice: WTD_CHOICE_FILE,
         file: &mut file,
         state_action: WTD_STATEACTION_VERIFY,
         state_data: null_mut(),
         url_reference: null(),
-        provider_flags: WTD_REVOCATION_CHECK_NONE | WTD_CACHE_ONLY_URL_RETRIEVAL,
+        provider_flags: WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
         ui_context: 0,
         signature_settings: null_mut(),
     };
-    let status = unsafe { WinVerifyTrust(null_mut(), &ACTION_GENERIC_VERIFY_V2, &mut data) };
+    let status = verify(&ACTION_GENERIC_VERIFY_V2, &mut data);
     let result = if status == 0 {
-        signer_metadata(data.state_data)
+        metadata(data.state_data)
     } else {
         Err(status as u32)
     };
     data.state_action = WTD_STATEACTION_CLOSE;
-    unsafe { WinVerifyTrust(null_mut(), &ACTION_GENERIC_VERIFY_V2, &mut data) };
+    verify(&ACTION_GENERIC_VERIFY_V2, &mut data);
     result
 }
 
@@ -485,7 +497,52 @@ pub(crate) fn process(pid: u32) -> Result<ProcessIdentity, u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::json_string;
+    use super::{json_string, trusted_signer, trusted_signer_with, wide};
+
+    #[test]
+    fn windows_trust_rejects_the_unsigned_test_executable() {
+        let executable = std::env::current_exe().unwrap();
+        assert!(trusted_signer(&wide(executable.as_os_str())).is_err());
+    }
+
+    #[test]
+    fn revoked_or_unavailable_chain_never_exposes_signer_metadata() {
+        for status in [0x800b010cu32, 0x80092012, 0x80092013] {
+            let mut actions = Vec::new();
+            let result = trusted_signer_with(
+                &[0],
+                |_, data| {
+                    assert_eq!(data.revocation_checks, 1);
+                    assert_eq!(data.provider_flags, 0x80);
+                    actions.push(data.state_action);
+                    status as i32
+                },
+                |_| panic!("Failed certificate validation must not expose signer metadata"),
+            );
+            assert_eq!(result, Err(status));
+            assert_eq!(actions, [1, 2]);
+        }
+    }
+
+    #[test]
+    fn verified_chain_reads_metadata_and_closes_trust_state() {
+        let mut actions = Vec::new();
+        let result = trusted_signer_with(
+            &[0],
+            |_, data| {
+                assert_eq!(data.revocation_checks, 1);
+                assert_eq!(data.provider_flags, 0x80);
+                actions.push(data.state_action);
+                0
+            },
+            |_| Ok(("Microsoft Corporation".into(), "fixture-thumbprint".into())),
+        );
+        assert_eq!(
+            result,
+            Ok(("Microsoft Corporation".into(), "fixture-thumbprint".into()))
+        );
+        assert_eq!(actions, [1, 2]);
+    }
 
     #[test]
     fn identity_output_escapes_json_control_characters() {

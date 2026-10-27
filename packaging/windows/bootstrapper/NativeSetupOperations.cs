@@ -12,6 +12,7 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal delegate Task<string> NativeSetupHelperRunner(string launcher, string[] arguments, byte[] input, bool captureOutput);
 internal sealed record NativeSavedSettings(string State, NativeSetupConfiguration? Configuration);
+internal sealed record NativeConfigurationRecovery(bool NeedsResave, string? OperationId);
 
 // Closing an unconfirmed window must not release the transaction or permit another save.
 internal sealed class NativeSetupObservation
@@ -207,15 +208,21 @@ internal static class NativeSetupOperations
     }
 
     internal static async Task<bool> ReadRecoveryAsync(string agent, string? launcher = null)
+        => (await ReadRecoveryDetailsAsync(agent, launcher)).NeedsResave;
+
+    internal static async Task<NativeConfigurationRecovery> ReadRecoveryDetailsAsync(string agent, string? launcher = null)
     {
         if (agent is not ("openclaw" or "hermes")) throw new InvalidOperationException("The selected agent is invalid.");
         var response = await RunSetupHelperAsync(launcher ?? InstalledLauncher(),
             new[] { "--configure-native", "--recovery-status", agent }, Array.Empty<byte>(),
             captureOutput: true, observationDeadline: TimeSpan.FromSeconds(10));
-        return ReadRecovery(response, agent);
+        return ReadRecoveryDetails(response, agent);
     }
 
     internal static bool ReadRecovery(string value, string agent)
+        => ReadRecoveryDetails(value, agent).NeedsResave;
+
+    internal static NativeConfigurationRecovery ReadRecoveryDetails(string value, string agent)
     {
         using var document = JsonDocument.Parse(value);
         var root = document.RootElement;
@@ -228,13 +235,13 @@ internal static class NativeSetupOperations
             !root.TryGetProperty("agent", out var selected) || selected.ValueKind != JsonValueKind.String || selected.GetString() != agent ||
             !root.TryGetProperty("state", out var state) || state.ValueKind != JsonValueKind.String)
             throw new InvalidOperationException("The configuration recovery result is invalid.");
-        if (state.GetString() == "clear" && names.Length == 4) return false;
+        if (state.GetString() == "clear" && names.Length == 4) return new(false, null);
         if (state.GetString() != "needs-resave" || names.Length != 6 ||
             !root.TryGetProperty("operationId", out var operation) || operation.ValueKind != JsonValueKind.String ||
             operation.GetString() is not string id || id.Length != 32 || id.Any(character => !"0123456789abcdef".Contains(character)) ||
             !root.TryGetProperty("writerProcessId", out var writer) || writer.ValueKind != JsonValueKind.Number || !writer.TryGetInt32(out var processId) || processId <= 0)
             throw new InvalidOperationException("The configuration recovery result is invalid.");
-        return true;
+        return new(true, id);
     }
 
     internal static async Task SaveWithHelperAsync(NativeSetupConfiguration configuration, SecureString password, NativeServiceCredentials? serviceCredentials, Action<NativeExpressProgress>? progress, CancellationToken cancellation, string launcher, NativeSetupHelperRunner runSetupHelper)

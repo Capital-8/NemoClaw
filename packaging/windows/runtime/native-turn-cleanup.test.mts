@@ -62,6 +62,72 @@ function openClawCleanupController() {
   );
 }
 
+for (const status of [
+  "AgentCompleted",
+  "MainProcessCompleted",
+  "ExecFailed",
+  "MainProcessFailed",
+]) {
+  test(`OpenClaw waits for executor completion before normal deletion: ${status}`, async () => {
+    const events: string[] = [];
+    let resolveCompletion!: (status: string) => void;
+    const completion = new Promise<string>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const operation = runCleanupFragment(
+      "./run-installed-native-turn.mts",
+      "    const turnPassed =",
+      "    if (!(await gatewaySession.stopGateway()))",
+      {
+        cliEnvironment: {},
+        sandboxName: "owned-sandbox",
+        gateway: {},
+        runtimeLease: {},
+        sandboxDeletionRequested: false,
+        sandboxAbsentFromRegistry: false,
+        result: {
+          executionMode: "embedded-worker",
+          version: "2026.9.2",
+          versionExitCode: 0,
+          chatExitCode: 0,
+          exactReply: true,
+          reply: "CHAT_OK",
+        },
+        console: { log() {} },
+        fail(message: string) {
+          throw new Error(message);
+        },
+        gatewaySession: {
+          waitForCompletion() {
+            events.push("completion");
+            return completion;
+          },
+          async deleteWorkload() {
+            events.push("delete");
+          },
+          async confirmRegistryEmpty() {
+            events.push("registry");
+          },
+        },
+      },
+      "({ sandboxDeletionRequested, sandboxAbsentFromRegistry })",
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(events, ["completion"]);
+    resolveCompletion(status);
+    if (status === "ExecFailed" || status === "MainProcessFailed") {
+      await assert.rejects(operation, /failed MXC workload termination/);
+      assert.deepEqual(events, ["completion"]);
+    } else {
+      assert.deepEqual(await operation, {
+        sandboxDeletionRequested: true,
+        sandboxAbsentFromRegistry: true,
+      });
+      assert.deepEqual(events, ["completion", "delete", "registry"]);
+    }
+  });
+}
+
 for (const failure of [
   "none",
   "request-stop",

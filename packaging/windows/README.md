@@ -277,6 +277,23 @@ Successful migration retains the upstream migration archives. A failed or
 interrupted migration stops launch and retains original files and available
 archives for recovery; do not delete them to force startup.
 
+If a settings save exceeds its visible deadline, Setup keeps the transaction
+helper and blocks overlapping saves. **Check save status** waits briefly for
+the owned helper, then queries the installed configuration lease and recovery
+record. A free lease alone does not authorize another save while that helper
+remains owned. The recovery window identifies the agent, helper PID, and any
+unfinished operation returned by the lease-protected query.
+If repeated checks cannot confirm completion, record the displayed message,
+save other work, and restart Windows through **Start > Power > Restart**.
+Reopen NemoClaw Setup, check save status, review the provider and model, and
+re-enter required keys before saving. Do not terminate individual Setup
+processes or delete configuration, lock, or recovery files to bypass recovery.
+
+The native Edge identity check requires certificate-chain revocation validation.
+Windows may retrieve revocation evidence from certificate authorities. A revoked
+chain or unavailable revocation evidence rejects launch. The check does not
+disable revocation or accept signer metadata alone when validation fails.
+
 Web UI file transport uses a native, bounded file owner. It pins the root and
 stream directory handles, performs handle-relative I/O, and refuses reparse
 points, hard links, path traversal, and oversized frames. Its guarded root has

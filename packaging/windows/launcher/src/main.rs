@@ -320,7 +320,7 @@ fn main() {
     }
     if forwarded
         .first()
-        .is_some_and(|value| value == "--edge-offline-trust")
+        .is_some_and(|value| value == "--edge-trust")
     {
         if forwarded.len() != 2 {
             credential_error("The Microsoft Edge trust query requires one path.");

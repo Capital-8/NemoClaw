@@ -494,6 +494,10 @@ internal static class Program
             if (NativeSetupOperations.ReadRecovery(clear.Replace("openclaw", agent), agent) ||
                 !NativeSetupOperations.ReadRecovery(pending.Replace("openclaw", agent), agent))
                 throw new InvalidOperationException("Setup misclassified a retained agent's recovery status.");
+            var details = NativeSetupOperations.ReadRecoveryDetails(pending.Replace("openclaw", agent), agent);
+            if (details.OperationId != "0123456789abcdef0123456789abcdef" ||
+                NativeSetupOperations.ReadRecoveryDetails(clear.Replace("openclaw", agent), agent).OperationId is not null)
+                throw new InvalidOperationException("Setup lost or invented a recovery operation identity.");
         }
         foreach (var value in new[]
         {
@@ -549,7 +553,7 @@ internal static class Program
         }
     }
 
-    private static async Task DeleteFixtureDirectoryAsync(string root)
+    internal static async Task DeleteFixtureDirectoryAsync(string root)
     {
         // The helper has exited; Windows can briefly retain a sharing lock during file teardown.
         var deadline = System.Diagnostics.Stopwatch.StartNew();

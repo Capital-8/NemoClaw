@@ -2230,7 +2230,7 @@ jobs:
           if (process.platform !== "win32" || process.arch !== "arm64") throw new Error("Expected native Windows ARM64 Node.");
           try {
             const launcher = path.join(process.env.NEMOCLAW_NATIVE_INSTALL_ROOT, "bin", "NemoClaw.exe");
-            const denial = spawnSync(launcher, ["--edge-offline-trust", launcher], { encoding: "utf8", windowsHide: true });
+            const denial = spawnSync(launcher, ["--edge-trust", launcher], { encoding: "utf8", windowsHide: true });
             const denialReceipt = { schemaVersion: 1, classification: "native-edge-unsigned-denial", exitCode: denial.status, stdout: denial.stdout.trim(), stderr: denial.stderr.trim() };
             fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "native-edge-prerequisite", "unsigned-denial.json"), JSON.stringify(denialReceipt, null, 2) + "\n", { flag: "wx" });
             assert.equal(denial.error, undefined);
@@ -2970,6 +2970,36 @@ jobs:
           if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 31 passed; 0 failed; 0 ignored;') {
             throw 'The twenty-six transaction, image cleanup, manifest, mount ACL and native SHA256 controls did not all pass.'
           }
+
+      - name: Exercise native certificate revocation requests
+        shell: powershell
+        env:
+          CARGO_TERM_COLOR: never
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'windows-runtime-controls'
+          [IO.Directory]::CreateDirectory($output) | Out-Null
+          $log = Join-Path $output 'edge-trust-tests.log'
+          try {
+            $ErrorActionPreference = 'Continue'
+            & rustup run 1.95.0-aarch64-pc-windows-msvc cargo test --locked `
+              --manifest-path "$env:GITHUB_WORKSPACE\packaging\windows\launcher\Cargo.toml" `
+              --target aarch64-pc-windows-msvc edge_trust:: -- --nocapture 2>&1 | Tee-Object -FilePath $log
+            $result = $LASTEXITCODE
+          } finally { $ErrorActionPreference = 'Stop' }
+          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 4 passed; 0 failed; 0 ignored;') {
+            throw 'The native Edge certificate trust controls did not all pass.'
+          }
+
+      - name: Reject unavailable revocation through the native Windows trust API
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'edge-revocation-control'
+          & rustup run 1.95.0-aarch64-pc-windows-msvc cargo build --locked `
+            --manifest-path "$env:GITHUB_WORKSPACE\packaging\windows\launcher\Cargo.toml" `
+            --target aarch64-pc-windows-msvc --target-dir "$output\target"
+          if ($LASTEXITCODE -ne 0) { throw 'The native certificate trust owner did not build.' }
+          & "$env:GITHUB_WORKSPACE\packaging\windows\tests\edge-trust\run-revocation-control.ps1" `
+            -Launcher "$output\target\aarch64-pc-windows-msvc\debug\NemoClaw.exe"
 
       - name: Exercise real Windows leases and protected fixtures
         shell: powershell
