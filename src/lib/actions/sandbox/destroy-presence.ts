@@ -127,7 +127,6 @@ export function classifyDestroyContainerIdentity(
   if (managed.length > 0 && retainedSandboxIdentityFingerprint !== undefined) {
     const identityMatches = managed.every(
       (row) =>
-        row.workspace.length > 0 &&
         row.sandboxId.length > 0 &&
         fingerprintOpenShellSandboxId(row.sandboxId) === retainedSandboxIdentityFingerprint,
     );
@@ -161,15 +160,11 @@ export function classifyDestroyContainerIdentity(
   }
 
   const [identity] = managed;
-  if (!identity.workspace || !identity.sandboxId) {
-    const missingLabels = [
-      identity.workspace ? null : OPENSHELL_SANDBOX_WORKSPACE_LABEL,
-      identity.sandboxId ? null : OPENSHELL_SANDBOX_ID_LABEL,
-    ].filter((label): label is string => label !== null);
+  if (!identity.sandboxId) {
     return {
       status: "ambiguous",
       sandboxName,
-      reason: `the managed container is missing ${missingLabels.join(" and ")}`,
+      reason: `the managed container is missing ${OPENSHELL_SANDBOX_ID_LABEL}`,
       foreign,
       managed,
     };

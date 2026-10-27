@@ -1124,8 +1124,8 @@ describe("destroySandbox flow", () => {
     expect(errorOutput).toContain("Provider cleanup detached provider-a");
   });
 
-  it("keeps the final exact probe immediately adjacent to sandbox delete", async () => {
-    const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
+  it.each(["default", ""])("keeps the final probe adjacent to delete (%j)", async (workspace) => {
+    const managed = { status: 0, stdout: `aaaa000000000000\topenshell\t${workspace}\tsb-alpha` };
     const trace: string[] = [];
     let identityProbeCalls = 0;
     const harness = createDestroyHarness({
@@ -1146,6 +1146,7 @@ describe("destroySandbox flow", () => {
       `probe:${String(identityProbeCalls - 1)}`,
       `probe:${String(identityProbeCalls)}`,
     ]);
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {

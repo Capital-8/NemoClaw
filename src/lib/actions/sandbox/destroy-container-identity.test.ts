@@ -166,14 +166,48 @@ describe("classifyDestroyContainerIdentity", () => {
     expect(verdict.reason).toContain("retained sandbox identity");
   });
 
-  it.each([
-    ["workspace", { ...MANAGED, workspace: "" }],
-    ["sandbox ID", { ...MANAGED, sandboxId: "" }],
-  ])("refuses a managed container with no %s", (_label, row) => {
-    const verdict = expectAmbiguous(
-      classifyDestroyContainerIdentity("destroytest", observeRows([row])),
+  it("accepts a managed container created without a workspace label", () => {
+    const legacyManaged = { ...MANAGED, workspace: "" };
+
+    expect(classifyDestroyContainerIdentity("destroytest", observeRows([legacyManaged]))).toEqual({
+      status: "clear",
+      identity: legacyManaged,
+    });
+  });
+
+  it("accepts a retained recovery set created without workspace labels and rejects mixed workspaces", () => {
+    const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(MANAGED.sandboxId)!;
+    const legacyIdentities = [
+      { ...MANAGED, workspace: "" },
+      { ...MANAGED, id: "dddd000000000000", workspace: "" },
+    ];
+
+    expect(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows(legacyIdentities),
+        sandboxIdentityFingerprint,
+      ),
+    ).toEqual({ status: "recovery", identities: legacyIdentities });
+
+    const mixedVerdict = expectAmbiguous(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([
+          { ...MANAGED, workspace: "" },
+          { ...MANAGED, id: "dddd000000000000" },
+        ]),
+        sandboxIdentityFingerprint,
+      ),
     );
-    expect(verdict.reason).toContain("missing");
+    expect(mixedVerdict.reason).toContain("retained sandbox identity");
+  });
+
+  it("refuses a managed container with no sandbox ID", () => {
+    const verdict = expectAmbiguous(
+      classifyDestroyContainerIdentity("destroytest", observeRows([{ ...MANAGED, sandboxId: "" }])),
+    );
+    expect(verdict.reason).toContain("missing openshell.ai/sandbox-id");
   });
 
   it("refuses malformed Docker identity output", () => {
