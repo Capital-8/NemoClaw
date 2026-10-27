@@ -77,13 +77,41 @@ describe("stopped rebuild capture selection", () => {
     await expect(
       prepareRebuildStoppedAgentState(
         entry,
-        { notReadyPhase: true, staleRecovery: false, staleRegistrySnapshot: null },
+        {
+          observedPhase: "Stopped",
+          notReadyPhase: true,
+          staleRecovery: false,
+          staleRegistrySnapshot: null,
+        },
         false,
         () => entry,
       ),
     ).resolves.toBe(capture);
     expect(prepare).toHaveBeenCalledWith("alpha", expect.any(Function));
   });
+
+  it.each(["Deleting", "Provisioning"])(
+    "does not capture a non-ready source while OpenShell reports %s",
+    async (observedPhase) => {
+      const prepare = vi.spyOn(snapshotBackup, "prepareStoppedAgentState");
+      const entry = { name: "alpha", agent: "openclaw" };
+
+      await expect(
+        prepareRebuildStoppedAgentState(
+          entry,
+          {
+            observedPhase,
+            notReadyPhase: true,
+            staleRecovery: false,
+            staleRegistrySnapshot: null,
+          },
+          false,
+          () => entry,
+        ),
+      ).resolves.toBeNull();
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [{ notReadyPhase: true, staleRecovery: true, staleRegistrySnapshot: null }, false],
