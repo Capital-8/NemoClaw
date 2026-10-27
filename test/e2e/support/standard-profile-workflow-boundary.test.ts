@@ -16,7 +16,11 @@ import {
   FULL_E2E_TEST_TIMEOUT_MINUTES,
 } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
-import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
+import {
+  catalogueTarget,
+  catalogueTargetsForChangedFiles,
+} from "../../../tools/e2e/target-catalogue.mts";
+import { buildE2eWorkflowPlan, selectedWorkflowJobs } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -25,6 +29,39 @@ describe("standard E2E execution profile", () => {
   it("accepts the catalogue callers and reusable profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
+
+  it("routes the GPU provider-switch target through guarded NVIDIA API credentials", () => {
+    expect(catalogueTarget("gpu-double-onboard").profile).toBe("nvidia-api");
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
+  });
+
+  it(
+    "routes the GPU Ollama provider-switch target through the guarded NVIDIA API profile",
+    { timeout: 30_000 },
+    () => {
+      const targetId = "gpu-double-onboard";
+      const plan = buildE2eWorkflowPlan({ targets: targetId });
+
+      expect(catalogueTarget(targetId).profile).toBe("nvidia-api");
+      expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual([targetId]);
+      expect(plan.catalogueMatrices.standard).toEqual([]);
+      expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
+    },
+  );
+
+  it.each(["src/lib/inference/ollama/model-ownership.ts", "src/lib/onboard/setup-inference.ts"])(
+    "selects the GPU provider-switch target for a source-only %s change",
+    (changedFile) => {
+      const targetId = "gpu-double-onboard";
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+      expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+        targetId,
+      );
+      expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toContain(targetId);
+      expect(selectedWorkflowJobs(plan)).toContain("catalogue-nvidia-api");
+    },
+  );
 
   it.each([
     { field: "uses", value: "actions/setup-python@v7" },
