@@ -271,29 +271,13 @@ export function requireReviewedDockerfileRunCommands(
   command: string,
   requiredArguments: readonly string[],
   expectedCount: number,
-  reviewedShape: "standard" | "dcode-npm-cache" = "standard",
 ): readonly ReviewedDockerfileRunCommand[] {
   const invocation = [command, ...requiredArguments].join(" ");
-  if (reviewedShape === "dcode-npm-cache" && command !== "node /scripts/upgrade-bundled-npm.mts") {
-    throw new Error("DCode cache wrapper is only reviewed for the bundled npm upgrade");
-  }
-  const reviewedBodies =
-    reviewedShape === "dcode-npm-cache"
-      ? new Set([
-          [
-            "set -eu;",
-            'dcode_npm_cache="$(mktemp -d /tmp/nemoclaw-dcode-npm-cache.XXXXXX)";',
-            `trap 'rm -rf "$dcode_npm_cache"' EXIT;`,
-            `trap 'exit 1' HUP INT TERM;`,
-            'export NPM_CONFIG_CACHE="$dcode_npm_cache" npm_config_cache="$dcode_npm_cache";',
-            invocation,
-          ].join(" "),
-        ])
-      : new Set([
-          invocation,
-          `${CORPORATE_CA_CURL_GUARD} ${invocation}`,
-          `${CORPORATE_CA_NODE_CURL_GUARD} ${invocation}`,
-        ]);
+  const reviewedBodies = new Set([
+    invocation,
+    `${CORPORATE_CA_CURL_GUARD} ${invocation}`,
+    `${CORPORATE_CA_NODE_CURL_GUARD} ${invocation}`,
+  ]);
   const matches: ReviewedDockerfileRunCommand[] = [];
   let unreviewedInstructions = 0;
 
@@ -304,14 +288,16 @@ export function requireReviewedDockerfileRunCommands(
     const hasUnsupportedShellConstruct = ["$(", "${", "`"].some((token) =>
       collapsed.text.includes(token),
     );
-    const reviewedBody = reviewedBodies.has(normalizedInstructionBody(instruction.body));
-    if (containsCommand && hasUnsupportedShellConstruct && !reviewedBody) {
+    if (containsCommand && hasUnsupportedShellConstruct) {
       unreviewedInstructions += 1;
       continue;
     }
     const commandIndexes = unquotedTextIndexes(collapsed.text, command);
     if (commandIndexes.length === 0) continue;
-    if (commandIndexes.length !== 1 || !reviewedBody) {
+    if (
+      commandIndexes.length !== 1 ||
+      !reviewedBodies.has(normalizedInstructionBody(instruction.body))
+    ) {
       unreviewedInstructions += 1;
       continue;
     }
@@ -339,13 +325,6 @@ export function requireSingleReviewedDockerfileRunCommand(
   source: string,
   command: string,
   requiredArguments: readonly string[],
-  reviewedShape: "standard" | "dcode-npm-cache" = "standard",
 ): ReviewedDockerfileRunCommand {
-  return requireReviewedDockerfileRunCommands(
-    source,
-    command,
-    requiredArguments,
-    1,
-    reviewedShape,
-  )[0]!;
+  return requireReviewedDockerfileRunCommands(source, command, requiredArguments, 1)[0]!;
 }
