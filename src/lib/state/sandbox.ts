@@ -2030,13 +2030,28 @@ function nativeArchiveCredentialViolation(
   const temporary = mkdtempSync(path.join(path.dirname(archivePath), ".native-scan-"));
   const scanRoot = path.join(temporary, "root");
   try {
-    const extracted = extractSelectedNativeArchiveMembers(
-      { archivePath },
-      temporary,
-      scanRoot,
-      candidates.map(({ entry }) => entry),
-      deadlineMs,
-    );
+    let extracted: ReturnType<typeof spawnSync>;
+    try {
+      extracted = extractSelectedNativeArchiveMembers(
+        { archivePath },
+        temporary,
+        scanRoot,
+        candidates.map(({ entry }) => entry),
+        deadlineMs,
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === "Native archive extraction exceeded its deadline" ||
+          error.message === "Native archive fallback staging exceeded the extraction deadline")
+      ) {
+        return {
+          entry: candidates[0]?.entry ?? "native state credential scan",
+          deadlineExpired: true,
+        };
+      }
+      throw error;
+    }
     if (extracted.status !== 0 || extracted.error || extracted.signal) {
       return candidates[0]?.entry ?? "native state credential scan";
     }
