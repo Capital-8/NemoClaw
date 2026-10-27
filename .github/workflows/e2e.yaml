@@ -5532,7 +5532,8 @@ jobs:
                 exit 1
               }
             else
-              [[ "$CANDIDATE_BASES" == false && "$reference" == "${repository}@${digest}" &&
+              [[ ( "$CANDIDATE_BASES" == false || "$agent" == openclaw ) &&
+                 "$reference" == "${repository}@${digest}" &&
                  ( -z "$expected_published" || "$reference" == "$expected_published" ) ]] || {
                 echo "::error::prepared ${agent} base does not match the selected source" >&2
                 exit 1

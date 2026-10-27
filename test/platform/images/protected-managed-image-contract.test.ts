@@ -355,7 +355,42 @@ describe("protected managed-image build contract", () => {
     expect(dockerCalls).toBe("");
   });
 
-  it.each(PROTECTED_MANAGED_IMAGE_AGENTS)(
+  it("verifies the published OpenClaw base selected by the PR CPU cache on GPU", () => {
+    const { result, output, dockerCalls, references } = runBaseResolution(
+      "managed-image-protected-runtime",
+      "Resolve digest-pinned amd64 runtime base images",
+      { candidate: "true", localBases: true, publishedAgent: "openclaw" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe(
+      `openclaw=${references[0]}\nhermes=${references[1]}\ndcode=${references[2]}\n`,
+    );
+    expect(dockerCalls).toContain(`imagetools inspect ${references[0]} --raw`);
+  });
+
+  it("rejects changed bytes for the published OpenClaw base in a PR cache", () => {
+    const { result, output, dockerCalls, references } = runBaseResolution(
+      "managed-image-protected-runtime",
+      "Resolve digest-pinned amd64 runtime base images",
+      {
+        candidate: "true",
+        localBases: true,
+        publishedAgent: "openclaw",
+        mutate(cache) {
+          writeFileSync(
+            path.join(cache, "bin", "sha256sum"),
+            `#!/bin/sh\nprintf '%s  %s\\n' '${"f".repeat(64)}' "$1"\n`,
+          );
+        },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("exact base bytes do not match the prepared digest");
+    expect(output).toBe("");
+    expect(dockerCalls).toContain(`imagetools inspect ${references[0]} --raw`);
+  });
+
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
     "rejects a published %s base in a PR cache",
     (publishedAgent) => {
       const { result, dockerCalls } = runBaseResolution(
