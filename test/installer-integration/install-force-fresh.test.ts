@@ -161,6 +161,44 @@ esac
   expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
+it("stops before cleanup when a convention-matching Docker container has an empty image field", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-empty-image-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}} {{.Image}} {{.Names}}")
+    printf 'fedcba987654  openshell-orphan\n'
+    ;;
+  "volume ls --format {{.Name}}") exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain("unverified Docker container fedcba987654");
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
+});
+
 it("stops before cleanup for a labelled receipt-volume-only state", () => {
   const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-receipt-detect-");
   const cleanupMarker = path.join(tmp, "cleanup-started");

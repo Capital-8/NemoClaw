@@ -2737,6 +2737,39 @@ function hasDockerSandboxRegistrations(
   );
 }
 
+interface DockerContainerInventoryRow {
+  readonly id: string;
+  readonly image: string;
+  readonly name: string;
+}
+
+function parseDockerContainerInventoryRow(line: string): DockerContainerInventoryRow | null {
+  if (/^\s/u.test(line)) return null;
+  const compactFields = line.trim().split(/\s+/u);
+  if (compactFields.length === 3) {
+    const [id = "", image = "", name = ""] = compactFields;
+    return id && image && name ? { id, image, name } : null;
+  }
+  if (compactFields.length === 2) {
+    const [id = "", second = ""] = compactFields;
+    if (!id || !second) return null;
+    if (
+      /^\S+\s{2,}\S+$/u.test(line.trimEnd()) ||
+      (!/[/:@]/u.test(second) &&
+        (isConventionalDockerContainerName(second) ||
+          second === resolveGatewayCompatContainerName(GATEWAY_PORT) ||
+          MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(second)))
+    ) {
+      return { id, image: "", name: second };
+    }
+    return { id, image: second, name: "" };
+  }
+  if (compactFields.length === 1 && /^[0-9a-f]{12,64}$/u.test(compactFields[0] ?? "")) {
+    return { id: compactFields[0]!, image: "", name: "" };
+  }
+  return null;
+}
+
 /** Container deletion belongs to the runtime owners; names only identify uncertain leftovers. */
 function verifyDockerContainerCleanup(
   runtime: UninstallRuntime,
@@ -2756,20 +2789,24 @@ function verifyDockerContainerCleanup(
     );
     return false;
   }
-  const rows = splitNonEmptyLines(result.stdout).map((line) => line.trim().split(/\s+/u));
-  if (rows.some((fields) => fields.length !== 3 || fields.some((field) => !field))) {
+  const rows = result.stdout
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0)
+    .map(parseDockerContainerInventoryRow);
+  if (rows.some((row) => row === null)) {
     runtime.error(
       "Docker returned an incomplete container inventory. Remaining uninstall state was preserved for retry.",
     );
     return false;
   }
-  if (rows.length === 0) return true;
+  const parsedRows = rows.filter((row): row is DockerContainerInventoryRow => row !== null);
+  if (parsedRows.length === 0) return true;
   const unresolved = findUnresolvedDockerSandboxes(
     runtime.env.HOME || os.homedir(),
     GATEWAY_PORT,
     sandboxNames,
     registrations,
-    rows.map((fields) => fields[2]!),
+    parsedRows.map((row) => row.name).filter(Boolean),
     (args) => runtime.runDocker(args, { env: runtime.env, timeout: 5_000 }),
     (args) => runtime.run("openshell", args, { env: runtime.env, timeout: 10_000 }),
   );
@@ -2779,20 +2816,19 @@ function verifyDockerContainerCleanup(
     );
     return false;
   }
-  const remaining = rows.filter((fields) => {
-    const name = fields[2]!;
-    if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) return false;
+  const remaining = parsedRows.filter((row) => {
+    if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(row.name)) return false;
     return (
       (gatewayName !== null &&
-        (name === `openshell-cluster-${gatewayName}` ||
-          name === resolveGatewayCompatContainerName(GATEWAY_PORT))) ||
+        (row.name === `openshell-cluster-${gatewayName}` ||
+          row.name === resolveGatewayCompatContainerName(GATEWAY_PORT))) ||
       (rejectConventionMatches &&
-        (isConventionalDockerContainerName(name) || isOwnedDockerImageRepository(fields[1]!)))
+        (isConventionalDockerContainerName(row.name) || isOwnedDockerImageRepository(row.image)))
     );
   });
   if (remaining.length === 0) return true;
   runtime.error(
-    `Preserved Docker containers with unverified ownership: ${remaining.map((fields) => `${fields[2]} (${fields[0]})`).join(", ")}. Complete cleanup through the owning runtime, then retry; remaining uninstall state was preserved.`,
+    `Preserved Docker containers with unverified ownership: ${remaining.map((row) => (row.name || row.image ? `${row.name || row.image} (${row.id})` : row.id)).join(", ")}. Complete cleanup through the owning runtime, then retry; remaining uninstall state was preserved.`,
   );
   return false;
 }

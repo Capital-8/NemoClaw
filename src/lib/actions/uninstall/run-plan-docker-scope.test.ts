@@ -393,6 +393,40 @@ describe("uninstall Docker resource scope", () => {
     ).toBe(false);
   });
 
+  it("completes uninstall when unrelated Docker containers omit image or name fields", async () => {
+    const result = await runWithDockerInventory({
+      leftovers: ["0123456789ab  foreign-untagged-image", "fedcba987654 redis:7", "abcdef012345"],
+    });
+    expect(result.result.exitCode, result.errors.join("\n")).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(result.calls.filter((args) => args[0] === "rm")).toEqual([]);
+    expect(result.commands).toContainEqual([
+      "npm",
+      "uninstall",
+      "-g",
+      "--loglevel=error",
+      "nemoclaw",
+    ]);
+  });
+
+  it.each([
+    ["0123456789ab  openshell-my-assistant", "my-assistant"],
+    ["0123456789ab  openshell-cluster-nemoclaw", "openshell-cluster-nemoclaw"],
+  ])(
+    "preserves state when a sandbox or gateway container row has an empty image field: %s",
+    async (leftover, expectedMessage) => {
+      const result = await runWithDockerInventory({ leftovers: [leftover] });
+      expect(result.result.exitCode).toBe(1);
+      expect(result.errors.join("\n")).toContain(expectedMessage);
+      expect(result.retainedRegistry).toBe(result.registry);
+      expect(
+        result.commands.some(
+          ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+        ),
+      ).toBe(false);
+    },
+  );
+
   it("retains state when Docker is unreachable after runtime cleanup", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
     vi.resetModules();

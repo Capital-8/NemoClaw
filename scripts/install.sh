@@ -3778,6 +3778,11 @@ force_fresh_install_has_existing_state() {
     )" || return 2
     while read -r container_id container_image container_name; do
       [[ -n "$container_id" ]] || continue
+      if [[ -z "$container_name" ]]; then
+        case "$container_image" in
+          openshell-* | nemoclaw-*) container_name="$container_image" ;;
+        esac
+      fi
       case "$container_name" in
         openshell-* | nemoclaw-*) _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$container_id" ;;
       esac
