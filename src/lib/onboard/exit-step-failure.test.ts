@@ -405,7 +405,7 @@ setInterval(() => {}, 1_000);
     },
   );
 
-  it("removes SIGINT listeners added after registration and calls only undelivered ones before re-raising SIGINT", async () => {
+  it("removes late SIGINT listeners and calls only those that missed the signal before re-raising SIGINT", async () => {
     const signalEvents = new EventEmitter();
     const outerListener = vi.fn();
     signalEvents.on("SIGINT", outerListener);
@@ -452,7 +452,7 @@ setInterval(() => {}, 1_000);
   });
 
   it.skipIf(process.platform === "win32")(
-    "removes the policy directory, releases the lock, and skips later steps when SIGINT interrupts a policy preset submission",
+    "removes the policy directory, releases the lock, and stops before later steps when SIGINT interrupts a policy preset submission",
     async () => {
       const childDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-signal-"));
       const openshellBin = path.join(childDir, "openshell");
@@ -472,9 +472,12 @@ const policyIdx = process.argv.indexOf("--policy");
 const policyPath = policyIdx >= 0 ? process.argv[policyIdx + 1] : null;
 fs.writeFileSync(
   ${JSON.stringify(policyStartedFile)},
-  JSON.stringify({ policyDir: policyPath ? path.dirname(policyPath) : null }),
+  JSON.stringify({
+    pid: process.pid,
+    policyDir: policyPath ? path.dirname(policyPath) : null,
+  }),
 );
-setInterval(() => {}, 1_000);
+setTimeout(() => process.exit(0), 10_000);
 `,
         { mode: 0o755 },
       );
@@ -543,17 +546,24 @@ registerIncompleteOnboardExitFailureHandler(
         stderr += chunk;
       });
 
+      let openshellPid = 0;
       try {
-        const [ready] = await once(child.stdout, "data");
-        const { lockFile, policyDir } = JSON.parse(String(ready)) as {
+        const [ready] = await once(child.stdout, "data", {
+          signal: AbortSignal.timeout(5_000),
+        });
+        const { lockFile, pid, policyDir } = JSON.parse(String(ready)) as {
           lockFile: string;
+          pid: number;
           policyDir: string;
         };
+        openshellPid = pid;
         expect(fs.existsSync(lockFile)).toBe(true);
         expect(fs.existsSync(policyDir)).toBe(true);
-        const exited = once(child, "exit");
+        const exited = once(child, "exit", { signal: AbortSignal.timeout(5_000) });
+        const closed = once(child, "close", { signal: AbortSignal.timeout(5_000) });
         child.kill("SIGINT");
         const [code, signal] = await exited;
+        await closed;
         expect(code).toBeNull();
         expect(signal).toBe("SIGINT");
         expect(stderr).toContain("onboard --resume");
@@ -572,6 +582,24 @@ registerIncompleteOnboardExitFailureHandler(
         expect(savedSession.failure).toMatchObject({ step: "policies", interrupted: true });
       } finally {
         child.kill("SIGKILL");
+        const targetPid =
+          openshellPid ||
+          (fs.existsSync(policyStartedFile)
+            ? ((JSON.parse(fs.readFileSync(policyStartedFile, "utf8")) as { pid?: number }).pid ??
+              0)
+            : 0);
+        try {
+          targetPid && process.kill(-targetPid, "SIGKILL");
+        } catch {
+          try {
+            targetPid && process.kill(targetPid, "SIGKILL");
+          } catch {
+            void 0;
+          }
+        }
+        await (child.exitCode !== null || child.signalCode !== null
+          ? Promise.resolve()
+          : once(child, "close", { signal: AbortSignal.timeout(5_000) }).catch(() => undefined));
         fs.rmSync(childDir, { recursive: true, force: true });
       }
     },
