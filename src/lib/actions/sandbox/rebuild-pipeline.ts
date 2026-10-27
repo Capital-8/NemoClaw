@@ -13,6 +13,7 @@ import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
+import { HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { withPortableOnboardRetirementBoundary } from "../../onboard/portable-retirement-authority";
 import { cleanupTempDir } from "../../onboard/temp-files";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -38,7 +39,7 @@ import {
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
-import { HERMES_API_PORT_ENV, REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
+import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   delegateRebuildToOwningRegistry,
   disposeRebuildAgentBaseImagePreflight,

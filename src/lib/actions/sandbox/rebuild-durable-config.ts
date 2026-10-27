@@ -38,8 +38,6 @@ import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
-export { HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
-
 export type RebuildDurableConfig = {
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;
   dcodeAutoApprovalModeError: string | null;
