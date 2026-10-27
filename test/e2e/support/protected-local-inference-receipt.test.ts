@@ -8,15 +8,21 @@ import { readProtectedLocalInferenceCount } from "../../../scripts/checks/manage
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 
 it.each([
-  ["ollama", "11435", "NEMOCLAW_OLLAMA_PROXY_TOKEN"],
-  ["vllm", "8000", "NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_TOKEN"],
+  [
+    "ollama",
+    "11435",
+    "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    { model: "fixture-model", completedRequests: 2 },
+    "?model=fixture-model",
+  ],
+  ["vllm", "8000", "NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_TOKEN", { completedRequests: 2 }, ""],
 ] as const)(
   "reads the protected %s completion receipt only from its configured route",
-  async (kind, port, credentialEnv) => {
+  async (kind, port, credentialEnv, receipt, query) => {
     const token = "a".repeat(48);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
-      json: async () => ({ completedRequests: 2 }),
+      json: async () => receipt,
     } as Response);
     try {
       const env = {
@@ -35,7 +41,7 @@ it.each([
       );
       expect(count).toBe(2);
       expect(fetchMock).toHaveBeenCalledWith(
-        `http://127.0.0.1:${port}/_nemoclaw/e2e-inference-receipt`,
+        `http://127.0.0.1:${port}/_nemoclaw/e2e-inference-receipt${query}`,
         expect.objectContaining({ headers: { authorization: `Bearer ${token}` } }),
       );
     } finally {
