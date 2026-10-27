@@ -94,6 +94,9 @@ async function requireSandboxPolicyAuthority(run: PolicyCommand): Promise<void> 
   );
 }
 
+/** Disabled composition refusal; onboard prints each line, so the command stays copyable. */
+export class NativeProviderPolicyDisabledError extends Error {}
+
 /** Read-only prerequisite on existing gateways. Never changes sibling policy. */
 export async function requireNativeProviderPolicy(
   gatewayName: string,
@@ -115,7 +118,7 @@ export async function requireNativeProviderPolicy(
     Array.isArray(settings) ||
     (settings as Record<string, unknown>).providers_v2_enabled !== "true"
   ) {
-    throw new Error(
+    throw new NativeProviderPolicyDisabledError(
       // Keep each line short: onboard bounds every displayed diagnostic line.
       [
         `Native local inference requires providers_v2_enabled=true on gateway '${gatewayName}'.`,

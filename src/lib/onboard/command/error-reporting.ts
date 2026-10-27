@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NativeProviderPolicyDisabledError } from "../../adapters/openshell/provider-policy";
 import { GatewayManagementDeclarationError } from "../gateway-management";
 import { GatewayStateConflictError } from "../errors/gateway-state-conflict";
 import { noteOnboardResumeHintShown } from "../resume-hint";
@@ -83,6 +84,17 @@ export function handleOnboardCommandError(
   }
   if (sanitizedError instanceof OnboardRestoreSnapshotDriftError) {
     return reportOnboardCommandError(deps, `  ${sanitizedError.message}`);
+  }
+  // The launcher joins a rethrown message into one line, which buried the
+  // administrator command mid-sentence (#13811). Print each line instead.
+  if (sanitizedError instanceof NativeProviderPolicyDisabledError) {
+    return reportOnboardCommandError(
+      deps,
+      sanitizedError.message
+        .split("\n")
+        .map((line) => `  ${line}`)
+        .join("\n"),
+    );
   }
   // Gateway-authority refusals are reported, never rethrown. Recreation is not
   // selected in one place: `--recreate-sandbox` sets the flag, but `runOnboard`
