@@ -15,6 +15,7 @@ import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/c
 import {
   assertAgentMcpMutationRuntimeCapability,
   beginHermesMcpReloadFinalityDeadline,
+  DEEPAGENTS_MCP_MAX_SERVERS,
   HermesMcpReloadRelayLossError,
   type HermesMcpReloadFinalityDeadline,
   type HermesMcpReloadFinalityInspection,
@@ -46,6 +47,7 @@ import {
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
+  MAX_SANDBOX_PROVIDER_ATTACHMENTS,
   MCP_BRIDGE_PROVIDER_TYPE,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
@@ -53,6 +55,7 @@ import {
   providerShapeDetail,
   preflightMcpEntryTargets,
   refreshMcpProviderEnvironment,
+  sandboxProviderAttachmentLimitError,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
@@ -211,6 +214,7 @@ async function recoverCommittedPolicyTarget(
 type McpAddRecovery = {
   entry: McpSourceEntry;
   adapterRegistered: boolean;
+  attachmentCount: number;
   attachmentPresent: boolean;
   policyState: "absent" | "capability" | "bound";
   resuming: boolean;
@@ -473,6 +477,7 @@ async function inspectMcpAddRecovery(
   return {
     entry: recoveredEntry,
     adapterRegistered,
+    attachmentCount: attachmentInspection.attachments.length,
     attachmentPresent,
     policyState,
     resuming: adapterRegistered || attachmentPresent || providerPresent || policyState !== "absent",
@@ -769,6 +774,17 @@ async function addMcpBridgeUnlocked(
   }
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
+  const prospectiveNativeServerCount =
+    Object.keys(observed.sources.native).length +
+    (Object.hasOwn(observed.sources.native, options.server) ? 0 : 1);
+  if (
+    adapter === "deepagents-config" &&
+    prospectiveNativeServerCount > DEEPAGENTS_MCP_MAX_SERVERS
+  ) {
+    throw new McpBridgeError(
+      `Deep Agents managed MCP supports at most ${String(DEEPAGENTS_MCP_MAX_SERVERS)} servers; refusing to render a ${String(prospectiveNativeServerCount)}-server mutation.`,
+    );
+  }
   const existingEntry = observed.bridges[options.server];
   let target = existingEntry
     ? replayMcpAddTarget(existingEntry, normalizedUrl, matchingTrustedPrivateHosts)
@@ -871,6 +887,12 @@ async function addMcpBridgeUnlocked(
       providerRuntimeSelection,
     );
     entry = recovery.entry;
+    if (
+      !recovery.attachmentPresent &&
+      recovery.attachmentCount >= MAX_SANDBOX_PROVIDER_ATTACHMENTS
+    ) {
+      throw sandboxProviderAttachmentLimitError(sandboxName, recovery.attachmentCount);
+    }
     // Check live providers under the same cross-command lock used by
     // credentials add so neither command can race its collision check.
     await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);

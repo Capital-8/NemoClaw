@@ -189,6 +189,14 @@ If two definitions need different credentials, retain one definition for that UR
 If this server uses the profile-less `generic` provider from an earlier NemoClaw build, remove it and add it again with the credential exported.
 That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
 
+OpenShell allows at most 32 attached providers in one sandbox.
+This total includes inference, messaging, web search, managed MCP, and providers registered with `credentials add`.
+Each managed MCP server uses one attached provider.
+If the only other attached provider is one inference provider, NemoClaw can attach at most 31 managed MCP servers.
+When a sandbox already has 32 attached providers, NemoClaw rejects a new server before it creates a provider or policy.
+Remove an unused MCP server with `mcp remove`, or detach another provider, before you add the server.
+`mcp restart` and rebuild restoration apply the same limit and stop before they change a provider, policy, or adapter.
+
 ## Meet Endpoint Requirements
 
 Every endpoint must use HTTPS.
@@ -201,7 +209,7 @@ Server names must start with a letter and contain at most 64 letters, digits, hy
 Endpoint hostnames must use lowercase RFC-style DNS labels without empty, leading-hyphen, trailing-hyphen, or overlong labels.
 
 <AgentOnly variant="deepagents">
-Deep Agents Code supports at most 64 managed MCP servers in one sandbox.
+NemoClaw limits `/sandbox/.deepagents/.mcp.json` to 64 `mcpServers` entries in total.
 </AgentOnly>
 Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenShell glob metacharacters.
 Endpoint URLs cannot use port `0`.
