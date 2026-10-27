@@ -61,6 +61,7 @@ function prepare(input: {
       previousReceipt: { credentialProxyReplayRequired: false },
       corporateCa: null,
     } as unknown as managedWorkload.ManagedWorkloadRebuildCatalogHandoff,
+    gatewayPort: 8080,
     targetConfig,
     recreateOptions: {
       controlUiPort: 18_790,
