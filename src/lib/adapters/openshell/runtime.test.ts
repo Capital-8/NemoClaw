@@ -174,6 +174,48 @@ describe("captureSandboxPhasesForGateway", () => {
       fs.rmSync(marker, { force: true });
     }
   });
+
+  it("passes gateway config but excludes supplied and ambient credentials from the child", async () => {
+    const openshell = nodeExecutable(
+      "openshell",
+      `process.stdout.write(JSON.stringify({
+        args: process.argv.slice(2),
+        home: process.env.HOME,
+        config: process.env.XDG_CONFIG_HOME,
+        gateway: process.env.OPENSHELL_GATEWAY,
+        workspace: process.env.OPENSHELL_WORKSPACE,
+        tls: process.env.OPENSHELL_LOCAL_TLS_DIR,
+        suppliedSecret: process.env.NVIDIA_API_KEY ?? null,
+        ambientSecret: process.env.AWS_SECRET_ACCESS_KEY ?? null,
+      }));`,
+    );
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "ambient-canary");
+    vi.resetModules();
+    const { captureSandboxPhasesForGateway: captureFresh } = await import("./runtime");
+
+    const result = captureFresh("recorded-gateway", {
+      HOME: "/recorded/home",
+      PATH: process.env.PATH,
+      XDG_CONFIG_HOME: "/recorded/config",
+      OPENSHELL_GATEWAY: "recorded-gateway",
+      OPENSHELL_WORKSPACE: "recorded-workspace",
+      OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+      NVIDIA_API_KEY: "supplied-canary",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output)).toEqual({
+      args: ["sandbox", "list", "-g", "recorded-gateway"],
+      home: "/recorded/home",
+      config: "/recorded/config",
+      gateway: "recorded-gateway",
+      workspace: "recorded-workspace",
+      tls: "/recorded/tls",
+      suppliedSecret: null,
+      ambientSecret: null,
+    });
+  });
 });
 
 describe("captureResolvedOpenshellAsync", () => {

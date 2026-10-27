@@ -16,7 +16,11 @@ import {
 } from "./command-execution";
 import { cliOpenShellInstalledVersionObserver } from "./installed-version-cli";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
-import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
+import {
+  buildOpenShellDiagnosticEnvironment,
+  buildOpenShellSubprocessEnv,
+  resolveOpenshellBinaryOrNull,
+} from "./resolve-shared";
 
 type CommandArgs = string[];
 
@@ -125,7 +129,8 @@ export function captureSandboxPhasesForGateway(
   assertNoOpenShellGatewayEndpointOverride();
   assertNoOpenShellGatewayEndpointOverride(environment);
   const result = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
-    env: environment,
+    env: buildOpenShellDiagnosticEnvironment(environment),
+    replaceEnv: true,
     ignoreError: true,
     includeStderr: true,
     maxBuffer: 1024 * 1024,
