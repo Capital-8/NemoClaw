@@ -110,7 +110,7 @@ describe("rebuild resume snapshot repair", () => {
 
     session = onboardSession.createSession({
       sandboxName: "alpha",
-      provider: "ollama-local",
+      provider: "build",
       model: "nvidia/nemotron",
       lastCompletedStep: "gateway",
       status: "complete",
@@ -216,7 +216,7 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(onboardSession, "markStepFailed").mockImplementation(() => loadSession()),
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "alpha",
-        provider: "ollama-local",
+        provider: "build",
         model: "nvidia/nemotron",
         agent: null,
         nimContainer: null,
@@ -237,7 +237,7 @@ describe("rebuild resume snapshot repair", () => {
           sandboxName: "alpha",
           gatewayName: "nemoclaw",
           route: {
-            provider: "ollama-local",
+            provider: "build",
             model: "nvidia/nemotron",
             endpointUrl: null,
             preferredInferenceApi: null,
@@ -264,13 +264,31 @@ describe("rebuild resume snapshot repair", () => {
         failedDirs: [],
         failedFiles: [],
         manifest: {
+          version: 2,
+          sandboxName: "alpha",
           backupPath,
           timestamp: "2026-06-01T00:00:00.000Z",
+          agentType: "openclaw",
+          agentVersion: "0.0.1",
+          expectedVersion: "0.1.0",
+          nativeState: {
+            root: "/sandbox",
+            archive: "native-home.tar",
+            sha256: "a".repeat(64),
+          },
+          blueprintDigest: null,
         },
       } as never),
-      vi
-        .spyOn(openshellRuntime, "runOpenshell")
-        .mockReturnValue({ status: 0, output: "" } as never),
+      vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(
+        (args: string[]) =>
+          ({
+            status: 0,
+            output:
+              args[0] === "provider" && args[1] === "get" && args[2] === "build"
+                ? "Name: build\nType: openai\nCredential keys: <none>\nConfig keys: <none>\n"
+                : "",
+          }) as never,
+      ),
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 1,
         output: "",

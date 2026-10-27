@@ -88,6 +88,24 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it("rejects an endpoint override before selected-target observation (#11832)", async () => {
+    const capture = vi.fn();
+    const observer = createCliOpenShellSandboxObserver({
+      capture,
+      environment: {
+        OPENSHELL_GATEWAY_ENDPOINT: "https://user:fixture-secret@example.test",
+      },
+    });
+
+    await expect(
+      observer.listSandboxes({ target: selectedOpenShellGateway() }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "transport", reason: "endpoint_override" },
+    });
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it("contains table and ANSI compatibility inside the CLI implementation (#9803)", () => {
     expect(
       parseCliOpenShellSandboxInventory(
@@ -308,6 +326,7 @@ describe("CLI OpenShell sandbox observer", () => {
           `Error: code: 'Some requested entity was not found', message: "sandbox not found"`,
         ),
       )
+      .mockReturnValueOnce(captured(1, "", `Error: code: 'NotFound', message: "sandbox not found"`))
       .mockReturnValueOnce(
         captured(1, "", "Error: authentication failed: sandbox not found: bearer value"),
       );
@@ -319,11 +338,35 @@ describe("CLI OpenShell sandbox observer", () => {
       displayOutput: "",
     });
     await expect(lookup(request)).resolves.toEqual({
+      result: { ok: true, value: { state: "missing" } },
+      displayOutput: "",
+    });
+    await expect(lookup(request)).resolves.toEqual({
       result: {
         ok: false,
         error: {
           kind: "authentication",
           message: "OpenShell could not authenticate the sandbox observation.",
+        },
+      },
+      displayOutput: "",
+    });
+  });
+
+  it("does not retire ownership from compact NotFound status (#12740)", async () => {
+    const lookup = createCliOpenShellSandboxLookup({
+      capture: () => captured(1, "", `status: NotFound, message: "sandbox not found"`),
+    });
+
+    await expect(
+      lookup({ sandboxName: "alpha", target: selectedOpenShellGateway() }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: "The OpenShell sandbox observation failed.",
         },
       },
       displayOutput: "",

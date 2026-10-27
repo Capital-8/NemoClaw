@@ -11,23 +11,34 @@ import type {
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxControl,
   RuntimeProviderPrivilegedSandboxTarget,
+  RuntimeProviderStoppedNativeHomeCleanupInput,
+  RuntimeProviderStoppedSandboxStateCleanupInput,
 } from "./contract";
 import {
   DirectSandboxContainerNotFoundError,
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
-import { selectDockerPrivilegedSandboxTarget } from "./docker-privileged-sandbox-identity";
-import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
+  selectDockerPrivilegedSandboxTarget,
+  selectDockerPrivilegedSandboxTargetRecord,
+} from "./docker-privileged-sandbox-identity";
+import { createDockerOperationAuthority } from "./docker-operation-authority";
+import { prepareManagedWorkspaceMetadata } from "./managed-workspace-metadata";
+import {
+  clearStoppedNativeHomeWithEngine,
   clearStoppedSandboxStateWithEngine,
+  sandboxNativeHomeResourceFromMounts,
   sandboxStateResourceFromMounts,
   type StoppedSandboxStateObservation,
+  type StoppedSandboxStateTarget,
 } from "./stopped-sandbox-state-cleanup";
 
 const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+const OPENSHELL_ISOLATION_ROLE_LABEL = "openshell.ai/isolation-role";
+const SANDBOX_CONTAINER_FORMAT = `{{.ID}}\t{{.Names}}\t{{.Label "${OPENSHELL_ISOLATION_ROLE_LABEL}"}}`;
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 
 type SandboxEntry = import("../../state/registry").SandboxEntry;
@@ -35,6 +46,7 @@ type SandboxEntry = import("../../state/registry").SandboxEntry;
 function findDirectSandboxContainer(
   sandboxName: string,
   registeredSandboxNames: readonly string[],
+  timeoutMs = DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS,
 ): string | null {
   let output: string;
   try {
@@ -48,9 +60,9 @@ function findDirectSandboxContainer(
         "--filter",
         `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
         "--format",
-        "{{.ID}}\t{{.Names}}",
+        SANDBOX_CONTAINER_FORMAT,
       ],
-      { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
+      { timeout: Math.max(1, Math.min(DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS, timeoutMs)) },
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -123,7 +135,9 @@ function resolvePinnedDockerTarget(
     selected !== expectedResourceHandle ||
     running !== "true" ||
     labels[OPENSHELL_MANAGED_BY_LABEL] !== OPENSHELL_MANAGED_BY_VALUE ||
-    labels[OPENSHELL_SANDBOX_NAME_LABEL] !== input.sandboxName
+    labels[OPENSHELL_SANDBOX_NAME_LABEL] !== input.sandboxName ||
+    (labels[OPENSHELL_ISOLATION_ROLE_LABEL] !== undefined &&
+      labels[OPENSHELL_ISOLATION_ROLE_LABEL] !== "sandbox")
   ) {
     return refuse();
   }
@@ -143,14 +157,18 @@ function resolveDockerTarget(
   input: Pick<
     RuntimeProviderPrivilegedSandboxCommandInput,
     "registeredSandboxNames" | "sandbox" | "sandboxName"
-  >,
+  > & { readonly timeoutMs?: number },
 ): RuntimeProviderPrivilegedSandboxTarget {
   const portable = portableTarget(input.sandboxName, input.sandbox);
   if (portable) {
     portable.assertRuntimeAuthority();
     return Object.freeze({ providerId: "docker", resourceHandle: portable.containerId });
   }
-  const containerId = findDirectSandboxContainer(input.sandboxName, input.registeredSandboxNames);
+  const containerId = findDirectSandboxContainer(
+    input.sandboxName,
+    input.registeredSandboxNames,
+    input.timeoutMs,
+  );
   if (!containerId) {
     throw new DirectSandboxContainerNotFoundError(
       `No running direct OpenShell sandbox container found for '${input.sandboxName}' ` +
@@ -165,8 +183,9 @@ function resolveDockerTarget(
 
 function executeDockerCommand(
   input: RuntimeProviderPrivilegedSandboxCommandInput,
+  sandboxUser?: string,
 ): RuntimeProviderPrivilegedSandboxCommandResult {
-  const argv = buildLegacyDockerArgv(input);
+  const argv = buildLegacyDockerArgv(input, sandboxUser);
   const result = dockerSpawnSync(argv, {
     encoding: null,
     input: input.input,
@@ -185,6 +204,7 @@ function executeDockerCommand(
 
 function buildLegacyDockerArgv(
   input: Omit<RuntimeProviderPrivilegedSandboxCommandInput, "timeoutMs">,
+  sandboxUser?: string,
 ): string[] {
   const portable = portableTarget(input.sandboxName, input.sandbox);
   const target = portable
@@ -207,7 +227,7 @@ function buildLegacyDockerArgv(
     ...(input.input ? ["-i"] : []),
     ...environment,
     "--user",
-    portable ? "0" : "root",
+    sandboxUser ?? (portable ? "0" : "root"),
     target,
     ...input.command,
   ];
@@ -216,9 +236,13 @@ function buildLegacyDockerArgv(
 
 function observeStoppedDockerTarget(
   engine: ReturnType<typeof createDockerOperationAuthority>["engine"],
-  input: Parameters<
-    NonNullable<RuntimeProviderPrivilegedSandboxControl["clearStoppedStateRoots"]>
-  >[0],
+  input:
+    | RuntimeProviderStoppedSandboxStateCleanupInput
+    | RuntimeProviderStoppedNativeHomeCleanupInput,
+  stateResourceFromMounts: (
+    mounts: unknown,
+    resourceHandle: string,
+  ) => StoppedSandboxStateTarget["stateResource"] | null,
 ): StoppedSandboxStateObservation {
   let lookup;
   try {
@@ -232,7 +256,7 @@ function observeStoppedDockerTarget(
         "--filter",
         `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${input.sandboxName}`,
         "--format",
-        "{{.ID}}\t{{.Names}}",
+        SANDBOX_CONTAINER_FORMAT,
       ],
       DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS,
     );
@@ -240,9 +264,9 @@ function observeStoppedDockerTarget(
     return { failure: "runtime-discovery-failed" };
   }
   if (lookup.status !== 0 || lookup.error) return { failure: "runtime-discovery-failed" };
-  let resourceHandle: string | null;
+  let targetRecord;
   try {
-    resourceHandle = selectDockerPrivilegedSandboxTarget(
+    targetRecord = selectDockerPrivilegedSandboxTargetRecord(
       input.sandboxName,
       lookup.stdout,
       input.registeredSandboxNames,
@@ -250,9 +274,17 @@ function observeStoppedDockerTarget(
   } catch {
     return { failure: "runtime-ownership-invalid" };
   }
-  if (!resourceHandle || /-nemoclaw-gpu-backup-\d+$/u.test(lookup.stdout)) {
+  if (
+    "expectedResourceHandle" in input &&
+    input.expectedResourceHandle !== undefined &&
+    input.expectedResourceHandle !== targetRecord?.resourceHandle
+  ) {
+    return { failure: "runtime-ownership-invalid" };
+  }
+  if (!targetRecord || /-nemoclaw-gpu-backup-\d+$/u.test(targetRecord.containerName)) {
     return { failure: "no-eligible-stopped-runtime" };
   }
+  const resourceHandle = targetRecord.resourceHandle;
   const inspected = engine.capture(
     ["inspect", "--format", "{{.Id}}\t{{.State.Running}}\t{{json .Mounts}}", resourceHandle],
     30_000,
@@ -273,7 +305,7 @@ function observeStoppedDockerTarget(
   } catch {
     return { failure: "state-resource-unavailable" };
   }
-  const stateResource = sandboxStateResourceFromMounts(mounts, input.paths);
+  const stateResource = stateResourceFromMounts(mounts, resourceHandle);
   return stateResource
     ? { target: { resourceHandle, running: running === "true", stateResource } }
     : { failure: "state-resource-unavailable" };
@@ -287,15 +319,80 @@ function clearStoppedStateRoots(
   const engine = createDockerOperationAuthority("sandbox-lifecycle").engine;
   return clearStoppedSandboxStateWithEngine(input.sandboxName, input.paths, {
     capture: (args, timeoutMs = 30_000) => engine.capture(args, timeoutMs),
-    observe: () => observeStoppedDockerTarget(engine, input),
+    observe: () =>
+      observeStoppedDockerTarget(engine, input, (mounts) =>
+        sandboxStateResourceFromMounts(mounts, input.paths),
+      ),
+  });
+}
+
+function clearStoppedNativeHome(input: RuntimeProviderStoppedNativeHomeCleanupInput) {
+  const engine = createDockerOperationAuthority("sandbox-lifecycle").engine;
+  return clearStoppedNativeHomeWithEngine(input.sandboxName, input.root, input.protectedPaths, {
+    capture: (args, timeoutMs = 30_000) => engine.capture(args, timeoutMs),
+    observe: () =>
+      observeStoppedDockerTarget(engine, input, (mounts, resourceHandle) =>
+        sandboxNativeHomeResourceFromMounts(mounts, input.root, resourceHandle),
+      ),
   });
 }
 
 export function createDockerPrivilegedSandboxControl(): RuntimeProviderPrivilegedSandboxControl {
   return Object.freeze({
+    prepareManagedStartupWorkspace: (
+      input: Parameters<
+        NonNullable<RuntimeProviderPrivilegedSandboxControl["prepareManagedStartupWorkspace"]>
+      >[0],
+    ) =>
+      prepareManagedWorkspaceMetadata(input.workspace, {
+        execute: (command) =>
+          executeDockerCommand({
+            ...input,
+            command,
+            sanitizeEnvironment: true,
+            maxOutputBytes: 4096,
+          }),
+        copyDirectory: (archive) => {
+          const portable = portableTarget(input.sandboxName, input.sandbox);
+          if (portable) portable.assertRuntimeAuthority();
+          const target = portable
+            ? portable.containerId
+            : resolvePinnedDockerTarget(input, input.expectedResourceHandle);
+          if (target !== input.expectedResourceHandle) {
+            throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
+          }
+          // Do not pass -a: Docker then substitutes Config.User for archive ownership.
+          const result = dockerSpawnSync(
+            [...(portable ? ["--host", portable.dockerHost] : []), "cp", "-", `${target}:/`],
+            {
+              encoding: null,
+              input: archive,
+              maxBuffer: 4096,
+              stdio: ["pipe", "pipe", "pipe"],
+              timeout: input.timeoutMs,
+            },
+          );
+          return {
+            ...result,
+            stdout: Buffer.from(result.stdout ?? ""),
+            stderr: Buffer.from(result.stderr ?? ""),
+          };
+        },
+      }),
     resolveTarget: resolveDockerTarget,
     execute: executeDockerCommand,
+    // Capability-free root cannot remove private sandbox-owned native state.
+    // Retain the same target checks and sanitized transport for its owner.
+    executeAsSandboxUser: (
+      input: RuntimeProviderPrivilegedSandboxCommandInput & { readonly sandboxUser: string },
+    ) => {
+      if (!/^[1-9][0-9]{0,9}:[1-9][0-9]{0,9}$/u.test(input.sandboxUser)) {
+        throw new Error("Docker sandbox-user cleanup requires a non-root numeric UID and GID.");
+      }
+      return executeDockerCommand(input, input.sandboxUser);
+    },
     clearStoppedStateRoots,
+    clearStoppedNativeHome,
     buildLegacyDockerArgv,
   });
 }

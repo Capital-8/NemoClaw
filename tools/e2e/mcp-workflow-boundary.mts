@@ -59,7 +59,7 @@ const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
 const DEV_ARTIFACT_COPY_HELPER = ".github/scripts/copy-openshell-dev-asset.sh";
 const DEV_ARTIFACT_TOOL_PATHS =
   "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
-const DEV_ARTIFACT_TRUSTED_PATHS = `.github/actions/setup-reviewed-npm\nci/reviewed-npm-audit.json\nscripts/lib/reviewed-npm-audit.mts\n${DEV_ARTIFACT_TOOL_PATHS}`;
+const DEV_ARTIFACT_TRUSTED_PATHS = `.github/actions/setup-reviewed-npm\nci/reviewed-npm-audit.json\nscripts/lib/npm-diagnostics.sh\nscripts/lib/reviewed-npm-audit.mts\n${DEV_ARTIFACT_TOOL_PATHS}`;
 const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `${DEV_ARTIFACT_COPY_HELPER}\n.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TOOL_PATHS}`;
 const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
 const DEV_ARTIFACT_TRUSTED_COPY_HELPER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_COPY_HELPER}`;
@@ -89,12 +89,13 @@ const CREDENTIAL_WINDOW_ARTIFACT_DIR = `e2e-artifacts/live/openshell-credential-
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
-const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
+const REVIEWED_SUPERVISOR_IMAGE = "${{ needs.generate-matrix.outputs.openshell_supervisor_image }}";
+const REVIEWED_RUNTIME_PROVENANCE =
+  "${{ needs.generate-matrix.outputs.openshell_runtime_provenance }}";
 const STABLE_MCP_INSTALL_CONTENT_SHA256 =
-  "3cfce1666262924082f93257212eadc6f133c60eb705263c715aa9f79c293943";
+  "1c788c6e37535f5be504f954d2acbea8ddddd3d8d1e46ebdc1bdcd67a19e492f";
 const CREDENTIAL_WINDOW_INSTALL_CONTENT_SHA256 =
-  "8fb967344552c39a0c01b2901b6ec7bfa527f248e7d3aaf3edf63fbcc1c376c0";
+  "2fc2e4166b63c99c8e048f43f0da18864a1b997cb6aaeb13e066046d443c2bc4";
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -214,7 +215,7 @@ function validateJobIdentity(
     JSON.stringify(jobNeeds(job)),
     JSON.stringify(
       jobName === "mcp-bridge-dev"
-        ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB]
+        ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB, REVIEWED_SDK_ARTIFACT_JOB]
         : ["base-image-publication", "generate-matrix", REVIEWED_SDK_ARTIFACT_JOB],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
@@ -265,7 +266,7 @@ function validateJobIdentity(
     requireEqual(
       errors,
       env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-      `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
+      REVIEWED_SUPERVISOR_IMAGE,
       "mcp-bridge must pin the reviewed stable supervisor image",
     );
     if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
@@ -541,6 +542,12 @@ function validateJobExecution(
       "1",
       `${jobName} must force the selected OpenShell install`,
     );
+    requireEqual(
+      errors,
+      installEnv.OPENSHELL_RUNTIME_PROVENANCE,
+      REVIEWED_RUNTIME_PROVENANCE,
+      "mcp-bridge must receive the reviewed candidate runtime provenance",
+    );
     if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
       errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
     }
@@ -613,11 +620,15 @@ function validateJobExecution(
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     const dockerAuth = namedStep(job, "Authenticate to Docker Hub");
     const prepare = namedStep(job, "Prepare E2E workspace");
+    const sdkDownload = namedStep(job, REVIEWED_SDK_DOWNLOAD_NAME);
+    const sdkInstall = namedStep(job, REVIEWED_OPEN_SHELL_SDK_INSTALL_STEP);
     const reviewedNpm = namedStep(job, "Install reviewed npm for trusted OpenShell verification");
     const trustedNodeSetup = namedStep(job, DEV_TRUSTED_NODE_SETUP_NAME);
     const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
     const dockerAuthIndex = steps.indexOf(dockerAuth);
     const prepareIndex = steps.indexOf(prepare);
+    const sdkDownloadIndex = steps.indexOf(sdkDownload);
+    const sdkInstallIndex = steps.indexOf(sdkInstall);
     const trustedCheckoutIndex = steps.indexOf(trustedCheckout);
     const installIndex = steps.indexOf(install);
     const restoreCliIndex = steps.indexOf(restoreCli);
@@ -639,8 +650,10 @@ function validateJobExecution(
       dockerAuthIndex !== trustedNodeSetupIndex + 2 ||
       steps.indexOf(reviewedNpm) !== dockerAuthIndex + 1 ||
       trustedCheckoutIndex !== dockerAuthIndex + 2 ||
-      prepareIndex !== installIndex + 1 ||
-      restoreCliIndex !== prepareIndex + 1 ||
+      sdkDownloadIndex !== installIndex + 1 ||
+      prepareIndex !== sdkDownloadIndex + 1 ||
+      sdkInstallIndex !== prepareIndex + 1 ||
+      restoreCliIndex !== sdkInstallIndex + 1 ||
       trustedInstallSequence.some((step, offset) => steps[dockerAuthIndex + 1 + offset] !== step)
     ) {
       errors.push(
@@ -658,9 +671,10 @@ function validateJobExecution(
       errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
     }
     if (
+      sdkDownloadIndex < 0 ||
       prepareIndex < 0 ||
       restoreCliIndex < prepareIndex ||
-      contentSha256(steps.slice(prepareIndex, restoreCliIndex + 1)) !==
+      contentSha256(steps.slice(sdkDownloadIndex, restoreCliIndex + 1)) !==
         MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256
     ) {
       errors.push(
@@ -921,8 +935,8 @@ function validateCredentialWindowJob(
   requireEqual(
     errors,
     JSON.stringify(jobNeeds(job)),
-    JSON.stringify(["base-image-publication", "generate-matrix"]),
-    `${CREDENTIAL_WINDOW_JOB} must depend on publication and matrix generation`,
+    JSON.stringify(["base-image-publication", "generate-matrix", REVIEWED_SDK_ARTIFACT_JOB]),
+    `${CREDENTIAL_WINDOW_JOB} must depend on publication, matrix generation, and SDK packaging`,
   );
   requireEqual(
     errors,
@@ -964,7 +978,7 @@ function validateCredentialWindowJob(
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_GATEWAY_RUNTIME: MATRIX_RUNTIME_PROVIDER_EXPRESSION,
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: REVIEWED_SUPERVISOR_IMAGE,
   };
   if (!hasExactEntries(env, expectedEnv)) {
     errors.push(`${CREDENTIAL_WINDOW_JOB} must use only its reviewed exact-stable environment`);
@@ -1029,6 +1043,12 @@ function validateCredentialWindowJob(
     asRecord(install.env).NEMOCLAW_OPENSHELL_FORCE_INSTALL,
     "1",
     `${CREDENTIAL_WINDOW_JOB} must force the stable OpenShell install`,
+  );
+  requireEqual(
+    errors,
+    asRecord(install.env).OPENSHELL_RUNTIME_PROVENANCE,
+    REVIEWED_RUNTIME_PROVENANCE,
+    `${CREDENTIAL_WINDOW_JOB} must receive the reviewed candidate runtime provenance`,
   );
   requireEqual(
     errors,
