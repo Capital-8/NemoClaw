@@ -154,6 +154,18 @@ function buildSparseTar(kind: "old-gnu" | "pax" | "global-pax"): Buffer {
   ]);
 }
 
+function buildGlobalPaxCredentialTar(): Buffer {
+  const metadata = paxRecord("path", "workspace/.env");
+  const file = Buffer.from("CUSTOM_API_TOKEN=opaqueCredentialPayloadZ1234567890\n", "utf8");
+  return Buffer.concat([
+    tarHeader("PaxHeaders/global", metadata, { type: "g" }),
+    paddedTarPayload(metadata),
+    tarHeader("workspace/benign.txt", file),
+    paddedTarPayload(file),
+    Buffer.alloc(1024, 0),
+  ]);
+}
+
 function buildSymlinkTraversalTar(): Buffer {
   const payload = Buffer.from("must stay contained", "utf8");
   const paddedPayload = Buffer.alloc(Math.ceil(payload.length / 512) * 512, 0);
@@ -1289,8 +1301,8 @@ process.stdout.write(String(uid) + "\\n");
     },
   );
 
-  it.each(["old-gnu", "pax", "global-pax"] as const)(
-    "rejects a %s sparse archive before inspection or publication",
+  it.each(["old-gnu", "pax", "global-pax", "global-pax-credential"] as const)(
+    "rejects a %s archive before inspection or publication",
     (kind) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-sparse-"));
       const oldPath = process.env.PATH;
@@ -1307,7 +1319,10 @@ process.stdout.write(String(uid) + "\\n");
         expect(systemTar).not.toBe("");
         fs.mkdirSync(binDir, { recursive: true });
         fs.mkdirSync(nativeRoot, { recursive: true });
-        fs.writeFileSync(craftedArchive, buildSparseTar(kind));
+        fs.writeFileSync(
+          craftedArchive,
+          kind === "global-pax-credential" ? buildGlobalPaxCredentialTar() : buildSparseTar(kind),
+        );
         writeCraftedCaptureTar(binDir, systemTar);
         process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
         process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
@@ -1323,7 +1338,11 @@ process.stdout.write(String(uid) + "\\n");
         });
 
         expect(backup.success).toBe(false);
-        expect(backup.error).toContain("native state sparse archive entry");
+        expect(backup.error).toContain(
+          kind === "global-pax-credential"
+            ? "credential-bearing or uninspectable content at 'workspace/.env'"
+            : "native state sparse archive entry",
+        );
         const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
         expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
       } finally {

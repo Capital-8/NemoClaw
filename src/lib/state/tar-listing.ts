@@ -6,6 +6,7 @@ import {
   accessSync,
   closeSync,
   constants,
+  existsSync,
   fstatSync,
   mkdtempSync,
   openSync,
@@ -31,6 +32,72 @@ export const TAR_BLOCK_BYTES = 512;
 const TAR_METADATA_MAX_BYTES = 1024 * 1024;
 const TAR_TOTAL_METADATA_MAX_BYTES = 4 * 1024 * 1024;
 let unsupportedLiteralQuotingExecutable: string | null = null;
+const TAR_LISTING_BOUNDED_WRITER_SCRIPT = String.raw`
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const [listingPath, overflowPath, maxBytesText, tarCommand, ...args] = process.argv.slice(1);
+const maxBytes = Number(maxBytesText);
+let listingFd = fs.openSync(listingPath, "w", 0o600);
+let written = 0;
+let overflowed = false;
+const closeListing = () => {
+  if (listingFd !== null) {
+    try {
+      fs.closeSync(listingFd);
+    } catch {}
+    listingFd = null;
+  }
+};
+const child = spawn(tarCommand, args, { stdio: [0, "pipe", "pipe"] });
+const stopChild = () => {
+  try {
+    child.kill("SIGKILL");
+  } catch {}
+};
+process.on("SIGTERM", () => {
+  stopChild();
+  closeListing();
+  process.exit(1);
+});
+process.on("SIGINT", () => {
+  stopChild();
+  closeListing();
+  process.exit(1);
+});
+child.stdout.on("data", (chunk) => {
+  if (overflowed) return;
+  if (written + chunk.length > maxBytes) {
+    overflowed = true;
+    closeListing();
+    fs.rmSync(listingPath, { force: true });
+    fs.writeFileSync(overflowPath, "1");
+    child.stdout.destroy();
+    stopChild();
+    return;
+  }
+  let offset = 0;
+  while (offset < chunk.length) {
+    offset += fs.writeSync(listingFd, chunk, offset, chunk.length - offset);
+  }
+  written += chunk.length;
+});
+child.stderr.on("data", (chunk) => {
+  process.stderr.write(chunk);
+});
+child.on("error", (error) => {
+  closeListing();
+  process.stderr.write(String(error.message) + "\n");
+  process.exit(1);
+});
+child.on("close", (code, signal) => {
+  closeListing();
+  if (overflowed) {
+    fs.rmSync(listingPath, { force: true });
+    process.exit(0);
+  }
+  process.exit(code ?? (signal ? 1 : 0));
+});
+`;
 
 /** Resolve the active tar executable and its filesystem identity from PATH. */
 function resolveTarExecutable(): { command: string; identity: string | null } {
@@ -323,33 +390,46 @@ function spawnTarListingPass(
   tarArchive: TarListingSource,
   tempDir: string,
   listingPath: string,
+  overflowPath: string,
   stagedArchivePath: { current: string | null },
   args: string[],
   timeoutMs: number,
   deadlineMs: number,
+  maxOutputBytes: number,
 ): SpawnSyncReturns<string> {
-  let listingFd: number | null = null;
   let archiveFd: number | null = null;
+  const wrapperArgs = [
+    "--no-warnings",
+    "-e",
+    TAR_LISTING_BOUNDED_WRITER_SCRIPT,
+    listingPath,
+    overflowPath,
+    String(maxOutputBytes),
+    tarCommand,
+    ...args,
+  ];
+  const wrapperEnv = { ...process.env, NODE_OPTIONS: undefined, NODE_PATH: undefined };
   try {
-    listingFd = openSync(listingPath, "w");
+    rmSync(overflowPath, { force: true });
     if (Buffer.isBuffer(tarArchive)) {
-      return spawnSync(tarCommand, args, {
+      return spawnSync(process.execPath, wrapperArgs, {
+        env: wrapperEnv,
         input: tarArchive,
         encoding: "utf-8",
-        stdio: ["pipe", listingFd, "pipe"],
+        stdio: ["pipe", "ignore", "pipe"],
         timeout: timeoutMs,
         maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
       });
     }
     archiveFd = openIndependentTarDescriptor(tarArchive, tempDir, stagedArchivePath, deadlineMs);
-    return spawnSync(tarCommand, args, {
+    return spawnSync(process.execPath, wrapperArgs, {
+      env: wrapperEnv,
       encoding: "utf-8",
-      stdio: [archiveFd, listingFd, "pipe"],
+      stdio: [archiveFd, "ignore", "pipe"],
       timeout: timeoutMs,
       maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
     });
   } finally {
-    if (listingFd !== null) closeSync(listingFd);
     if (archiveFd !== null) closeSync(archiveFd);
   }
 }
@@ -368,7 +448,12 @@ export function runTarListing(
   onLine: (line: string) => void,
   timeoutMs = 60_000,
   deadlineMs?: number,
+  maxOutputBytes = TAR_LISTING_MAX_OUTPUT_BYTES,
 ): string | null {
+  const effectiveMaxOutputBytes =
+    Number.isSafeInteger(maxOutputBytes) && maxOutputBytes > 0
+      ? Math.min(maxOutputBytes, TAR_LISTING_MAX_OUTPUT_BYTES)
+      : TAR_LISTING_MAX_OUTPUT_BYTES;
   const nowMs = Date.now();
   const listingDeadlineMs =
     deadlineMs === undefined ? nowMs + timeoutMs : Math.min(nowMs + timeoutMs, deadlineMs);
@@ -377,6 +462,7 @@ export function runTarListing(
   }
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tar-listing-"));
   const listingPath = path.join(tempDir, "listing.txt");
+  const overflowPath = path.join(tempDir, "listing.overflow");
   const stagedArchivePath = { current: null as string | null };
   let headerFd: number | null = null;
   try {
@@ -438,12 +524,14 @@ export function runTarListing(
       tarArchive,
       tempDir,
       listingPath,
+      overflowPath,
       stagedArchivePath,
       tryLiteralQuoting ? ["--quoting-style=literal", ...args] : args,
       initialTimeoutMs,
       listingDeadlineMs,
+      effectiveMaxOutputBytes,
     );
-    if (tryLiteralQuoting && isUnsupportedQuotingStyle(result)) {
+    if (tryLiteralQuoting && !existsSync(overflowPath) && isUnsupportedQuotingStyle(result)) {
       unsupportedLiteralQuotingExecutable = tarExecutable.identity;
       const fallbackTimeoutMs = remainingListingTimeoutMs(listingDeadlineMs, timeoutMs);
       if (fallbackTimeoutMs === null) {
@@ -454,20 +542,26 @@ export function runTarListing(
         tarArchive,
         tempDir,
         listingPath,
+        overflowPath,
         stagedArchivePath,
         args,
         fallbackTimeoutMs,
         listingDeadlineMs,
+        effectiveMaxOutputBytes,
       );
+    }
+
+    if (
+      existsSync(overflowPath) ||
+      (existsSync(listingPath) && statSync(listingPath).size > effectiveMaxOutputBytes)
+    ) {
+      rmSync(listingPath, { force: true });
+      return `${failureLabel} exceeded ${effectiveMaxOutputBytes} bytes`;
     }
 
     const status = tarExitStatus(result);
     if (status !== 0) {
       return `${failureLabel} failed (exit ${status}): ${(result.stderr || "").substring(0, 200)}`;
-    }
-
-    if (statSync(listingPath).size > TAR_LISTING_MAX_OUTPUT_BYTES) {
-      return `${failureLabel} exceeded ${TAR_LISTING_MAX_OUTPUT_BYTES} bytes`;
     }
 
     readTextLinesFromFile(listingPath, onLine, listingDeadlineMs);

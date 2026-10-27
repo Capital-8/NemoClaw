@@ -592,13 +592,13 @@ While the original sandbox remains intact, correct the reported failure:
 
 - If the error reports a source-access failure, repair source access.
 - If the error reports insufficient space, free backup-disk space.
-- If the error reports `archive entry contains a line break`, the message shows the JSON-encoded first 240 characters of the affected path or link target.
-  Rename that file or directory, or recreate the link with a target that has no line break.
-- If the error reports `archive header inspection timed out`, reduce the native-home size, entry count, or host disk-read load.
+- If the error reports `archive entry contains a line break`, rename the affected file, directory, or link, or recreate the link with a target that has no line break.
+  The message shows the JSON-encoded first 240 characters of the affected path or link target.
+- If the error reports `archive header inspection timed out` or `archive listing timed out`, reduce the native-home size, entry count, or host disk-read load.
   NemoClaw allows each archive inspection up to 60 seconds, and the inspection must finish before the backup deadline.
 - If the error reports `archive header inspection exceeded the metadata-byte limit`, reduce the extended-header and long-name metadata in the native home.
   NemoClaw accepts up to 4 MiB of PAX extended-header, GNU long-name, and GNU long-link metadata in total.
-- If the error reports `archive header cannot be inspected for line breaks`, the archive has a malformed tar header or an extended-header, long-name, or long-link record larger than 1 MiB.
+- If the error reports `archive header cannot be inspected for line breaks`, the archive has a malformed or truncated tar header or an extended-header, long-name, or long-link block larger than 1 MiB.
   Preserve the error output and ask a NemoClaw maintainer to review it.
 - If the error identifies credential-bearing content, remove it from the native home.
   Store any credential you still need in supported OpenShell credential storage or bindings.

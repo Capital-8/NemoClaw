@@ -606,6 +606,7 @@ export function validateTarEntries(
   tarArchive: TarListingSource,
   targetDir: string,
   deadlineMs?: number,
+  maxOutputBytes?: number,
 ): TarValidationResult {
   const entries: string[] = [];
   const listingFailure = runTarListing(
@@ -617,6 +618,7 @@ export function validateTarEntries(
     },
     undefined,
     deadlineMs,
+    maxOutputBytes,
   );
   if (listingFailure) {
     return {
@@ -1270,13 +1272,17 @@ function paxMetadata(
     if (!Number.isSafeInteger(length) || length <= 0 || cursor + length > payload.byteLength) {
       return undefined;
     }
+    if (payload[cursor + length - 1] !== 0x0a) return undefined;
     const record = payload.subarray(separator + 1, cursor + length - 1).toString("utf8");
     const equals = record.indexOf("=");
-    if (equals > 0) {
-      const key = record.slice(0, equals);
-      if (key === "path") archivePath = record.slice(equals + 1);
-      if (key.startsWith("GNU.sparse.")) sparse = true;
+    if (equals <= 0) return undefined;
+    const key = record.slice(0, equals);
+    if (key === "path") {
+      const value = record.slice(equals + 1);
+      if (!value) return undefined;
+      archivePath = value;
     }
+    if (key.startsWith("GNU.sparse.")) sparse = true;
     cursor += length;
   }
   return { path: archivePath, sparse };
@@ -1475,6 +1481,7 @@ export function sanitizeMachineLocalArchiveConfig(
     descriptor = openSync(archivePath, constants.O_RDWR | constants.O_NOFOLLOW);
     let archiveSize = fstatSync(descriptor).size;
     let offset = 0;
+    let globalPath: string | null = null;
     let nextPath: string | null = null;
     const found = new Set<string>();
     while (offset < archiveSize) {
@@ -1493,20 +1500,23 @@ export function sanitizeMachineLocalArchiveConfig(
       const name = tarHeaderString(header, 0, 100);
       const prefix = tarHeaderString(header, 345, 155);
       const headerPath = prefix ? `${prefix}/${name}` : name;
-      if (type === "x" || type === "g" || type === "L") {
+      if (type === "x" || type === "g" || type === "L" || type === "K") {
         if (size > NATIVE_TAR_METADATA_MAX_BYTES) return "the native archive metadata is too large";
         const metadata = readArchiveRange(descriptor, dataOffset, size);
         if (!metadata) return "could not read the native archive metadata";
         if (type === "x" || type === "g") {
           const parsed = paxMetadata(metadata);
           if (parsed === undefined) return "the native archive has invalid PAX metadata";
+          if (type === "g" && parsed.path !== null) globalPath = parsed.path;
           if (type === "x" && parsed.path !== null) nextPath = parsed.path;
-        } else {
+        } else if (type === "L") {
           nextPath = metadata.toString("utf8").replace(/\0.*$/su, "");
           if (!nextPath) return "the native archive has an invalid GNU long path";
+        } else if (!metadata.toString("utf8").replace(/\0.*$/su, "")) {
+          return "the native archive has an invalid GNU long link";
         }
       } else {
-        const entry = nextPath ?? headerPath;
+        const entry = nextPath ?? globalPath ?? headerPath;
         nextPath = null;
         const normalized = path.posix.normalize(entry.replace(/^\.\//u, ""));
         if (openClawDatabaseCompanions.has(normalized)) {
@@ -1698,6 +1708,7 @@ function walkNativeTarMembers(
 ): NativeArchiveCredentialViolation {
   const archiveSize = fstatSync(descriptor).size;
   let offset = 0;
+  let globalPath: string | null = null;
   let nextPath: string | null = null;
   while (offset < archiveSize) {
     const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
@@ -1728,6 +1739,7 @@ function walkNativeTarMembers(
         const parsed = paxMetadata(metadata);
         if (parsed === undefined) return "native state credential scan";
         if (parsed.sparse) return "native state sparse archive entry";
+        if (type === "g" && parsed.path !== null) globalPath = parsed.path;
         if (type === "x" && parsed.path !== null) nextPath = parsed.path;
       } else if (type === "L") {
         nextPath = metadata.toString("utf8").replace(/\0.*$/su, "");
@@ -1736,7 +1748,7 @@ function walkNativeTarMembers(
         return "native state credential scan";
       }
     } else {
-      const entry = nextPath ?? headerPath;
+      const entry = nextPath ?? globalPath ?? headerPath;
       nextPath = null;
       rawEntries?.push(type === "5" && !entry.endsWith("/") ? `${entry}/` : entry);
       const violation = onMember?.(entry, type, dataOffset, size) ?? null;

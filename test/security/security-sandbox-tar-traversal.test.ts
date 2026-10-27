@@ -462,6 +462,56 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
       ],
     });
   });
+
+  it("stops tar at the configured output bound without retaining a listing file", async () => {
+    const { validateTarEntries } = await loadSandboxState();
+    const targetDir = "/tmp/nemoclaw-test-target";
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tar-output-bound-"));
+    const oldPath = process.env.PATH;
+    const existingListingDirs = new Set(
+      fs.readdirSync(os.tmpdir()).filter((entry) => entry.startsWith("nemoclaw-tar-listing-")),
+    );
+    try {
+      const countFile = path.join(fixture, "chunks.txt");
+      const fakeTar = path.join(fixture, "tar");
+      fs.writeFileSync(
+        fakeTar,
+        [
+          "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
+          "let chunks = 0;",
+          "const timer = setInterval(() => {",
+          "  chunks += 1;",
+          `  fs.writeFileSync(${JSON.stringify(countFile)}, String(chunks));`,
+          '  fs.writeSync(1, "workspace/member-" + String(chunks).padStart(4, "0") + ".txt\\n");',
+          "  chunks >= 200 && clearInterval(timer);",
+          "}, 5);",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      process.env.PATH = `${fixture}:${oldPath ?? ""}`;
+
+      const tar = buildTar([{ path: "workspace/state.json", content: "{}" }]);
+      expect(validateTarEntries(tar, targetDir, undefined, 64)).toEqual({
+        safe: false,
+        entries: [],
+        violations: ["tar listing exceeded 64 bytes"],
+      });
+      expect(Number(fs.readFileSync(countFile, "utf8"))).toBeLessThan(20);
+      expect(
+        fs
+          .readdirSync(os.tmpdir())
+          .filter(
+            (entry) => entry.startsWith("nemoclaw-tar-listing-") && !existingListingDirs.has(entry),
+          ),
+      ).toEqual([]);
+    } finally {
+      oldPath === undefined
+        ? Reflect.deleteProperty(process.env, "PATH")
+        : Reflect.set(process.env, "PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () => {
