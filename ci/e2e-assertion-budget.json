@@ -27,16 +27,16 @@
       "generatedProbeConditions": 207
     },
     "unique": {
-      "expectCalls": 1701,
-      "matcherAssertions": 1676,
+      "expectCalls": 1703,
+      "matcherAssertions": 1678,
       "nodeAssertions": 131,
       "namedAssertionHelpers": 668,
       "failCalls": 1,
       "throwGuards": 531,
       "objectFieldAssertions": 266,
-      "assertionPoints": 3274,
-      "generatedProbeBlocks": 210,
-      "generatedProbeConditions": 715
+      "assertionPoints": 3275,
+      "generatedProbeBlocks": 211,
+      "generatedProbeConditions": 716
     },
     "fileMetricOrder": [
       "directExpectCalls",
