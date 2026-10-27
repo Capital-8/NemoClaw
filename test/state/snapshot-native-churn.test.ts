@@ -122,16 +122,16 @@ describe("live SSH native-home capture process churn", () => {
   it("does not retry a churned capture when SSH cleanup fails (#12867)", () => {
     withChurningCaptureFixture(() => {
       const originalRemove = fs.rmSync;
-      let cleanupDirectory: string | undefined;
+      const cleanupDirectories: string[] = [];
+      const failCleanup = (target: string): never => {
+        cleanupDirectories.push(target);
+        throw new Error("cleanup blocked");
+      };
       const remove = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
-        if (
-          typeof target === "string" &&
+        return typeof target === "string" &&
           path.basename(target).startsWith("nemoclaw-native-state-")
-        ) {
-          cleanupDirectory = target;
-          throw new Error("cleanup blocked");
-        }
-        return originalRemove(target, options);
+          ? failCleanup(target)
+          : originalRemove(target, options);
       });
       try {
         const backup = sandboxState.backupSandboxState("alpha");
@@ -140,7 +140,9 @@ describe("live SSH native-home capture process churn", () => {
         expect(backup.error).toContain("Remove that directory before retrying.");
       } finally {
         remove.mockRestore();
-        if (cleanupDirectory) fs.rmSync(cleanupDirectory, { recursive: true, force: true });
+        cleanupDirectories.forEach((directory) =>
+          fs.rmSync(directory, { recursive: true, force: true }),
+        );
       }
     });
   });
