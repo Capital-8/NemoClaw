@@ -3,6 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  serializedHostLocalInferenceReceipt,
+  serializedOllamaHostLocalInferenceReceipt,
+} from "../../../test/helpers/host-local-inference-receipt";
+import {
   isPersistedHermesPortableSharedLocalInferenceRoute,
   isPersistedPiSharedLocalInferenceRoute,
 } from "./native-local/contract";
@@ -58,7 +62,7 @@ describe("published Portable Hermes shared local route", () => {
     provider: "ollama-local",
     model: "qwen3-vl:4b",
     endpointUrl: "https://inference.local/v1",
-    hostLocalInferenceReceipt: '{"schemaVersion":2,"providerId":"podman","service":"ollama"}',
+    hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("qwen3-vl:4b"),
   };
 
   it("recognizes a published Portable Hermes shared Ollama route and excludes it from legacy shared local routes", () => {
@@ -75,7 +79,7 @@ describe("published Portable Hermes shared local route", () => {
     ).toBe(false);
   });
 
-  it("rejects non-portable, pending, receiptless, or attached Hermes selections", () => {
+  it("rejects Hermes selections that are non-Portable, pending, attached, or lack a matching Ollama receipt", () => {
     const nonPortable = { ...recorded, portableLifecycleProfile: undefined };
     expect(isPersistedHermesPortableSharedLocalInferenceRoute(nonPortable, recorded)).toBe(false);
     expect(hasLegacySharedLocalInferenceRoute(nonPortable)).toBe(true);
@@ -88,6 +92,33 @@ describe("published Portable Hermes shared local route", () => {
     expect(
       isPersistedHermesPortableSharedLocalInferenceRoute(
         { ...recorded, hostLocalInferenceReceipt: null },
+        recorded,
+      ),
+    ).toBe(false);
+    expect(
+      isPersistedHermesPortableSharedLocalInferenceRoute(
+        {
+          ...recorded,
+          hostLocalInferenceReceipt: '{"schemaVersion":2,"providerId":"podman","service":"ollama"}',
+        },
+        recorded,
+      ),
+    ).toBe(false);
+    expect(
+      isPersistedHermesPortableSharedLocalInferenceRoute(
+        {
+          ...recorded,
+          hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt("ollama"),
+        },
+        recorded,
+      ),
+    ).toBe(false);
+    expect(
+      isPersistedHermesPortableSharedLocalInferenceRoute(
+        {
+          ...recorded,
+          hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("other-model:8b"),
+        },
         recorded,
       ),
     ).toBe(false);

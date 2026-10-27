@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { hostLocalInferenceReceipt } from "../../test/helpers/host-local-inference-receipt";
+import {
+  hostLocalInferenceReceipt,
+  serializedHostLocalInferenceReceipt,
+  serializedOllamaHostLocalInferenceReceipt,
+} from "../../test/helpers/host-local-inference-receipt";
 import { serializeHostLocalInferenceReceipt } from "./onboard/runtime-provider/host-local-inference";
 import { buildChain } from "./dashboard/contract.js";
 import {
@@ -106,27 +110,46 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(vllm.route.nativeLocalExpected).toBe(true);
   });
 
-  it("verifies a Portable Hermes Ollama route through inference.local without a native attachment", () => {
+  it("selects the shared route for Portable Hermes Ollama only when the receipt service and model match", () => {
     const flow = {
       provider: "ollama-local",
       model: "qwen3-vl:4b",
       endpointUrl: "https://inference.local/v1",
       preferredInferenceApi: "openai-completions",
     };
+    const recordedPortable = {
+      agent: "hermes",
+      portableLifecycleProfile: "hermes" as const,
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      endpointUrl: "https://inference.local/v1",
+      hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("qwen3-vl:4b"),
+    };
     const portable = onboardInferenceVerificationContext(
       "my-sandbox",
       "my-gateway",
       "hermes",
       flow,
+      recordedPortable,
+    );
+    const mismatchedService = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "hermes",
+      flow,
       {
-        agent: "hermes",
-        portableLifecycleProfile: "hermes",
-        provider: "ollama-local",
-        model: "qwen3-vl:4b",
-        endpointUrl: "https://inference.local/v1",
-        hostLocalInferenceReceipt: serializeHostLocalInferenceReceipt(
-          hostLocalInferenceReceipt("ollama"),
-        ),
+        ...recordedPortable,
+        hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt("ollama"),
+      },
+    );
+    const mismatchedModel = onboardInferenceVerificationContext(
+      "my-sandbox",
+      "my-gateway",
+      "hermes",
+      flow,
+      {
+        ...recordedPortable,
+        hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("other-model:8b"),
       },
     );
     const nonPortable = onboardInferenceVerificationContext(
@@ -135,14 +158,16 @@ describe("verifyDeployment inference route model-catalog validation", () => {
       "hermes",
       flow,
       {
-        agent: "hermes",
-        provider: "ollama-local",
-        model: "qwen3-vl:4b",
-        endpointUrl: "https://inference.local/v1",
+        ...recordedPortable,
+        portableLifecycleProfile: undefined,
       },
     );
     expect(portable.route.nativeLocalExpected).toBe(false);
     expect(portable.invocation.nativeLocalExpected).toBe(false);
+    expect(mismatchedService.route.nativeLocalExpected).toBe(true);
+    expect(mismatchedService.invocation.nativeLocalExpected).toBe(true);
+    expect(mismatchedModel.route.nativeLocalExpected).toBe(true);
+    expect(mismatchedModel.invocation.nativeLocalExpected).toBe(true);
     expect(nonPortable.route.nativeLocalExpected).toBe(true);
     expect(nonPortable.invocation.nativeLocalExpected).toBe(true);
   });

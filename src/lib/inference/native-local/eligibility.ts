@@ -3,6 +3,10 @@
 
 import { OLLAMA_PROXY_PORT } from "../../core/ollama-proxy-port";
 import { VLLM_PORT } from "../../core/vllm-port";
+import {
+  normalizeHostLocalOllamaModelRef,
+  parseHostLocalInferenceReceipt,
+} from "../../onboard/runtime-provider/host-local-inference";
 import { LLAMA_CPP_PORT } from "../llama-cpp/contract";
 
 import { isLocalInferenceProvider, qualifiedNativeLocalEndpointUrl } from "./agent-config";
@@ -84,6 +88,22 @@ export function isPersistedPiSharedLocalInferenceRoute(
   );
 }
 
+function matchesPublishedOllamaReceipt(
+  serializedReceipt: string | null | undefined,
+  model: string | null | undefined,
+): boolean {
+  if (typeof serializedReceipt !== "string" || typeof model !== "string") return false;
+  try {
+    const receipt = parseHostLocalInferenceReceipt(serializedReceipt);
+    return (
+      receipt.service === "ollama" &&
+      receipt.inference?.model === normalizeHostLocalOllamaModelRef(model)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function isPersistedHermesPortableSharedLocalInferenceRoute(
   recorded:
     | {
@@ -105,8 +125,7 @@ export function isPersistedHermesPortableSharedLocalInferenceRoute(
     recorded.portableLifecycleProfile === "hermes" &&
     recorded.provider === "ollama-local" &&
     recorded.endpointUrl === "https://inference.local/v1" &&
-    typeof recorded.hostLocalInferenceReceipt === "string" &&
-    recorded.hostLocalInferenceReceipt.trim().length > 0 &&
+    matchesPublishedOllamaReceipt(recorded.hostLocalInferenceReceipt, recorded.model) &&
     recorded.pendingRouteReservation !== true &&
     recorded.nativeLocalProviderAttachment === undefined &&
     (!selected ||

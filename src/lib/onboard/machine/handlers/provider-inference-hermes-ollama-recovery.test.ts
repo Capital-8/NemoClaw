@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { serializedOllamaHostLocalInferenceReceipt } from "../../../../../test/helpers/host-local-inference-receipt";
 import { createSession } from "../../../state/onboard-session";
 import type { HostLocalInferenceReceipt } from "../../runtime-provider/host-local-inference";
 import type {
@@ -118,7 +119,7 @@ describe("Hermes managed Ollama inference recovery", () => {
         provider: "ollama-local",
         model,
         endpointUrl: "https://inference.local/v1",
-        hostLocalInferenceReceipt: '{"schemaVersion":2,"providerId":"podman","service":"ollama"}',
+        hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt(model),
       })),
       isInferenceRouteReady: vi.fn(() => true),
       resolveHostLocalInferenceStartupSelection: resolver,

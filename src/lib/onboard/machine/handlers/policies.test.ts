@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { serializedOllamaHostLocalInferenceReceipt } from "../../../../../test/helpers/host-local-inference-receipt";
 import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
 import { createSession } from "../../../state/onboard-session";
 import { createPolicyHandlerDeps, basePolicyHandlerOptions } from "./policies-test-fixture";
@@ -46,7 +47,7 @@ describe("policy state handler", () => {
     expect(calls.setupPolicies).not.toHaveBeenCalled();
   });
 
-  it("applies policies without the local-inference preset and verifies a Portable Hermes Ollama route without a native attachment", async () => {
+  it("skips the local-inference preset and verifies a Portable Hermes Ollama route with a matching receipt and no native attachment", async () => {
     const proofAuthority = {
       service: "ollama" as const,
       directHostPort: 11434,
@@ -60,7 +61,7 @@ describe("policy state handler", () => {
         provider: "ollama-local",
         model: "qwen3-vl:4b",
         endpointUrl: "https://inference.local/v1",
-        hostLocalInferenceReceipt: '{"schemaVersion":2,"providerId":"podman","service":"ollama"}',
+        hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("qwen3-vl:4b"),
         createdAt: "2026-10-23T00:00:00Z",
       })),
     });
@@ -100,7 +101,7 @@ describe("policy state handler", () => {
         provider: "ollama-local",
         model: "qwen3-vl:4b",
         endpointUrl: "https://inference.local/v1",
-        hostLocalInferenceReceipt: '{"schemaVersion":2,"providerId":"podman","service":"ollama"}',
+        hostLocalInferenceReceipt: serializedOllamaHostLocalInferenceReceipt("qwen3-vl:4b"),
       })),
     });
     await expect(
