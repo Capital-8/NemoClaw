@@ -5,7 +5,7 @@ import type { OpenShellInferenceRouteMutator } from "../adapters/openshell/infer
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
 import { ensureOpenRouterRuntimeAdapter } from "../inference/openrouter-runtime-adapter";
 import * as registry from "../state/registry";
-import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
+import { LOCAL_INFERENCE_TIMEOUT_SECS, localInferenceTimeoutRangeError } from "./env";
 import type { UpsertProvider } from "./inference-providers/types";
 
 type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
@@ -47,6 +47,13 @@ export async function setupOpenRouterRuntimeInference(
 ): Promise<{ handled: false } | { handled: true; result: SetupInferenceResult }> {
   const { error, exitProcess, log } = options;
   if (options.provider !== OPENROUTER_PROVIDER_NAME) return { handled: false };
+  // This route sends the timeout to OpenShell; reject an unsupported value
+  // before the adapter starts or the provider changes (#13734).
+  const timeoutRangeError = localInferenceTimeoutRangeError();
+  if (timeoutRangeError) {
+    error(`  Error: ${timeoutRangeError}`);
+    return exitProcess(1);
+  }
 
   const credentialEnv = options.credentialEnv || OPENROUTER_CREDENTIAL_ENV;
   if (!options.credentialValue && !options.reuseGatewayCredentialWithoutLocalKey) {

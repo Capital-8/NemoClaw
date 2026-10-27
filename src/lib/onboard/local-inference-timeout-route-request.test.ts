@@ -60,4 +60,44 @@ describe("accepted local inference timeout reaches the route request (#13734)", 
       MAX_TIMEOUT_REQUEST,
     );
   });
+
+  it("passes 3600 seconds for the OpenRouter Runtime adapter route", async () => {
+    const { setupOpenRouterRuntimeInference } = await import("./openrouter-runtime");
+    const options = routeHarness();
+
+    await setupOpenRouterRuntimeInference({
+      ...options,
+      provider: "openrouter-api",
+      model: "openai/gpt-5",
+      credentialEnv: "OPENROUTER_API_KEY",
+      credentialValue: "openrouter-token",
+    } as unknown as Parameters<typeof setupOpenRouterRuntimeInference>[0]);
+
+    expect(options.inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledWith(
+      MAX_TIMEOUT_REQUEST,
+    );
+  });
+
+  it("rejects 7200 in the OpenRouter Runtime adapter before it starts or changes the provider", async () => {
+    vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "7200");
+    const { setupOpenRouterRuntimeInference } = await import("./openrouter-runtime");
+    const options = routeHarness();
+
+    await expect(
+      setupOpenRouterRuntimeInference({
+        ...options,
+        provider: "openrouter-api",
+        model: "openai/gpt-5",
+        credentialEnv: "OPENROUTER_API_KEY",
+        credentialValue: "openrouter-token",
+      } as unknown as Parameters<typeof setupOpenRouterRuntimeInference>[0]),
+    ).rejects.toThrow("exit 1");
+
+    expect(options.error).toHaveBeenCalledWith(
+      '  Error: NEMOCLAW_LOCAL_INFERENCE_TIMEOUT must be from 1 to 3600 seconds; got "7200".',
+    );
+    expect(options.ensureAdapter).not.toHaveBeenCalled();
+    expect(options.upsertProvider).not.toHaveBeenCalled();
+    expect(options.inferenceRouteMutator.setInferenceRoute).not.toHaveBeenCalled();
+  });
 });
