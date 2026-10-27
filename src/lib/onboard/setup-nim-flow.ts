@@ -604,6 +604,20 @@ function prepareManagedLlamaCppMenu(input: {
       `  Managed llama.cpp is unavailable on this Station GB300 WSL host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
     );
   }
+  // A generic NVIDIA host now runs discovery, so its rejection must also name
+  // the failing requirement. Without it the managed entry silently disappears
+  // and the operator cannot tell why (#12155).
+  if (
+    gpu?.type === "nvidia" &&
+    platform !== "n1x" &&
+    platform !== "spark" &&
+    gpu?.stationGb300WslProduct !== true &&
+    resolution?.kind === "rejected"
+  ) {
+    deps.note(
+      `  Managed llama.cpp is unavailable on this NVIDIA host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
+    );
+  }
   return {
     resolution,
     options: buildManagedLlamaCppOptions({

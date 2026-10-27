@@ -116,6 +116,19 @@ function sparkCollectionOptions(): Omit<
   };
 }
 
+function linuxNvidiaCollectionOptions(): Omit<
+  CollectHostObservationsOptions,
+  "detectGpu" | "containerGpuProof"
+> {
+  return {
+    architecture: "x64",
+    assess: () => dockerHostAssessment(false),
+    collectPlatformIdentity: () => ({ osId: "ubuntu", osVersionId: "24.04" }),
+    detectHostGpuPlatform: () => "linux",
+    detectNvidiaDriverVersion: () => "595.71.05",
+  };
+}
+
 function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null) {
   const selection = managedSelectionFixture(
     "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
@@ -370,11 +383,13 @@ describe("managed llama.cpp profile onboarding", () => {
       },
     );
     const installManagedLlamaCpp = vi.fn();
+    const note = vi.fn();
     const setupNim = createSetupNim(
       makeDeps({
         discoverManagedLlamaCppSelections,
         handleRemoteProviderSelection,
         installManagedLlamaCpp: installManagedLlamaCpp as never,
+        note,
         prompt: async () => "1",
         selectFromNumberedMenu,
       }),
@@ -385,6 +400,9 @@ describe("managed llama.cpp profile onboarding", () => {
     ).resolves.toMatchObject({ provider: "nvidia-prod" });
     expect(discoverManagedLlamaCppSelections).toHaveBeenCalledTimes(1);
     expect(installManagedLlamaCpp).not.toHaveBeenCalled();
+    expect(note).toHaveBeenCalledWith(
+      "  Managed llama.cpp is unavailable on this NVIDIA host: Readiness requirement host.gpu.driver_version did not match. Fix the reported readiness or runtime-provider requirement, then rerun onboarding.",
+    );
   });
 
   it("skips managed llama.cpp discovery on a host without an NVIDIA GPU (#12155)", async () => {
@@ -739,6 +757,92 @@ describe("managed llama.cpp profile onboarding", () => {
         recipe: expect.objectContaining({ id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1" }),
       }),
     });
+  });
+
+  it("passes the real catalog's Linux x86_64 managed profile from the interactive menu into installation (#12155)", async () => {
+    const catalog = loadManagedInferenceCatalog();
+    const gpu = {
+      type: "nvidia",
+      name: "NVIDIA GeForce RTX 5060 Ti",
+      platform: "linux" as const,
+      gpus: [{ name: "NVIDIA GeForce RTX 5060 Ti", memoryMB: 16_311 }],
+      count: 1,
+      totalMemoryMB: 16_311,
+      availableMemoryMB: 15_000,
+      perGpuMB: 16_311,
+      nimCapable: false,
+    } as never;
+    const discoverManagedLlamaCppSelections = vi.fn(
+      (env, detectedGpu, _catalog, _collectionOptions, selectionOptions) =>
+        discoverManagedLlamaCppSelectionsForGpu(
+          env,
+          detectedGpu,
+          catalog,
+          linuxNvidiaCollectionOptions(),
+          selectionOptions,
+        ),
+    );
+    const installManagedLlamaCpp = vi.fn<NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>>(
+      async (selection) => ({
+        ok: true as const,
+        apiKey: "a".repeat(64),
+        model: selection.recipe.spec.model.servedName,
+        receipt: { schemaVersion: 1 } as never,
+      }),
+    );
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (state, requestedModel) => {
+        state.provider = "llama-cpp-local";
+        state.model = requestedModel;
+        return "selected";
+      },
+    );
+    const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
+      (_rawChoice, _defaultIndex, options) => {
+        const managed = options.find(({ key }) => key === "install-llama-cpp");
+        expect(managed).toMatchObject({
+          label:
+            "Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one Linux x86_64 NVIDIA GPU (recommended)",
+          managedLlamaCppRecipeId: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+        });
+        return managed!;
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        discoverManagedLlamaCppSelections,
+        handleLlamaCppSelection,
+        installManagedLlamaCpp,
+        prompt: async () => "1",
+        selectFromNumberedMenu,
+      }),
+    );
+
+    await expect(setupNim(gpu, "linux-agent")).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      servingProfileProvenance: {
+        preset: { id: "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b" },
+        recipe: { id: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1" },
+      },
+    });
+    // Menu discovery is advisory; the install must receive the exact selection
+    // that the canonical readiness/catalog re-read produced.
+    const produced = discoverManagedLlamaCppSelections.mock.results[1]?.value;
+    expect(produced?.resolution.kind).toBe("selected");
+    const producedSelection =
+      produced?.resolution.kind === "selected" ? produced.resolution.selection : null;
+    expect(producedSelection).not.toBeNull();
+    expect(installManagedLlamaCpp.mock.calls[0]?.[0]).toBe(producedSelection);
+    expect(installManagedLlamaCpp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipe: expect.objectContaining({
+          metadata: expect.objectContaining({
+            id: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+          }),
+        }),
+      }),
+      expect.objectContaining({ sandboxName: "linux-agent", gpu }),
+    );
   });
 
   it("passes the real N1x discovery selection directly into installation", async () => {
