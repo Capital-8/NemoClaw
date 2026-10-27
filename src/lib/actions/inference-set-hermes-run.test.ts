@@ -277,6 +277,7 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
       "hermes-provider",
       "openai/gpt-5.4-mini",
+      8080,
     );
   });
 

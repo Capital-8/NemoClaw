@@ -54,7 +54,7 @@ import {
   type ReasoningEffortRequest,
   resolveReasoningEffortRequest,
 } from "../inference/selection";
-import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { registryEntryGatewayPort, resolveGatewayName } from "../onboard/gateway-binding";
 import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
@@ -269,7 +269,11 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   isLocalInferenceProvider: (provider: string) => boolean;
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
-  resolveContextWindowForModel: (provider: string, model: string) => number | null;
+  resolveContextWindowForModel: (
+    provider: string,
+    model: string,
+    gatewayPort: number,
+  ) => number | null;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
   resolveCredentialValue: (credentialEnv: string) => string;
   readNativeNvidiaCredentialHandle: (sandboxName: string, gatewayName: string) => Promise<string>;
@@ -946,12 +950,13 @@ export function patchHermesInferenceConfig(
 function resolveHermesContextWindowForSwitch(
   provider: string,
   model: string,
+  gatewayPort: number,
   deps: Pick<InferenceSetDeps, "resolveContextWindowForModel" | "log">,
   nimContextWindow?: number | null,
 ): number | undefined {
   const contextWindow =
     nimContextWindow === undefined
-      ? deps.resolveContextWindowForModel(provider, model)
+      ? deps.resolveContextWindowForModel(provider, model, gatewayPort)
       : nimContextWindow;
   if (contextWindow != null) {
     deps.log(`  Context window for '${model}': ${contextWindow} tokens`);
@@ -969,6 +974,7 @@ function resolveOpenClawContextWindowForSwitch(
     provider: string;
     model: string;
     sandboxName: string;
+    gatewayPort: number;
     routeChanged: boolean;
     nimContextWindow?: number | null;
   },
@@ -976,7 +982,7 @@ function resolveOpenClawContextWindowForSwitch(
 ): number | null | undefined {
   const contextWindow =
     options.nimContextWindow === undefined
-      ? deps.resolveContextWindowForModel(options.provider, options.model)
+      ? deps.resolveContextWindowForModel(options.provider, options.model, options.gatewayPort)
       : options.nimContextWindow;
   if (contextWindow != null) {
     deps.log(`  Context window for '${options.model}': ${contextWindow} tokens`);
@@ -1378,6 +1384,7 @@ async function runInferenceSetWithoutHostLock(
   const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
   const priorHttpsPinRouteId = parseHttpsPinRouteId(entry.endpointUrl);
   assertInferenceSetAgent(agentName, sandboxName);
+  const gatewayPort = registryEntryGatewayPort(entry);
   const { previousRegistered, registeredConfig, registered } =
     await resolveRegisteredConfigSelection({
       options,
@@ -2151,6 +2158,7 @@ async function runInferenceSetWithoutHostLock(
       const contextWindow = resolveHermesContextWindowForSwitch(
         provider,
         model,
+        gatewayPort,
         deps,
         nimSelection?.contextWindow,
       );
@@ -2175,6 +2183,7 @@ async function runInferenceSetWithoutHostLock(
           provider,
           model,
           sandboxName,
+          gatewayPort,
           routeChanged: openClawConfigSyncPending,
           nimContextWindow: nimSelection?.contextWindow,
         },
@@ -2490,7 +2499,7 @@ export async function runInferenceSet(
       lockedSelection.entry,
       deps.runtimeProviders,
     );
-    const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
+    const gatewayName = resolveGatewayName(registryEntryGatewayPort(lockedSelection.entry));
     const mutation = await deps.withGatewayRouteMutationLock(gatewayName, () =>
       withRoutedInferencePortLock(
         Boolean(

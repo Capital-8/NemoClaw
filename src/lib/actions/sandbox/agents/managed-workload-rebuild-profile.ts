@@ -82,6 +82,7 @@ function replacementDashboardChatUiUrl(input: {
 /** Render the exact replacement profile while the old managed workload remains authoritative. */
 export function prepareManagedRebuildProfileHandoff(input: {
   readonly catalogHandoff: ManagedWorkloadRebuildCatalogHandoff;
+  readonly gatewayPort: number;
   readonly targetConfig: RebuildTargetConfig;
   readonly recreateOptions: RebuildRecreateOnboardOpts;
   readonly messagingPlan: SandboxMessagingPlan | null;
@@ -160,6 +161,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
       ? managedRebuildProfileDependencies.resolveContextWindowForModel(
           resumeConfig.provider,
           resumeConfig.model,
+          input.gatewayPort,
         )
       : null;
   if (openClawRouteChanged && !selected && currentOpenClawContextWindow === null) {
