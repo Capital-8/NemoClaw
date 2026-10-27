@@ -189,6 +189,7 @@ type PairingWaitResult =
   | { readonly kind: "observed"; readonly value: OpenClawPairingSettlementObservation }
   | { readonly kind: "target-changed" }
   | { readonly kind: "identity-changed" }
+  | { readonly kind: "incompatible"; readonly pairingField: string | null }
   | {
       readonly kind: "timeout";
       readonly last: OpenClawPairingSettlementObservation | null;
@@ -203,6 +204,7 @@ async function waitForPairingObservation(
   accept: (value: OpenClawPairingSettlementObservation) => boolean,
   deps: OrdinaryOpenClawPairingSettlementDeps,
   expectedDeviceIdentitySha256?: string,
+  transientIncompatibleField?: string,
 ): Promise<PairingWaitResult> {
   let last: OpenClawPairingSettlementObservation | null = null;
   let incompatible = false;
@@ -234,6 +236,9 @@ async function waitForPairingObservation(
       if (accept(value)) return { kind: "observed", value };
     } catch (error) {
       if (error instanceof OpenClawPairingIncompatibleError) {
+        if (transientIncompatibleField && error.field !== transientIncompatibleField) {
+          return { kind: "incompatible", pairingField: error.field };
+        }
         incompatible = true;
         pairingField = error.field;
       }
@@ -333,7 +338,12 @@ export async function settleOrdinaryOpenClawPairing(
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          if (initiallyIncompatible) {
+          // OpenClaw may publish its paired device before its local operator
+          // auth record. Observe that one read-only publication window; every
+          // other rejected field remains an immediate incompatibility.
+          const authPublicationPending =
+            initiallyIncompatible && initialPairingField === "auth.tokens";
+          if (initiallyIncompatible && !authPublicationPending) {
             return {
               kind: "incomplete",
               reason: "pairing-incompatible",
@@ -354,6 +364,8 @@ export async function settleOrdinaryOpenClawPairing(
               Math.min(settlementDeadline, deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS),
               () => true,
               deps,
+              undefined,
+              authPublicationPending ? "auth.tokens" : undefined,
             );
             if (
               pairingAppearance.kind === "target-changed" ||
@@ -368,6 +380,15 @@ export async function settleOrdinaryOpenClawPairing(
                   ? "pairing-incompatible"
                   : "pairing-unavailable",
                 ...(pairingAppearance.incompatible && pairingAppearance.pairingField
+                  ? { pairingField: pairingAppearance.pairingField }
+                  : {}),
+              };
+            }
+            if (pairingAppearance.kind === "incompatible") {
+              return {
+                kind: "incomplete",
+                reason: "pairing-incompatible",
+                ...(pairingAppearance.pairingField
                   ? { pairingField: pairingAppearance.pairingField }
                   : {}),
               };
@@ -400,6 +421,13 @@ export async function settleOrdinaryOpenClawPairing(
           );
           if (final.kind === "target-changed" || final.kind === "identity-changed") {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          if (final.kind === "incompatible") {
+            return {
+              kind: "incomplete",
+              reason: "pairing-incompatible",
+              ...(final.pairingField ? { pairingField: final.pairingField } : {}),
+            };
           }
           if (final.kind === "observed") {
             return { kind: "settled" };
