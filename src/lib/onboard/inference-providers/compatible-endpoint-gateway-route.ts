@@ -76,6 +76,30 @@ export function isLoopbackNoAuthCompatibleEndpointUrl(
   );
 }
 
+/**
+ * Classify a custom-endpoint selection for no-auth proxy routing. `eligible`
+ * means the endpoint may run without authentication; `noAuth` means this run
+ * allows it: interactive runs offer it at the API-key prompt, non-interactive
+ * runs need `NEMOCLAW_COMPATIBLE_AUTH_MODE=none`. A no-auth route reaches the
+ * gateway through the local proxy, so its credential identity is the proxy
+ * token. Non-interactive runs know that choice before the API-key step;
+ * interactive runs know it only after the prompt.
+ */
+export function compatibleEndpointNoAuthSelection(
+  selectedKey: string,
+  provider: string,
+  endpointUrl: string | null | undefined,
+  nonInteractive: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): { eligible: boolean; noAuth: boolean } {
+  const eligible =
+    selectedKey === "custom" && isLoopbackNoAuthCompatibleEndpointUrl(provider, endpointUrl);
+  const noAuth =
+    eligible &&
+    (!nonInteractive || (env.NEMOCLAW_COMPATIBLE_AUTH_MODE || "").trim().toLowerCase() === "none");
+  return { eligible, noAuth };
+}
+
 /** Revalidate the no-auth endpoint at the proxy's final mutation boundary. */
 export function assertLoopbackNoAuthCompatibleEndpointUrl(
   endpointUrl: string,

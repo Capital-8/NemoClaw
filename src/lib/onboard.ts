@@ -1856,7 +1856,17 @@ async function handleRemoteProviderSelection(
           : "anthropic-messages";
     }
   }
-  state.assertRouteCompatible?.();
+  const { eligible: compatibleNoAuth, noAuth: useNoAuth } =
+    compatibleEndpointGatewayRoute.compatibleEndpointNoAuthSelection(
+      selected.key,
+      state.provider,
+      state.endpointUrl,
+      isNonInteractive(),
+    );
+  // Route checks need the credential identity the route will use (see helper);
+  // API-key staging below still reads the provider's API-key env.
+  if (useNoAuth && isNonInteractive()) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
+  if (!compatibleNoAuth || isNonInteractive()) state.assertRouteCompatible?.();
   if (selected.key === "hermesProvider") {
     const selectedHermesAuthMethod = await promptHermesAuthMethod();
     if (isBackToSelection(selectedHermesAuthMethod)) {
@@ -1938,7 +1948,7 @@ async function handleRemoteProviderSelection(
     console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
     return "selected";
   }
-  hydrateCredentialEnv(state.credentialEnv);
+  hydrateCredentialEnv(remoteConfig.credentialEnv);
   if (selected.key === "build") {
     assertSelectionMutationAuthority(state, "stage the NVIDIA provider credential");
     providerKeyBridge.stageBuildProviderKeyBridge();
@@ -1976,7 +1986,7 @@ async function handleRemoteProviderSelection(
       state,
       `stage inference provider ${JSON.stringify(state.provider)} credential`,
     );
-    providerKeyBridge.stageRemoteProviderKeyBridge(state.credentialEnv);
+    providerKeyBridge.stageRemoteProviderKeyBridge(remoteConfig.credentialEnv);
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
     const defaultModel =
@@ -1986,19 +1996,9 @@ async function handleRemoteProviderSelection(
       (recoveredFromSandbox && recoveredModel) ||
       remoteConfig.defaultModel;
     const selectedCredentialEnv = requireValue(
-      state.credentialEnv,
+      remoteConfig.credentialEnv,
       `Missing credential env for ${remoteConfig.label}`,
     );
-    const compatibleNoAuth =
-      selected.key === "custom" &&
-      compatibleEndpointGatewayRoute.isLoopbackNoAuthCompatibleEndpointUrl(
-        state.provider,
-        state.endpointUrl,
-      );
-    const useNoAuth =
-      compatibleNoAuth &&
-      (!isNonInteractive() ||
-        (process.env.NEMOCLAW_COMPATIBLE_AUTH_MODE || "").trim().toLowerCase() === "none");
     assertSelectionMutationAuthority(
       state,
       `register inference provider ${JSON.stringify(state.provider)} credential`,

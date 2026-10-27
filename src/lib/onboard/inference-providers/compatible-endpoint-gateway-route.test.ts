@@ -32,6 +32,7 @@ import {
 import {
   assertLoopbackNoAuthCompatibleEndpointUrl,
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
+  compatibleEndpointNoAuthSelection,
   gatewayReachableCompatibleEndpointUrl,
   isLoopbackNoAuthCompatibleEndpointUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
@@ -146,6 +147,60 @@ describe("compatible endpoint gateway routing", () => {
     "rejects an unsafe no-auth proxy source: %s",
     (_label, endpointUrl, provider = "compatible-endpoint") => {
       expect(isLoopbackNoAuthCompatibleEndpointUrl(provider, endpointUrl)).toBe(false);
+    },
+  );
+
+  it.each([
+    ["interactive", "custom", "http://localhost:11434/v1", false, {}, true, true],
+    [
+      "non-interactive none",
+      "custom",
+      "http://localhost:11434/v1",
+      true,
+      { NEMOCLAW_COMPATIBLE_AUTH_MODE: " None " },
+      true,
+      true,
+    ],
+    ["non-interactive unset", "custom", "http://localhost:11434/v1", true, {}, true, false],
+    [
+      "non-interactive other mode",
+      "custom",
+      "http://localhost:11434/v1",
+      true,
+      { NEMOCLAW_COMPATIBLE_AUTH_MODE: "key" },
+      true,
+      false,
+    ],
+    [
+      "remote endpoint",
+      "custom",
+      "https://inference.example.com/v1",
+      false,
+      { NEMOCLAW_COMPATIBLE_AUTH_MODE: "none" },
+      false,
+      false,
+    ],
+    [
+      "Anthropic-compatible key",
+      "anthropicCompatible",
+      "http://localhost:11434/v1",
+      true,
+      { NEMOCLAW_COMPATIBLE_AUTH_MODE: "none" },
+      false,
+      false,
+    ],
+  ] as const)(
+    "classifies no-auth selection for %s (#13733)",
+    (_label, selectedKey, endpointUrl, nonInteractive, env, eligible, noAuth) => {
+      expect(
+        compatibleEndpointNoAuthSelection(
+          selectedKey,
+          "compatible-endpoint",
+          endpointUrl,
+          nonInteractive,
+          env,
+        ),
+      ).toEqual({ eligible, noAuth });
     },
   );
 
