@@ -440,4 +440,23 @@ describe("removed immutability migration boundary", () => {
       /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*directory depth or entry limit.*Do not destroy the sandbox/u,
     );
   });
+
+  it("rejects a recovery directory whose combined file size exceeds the inspection limit", () => {
+    const memory = path.join(stateDir(), "memory");
+    fs.mkdirSync(memory);
+    const noteA = path.join(memory, "a.md");
+    const noteB = path.join(memory, "b.md");
+    fs.writeFileSync(noteA, "");
+    fs.truncateSync(noteA, 9 * 1024 * 1024);
+    fs.writeFileSync(noteB, "");
+    fs.truncateSync(noteB, 9 * 1024 * 1024);
+
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        memory,
+        "/sandbox/.openclaw/workspace/memory",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+  });
 });

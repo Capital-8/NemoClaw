@@ -620,4 +620,65 @@ describe("downloadFromSandbox", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects an oversized allowlisted recovery file or directory before transfer when a legacy Shields record exists",
+    async () => {
+      vi.restoreAllMocks();
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-oversized-"));
+      vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+      try {
+        fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+        const workspace = path.join(root, "sandbox/.openclaw/workspace");
+        const memory = path.join(workspace, "memory");
+        fs.mkdirSync(memory, { recursive: true });
+        const soul = path.join(workspace, "SOUL.md");
+        const noteA = path.join(memory, "a.md");
+        const noteB = path.join(memory, "b.md");
+        fs.writeFileSync(soul, "");
+        fs.truncateSync(soul, 16 * 1024 * 1024 + 1);
+        fs.writeFileSync(noteA, "");
+        fs.truncateSync(noteA, 9 * 1024 * 1024);
+        fs.writeFileSync(noteB, "");
+        fs.truncateSync(noteB, 9 * 1024 * 1024);
+
+        captureMock.mockImplementation(({ command }: { command: string[] }) => {
+          const mapped = [...command.slice(0, -1), path.join(root, command.at(-1)!.slice(1))];
+          const probe = childProcess.spawnSync(mapped[0]!, mapped.slice(1), {
+            cwd: root,
+            encoding: "utf8",
+          });
+          return {
+            outcome: { kind: "completed", exitCode: probe.status },
+            stdout: probe.stdout,
+            stderr: probe.stderr,
+          };
+        });
+
+        await expect(
+          downloadFromSandbox({
+            sandboxName: "alpha",
+            sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+            hostDest: path.join(root, "out-file"),
+          }),
+        ).rejects.toThrow(
+          /Cannot download '\/sandbox\/\.openclaw\/workspace\/SOUL\.md'.*16 MiB size limit.*Do not destroy the sandbox/u,
+        );
+        await expect(
+          downloadFromSandbox({
+            sandboxName: "alpha",
+            sandboxPath: "/sandbox/.openclaw/workspace/memory",
+            hostDest: path.join(root, "out-dir"),
+          }),
+        ).rejects.toThrow(
+          /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*16 MiB size limit.*Do not destroy the sandbox/u,
+        );
+        expect(runMock).not.toHaveBeenCalled();
+        expect(publishMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

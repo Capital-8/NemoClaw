@@ -20,6 +20,7 @@ import {
   assertRemovedImmutabilityRecoveryDownloadArtifactSafe,
   enforceRemovedImmutabilityMigrationBoundary,
   isRemovedImmutabilityRecoveryDownloadPath,
+  MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES,
 } from "../../state/migrations/removed-immutability";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
@@ -40,7 +41,7 @@ import {
 // roots for `find`, and stop at the first unsupported entry. Probe failures
 // fail closed.
 const SANDBOX_SOURCE_PROBE_SCRIPT = [
-  "p=$1",
+  "if [ $# -gt 1 ]; then max_bytes=$1; p=$2; else max_bytes=; p=$1; fi",
   "link_probe=$p",
   'while [ "$link_probe" != "/" ]; do',
   '  case "$link_probe" in',
@@ -76,10 +77,26 @@ const SANDBOX_SOURCE_PROBE_SCRIPT = [
   "    *) root=./$p ;;",
   "  esac",
   '  unsafe=$(find "$root" ! -type d ! -type f -print -quit) || exit 1',
-  '  [ -n "$unsafe" ] && printf unsafe-member || printf dir',
+  '  if [ -n "$unsafe" ]; then printf unsafe-member; exit 0; fi',
+  '  if [ -n "$max_bytes" ]; then',
+  '    sizes=$(find "$root" -type f -exec sh -c \'for f do wc -c < "$f" || exit 1; done\' sh {} +) || exit 1',
+  "    total=0",
+  "    for sz in $sizes; do",
+  "      total=$((total + sz))",
+  '      if [ "$total" -gt "$max_bytes" ]; then printf oversized; exit 0; fi',
+  "    done",
+  "  fi",
+  "  printf dir",
   "  exit 0",
   "fi",
-  'if [ -f "$p" ]; then printf file; exit 0; fi',
+  'if [ -f "$p" ]; then',
+  '  if [ -n "$max_bytes" ]; then',
+  '    sz=$(wc -c < "$p") || exit 1',
+  '    if [ "$sz" -gt "$max_bytes" ]; then printf oversized; exit 0; fi',
+  "  fi",
+  "  printf file",
+  "  exit 0",
+  "fi",
   'if [ -e "$p" ]; then printf unsupported; exit 0; fi',
   "printf missing",
 ].join("\n");
@@ -93,13 +110,27 @@ async function probeSandboxSourceKind(
   target: OpenShellSandboxTransferRequest["target"],
   sandboxName: string,
   sandboxPath: string,
+  maxBytes?: number,
 ): Promise<
-  SandboxSourceKind | "missing" | "unsupported" | "unsafe-member" | "timeout" | undefined
+  | SandboxSourceKind
+  | "missing"
+  | "unsupported"
+  | "unsafe-member"
+  | "oversized"
+  | "timeout"
+  | undefined
 > {
   const probe = await executor.runBuffered({
     sandboxName,
     target,
-    command: ["sh", "-c", SANDBOX_SOURCE_PROBE_SCRIPT, "sh", sandboxPath],
+    command: [
+      "sh",
+      "-c",
+      SANDBOX_SOURCE_PROBE_SCRIPT,
+      "sh",
+      ...(maxBytes !== undefined ? [String(maxBytes)] : []),
+      sandboxPath,
+    ],
     timeoutMilliseconds: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (probe.outcome.kind === "failed") {
@@ -111,7 +142,8 @@ async function probeSandboxSourceKind(
     kind === "dir" ||
     kind === "missing" ||
     kind === "unsupported" ||
-    kind === "unsafe-member"
+    kind === "unsafe-member" ||
+    kind === "oversized"
     ? kind
     : undefined;
 }
@@ -180,11 +212,15 @@ export async function downloadFromSandbox(
       // Keep this verification after OpenShell fixes that issue: NemoClaw's
       // wrapper independently requires a fresh artifact from this invocation
       // before it publishes anything to the requested host destination.
+      const maxRecoveryBytes = removedImmutability.stateRecord
+        ? MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES
+        : undefined;
       const sourceKind = await probeSandboxSourceKind(
         executor,
         target,
         opts.sandboxName,
         sandboxPath,
+        maxRecoveryBytes,
       );
       if (sourceKind === "missing") {
         throw new SandboxDownloadSourceMissingError(sandboxPath, opts.sandboxName);
@@ -197,6 +233,11 @@ export async function downloadFromSandbox(
       if (sourceKind === "unsafe-member") {
         throw new Error(
           `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': the directory contains an entry that is not a regular file or directory. Symbolic links are not supported.`,
+        );
+      }
+      if (sourceKind === "oversized") {
+        throw new Error(
+          `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': recovery download exceeds the 16 MiB size limit. Do not destroy the sandbox if you need this file.`,
         );
       }
       if (sourceKind === "timeout") {
@@ -237,6 +278,7 @@ export async function downloadFromSandbox(
           target,
           opts.sandboxName,
           sandboxPath,
+          maxRecoveryBytes,
         );
         if (sourceKindAfterDownload === "timeout") {
           throw new Error(

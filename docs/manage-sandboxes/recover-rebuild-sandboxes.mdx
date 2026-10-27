@@ -56,7 +56,7 @@ To replace the sandbox, complete these steps:
 
 1. Download each file or directory that you want to keep with `$$nemoclaw <sandbox-name> download <sandbox-path> <host-dir>`.
    While the legacy state record exists, `download` accepts only the `/sandbox/...` paths that the [manual transfer workflow](../state-and-backups/transfer-state-manually) lists, and files under the listed directories.
-   `download` also rejects a file larger than 16 MiB and any file whose content matches a credential pattern.
+   While the record exists, `download` also rejects a file larger than 16 MiB, a directory whose files total more than 16 MiB, and any file whose name or content marks it as credential-bearing.
    This check does not prove that an accepted file is credential-free.
    You cannot download state that only root can read.
    Do not download credential files.
@@ -70,7 +70,7 @@ To replace the sandbox, complete these steps:
 7. Reconfigure any setting whose files you could not copy.
 8. Run `$$nemoclaw <sandbox-name> status` and confirm that the retirement notice no longer lists the sandbox.
 
-Do not onboard or mutate any sandbox yet if NemoClaw blocks an operation because it found any of these legacy files:
+If NemoClaw blocks an operation because it found any of these legacy files, do not onboard or mutate any sandbox yet:
 
 - An old timer, transition, or policy snapshot.
 - A legacy state record that is a symbolic link, a directory, a hard-linked file, or a file that NemoClaw cannot read.

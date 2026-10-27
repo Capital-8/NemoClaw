@@ -45,7 +45,7 @@ const LEGACY_PROVIDER_RECORD_NAMES = new Set([
 ]);
 const MAX_LEGACY_LEDGER_ENTRIES = 4096;
 const MAX_LEGACY_LEDGER_RECORD_BYTES = 128 * 1024;
-const MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES = 16 * 1024 * 1024;
+export const MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH = 32;
 const MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES = 4096;
 const REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILES = new Set([
@@ -160,6 +160,7 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
   };
   const pending = [{ entryPath: stagedArtifact, depth: 0, checkSegmentName: false }];
   let inspectedEntries = 0;
+  let totalBytes = 0;
   while (pending.length > 0) {
     const { entryPath, depth, checkSegmentName } = pending.pop()!;
     inspectedEntries += 1;
@@ -209,6 +210,10 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
       continue;
     }
     if (!stat!.isFile() || stat!.size > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES) {
+      reject();
+    }
+    totalBytes += stat!.size;
+    if (totalBytes > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES) {
       reject();
     }
     let opened: ReturnType<typeof openRegularFileNoFollow>;
