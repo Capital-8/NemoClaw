@@ -2991,6 +2991,7 @@ jobs:
           }
 
       - name: Reject unavailable revocation through the native Windows trust API
+        timeout-minutes: 5
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP 'edge-revocation-control'
