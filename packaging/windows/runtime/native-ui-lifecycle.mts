@@ -3,7 +3,7 @@
 
 import type { ChildProcess } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-import { run } from "./run-installed-native-turn.mts";
+import { run } from "./native-command.mts";
 
 type GatewayState = Pick<ChildProcess, "exitCode" | "signalCode">;
 type StateLease = { assertHeld(): void };

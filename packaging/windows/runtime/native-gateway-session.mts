@@ -13,7 +13,7 @@ import {
   requiredFile,
   removeDirectory,
   stopChild,
-} from "./run-installed-native-turn.mts";
+} from "./native-command.mts";
 
 type TlsMaterial = {
   schemaVersion: 1;

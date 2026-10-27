@@ -19,6 +19,30 @@ const helper = process.env.NEMOCLAW_GATEWAY_TLS_CONTROL;
 const options = { skip: !helper || process.platform !== "win32", timeout: 30_000 };
 const template = '[openshell.drivers.mxc]\nwxc_exec_path = "fixture.exe"\n';
 
+test("installed provider imports without qualification entry points", () => {
+  const provider = new URL("./installed-runtime-provider.mts", import.meta.url).href;
+  const script = [
+    'import { registerHooks } from "node:module";',
+    "registerHooks({",
+    "  resolve(specifier, context, nextResolve) {",
+    '    if (specifier.includes("/run-installed-") && specifier.endsWith(".mts"))',
+    '      throw new Error("blocked qualification entry: " + specifier);',
+    "    return nextResolve(specifier, context);",
+    "  },",
+    "});",
+    "const provider = await import(" + JSON.stringify(provider) + ");",
+    'if (typeof provider.openInstalledRuntimeSession !== "function")',
+    '  throw new Error("installed provider factory is missing");',
+    'process.stdout.write("provider-import-without-qualification\\n");',
+  ].join("\n");
+  const output = childProcess.execFileSync(
+    process.execPath,
+    ["--experimental-strip-types", "--no-warnings", "--input-type=module", "--eval", script],
+    { encoding: "utf8", timeout: 10_000, windowsHide: true },
+  );
+  assert.equal(output, "provider-import-without-qualification\n");
+});
+
 test("gateway command refuses to spawn without a process owner", async (t) => {
   t.mock.method(childProcess, "spawn", () => {
     throw new Error("must not spawn");

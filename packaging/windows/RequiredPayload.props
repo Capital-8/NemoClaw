@@ -32,6 +32,7 @@
     <NemoClawRequiredPayload Include="qualification\native-remove-data.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-web-session.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-session-diagnostics.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-command.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-ui-tunnel.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="desktop-icons\NemoClaw.ico" Phase="Prepared" />
     <NemoClawRequiredPayload Include="desktop-icons\openclaw.ico" Phase="Prepared" />

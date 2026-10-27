@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
-vi.mock("../../packaging/windows/runtime/run-installed-native-turn.mts", () => ({
+vi.mock("../../packaging/windows/runtime/native-command.mts", () => ({
   run: mocks.invoke,
 }));
 

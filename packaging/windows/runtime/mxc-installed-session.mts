@@ -15,7 +15,7 @@ import {
   waitForNativeMxcCompletion,
   watchNativeUiSandbox,
 } from "./native-ui-lifecycle.mts";
-import { allowlistedWindowsEnvironment, requiredFile, run } from "./run-installed-native-turn.mts";
+import { allowlistedWindowsEnvironment, requiredFile, run } from "./native-command.mts";
 
 export function installedMxcWorkloadArguments(workload: InstalledRuntimeWorkload): string[] {
   return [

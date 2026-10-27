@@ -3,7 +3,7 @@
 
 import type { ChildProcess } from "node:child_process";
 import path from "node:path";
-import { allowlistedWindowsEnvironment, requiredFile, run } from "./run-installed-native-turn.mts";
+import { allowlistedWindowsEnvironment, requiredFile, run } from "./native-command.mts";
 
 function fail(message: string): never {
   throw new Error(`Native Windows private directory failed: ${message}`);

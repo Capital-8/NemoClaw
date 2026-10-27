@@ -3,7 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { allowlistedWindowsEnvironment, requiredFile } from "./run-installed-native-turn.mts";
+import { allowlistedWindowsEnvironment, requiredFile } from "./native-command.mts";
 
 /** Parse the exact installed gateway configuration without starting a gateway or sandbox. */
 export function preflightNativeGatewayConfig(

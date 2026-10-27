@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { openInstalledRuntimeSession } from "../../packaging/windows/runtime/installed-runtime-provider.mts";
 import { NativeGatewaySession } from "../../packaging/windows/runtime/native-gateway-session.mts";
-import { run } from "../../packaging/windows/runtime/run-installed-native-turn.mts";
+import { run } from "../../packaging/windows/runtime/native-command.mts";
 import {
   requestNativeUiSandboxDeletion,
   confirmNativeUiRegistryEmpty,
@@ -15,7 +15,7 @@ import {
 } from "../../packaging/windows/runtime/native-ui-lifecycle.mts";
 
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
-vi.mock("../../packaging/windows/runtime/run-installed-native-turn.mts", () => ({
+vi.mock("../../packaging/windows/runtime/native-command.mts", () => ({
   requiredFile: (file: string) => file,
   allowlistedWindowsEnvironment: (environment: NodeJS.ProcessEnv) => environment,
   run: vi.fn(),

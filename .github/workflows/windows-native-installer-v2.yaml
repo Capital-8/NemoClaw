@@ -1476,8 +1476,8 @@ jobs:
             $result = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
           $text = Get-Content -LiteralPath $log -Raw
-          if ($result -ne 0 -or $text -notmatch '(?m)^# pass 29\r?$' -or $text -notmatch '(?m)^# skipped 0\r?$') {
-            throw 'All twenty-nine command-custody, private-session, private-pipe and Node TLS controls must execute without skips.'
+          if ($result -ne 0 -or $text -notmatch '(?m)^# pass 30\r?$' -or $text -notmatch '(?m)^# skipped 0\r?$') {
+            throw 'All thirty import-boundary, command-custody, private-session, private-pipe and Node TLS controls must execute without skips.'
           }
           $ownerRoot = Join-Path $env:RUNNER_TEMP 'gateway-process-helper'
           & dotnet publish packaging/windows/tests/gateway-process/Gateway.Process.Controls.csproj `

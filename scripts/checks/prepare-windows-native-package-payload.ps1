@@ -568,6 +568,7 @@ debug = false
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-remove-data.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-web-session.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-session-diagnostics.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-command.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-tunnel.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\assets\desktop-icons') -Destination (Join-Path $output 'desktop-icons') -Recurse
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-options.mts') -Destination $qualificationRoot
