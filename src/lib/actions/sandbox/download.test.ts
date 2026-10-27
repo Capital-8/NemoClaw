@@ -695,7 +695,9 @@ describe("downloadFromSandbox", () => {
     "rejects an oversized allowlisted recovery file or directory before transfer when a legacy Shields record exists",
     async () => {
       vi.restoreAllMocks();
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-oversized-"));
+      const root = fs.realpathSync(
+        fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-oversized-")),
+      );
       vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
       try {
         fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
