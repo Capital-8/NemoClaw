@@ -123,6 +123,15 @@ describe("dashboard-remote-bind target ownership (#13177)", () => {
     "src/lib/onboard/managed-startup/agent-environment.ts",
     "src/lib/actions/sandbox/rebuild-env-isolation.ts",
     "src/lib/actions/sandbox/agents/managed-workload-rebuild-profile.ts",
+    "src/lib/onboard/command.ts",
+    "src/lib/onboard/command-support.ts",
+    "src/lib/onboard/session-bootstrap.ts",
+    "src/lib/onboard/resume-config.ts",
+    "src/lib/onboard/sandbox-reuse.ts",
+    "src/lib/onboard/managed-startup/profile.ts",
+    "src/lib/onboard/managed-startup/profile-builder.ts",
+    "src/lib/actions/sandbox/rebuild-gpu-opt-out.ts",
+    "src/lib/onboard/workload/clone.ts",
   ])("selects the live dashboard-origin owner when %s changes", (changedFile) => {
     expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
       "dashboard-remote-bind",
