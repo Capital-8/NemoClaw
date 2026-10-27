@@ -155,6 +155,9 @@ describe("handleSandboxState resume recreation", () => {
     expect(calls.note).not.toHaveBeenCalledWith(
       "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
     );
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Reasoning capability differs from the Ready sandbox; keeping its baked value. Pass --recreate-sandbox to apply the saved onboarding value.",
+    );
     expect(calls.recordSkip).toHaveBeenCalled();
     expect(journal.completeCreate).not.toHaveBeenCalled();
   });

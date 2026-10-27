@@ -161,7 +161,7 @@ export type SandboxResumeDecision =
       readonly validateMessagingCredentialsBeforeMutation?: boolean;
       readonly continueHermesPortableLifecycle?: true;
     }
-  | { readonly kind: "reuse" }
+  | { readonly kind: "reuse"; readonly note?: string }
   | {
       readonly kind: "recreate";
       readonly note: string;
@@ -369,7 +369,14 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
   if (requiresUnownedNotReadyRepair(signals)) return { kind: "repair-and-recreate" };
   const compatibilityDecision = compatibilityResumeDecision(signals);
   if (compatibilityDecision) return compatibilityDecision;
-  if (canReuseSandbox(signals)) return { kind: "reuse" };
+  if (canReuseSandbox(signals)) {
+    return signals.compatibleEndpointReasoningChanged
+      ? {
+          kind: "reuse",
+          note: "  [resume] Reasoning capability differs from the Ready sandbox; keeping its baked value. Pass --recreate-sandbox to apply the saved onboarding value.",
+        }
+      : { kind: "reuse" };
+  }
   const configurationDecision = runtimeConfigurationResumeDecision(signals);
   if (configurationDecision) return configurationDecision;
   const toolDisclosureDecision = toolDisclosureResumeDecision(signals);

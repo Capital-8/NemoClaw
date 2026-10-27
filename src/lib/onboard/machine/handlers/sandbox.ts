@@ -1432,6 +1432,7 @@ class SandboxStateFlow<
 
   private async reuseSandbox(
     state: SandboxStepState<WebSearchConfig>,
+    note?: string,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
       await this.assertCheckpointBindingsStillLive(state);
@@ -1462,6 +1463,7 @@ class SandboxStateFlow<
         });
       }
       this.backfillReusedSandboxFidelity(state);
+      if (note) this.deps.note(note);
       this.deps.skippedStepMessage("sandbox", state.sandboxName, "reuse");
       const skippedSession = await this.deps.recordStateSkipped("sandbox", {
         reason: "resume",
@@ -2881,7 +2883,7 @@ class SandboxStateFlow<
     }
     const completedState =
       decision.kind === "reuse"
-        ? await this.reuseSandbox(initialState)
+        ? await this.reuseSandbox(initialState, decision.note)
         : await this.recreateSandbox(initialState, decision);
     return this.complete(completedState);
   }

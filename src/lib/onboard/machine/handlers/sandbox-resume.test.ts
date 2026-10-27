@@ -75,7 +75,10 @@ describe("decideSandboxResume", () => {
   it("reuses a Ready sandbox when its baked reasoning capability drifted without an explicit recreate (#13732)", () => {
     expect(
       decideSandboxResume(resumeSignals({ compatibleEndpointReasoningChanged: true })),
-    ).toEqual({ kind: "reuse" });
+    ).toEqual({
+      kind: "reuse",
+      note: "  [resume] Reasoning capability differs from the Ready sandbox; keeping its baked value. Pass --recreate-sandbox to apply the saved onboarding value.",
+    });
   });
 
   it("recreates a Ready sandbox with reasoning drift only when recreate is explicitly requested (#13732)", () => {
