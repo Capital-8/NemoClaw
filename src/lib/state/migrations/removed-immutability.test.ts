@@ -427,6 +427,35 @@ describe("removed immutability migration boundary", () => {
     ).toThrow(/credential-bearing or uninspectable material/u);
   });
 
+  it("rejects non-text legacy recovery files without blocking ordinary text whitespace", () => {
+    const root = stateDir();
+    const file = touch(root, "SOUL.md");
+    const assertSafe = () =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        file,
+        "/sandbox/.openclaw/workspace/SOUL.md",
+        "alpha",
+      );
+
+    fs.writeFileSync(file, Buffer.from([0xff]));
+    expect(assertSafe).toThrow(/credential-bearing or uninspectable material/u);
+    fs.writeFileSync(file, "Text\u0000hidden key");
+    expect(assertSafe).toThrow(/credential-bearing or uninspectable material/u);
+    fs.writeFileSync(file, "Text\r\n\tcontinued\n");
+    expect(assertSafe).not.toThrow();
+
+    const memory = path.join(root, "memory");
+    const nested = touch(memory, "note.md");
+    fs.writeFileSync(nested, Buffer.from([0xc3, 0x28]));
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        memory,
+        "/sandbox/.openclaw/workspace/memory",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+  });
+
   it("rejects a recovery directory deeper than the inspection limit", () => {
     const memory = path.join(stateDir(), "memory");
     fs.mkdirSync(path.join(memory, "d/".repeat(33)), { recursive: true });
@@ -447,10 +476,8 @@ describe("removed immutability migration boundary", () => {
     fs.mkdirSync(memory);
     const noteA = path.join(memory, "a.md");
     const noteB = path.join(memory, "b.md");
-    fs.writeFileSync(noteA, "");
-    fs.truncateSync(noteA, 9 * 1024 * 1024);
-    fs.writeFileSync(noteB, "");
-    fs.truncateSync(noteB, 9 * 1024 * 1024);
+    fs.writeFileSync(noteA, "a".repeat(9 * 1024 * 1024));
+    fs.writeFileSync(noteB, "b".repeat(9 * 1024 * 1024));
 
     expect(() =>
       assertRemovedImmutabilityRecoveryDownloadArtifactSafe(

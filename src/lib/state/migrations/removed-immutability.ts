@@ -107,6 +107,20 @@ function isDisallowedRemovedImmutabilityDownloadSegment(segment: string): boolea
   );
 }
 
+function decodeInspectableRecoveryText(bytes: Buffer): string {
+  const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  for (let index = 0; index < content.length; index += 1) {
+    const code = content.charCodeAt(index);
+    if (
+      (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+      (code >= 0x7f && code <= 0x9f)
+    ) {
+      throw new Error("Recovery content contains binary control characters.");
+    }
+  }
+  return content;
+}
+
 export function isRemovedImmutabilityRecoveryDownloadPath(
   sandboxPath: string | null | undefined,
 ): boolean {
@@ -217,9 +231,9 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
       reject();
     }
     try {
-      const content = opened!
-        .readBytes(MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES)
-        .toString("utf8");
+      const content = decodeInspectableRecoveryText(
+        opened!.readBytes(MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES),
+      );
       if (recoveryDownloadContentContainsCredential(content)) {
         reject();
       }

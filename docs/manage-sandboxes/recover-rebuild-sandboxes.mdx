@@ -55,8 +55,9 @@ Replace the sandbox only if you cannot restore read access to that state.
 To replace the sandbox, complete these steps:
 
 1. Download each file or directory that you want to keep with `$$nemoclaw <sandbox-name> download <sandbox-path> <host-dir>`.
-   While the legacy state record exists, `download` accepts only the `/sandbox/...` paths that the [manual transfer workflow](../state-and-backups/transfer-state-manually) lists, and files under the listed directories.
-   While the record exists, `download` rejects each file larger than 16 MiB and any file whose name or content marks it as credential-bearing. It does not allow the Hermes `state.db` database because its binary contents cannot be checked for credentials.
+   While the legacy state record exists, `download` accepts a restricted subset of the [manual transfer workflow](../state-and-backups/transfer-state-manually): the listed OpenClaw workspace Markdown files and `memory/`, `/sandbox/SOUL.md`, Hermes `platforms/`, and Deep Agents Code `config.toml`, agent `AGENTS.md`, `memories/`, and `skills/`.
+   The ordinary manual workflow also lists `/sandbox/.hermes/SOUL.md` and `/sandbox/.hermes/state.db`; neither is accepted while the legacy record exists.
+   While the record exists, `download` rejects each file larger than 16 MiB, non-text content, and any file whose name or content marks it as credential-bearing.
    This check does not prove that an accepted file is credential-free.
    You cannot download state that only root can read.
    Do not download credential files.
