@@ -76,6 +76,8 @@ function replaceCertificateWithInvalidDates(
         "policy = policy_any",
         "[ policy_any ]",
         "commonName = supplied",
+        "[ v3_ca ]",
+        "basicConstraints = critical,CA:TRUE",
       ].join("\n"),
     );
     execFileSync(
@@ -94,6 +96,7 @@ function replaceCertificateWithInvalidDates(
         validity === "expired" ? "20200101000000Z" : "20990101000000Z",
         "-enddate",
         validity === "expired" ? "20200102000000Z" : "20990102000000Z",
+        ...(certificate === "CA" ? ["-extensions", "v3_ca"] : []),
         "-out",
         path.join(tlsDir, certificate === "CA" ? "ca.crt" : "client/tls.crt"),
       ],
@@ -251,6 +254,30 @@ describe("rebuild gateway state directory preflight (#13330)", () => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
     const stateDir = sandboxGatewayStateDir();
     replaceWithCaSignedClientPair(stateDir);
+    process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
+    try {
+      const harness = createRebuildFlowHarness();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("continues when the CA bundle includes an unrelated expired rollover certificate", async () => {
+    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+    const stateDir = sandboxGatewayStateDir();
+    const unrelatedDir = sandboxGatewayStateDir();
+    replaceClientWithUnrelatedPair(unrelatedDir);
+    replaceCertificateWithInvalidDates(unrelatedDir, "CA", "expired");
+    fs.appendFileSync(
+      path.join(stateDir, "tls", "ca.crt"),
+      fs.readFileSync(path.join(unrelatedDir, "tls", "ca.crt")),
+    );
     process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
     try {
       const harness = createRebuildFlowHarness();

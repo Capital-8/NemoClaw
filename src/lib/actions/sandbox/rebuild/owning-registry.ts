@@ -111,28 +111,24 @@ const REBUILD_ENV_NAMES = [
   "NEMOCLAW_DISABLE_TELEMETRY",
 ] as const;
 
-function assertCertificatesCurrentlyValid(pem: Buffer, label: string): X509Certificate[] {
+function parseCertificates(pem: Buffer, label: string): X509Certificate[] {
   const blocks = pem
     .toString("utf8")
     .match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/gu);
   if (!blocks?.length) throw new Error(`${label} has no PEM certificate`);
+  return blocks.map((block) => new X509Certificate(block));
+}
+
+function certificateValidityIssue(certificate: X509Certificate, label: string): string | null {
   const now = Date.now();
-  const certificates: X509Certificate[] = [];
-  for (const block of blocks) {
-    const certificate = new X509Certificate(block);
-    const validFrom = Date.parse(certificate.validFrom);
-    const validTo = Date.parse(certificate.validTo);
-    if (
-      !Number.isFinite(validFrom) ||
-      !Number.isFinite(validTo) ||
-      now < validFrom ||
-      now >= validTo
-    ) {
-      throw new Error(`${label} certificate is expired or not yet valid`);
-    }
-    certificates.push(certificate);
-  }
-  return certificates;
+  const validFrom = Date.parse(certificate.validFrom);
+  const validTo = Date.parse(certificate.validTo);
+  return !Number.isFinite(validFrom) ||
+    !Number.isFinite(validTo) ||
+    now < validFrom ||
+    now >= validTo
+    ? `${label} certificate is expired or not yet valid`
+    : null;
 }
 
 function assertClientCertificateTrustedByGatewayCa(
@@ -143,6 +139,9 @@ function assertClientCertificateTrustedByGatewayCa(
   const possibleIssuers = [...clientCertificates.slice(1), ...caCertificates];
   const pending = [clientCertificates[0]];
   const visited = new Set<string>();
+  const clientValidityIssue = certificateValidityIssue(clientCertificates[0], "Gateway client");
+  if (clientValidityIssue) throw new Error(clientValidityIssue);
+  let invalidIssuer: string | null = null;
   while (pending.length > 0) {
     const certificate = pending.pop()!;
     if (trusted.has(certificate.fingerprint256)) return;
@@ -150,11 +149,19 @@ function assertClientCertificateTrustedByGatewayCa(
     visited.add(certificate.fingerprint256);
     for (const issuer of possibleIssuers) {
       if (issuer.ca && certificate.checkIssued(issuer) && certificate.verify(issuer.publicKey)) {
+        const issue = certificateValidityIssue(
+          issuer,
+          trusted.has(issuer.fingerprint256) ? "Gateway CA" : "Gateway client",
+        );
+        if (issue) {
+          invalidIssuer ??= issue;
+          continue;
+        }
         pending.push(issuer);
       }
     }
   }
-  throw new Error("Gateway client certificate is not signed by the gateway CA");
+  throw new Error(invalidIssuer ?? "Gateway client certificate is not signed by the gateway CA");
 }
 
 /**
@@ -186,11 +193,8 @@ export function rebuildGatewayStateDirIssue(
     try {
       // The SDK hands these to Node TLS; reject malformed or mismatched material here.
       const credentials = readManagedOpenShellSdkTls(stateDir);
-      const caCertificates = assertCertificatesCurrentlyValid(credentials.caCert, "Gateway CA");
-      const clientCertificates = assertCertificatesCurrentlyValid(
-        credentials.clientCert,
-        "Gateway client",
-      );
+      const caCertificates = parseCertificates(credentials.caCert, "Gateway CA");
+      const clientCertificates = parseCertificates(credentials.clientCert, "Gateway client");
       tls.createSecureContext({
         ca: credentials.caCert,
         cert: credentials.clientCert,
