@@ -273,6 +273,13 @@ Gemini config export stops with an unsupported-provider error because V1 cannot 
 The command writes no YAML and does not create or replace an output file, including with `--force`.
 Continue using the existing Gemini sandbox until V1 support is available.
 
+V1 config export reports OpenClaw image input as `unsupported` because it cannot preserve that setting.
+The command writes no YAML to standard output and does not create or replace an output file, including with `--force`.
+
+Keep the existing sandbox to retain image input.
+If you need an export, onboard a new sandbox with an unused name and `NEMOCLAW_INFERENCE_INPUTS=text`.
+Then export that text-only sandbox.
+
 </AgentOnly>
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
