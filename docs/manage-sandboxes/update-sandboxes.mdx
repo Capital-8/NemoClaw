@@ -124,18 +124,18 @@ Keep the existing sandbox and volume available; refer to [Legacy Managed State V
 
 ## Resume a Manually Prepared Upgrade
 
-Use `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the current release CLI completes strict backup and forward retirement, and the selected gateway is retired.
-Preparation can be completed manually or by the installer.
-Preserve the completed backups.
-
 <Warning>
-This flag does not enable migration of registered sandboxes from an out-of-range OpenShell version to `0.1.5`.
+`NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` does not enable migration of registered sandboxes from an out-of-range OpenShell version to `0.1.5`.
 The installer checks the installed OpenShell version before it accepts the flag.
 When the selected gateway has registered sandboxes, an out-of-range, missing, or unreadable OpenShell version stops the installer before it accepts prepared state.
 Passing this version check does not permit component replacement while NemoClaw sandbox records remain.
 Do not retire the legacy gateway, delete its registration, or remove sandbox records to bypass this check.
 Keep the existing installation and sandbox data available until an approved migration path exists.
 </Warning>
+
+Use the retry command below only for an eligible upgrade whose strict backup, forward retirement, and gateway retirement already completed.
+Do not retire a gateway to make it eligible for this command.
+Preserve the completed backups.
 
 Before retrying, inspect the installed version:
 

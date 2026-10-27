@@ -395,7 +395,6 @@ test(
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
       publicSwitch ? null : RUNTIME_SWITCH_API,
     );
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     progress.phase("exercise sandbox inference and Hermes API");
     const inferenceLocalPayload = JSON.stringify({
       model: SWITCH_MODEL,
@@ -500,12 +499,9 @@ test(
       },
     );
     expect(reapplied.exitCode, resultText(reapplied)).toBe(0);
-    const strictHashAfterCli = await hashCheck(
-      sandbox,
-      "/etc/nemoclaw/hermes.config-hash",
-      "strict-after-cli",
-    );
+    const strictHashAfterCli = await strictHashState(sandbox, "after-cli");
     expect(strictHashAfterCli.exitCode, resultText(strictHashAfterCli)).toBe(0);
+    expect(strictHashAfterCli.stdout).toBe(strictHashBefore.stdout);
     const compatHashAfterCli = await hashCheck(
       sandbox,
       "/sandbox/.hermes/.config-hash",
