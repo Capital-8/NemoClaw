@@ -348,6 +348,7 @@ describe("installer npm resolution", () => {
         const sourceRoot = path.join(tmp, "source");
         fs.mkdirSync(npmBin, { recursive: true });
         fs.mkdirSync(sourceRoot);
+        fs.chmodSync(npmPrefix, 0o755);
         fs.chmodSync(npmBin, 0o775);
 
         const result = runInstallerFunction(

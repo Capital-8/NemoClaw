@@ -279,7 +279,7 @@ docker info
 
 The NemoClaw installer does not require `sudo` or root. It installs Node.js via nvm and NemoClaw via npm, both into user-local directories. The installer also handles OpenShell installation automatically using a pinned release.
 
-If the installer reports `Unsafe user-local executable directory` or `Unsafe executable directory`, inspect the named path and each parent directory.
+If the installer reports `Unsafe user-local executable directory`, `Unsafe user-local npm directory`, or `Unsafe executable directory`, inspect the named path and each parent directory.
 Each component must be a real directory owned by you or root, without group or world write access except in a root-owned sticky parent such as `/tmp`.
 The installer leaves existing directory modes unchanged and stops before it publishes executables.
 If you own the named real directory and only its mode is unsafe, run `chmod go-w` on that directory, then rerun the installer.
