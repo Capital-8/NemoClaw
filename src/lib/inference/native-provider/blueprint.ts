@@ -125,6 +125,8 @@ function blueprintProfile(receipt: BlueprintNativeReceipt) {
       (!Number.isSafeInteger(receipt.timeoutSeconds) || receipt.timeoutSeconds <= 0))
   )
     throw new Error("Invalid blueprint native inference receipt.");
+  if (receipt.credentialEnv !== null && new URL(receipt.endpointUrl).protocol !== "https:")
+    throw new Error("Blueprint inference endpoints with credentials require HTTPS.");
   const definition = customNativeProvider({
     provider:
       receipt.api === "anthropic-messages"

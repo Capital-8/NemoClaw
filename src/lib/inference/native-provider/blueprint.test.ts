@@ -141,7 +141,7 @@ function fixture(
     provider: providerName,
     model: "custom-model",
     api: "openai-completions",
-    endpointUrl: "http://8.8.8.8:8000/v1",
+    endpointUrl: "https://8.8.8.8:8000/v1",
     prepareSandboxPolicy: vi.fn(async () => {
       events.push("verify-policy");
     }),
@@ -243,7 +243,7 @@ describe("blueprint native creation", () => {
         {
           dotpath: "models.providers.inference",
           value: {
-            baseUrl: "http://8.8.8.8:8000/v1",
+            baseUrl: "https://8.8.8.8:8000/v1",
             api: "openai-completions",
             apiKey: "openshell:resolve:env:v1_OPENAI_API_KEY",
             timeoutSeconds: 180,
@@ -265,9 +265,11 @@ describe("blueprint native creation", () => {
     await expect(created.observe()).resolves.toBe(created.identity);
   });
 
-  it("creates a credential-free profile without reading or inheriting another credential", async () => {
+  it("creates a credential-free HTTP profile without reading or inheriting another credential", async () => {
     const f = fixture({ credential: "" });
-    await createBlueprintNativeInference(f.input, f.deps);
+    f.input.endpointUrl = "http://8.8.8.8:8000/v1";
+    const created = await createBlueprintNativeInference(f.input, f.deps);
+    await expect(created.observe()).resolves.toBe(created.identity);
     expect(YAML.parse(f.source()).credentials).toEqual([]);
     expect(f.adapter.createProvider).toHaveBeenCalledWith(
       expect.objectContaining({ credentials: [], fromExisting: false }),
@@ -281,6 +283,28 @@ describe("blueprint native creation", () => {
       ]),
     );
   });
+
+  it.each(["openai-completions", "anthropic-messages"])(
+    "rejects credential-bearing HTTP for %s before host operations",
+    async (api) => {
+      const f = fixture();
+      const createDirectory = vi.spyOn(fs, "mkdtempSync");
+      await expect(
+        createBlueprintNativeInference(
+          { ...f.input, api, endpointUrl: "http://8.8.8.8:8000/v1" },
+          f.deps,
+        ),
+      ).rejects.toThrow("Blueprint inference endpoints with credentials require HTTPS.");
+      expect(createDirectory).not.toHaveBeenCalled();
+      expect(f.deps.adapter).not.toHaveBeenCalled();
+      expect(f.deps.capture).not.toHaveBeenCalled();
+      expect(f.deps.readHandle).not.toHaveBeenCalled();
+      expect(f.deps.writeConfig).not.toHaveBeenCalled();
+      expect(f.input.persist).not.toHaveBeenCalled();
+      expect(f.input.createSandbox).not.toHaveBeenCalled();
+      expect(f.input.prepareSandboxPolicy).not.toHaveBeenCalled();
+    },
+  );
 
   it("retains the Anthropic credential boundary and paths", async () => {
     const f = fixture();
@@ -491,6 +515,35 @@ async function recoveryFixture() {
 }
 
 describe("blueprint run receipt recovery", () => {
+  it("rejects a saved HTTP credential receipt before reuse or timeout reconciliation", async () => {
+    const f = await recoveryFixture();
+    try {
+      const endpointUrl = "http://8.8.8.8:8000/v1";
+      const receipt = { ...f.receipts.at(-1)!, endpointUrl };
+      const requested = { ...f.input, endpointUrl };
+      fs.writeFileSync(f.file, JSON.stringify({ native_inference: receipt }));
+      vi.clearAllMocks();
+      expect(() => findBlueprintNativeReceipt(requested)).toThrow("require HTTPS");
+      const observe = () => observeBlueprintCreatedInference(requested, receipt, f.deps);
+      await expect(observe()).rejects.toThrow("require HTTPS");
+      const config = { readConfig: vi.fn(), configTarget: vi.fn(), writeConfig: vi.fn() };
+      await expect(reconcileBlueprintNativeTimeout(requested, observe, config)).rejects.toThrow(
+        "require HTTPS",
+      );
+      expect(f.deps.adapter).not.toHaveBeenCalled();
+      expect(f.deps.capture).not.toHaveBeenCalled();
+      expect(f.deps.readHandle).not.toHaveBeenCalled();
+      expect(f.deps.writeConfig).not.toHaveBeenCalled();
+      expect(config.configTarget).not.toHaveBeenCalled();
+      expect(config.readConfig).not.toHaveBeenCalled();
+      expect(config.writeConfig).not.toHaveBeenCalled();
+      expect(f.input.persist).not.toHaveBeenCalled();
+      expect(JSON.parse(fs.readFileSync(f.file, "utf8"))).toEqual({ native_inference: receipt });
+    } finally {
+      fs.rmSync(f.home, { recursive: true, force: true });
+    }
+  });
+
   it("reads a completed receipt at the byte limit and closes its descriptor", async () => {
     const f = await recoveryFixture();
     try {

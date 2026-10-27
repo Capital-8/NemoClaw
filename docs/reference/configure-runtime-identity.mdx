@@ -229,6 +229,9 @@ An admitted credential-free endpoint receives a provider with no credentials and
 
 The direct runner's existing inference endpoint restrictions still apply.
 Private and local addresses and DNS-backed HTTPS endpoints are rejected.
+For inference providers created by the direct runner, credentials require HTTPS.
+Creation and saved blueprint receipt validation reject credential-bearing HTTP before changing resources or configuration.
+Credential-free HTTP remains allowed only for an admitted public literal IP address.
 These restrictions are separate from the reviewed runtime identity destination rules above.
 
 The runner also inspects the requested runtime identity provider name.
