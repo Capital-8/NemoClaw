@@ -1024,7 +1024,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   dockerOnlyTarget("hosted-inference-openrouter", {
     displayName: "Inference: completes native OpenRouter agent requests",
-    agentRuntime: "openclaw + langchain-deepagents-code",
+    agentRuntime: "openclaw + hermes + langchain-deepagents-code",
     prAdvisorSelectable: true,
     owningPaths: [
       "test/e2e/live/inference-routing-credential-scan.ts",
@@ -1038,7 +1038,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     releaseRequired: false,
     testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
     selector: OPENROUTER_SMOKE.id,
-    timeoutMinutes: 90,
+    timeoutMinutes: 140,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
