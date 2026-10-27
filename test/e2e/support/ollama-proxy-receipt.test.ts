@@ -25,7 +25,7 @@ it("counts only completed authenticated chat requests at the Ollama proxy", asyn
   const url = `http://127.0.0.1:${proxyAddress.port}`;
   const authorization = `Bearer ${token}`;
   const receipt = async () => {
-    const response = await fetch(`${url}/_nemoclaw/proxy-config`, {
+    const response = await fetch(`${url}/_nemoclaw/e2e-inference-receipt`, {
       headers: { authorization },
     });
     return response.json() as Promise<{ completedRequests: number }>;
@@ -40,7 +40,20 @@ it("counts only completed authenticated chat requests at the Ollama proxy", asyn
       body: JSON.stringify({ model: "local-model", messages: [] }),
     });
   try {
+    const activeConfig = await fetch(`${url}/_nemoclaw/proxy-config`, {
+      headers: { authorization },
+    });
+    expect(await activeConfig.json()).not.toHaveProperty("completedRequests");
     expect((await receipt()).completedRequests).toBe(0);
+    expect((await fetch(`${url}/_nemoclaw/e2e-inference-receipt`)).status).toBe(401);
+    expect(
+      (
+        await fetch(`${url}/_nemoclaw/e2e-inference-receipt`, {
+          method: "POST",
+          headers: { authorization },
+        })
+      ).status,
+    ).toBe(405);
     expect((await request("Bearer wrong")).status).toBe(401);
     expect((await request(authorization, true)).status).toBe(500);
     expect((await receipt()).completedRequests).toBe(0);

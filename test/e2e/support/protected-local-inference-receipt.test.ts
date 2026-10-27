@@ -35,7 +35,7 @@ it.each([
       );
       expect(count).toBe(2);
       expect(fetchMock).toHaveBeenCalledWith(
-        `http://127.0.0.1:${port}/${kind === "ollama" ? "_nemoclaw/proxy-config" : "_nemoclaw/e2e-inference-receipt"}`,
+        `http://127.0.0.1:${port}/_nemoclaw/e2e-inference-receipt`,
         expect.objectContaining({ headers: { authorization: `Bearer ${token}` } }),
       );
     } finally {

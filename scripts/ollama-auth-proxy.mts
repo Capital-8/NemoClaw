@@ -386,9 +386,19 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
               ? { address: listener.address, port: listener.port }
               : null,
           backendOrigin: backendUrl.origin,
-          completedRequests: completedChatRequests,
         }),
       );
+      return;
+    }
+
+    if (clientReq.url === "/_nemoclaw/e2e-inference-receipt") {
+      if (clientReq.method !== "GET") {
+        clientRes.writeHead(405, { Allow: "GET" });
+        clientRes.end();
+        return;
+      }
+      clientRes.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      clientRes.end(JSON.stringify({ completedRequests: completedChatRequests }));
       return;
     }
 

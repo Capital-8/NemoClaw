@@ -102,7 +102,17 @@ export async function startProtectedInferenceRecorder(options: {
       };
       upstream.on("response", (response) => {
         const success = (response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300;
-        clientResponse.writeHead(response.statusCode ?? 502, response.headers);
+        // Keep the response headers needed by the local-model client. The
+        // backend must not choose arbitrary header names for this proxy.
+        const contentType = response.headers["content-type"];
+        const contentEncoding = response.headers["content-encoding"];
+        const cacheControl = response.headers["cache-control"];
+        if (typeof contentType === "string") clientResponse.setHeader("content-type", contentType);
+        if (typeof contentEncoding === "string")
+          clientResponse.setHeader("content-encoding", contentEncoding);
+        if (typeof cacheControl === "string")
+          clientResponse.setHeader("cache-control", cacheControl);
+        clientResponse.writeHead(response.statusCode ?? 502);
         clientResponse.once("finish", async () => {
           if (
             success &&

@@ -14,7 +14,10 @@ it("records only authenticated completed requests to the expected local model", 
     backendRequests += 1;
     request.resume();
     request.on("end", () => {
-      response.writeHead(request.headers["x-test-fail"] === "1" ? 500 : 200);
+      response.writeHead(request.headers["x-test-fail"] === "1" ? 500 : 200, {
+        "content-type": "application/json",
+        "x-untrusted-backend-header": "do-not-forward",
+      });
       response.end("model response");
     });
   });
@@ -53,6 +56,8 @@ it("records only authenticated completed requests to the expected local model", 
     expect((await receipt()).completedRequests).toBe(0);
     const accepted = await request("expected-model");
     expect(accepted.status).toBe(200);
+    expect(accepted.headers.get("content-type")).toBe("application/json");
+    expect(accepted.headers.get("x-untrusted-backend-header")).toBeNull();
     expect(await accepted.text()).toBe("model response");
     expect((await receipt()).completedRequests).toBe(1);
     expect(backendRequests).toBe(3);

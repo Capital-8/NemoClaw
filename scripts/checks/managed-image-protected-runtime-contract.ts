@@ -461,8 +461,7 @@ export async function readProtectedLocalInferenceCount(
     !/^[a-f0-9]{48}$/u.test(token)
   )
     throw new Error("protected local inference receipt authority is unavailable");
-  const route = ollama ? "/_nemoclaw/proxy-config" : "/_nemoclaw/e2e-inference-receipt";
-  const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+  const response = await fetch(`http://127.0.0.1:${port}/_nemoclaw/e2e-inference-receipt`, {
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(5_000),
   });
