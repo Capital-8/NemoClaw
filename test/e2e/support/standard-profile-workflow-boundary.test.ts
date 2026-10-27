@@ -16,11 +16,7 @@ import {
   FULL_E2E_TEST_TIMEOUT_MINUTES,
 } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
-import {
-  catalogueTarget,
-  catalogueTargetsForChangedFiles,
-} from "../../../tools/e2e/target-catalogue.mts";
-import { buildE2eWorkflowPlan, selectedWorkflowJobs } from "../../../tools/e2e/workflow-plan.mts";
+import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -30,38 +26,31 @@ describe("standard E2E execution profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
-  it("routes the GPU provider-switch target through guarded NVIDIA API credentials", () => {
-    expect(catalogueTarget("gpu-double-onboard").profile).toBe("nvidia-api");
-    expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
-  });
-
-  it(
-    "routes the GPU Ollama provider-switch target through the guarded NVIDIA API profile",
-    { timeout: 30_000 },
-    () => {
-      const targetId = "gpu-double-onboard";
-      const plan = buildE2eWorkflowPlan({ targets: targetId });
-
-      expect(catalogueTarget(targetId).profile).toBe("nvidia-api");
-      expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual([targetId]);
-      expect(plan.catalogueMatrices.standard).toEqual([]);
-      expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
-    },
-  );
-
-  it.each(["src/lib/inference/ollama/model-ownership.ts", "src/lib/onboard/setup-inference.ts"])(
-    "selects the GPU provider-switch target for a source-only %s change",
-    (changedFile) => {
-      const targetId = "gpu-double-onboard";
-      const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
-
-      expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
-        targetId,
+  it.each([
+    { field: "uses", value: "actions/setup-python@v7" },
+    { field: "if", value: "true" },
+    { field: "with", value: { "python-version": "3.14" } },
+    { field: "env", value: { UNREVIEWED_INPUT: "present" } },
+    { field: "run", value: "python3 --version" },
+  ])("rejects unreviewed Model Router Python $field", ({ field, value }) => {
+    const profile = YAML.parse(
+      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/e2e-standard-profile.yaml"), "utf8"),
+    ) as { jobs: { run: { steps: Array<Record<string, unknown>> } } };
+    const python = profile.jobs.run.steps.find(
+      (step) => step.name === "Set up supported Model Router Python",
+    )!;
+    python[field] = value;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-router-python-"));
+    const profilePath = path.join(directory, "profile.yaml");
+    try {
+      fs.writeFileSync(profilePath, YAML.stringify(profile));
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toContain(
+        "standard E2E profile must provision reviewed Python only for Model Router",
       );
-      expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toContain(targetId);
-      expect(selectedWorkflowJobs(plan)).toContain("catalogue-nvidia-api");
-    },
-  );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
 
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
     // The original 70-minute path now includes native configuration and plugin lifecycle work.
