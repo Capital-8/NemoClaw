@@ -12,8 +12,48 @@ const corporateCaPath = "/usr/local/share/nemoclaw/corporate-ca.pem";
 const requiredArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const invocation = [command, ...requiredArguments].join(" ");
 const splicedCommand = command.replace("bundled-npm", "bundled-\\\nnpm");
+const dcodeCommand = "node /scripts/upgrade-bundled-npm.mts";
+const dcodeArguments = [...requiredArguments, "--archive", "/tmp/npm-12.0.2.tgz"] as const;
+const dcodeRun = [
+  "set -eu;",
+  'dcode_npm_cache="$(mktemp -d /tmp/nemoclaw-dcode-npm-cache.XXXXXX)";',
+  `trap 'rm -rf "$dcode_npm_cache"' EXIT;`,
+  `trap 'exit 1' HUP INT TERM;`,
+  'export NPM_CONFIG_CACHE="$dcode_npm_cache" npm_config_cache="$dcode_npm_cache";',
+  [dcodeCommand, ...dcodeArguments].join(" "),
+].join(" ");
 
 describe("Dockerfile RUN command discovery", () => {
+  it("accepts the exact isolated DCode npm cache wrapper", () => {
+    const source = `RUN ${dcodeRun}\n`;
+
+    expect(
+      requireSingleReviewedDockerfileRunCommand(
+        source,
+        dcodeCommand,
+        dcodeArguments,
+        "dcode-npm-cache",
+      ).commandStart,
+    ).toBe(source.indexOf(dcodeCommand));
+  });
+
+  it.each([
+    ["missing cache isolation", `${dcodeCommand} ${dcodeArguments.join(" ")}`],
+    ["cache creation", dcodeRun.replace("mktemp -d", "mktemp")],
+    ["exit cleanup", dcodeRun.replace(`trap 'rm -rf "$dcode_npm_cache"' EXIT;`, "trap : EXIT;")],
+    ["additional command", `${dcodeRun}; true`],
+    ["duplicated upgrade", `${dcodeRun}; ${dcodeCommand} ${dcodeArguments.join(" ")}`],
+  ])("rejects a changed DCode npm wrapper: %s", (_label, body) => {
+    expect(() =>
+      requireSingleReviewedDockerfileRunCommand(
+        `RUN ${body}\n`,
+        dcodeCommand,
+        dcodeArguments,
+        "dcode-npm-cache",
+      ),
+    ).toThrow("unreviewed RUN instruction");
+  });
+
   it("finds only executable unquoted npm command words in RUN instructions (#9933)", () => {
     const source = [
       "# npm install",

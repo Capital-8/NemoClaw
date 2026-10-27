@@ -515,6 +515,7 @@ describe("reviewed npm image remediation contract", () => {
       file === "agents/hermes/Dockerfile"
         ? hermesReviewedNpmUpgradeArguments
         : reviewedNpmUpgradeArguments,
+      file === "agents/langchain-deepagents-code/Dockerfile" ? "dcode-npm-cache" : "standard",
     ).commandStart;
     const firstPrivatePatch = source.indexOf(patchCommand);
 
