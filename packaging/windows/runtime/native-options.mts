@@ -4,8 +4,8 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readCredentialByBinding } from "./native-security.mts";
+import { isActiveNativeAgent, isNativeCleanupAgent } from "./native-agent-identities.mts";
 
-const AGENTS = ["openclaw", "hermes"];
 export const NATIVE_SERVICES = {
   brave: { authority: "https://api.search.brave.com", environment: "BRAVE_API_KEY" },
   tavily: { authority: "https://api.tavily.com", environment: "TAVILY_API_KEY" },
@@ -33,7 +33,7 @@ function exactKeys(value: Record<string, unknown>, allowed: string[]) {
 }
 
 export function normalizeNativeOptions(agent: string, value: unknown): NativeOptions {
-  if (!AGENTS.includes(agent) || !record(value))
+  if (!isActiveNativeAgent(agent) || !record(value))
     throw new Error("Native setup options are invalid.");
   exactKeys(value, ["search", "messaging"]);
   const result: NativeOptions = {};
@@ -52,7 +52,7 @@ export function normalizeNativeOptions(agent: string, value: unknown): NativeOpt
     result.search = { provider: provider as "brave" | "tavily", credentialStored: true };
   }
   if (value.messaging !== undefined) {
-    if (!record(value.messaging) || !["openclaw", "hermes"].includes(agent))
+    if (!record(value.messaging) || !isActiveNativeAgent(agent))
       throw new Error("Messaging is unavailable for this agent.");
     exactKeys(value.messaging, ["telegram", "discord", "slack"]);
     result.messaging = {};
@@ -93,10 +93,7 @@ export function normalizeNativeOptions(agent: string, value: unknown): NativeOpt
 export function nativeServiceBinding(agent: string, service: string): string {
   // Historical identities remain hashable for credential deletion during uninstall.
   // This function does not authorize setup or runtime launch.
-  if (
-    ![...AGENTS, "langchain-deepagents-code", "pi", "nemocua"].includes(agent) ||
-    !Object.hasOwn(NATIVE_SERVICES, service)
-  )
+  if (!isNativeCleanupAgent(agent) || !Object.hasOwn(NATIVE_SERVICES, service))
     throw new Error("The native service credential identity is invalid.");
   // Search and channel keys cannot alias an inference endpoint or another agent.
   return createHash("sha256")

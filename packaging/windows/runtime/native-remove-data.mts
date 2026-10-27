@@ -7,6 +7,7 @@ import { NATIVE_SERVICES, nativeServiceBinding } from "./native-options.mts";
 import { acquireNativeStateRemoval } from "./native-state.mts";
 import { localModelIdentityMatches } from "./native-local-models.mts";
 import { readNativeConfigurationRecovery } from "./native-configuration-recovery.mts";
+import { isNativeCleanupAgent } from "./native-agent-identities.mts";
 import {
   deleteCredentialByBinding,
   nativeCredentialBinding,
@@ -69,8 +70,7 @@ export async function removeNativeAgentData(
     deleteCredential?: typeof deleteCredentialByBinding;
   } = {},
 ) {
-  if (!["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"].includes(agent))
-    throw new Error("Select a valid agent to remove.");
+  if (!isNativeCleanupAgent(agent)) throw new Error("Select a valid agent to remove.");
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData || !path.win32.isAbsolute(localAppData))
     throw new Error("The Windows settings directory is unavailable.");

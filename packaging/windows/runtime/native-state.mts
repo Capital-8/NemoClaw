@@ -4,22 +4,22 @@
 import { spawn } from "node:child_process";
 import type { Socket } from "node:net";
 import { createNativeDiagnosticCapture } from "./native-session-diagnostics.mts";
+import { isActiveNativeAgent, isNativeCleanupAgent } from "./native-agent-identities.mts";
 
 export async function acquireNativeStateSession(launcher: string, purpose: string) {
-  if (!["openclaw", "hermes", "inference"].includes(purpose))
+  if (!isActiveNativeAgent(purpose) && purpose !== "inference")
     throw new Error("Select a supported native agent or shared inference session.");
   return await acquireStateOwner(launcher, purpose, "session");
 }
 
 export async function acquireNativeStateConfiguration(launcher: string, purpose: string) {
-  if (!["openclaw", "hermes"].includes(purpose))
+  if (!isActiveNativeAgent(purpose))
     throw new Error("Select a supported native agent to configure.");
   return await acquireStateOwner(launcher, purpose, "configuration");
 }
 
 export async function acquireNativeStateInspection(launcher: string, purpose: string) {
-  if (!["openclaw", "hermes"].includes(purpose))
-    throw new Error("Select a supported native agent to inspect.");
+  if (!isActiveNativeAgent(purpose)) throw new Error("Select a supported native agent to inspect.");
   const owner = await acquireStateOwner(launcher, purpose, "inspection");
   if (typeof owner.present !== "boolean") {
     await owner.release();
@@ -40,11 +40,7 @@ async function acquireStateOwner(
   mode: "session" | "configuration" | "inspection" | "remove",
 ) {
   const removal = mode === "remove";
-  if (
-    !["openclaw", "nemocua", "pi", "hermes", "langchain-deepagents-code", "inference"].includes(
-      purpose,
-    )
-  )
+  if (!isNativeCleanupAgent(purpose) && purpose !== "inference")
     throw new Error("The native state purpose is invalid.");
   const inspection = mode === "inspection";
   const command =

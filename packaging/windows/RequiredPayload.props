@@ -26,6 +26,7 @@
     <NemoClawRequiredPayload Include="config\mxc-gateway.toml" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-security.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-state.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-agent-identities.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-ui-file-owner.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\native-hermes-dashboard.mts" Phase="Prepared" />
     <NemoClawRequiredPayload Include="qualification\run-installed-native-hermes-ui.mts" Phase="Prepared" />

@@ -89,7 +89,12 @@ while ($true) {
       discoveryBeforeSignal = stdout.includes("before-sentinel");
       try {
         if (contents === "") signalObserverStop(sentinel);
-        else fs.writeFileSync(sentinel, contents, { flag: "wx" });
+        else {
+          const stagedSentinel = path.join(root, "nonempty-sentinel");
+          fs.writeFileSync(stagedSentinel, contents, { flag: "wx", mode: 0o600 });
+          fs.linkSync(stagedSentinel, sentinel);
+          fs.unlinkSync(stagedSentinel);
+        }
         signalSent = true;
         // Measure Stop after publication, not while the parent is publishing it.
         armDeadline(15_000);

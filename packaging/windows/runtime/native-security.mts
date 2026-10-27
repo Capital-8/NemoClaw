@@ -8,6 +8,7 @@ import path from "node:path";
 import { nativeHermesCompatibility, type NativeRuntimeLaunchLease } from "./native-runtime.mts";
 import type { InstalledRuntimeSession } from "../../../src/lib/onboard/runtime-provider/installed-session.ts";
 import { PROVIDER_CONFIGURATION } from "./native-provider-policy.mts";
+import { isNativeCleanupAgent } from "./native-agent-identities.mts";
 
 type ReadOpenedRegularFileOptions = {
   encoding?: BufferEncoding;
@@ -96,9 +97,7 @@ export function resolveBrokerUpstreamUrl(endpointValue: string, operation: Broke
 export function nativeCredentialBinding(identity: NativeCredentialIdentity): string {
   if (
     !identity ||
-    !["openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua"].includes(
-      identity.agent,
-    ) ||
+    !isNativeCleanupAgent(identity.agent) ||
     typeof identity.inference !== "string" ||
     !Object.hasOwn(PROVIDER_CONFIGURATION, identity.inference)
   )

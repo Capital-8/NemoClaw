@@ -562,6 +562,7 @@ debug = false
     [IO.Directory]::CreateDirectory($qualificationRoot) | Out-Null
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-security.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-state.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-agent-identities.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-file-owner.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-hermes-dashboard.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-hermes-ui.mts') -Destination $qualificationRoot
