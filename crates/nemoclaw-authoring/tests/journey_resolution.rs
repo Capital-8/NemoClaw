@@ -2005,10 +2005,14 @@ fn delegation_accepts_when_a_credential_was_never_observed() {
 }
 
 #[test]
-fn missing_credentials_are_informational_and_do_not_block_delegation() {
+fn credential_availability_names_each_observed_state_without_blocking_delegation() {
     use nemoclaw_sdk::discovery::ObservationStatus;
     let capabilities = Capabilities::available();
-    for status in [ObservationStatus::Unavailable, ObservationStatus::Unknown] {
+    for (status, says, plan_guidance) in [
+        (ObservationStatus::Available, "is set", false),
+        (ObservationStatus::Unavailable, "is not set", true),
+        (ObservationStatus::Unknown, "could not be read", true),
+    ] {
         let mut facts = delegation_facts(&capabilities);
         facts.credentials[0].status = status;
         facts.credentials[0].reason = Some("PRIVATE_SENTINEL".into());
@@ -2017,23 +2021,33 @@ fn missing_credentials_are_informational_and_do_not_block_delegation() {
             .state
             .resolve_with_observations(&capabilities, &facts.observations())
             .unwrap();
-        let note = resolution.information().join(" ");
-        assert!(note.contains(&facts.credentials[0].reference), "{note}");
-        assert!(
+        let reference = &facts.credentials[0].reference;
+        let note = resolution.credentials().join(" ");
+        assert!(note.contains(&format!("{reference} {says}")), "{note}");
+        assert_eq!(
             note.contains("plan") && note.contains("non-interactive"),
+            plan_guidance,
             "{note}"
         );
         assert!(!note.contains("PRIVATE_SENTINEL"));
+        assert!(
+            !resolution.information().join(" ").contains(reference),
+            "credential availability is not a note for every question"
+        );
     }
-    let facts = delegation_facts(&capabilities);
-    assert!(
-        facts
-            .state
-            .resolve_with_observations(&capabilities, &facts.observations())
-            .unwrap()
-            .information()
-            .is_empty()
-    );
+}
+
+#[test]
+fn a_credential_never_checked_says_nothing_about_its_availability() {
+    let capabilities = Capabilities::available();
+    let mut facts = delegation_facts(&capabilities);
+    facts.credentials.clear();
+    let resolution = facts
+        .state
+        .resolve_with_observations(&capabilities, &facts.observations())
+        .unwrap();
+    assert!(resolution.credentials().is_empty());
+    assert!(resolution.information().is_empty());
 }
 
 #[test]

@@ -79,7 +79,7 @@ impl JourneyWizard {
         .split(body);
         self.render_logo(frame, rows[0], brand.filter(|_| body.width >= 80));
         let current = self.question();
-        let reviewing = self.started && matches!(&current, Ok(None));
+        let reviewing = self.reviewing();
         let asking = self.started && matches!(&current, Ok(Some(_)));
         let mut lines = if !self.started {
             welcome()
@@ -278,11 +278,13 @@ impl JourneyWizard {
                     lines.extend(target_lines(assessment, blocked));
                     lines.push(Line::from(""));
                 }
-                if !resolution.information().is_empty() {
-                    lines.extend(resolution.information().iter().map(|note| {
-                        Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED)))
-                    }));
-                    lines.push(Line::from(""));
+                for notes in [resolution.information(), resolution.credentials()] {
+                    if !notes.is_empty() {
+                        lines.extend(notes.iter().map(|note| {
+                            Line::from(Span::styled(terminal_text(note), Style::new().fg(MUTED)))
+                        }));
+                        lines.push(Line::from(""));
+                    }
                 }
                 if let Some(document) = resolution.materialized_document() {
                     if let Ok(yaml) = document.yaml() {

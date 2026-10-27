@@ -6,8 +6,8 @@ use super::*;
 impl JourneyState {
     /// Resolve questions and readiness against the observations gathered so far.
     /// Endpoint models remain suggestions, while target observations can block
-    /// readiness. Credential availability is informational; an empty sheet
-    /// leaves compatibility unverified and lists references needed by plan.
+    /// readiness. Credential availability is informational and reported only
+    /// for checked references; an empty sheet leaves compatibility unverified.
     pub fn resolve_with_observations(
         &self,
         capabilities: &Capabilities,
@@ -69,21 +69,22 @@ impl JourneyState {
         let Some(document) = resolution.assessment.document() else {
             return Ok(resolution);
         };
-        let unresolved = document
-            .credential_names()
-            .into_iter()
-            .filter(|reference| {
-                observations
-                    .get(&CredentialRequest {
-                        reference: (*reference).into(),
-                    })
-                    .is_none_or(|credential| credential.status != ObservationStatus::Available)
-            })
-            .collect::<Vec<_>>();
-        if !unresolved.is_empty() {
-            resolution.information.push(format!(
-                "Credential availability is missing or unverified here: {}. Interactive plan prompts for missing values; set them first for a non-interactive run.",
-                unresolved.join(", ")
+        // A reference that was never checked has no state to report. The
+        // observation's reason is not shown; only its status is.
+        for reference in document.credential_names() {
+            let Some(credential) = observations.get(&CredentialRequest {
+                reference: reference.into(),
+            }) else {
+                continue;
+            };
+            let guidance = " Interactive plan asks for it; set it first for a non-interactive run.";
+            let (state, guidance) = match credential.status {
+                ObservationStatus::Available => ("is set", ""),
+                ObservationStatus::Unavailable => ("is not set", guidance),
+                ObservationStatus::Unknown => ("could not be read", guidance),
+            };
+            resolution.credentials.push(format!(
+                "{reference} {state} in this environment.{guidance}"
             ));
         }
         let Some(request) = crate::inference_request_for_document(document, self.current_route())
