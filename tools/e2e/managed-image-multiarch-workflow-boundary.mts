@@ -38,7 +38,6 @@ const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TRUSTED_HERMES_RESOLVER_ROOT = ".trusted-hermes-resolver";
-const TRUSTED_OPENCLAW_RESOLVER_ROOT = ".trusted-openclaw-base-resolver";
 const REVIEWED_HERMES_PLATFORM_ACTION = `./${TRUSTED_HERMES_RESOLVER_ROOT}/.github/actions/resolve-reviewed-hermes-platform`;
 // Candidate-controlled execution starts at checkout and ends after the direct
 // managed-image consumer. Exact topology and complete step objects within that
@@ -51,10 +50,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Checkout trusted Hermes resolver",
   "Bind protected managed-image Buildx configuration",
   "Set up protected managed-image Buildx",
-  "Validate trusted OpenClaw base resolver path",
-  "Checkout trusted OpenClaw base resolver",
   "Reuse only an input-equivalent published OpenClaw base",
-  "Remove trusted OpenClaw base resolver checkout",
   "Download reviewed OpenShell SDK archive",
   "Prepare E2E workspace",
   "Install reviewed OpenShell SDK archive without package credentials",
@@ -69,7 +65,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "fe44172f704f59949b0f376a84f05201a1d78f02ee0b359df5d07f0e9ecfecd2";
+  "4aac1e314be7d6acbbcc5ac689d74f3489ab7fe2c8cdf8ee430dcf324ff11c16";
 const SHARED_POLICY_BOUNDARY_RUN = [
   "set -euo pipefail",
   "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
@@ -281,8 +277,8 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   ]);
 
   const checkouts = steps.filter((step) => text(step.uses).startsWith("actions/checkout@"));
-  if (checkouts.length !== 3) {
-    errors.push(`${JOB_ID} must define one candidate checkout and two trusted resolver checkouts`);
+  if (checkouts.length !== 2) {
+    errors.push(`${JOB_ID} must define one candidate checkout and one trusted resolver checkout`);
   }
   const candidateCheckout = requireStep(
     errors,
@@ -295,15 +291,9 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Validate trusted Hermes resolver checkout path",
   );
   const trustedResolverCheckout = requireStep(errors, steps, "Checkout trusted Hermes resolver");
-  const openclawResolverCheckout = requireStep(
-    errors,
-    steps,
-    "Checkout trusted OpenClaw base resolver",
-  );
   if (
     candidateCheckout?.uses !== CHECKOUT_ACTION ||
-    trustedResolverCheckout?.uses !== CHECKOUT_ACTION ||
-    openclawResolverCheckout?.uses !== CHECKOUT_ACTION
+    trustedResolverCheckout?.uses !== CHECKOUT_ACTION
   ) {
     errors.push(`${JOB_ID} must pin the candidate and trusted resolver checkouts`);
   }
@@ -325,40 +315,12 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
       repository: "${{ github.repository }}",
       ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
       path: TRUSTED_HERMES_RESOLVER_ROOT,
-      "sparse-checkout": ".github/actions/resolve-reviewed-hermes-platform",
-      "fetch-depth": 1,
-      "persist-credentials": false,
-    },
-  );
-  const openclawResolverPath = requireStep(
-    errors,
-    steps,
-    "Validate trusted OpenClaw base resolver path",
-  );
-  if (openclawResolverPath?.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push(`${JOB_ID} OpenClaw resolver path guard must require a PR candidate`);
-  }
-  requireFragments(errors, openclawResolverPath, [
-    `resolver_root="$GITHUB_WORKSPACE/${TRUSTED_OPENCLAW_RESOLVER_ROOT}"`,
-    '[[ ! -e "$resolver_root" && ! -L "$resolver_root" ]]',
-  ]);
-  requireValues(
-    errors,
-    `${JOB_ID} trusted OpenClaw resolver checkout`,
-    record(openclawResolverCheckout?.with),
-    {
-      repository: "${{ github.repository }}",
-      ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
-      path: TRUSTED_OPENCLAW_RESOLVER_ROOT,
       "sparse-checkout":
-        "scripts/checks/resolve-managed-pr-base.sh\nscripts/lib/dockerfile-copy-sources.mts\n",
+        ".github/actions/resolve-reviewed-hermes-platform\nscripts/checks/resolve-managed-pr-base.sh\nscripts/lib/dockerfile-copy-sources.mts\n",
       "fetch-depth": 1,
       "persist-credentials": false,
     },
   );
-  if (openclawResolverCheckout?.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push(`${JOB_ID} trusted OpenClaw resolver checkout must require a PR candidate`);
-  }
   const openclawBase = requireStep(
     errors,
     steps,
@@ -380,27 +342,9 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     PLATFORM: "${{ matrix.platform }}",
     RESOLUTION_MODE: "reference-or-candidate",
   });
-  if (
-    openclawBase?.run !==
-    ".trusted-openclaw-base-resolver/scripts/checks/resolve-managed-pr-base.sh"
-  ) {
+  if (openclawBase?.run !== ".trusted-hermes-resolver/scripts/checks/resolve-managed-pr-base.sh") {
     errors.push(`${JOB_ID} must execute the trusted OpenClaw base resolver`);
   }
-  const openclawResolverCleanup = requireStep(
-    errors,
-    steps,
-    "Remove trusted OpenClaw base resolver checkout",
-  );
-  if (openclawResolverCleanup?.if !== "${{ always() && inputs.checkout_sha != '' }}") {
-    errors.push(`${JOB_ID} trusted OpenClaw resolver cleanup must run after failures`);
-  }
-  requireFragments(errors, openclawResolverCleanup, [
-    `resolver_root="$GITHUB_WORKSPACE/${TRUSTED_OPENCLAW_RESOLVER_ROOT}"`,
-    '[[ -d "$resolver_root" && ! -L "$resolver_root" ]]',
-    'rm -rf -- "$resolver_root"',
-    '[[ ! -e "$resolver_root" && ! -L "$resolver_root" ]]',
-  ]);
-
   const buildxConfig = requireStep(
     errors,
     steps,

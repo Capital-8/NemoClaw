@@ -550,9 +550,10 @@ it.each(
   assertBaseResolution(testCase, "build-local");
 });
 
-it.each(publishedBaseCases)("protected OpenClaw: $title", (testCase) => {
-  assertBaseResolution(
-    { ...testCase, agent: "openclaw", architecture: "amd64" },
-    "reference-or-candidate",
-  );
+it.each(
+  publishedBaseCases.flatMap((testCase) =>
+    (["amd64", "arm64"] as const).map((architecture) => ({ ...testCase, architecture })),
+  ),
+)("protected OpenClaw ($architecture): $title", (testCase) => {
+  assertBaseResolution({ ...testCase, agent: "openclaw" }, "reference-or-candidate");
 });

@@ -4832,7 +4832,10 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           path: .trusted-hermes-resolver
-          sparse-checkout: .github/actions/resolve-reviewed-hermes-platform
+          sparse-checkout: |
+            .github/actions/resolve-reviewed-hermes-platform
+            scripts/checks/resolve-managed-pr-base.sh
+            scripts/lib/dockerfile-copy-sources.mts
           fetch-depth: 1
           persist-credentials: false
 
@@ -4862,30 +4865,6 @@ jobs:
             [registry."localhost:5000"]
               http = true
 
-      - name: Validate trusted OpenClaw base resolver path
-        if: ${{ inputs.checkout_sha != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          resolver_root="$GITHUB_WORKSPACE/.trusted-openclaw-base-resolver"
-          [[ ! -e "$resolver_root" && ! -L "$resolver_root" ]] || {
-            echo "::error::Trusted OpenClaw base resolver path already exists" >&2
-            exit 1
-          }
-
-      - name: Checkout trusted OpenClaw base resolver
-        if: ${{ inputs.checkout_sha != '' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
-          path: .trusted-openclaw-base-resolver
-          sparse-checkout: |
-            scripts/checks/resolve-managed-pr-base.sh
-            scripts/lib/dockerfile-copy-sources.mts
-          fetch-depth: 1
-          persist-credentials: false
-
       - id: openclaw-base
         name: Reuse only an input-equivalent published OpenClaw base
         if: ${{ inputs.checkout_sha != '' }}
@@ -4901,25 +4880,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           RESOLUTION_MODE: reference-or-candidate
         shell: bash
-        run: .trusted-openclaw-base-resolver/scripts/checks/resolve-managed-pr-base.sh
-
-      - name: Remove trusted OpenClaw base resolver checkout
-        if: ${{ always() && inputs.checkout_sha != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          resolver_root="$GITHUB_WORKSPACE/.trusted-openclaw-base-resolver"
-          if [[ -e "$resolver_root" || -L "$resolver_root" ]]; then
-            [[ -d "$resolver_root" && ! -L "$resolver_root" ]] || {
-              echo "::error::Trusted OpenClaw base resolver path changed type" >&2
-              exit 1
-            }
-            rm -rf -- "$resolver_root"
-          fi
-          [[ ! -e "$resolver_root" && ! -L "$resolver_root" ]] || {
-            echo "::error::Trusted OpenClaw base resolver remained after cleanup" >&2
-            exit 1
-          }
+        run: .trusted-hermes-resolver/scripts/checks/resolve-managed-pr-base.sh
 
       - name: Download reviewed OpenShell SDK archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
