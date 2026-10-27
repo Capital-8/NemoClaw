@@ -13,6 +13,25 @@ skill:
 ---
 Use the built-in uninstall command when the installed CLI is available.
 
+<AgentOnly variant="hermes">
+<Warning>
+For a Docker Hermes sandbox that uses the NemoClaw-managed image, uninstall removes its managed state volume even without `--destroy-user-data`.
+Default uninstall backs up required Hermes state first.
+When using `--destroy-user-data`, back up required state separately before uninstall.
+NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
+</Warning>
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+<Warning>
+For a Docker OpenClaw sandbox that uses the NemoClaw-managed image, uninstall removes its managed `/sandbox/.openclaw` state volume even without `--destroy-user-data`, as `$$nemoclaw <name> destroy` does.
+When the gateway is externally supervised, uninstall does not delete the sandbox and keeps its state volume; restore a NemoClaw-managed lifecycle authority and retry before onboarding the same sandbox name again.
+Default uninstall backs up eligible sandbox state first.
+When using `--destroy-user-data`, back up required state separately before uninstall.
+NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
+</Warning>
+</AgentOnly>
+
 ```bash
 $$nemoclaw uninstall
 ```
@@ -49,25 +68,6 @@ Uninstall preserves an unrelated process that uses the same port.
 | `--destroy-user-data` | Skip eligible fresh sandbox backups and remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
-
-<AgentOnly variant="hermes">
-<Warning>
-For a Docker Hermes sandbox that uses the NemoClaw-managed image, uninstall removes its managed state volume even without `--destroy-user-data`.
-Default uninstall backs up required Hermes state first.
-When using `--destroy-user-data`, back up required state separately before uninstall.
-NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
-</Warning>
-</AgentOnly>
-
-<AgentOnly variant="openclaw">
-<Warning>
-For a Docker OpenClaw sandbox that uses the NemoClaw-managed image, uninstall removes its managed `/sandbox/.openclaw` state volume even without `--destroy-user-data`, as `$$nemoclaw <name> destroy` does.
-When the gateway is externally supervised, uninstall does not delete the sandbox and keeps its state volume; restore a NemoClaw-managed lifecycle authority and retry before onboarding the same sandbox name again.
-Default uninstall backs up eligible sandbox state first.
-When using `--destroy-user-data`, back up required state separately before uninstall.
-NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
-</Warning>
-</AgentOnly>
 
 On macOS, Homebrew owns its OpenShell formula and executable links.
 Full uninstall preserves OpenShell executable paths instead of assuming NemoClaw owns them.
