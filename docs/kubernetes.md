@@ -8,7 +8,9 @@ NemoClaw either installs a development OpenShell gateway in a namespace it creat
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
 The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
-OpenShift's security policy admitting these pods is untested; [current limits](limits.md#platforms-models-and-placement) lists what else is untested.
+CI runs the managed lifecycle on kind (Kubernetes 1.37, Agent Sandbox 0.5.0).
+OpenShift was qualified by hand on one OpenShift Local 4.22.14 node (linux/arm64) at revision `62f994bf88` ([#12733](https://github.com/NVIDIA/NemoClaw/issues/12733)): the gateway and issuer ran under `restricted-v2`, and agents replied through a managed gateway, one authenticating through OIDC, and an existing gateway.
+No automated run covers OpenShift, and other clusters are untested; [current limits](limits.md#platforms-models-and-placement) lists what else is untested.
 
 ## Prerequisites
 
@@ -16,6 +18,7 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, Services, Deployments, StatefulSets and NetworkPolicies.
   The SDK reads the cluster's CustomResourceDefinitions, StorageClasses and namespaces.
+  The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
   OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list.
 - **Cluster setup, done by the platform operator:**
@@ -25,7 +28,14 @@ OpenShift's security policy admitting these pods is untested; [current limits](l
 - **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
   Managed model services under `spec.services` are not supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-NemoClaw installs nothing cluster-wide and never selects a context for you.
+NemoClaw never selects a context for you.
+
+### Cluster-Wide Objects
+
+Besides the namespace, a managed gateway adds two cluster-wide objects: the chart's ClusterRole and ClusterRoleBinding, both named `<release>-node-reader-<namespace>`.
+`<release>` is the gateway's Helm release, which also names its StatefulSet in the namespace, such as `nc-0123456789abcdef-gateway`.
+They let the gateway read nodes, namespaces, RuntimeClasses and PriorityClasses, and review ServiceAccount tokens.
+Destroy removes both with the gateway release.
 
 ## Prepare Agent Images
 
@@ -90,6 +100,7 @@ Keep the state directory: it holds the cluster ownership receipt and the develop
 ### Authenticate Through an Existing OIDC Issuer
 
 The `development` profile runs a token issuer for this deployment, which is not an identity service.
+Only NemoClaw can get its tokens, so it gives you no access of your own: to invoke agents or run `openshell` commands against the gateway, use the `oidc` profile and [reach the gateway from the OpenShell CLI](#reach-the-gateway-from-the-openshell-cli).
 To have the gateway authenticate users through your identity provider instead, use the `oidc` profile:
 
 ```yaml
@@ -123,8 +134,59 @@ nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 ```
 
 When the token expires, get a new one and rerun.
+OpenShell accepts a token for up to 60 seconds after its `exp`, the default leeway of the JWT library it uses, so a revoked token can keep working for that long.
 The gateway still requires its client certificate; the token adds user identity on top.
 With this profile, the namespace holds no development issuer, and the state directory holds no issuer keys.
+
+### Reach the Gateway from the OpenShell CLI
+
+With the `oidc` profile, the OpenShell CLI can reach the gateway with your own token, to [invoke agents](interfaces.md#invoke-an-agent) and run other `openshell` commands.
+It needs three things: a port forward to the gateway pod, the gateway's client certificate, and an OpenShell gateway entry that signs in through your identity provider.
+These steps have not been run on a cluster.
+
+In one terminal, forward the port in `gateway.endpoint` to the gateway, which listens on port 8080 in the pod named after its release with `-0` appended; find the release among the namespace's StatefulSets.
+Leave the forward running:
+
+```sh
+deployment_context=my-cluster
+deployment_namespace=nemoclaw-development
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" get statefulsets
+deployment_release=REPLACE_WITH_STATEFULSET_NAME
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+  port-forward "pod/$deployment_release-0" 17671:8080
+```
+
+In another terminal, with the same variables set, copy the client certificate from the Secret `<release>-client-tls` to where the OpenShell CLI looks for a gateway's certificates.
+The gateway's certificate names `127.0.0.1`, so keep that address:
+
+```sh
+gateway_name=nemoclaw-development
+mtls="${XDG_CONFIG_HOME:-$HOME/.config}/openshell/gateways/$gateway_name/mtls"
+(umask 077 && mkdir -p "$mtls")
+for file in ca.crt tls.crt tls.key; do
+  kubectl --context "$deployment_context" --namespace "$deployment_namespace" \
+    get secret "$deployment_release-client-tls" -o "go-template={{index .data \"$file\"}}" \
+    | base64 -d > "$mtls/$file"
+done
+chmod 600 "$mtls/tls.key"
+```
+
+Then add the gateway with the issuer and audience from `openshell.gateway.oidc`, and the client ID your identity provider registered for the OpenShell CLI with a localhost redirect.
+The CLI opens a browser to sign in, and presents the client certificate together with your token:
+
+```sh
+openshell gateway add https://127.0.0.1:17671 \
+  --name "$gateway_name" \
+  --oidc-issuer https://login.example.com/realms/openshell \
+  --oidc-client-id REPLACE_WITH_CLI_CLIENT_ID \
+  --oidc-audience openshell
+openshell status
+```
+
+`openshell status` reports the gateway as connected and authenticated.
+Then [select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
+The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
+See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
 ### Reference Registry Credentials
 
@@ -209,6 +271,7 @@ spec:
   The key crosses the cluster network over plain HTTP unless your network plugin or a service mesh encrypts Pod traffic.
 - **Model IDs:** the machine running `nemoclaw` usually can't resolve cluster names, so onboarding can't list the server's models; write the route's model ID yourself.
 - **The server:** NemoClaw's vLLM and Ollama runtime images can run it; `vllm_runtime` and `ollama_runtime` describe the launch and requirements a platform needs ([Direct OpenTofu Usage](provider.md#direct-opentofu-usage)). Readiness is the platform's: point its probe at the server's health endpoint.
+- **Ollama:** its health endpoint answers before it has a model, and it does not pull one when a request names it. Pull the route's model into the server before the first agent request.
 
 Start from [the in-cluster vLLM example](../examples/kubernetes/in-cluster-vllm.yaml), or from [the in-cluster Ollama example](../examples/kubernetes/in-cluster-ollama.yaml) for a server without a key.
 
@@ -231,3 +294,26 @@ OpenShell creates workspace claims in the cluster's default StorageClass; to cho
 Destroy keeps the namespace, the credential key Secret and the gateway's persistent volumes, as described in [deletion and retention](state.md#deletion-and-retention).
 To remove them and any released workspace volumes, follow [Remove Retained Resources](usage.md#remove-retained-resources).
 If destroy fails or is interrupted while removing the gateway release, follow [Recover an Interrupted Helm Removal](usage.md#recover-an-interrupted-helm-removal).
+
+### If Destroy Refuses
+
+Destroy refuses when an object it recorded is missing or was replaced, and the message names the object.
+NemoClaw deletes only objects it can show it created, so it leaves everything in place.
+Find out who changed the object first: a replacement can hold someone else's work.
+
+To remove the deployment anyway, use the cluster's own tools.
+Find the gateway's release among the namespace's StatefulSets, then delete its [cluster-wide objects](#cluster-wide-objects):
+
+```sh
+deployment_context=my-cluster
+deployment_namespace=nemoclaw-development
+kubectl --context "$deployment_context" --namespace "$deployment_namespace" get statefulsets
+deployment_release=REPLACE_WITH_STATEFULSET_NAME
+kubectl --context "$deployment_context" delete clusterrolebinding,clusterrole \
+  "$deployment_release-node-reader-$deployment_namespace"
+```
+
+Then follow [Remove Retained Resources](usage.md#remove-retained-resources) on Kubernetes without its destroy check.
+Its pod list still shows this deployment's gateway, issuer and sandboxes; deleting the namespace stops them, so continue if nothing else uses the namespace.
+Keep the state directory until the namespace, the volumes and both cluster-wide objects are gone.
+This procedure has not been run on a cluster.
