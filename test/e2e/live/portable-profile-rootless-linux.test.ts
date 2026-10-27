@@ -82,7 +82,7 @@ import {
 import {
   PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
   buildPortableSandboxImageWithEvidence,
-  publishPortableSandboxImage,
+  publishPortableSandboxImage as publishImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbe } from "../fixtures/shell-probe.ts";
@@ -1112,7 +1112,7 @@ async function main(
       origin: "generated",
       buildImage: (args, options) =>
         buildPortableSandboxImageWithEvidence(args, options, artifacts, progress),
-      publishImage: (args, options) => publishPortableSandboxImage(args, options, progress),
+      publishImage: (args, options) => publishImage(args, options, artifacts, progress),
       log: console.log,
     });
     const imageRef = prebuild.imageRef;
@@ -1174,7 +1174,7 @@ async function main(
         env: process.env,
         buildImage: (args, options) =>
           buildPortableSandboxImageWithEvidence(args, options, artifacts, progress),
-        publishImage: (args, options) => publishPortableSandboxImage(args, options, progress),
+        publishImage: (args, options) => publishImage(args, options, artifacts, progress),
         origin: "generated",
         log: console.log,
       });

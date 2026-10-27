@@ -114,6 +114,19 @@ function observedBuildStep(output: string): "base-image" | "dockerfile-run" | "u
   return "unknown";
 }
 
+function fixedFailureEvidence(result: BuildResult) {
+  const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  return {
+    schemaVersion: 1,
+    status: result.status,
+    signal: result.signal,
+    errorCode: errorCode && SAFE_ERROR_CODES.has(errorCode) ? errorCode : null,
+    category:
+      errorCode === "EUNRECONCILED" ? "process-isolation" : failureCategory(result.diagnostic),
+    observedBuildStep: observedBuildStep(result.diagnostic),
+  };
+}
+
 /** Keep only fixed failure categories from the fixed live build. */
 export async function buildPortableSandboxImageWithEvidence(
   args: readonly string[],
@@ -124,16 +137,10 @@ export async function buildPortableSandboxImageWithEvidence(
 ): Promise<number | null> {
   const result = await runBuild(args, options.env, PORTABLE_IMAGE_COMMAND_TIMEOUT_MS, progress);
   if (result.status !== 0 || result.error) {
-    const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
-    await artifacts.writeJson("portable-sandbox-image-build-failure.json", {
-      schemaVersion: 1,
-      status: result.status,
-      signal: result.signal,
-      errorCode: errorCode && SAFE_ERROR_CODES.has(errorCode) ? errorCode : null,
-      category:
-        errorCode === "EUNRECONCILED" ? "process-isolation" : failureCategory(result.diagnostic),
-      observedBuildStep: observedBuildStep(result.diagnostic),
-    });
+    await artifacts.writeJson(
+      "portable-sandbox-image-build-failure.json",
+      fixedFailureEvidence(result),
+    );
   }
   return result.error ? null : result.status;
 }
@@ -142,9 +149,16 @@ export async function buildPortableSandboxImageWithEvidence(
 export async function publishPortableSandboxImage(
   args: readonly string[],
   options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
+  artifacts: ArtifactSink,
   progress: TestProgress,
   runPublish: ImageCommandRunner = runPodmanBuild,
 ): Promise<number | null> {
   const result = await runPublish(args, options.env, PORTABLE_IMAGE_COMMAND_TIMEOUT_MS, progress);
+  if (result.status !== 0 || result.error) {
+    await artifacts.writeJson(
+      "portable-sandbox-image-publish-failure.json",
+      fixedFailureEvidence(result),
+    );
+  }
   return result.error ? null : result.status;
 }

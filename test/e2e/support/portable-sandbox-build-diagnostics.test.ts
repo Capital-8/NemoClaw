@@ -298,7 +298,7 @@ it("keeps a failed registry push separate from build evidence (#13482)", async (
         buildImage: (args, options) =>
           buildPortableSandboxImageWithEvidence(args, options, artifacts, progress, runBuild),
         publishImage: (args, options) =>
-          publishPortableSandboxImage(args, options, progress, runPublish),
+          publishPortableSandboxImage(args, options, artifacts, progress, runPublish),
         inspectImageId: () => `sha256:${"a".repeat(64)}`,
         log: () => undefined,
       }),
@@ -313,6 +313,19 @@ it("keeps a failed registry push separate from build evidence (#13482)", async (
     expect(fs.existsSync(artifacts.pathFor("portable-sandbox-image-build-failure.json"))).toBe(
       false,
     );
+    const publication = fs.readFileSync(
+      artifacts.pathFor("portable-sandbox-image-publish-failure.json"),
+      "utf8",
+    );
+    expect(JSON.parse(publication)).toMatchObject({
+      schemaVersion: 1,
+      status: 125,
+      signal: null,
+      errorCode: null,
+      category: "unclassified",
+      observedBuildStep: "unknown",
+    });
+    expect(publication).not.toContain("private-push-token");
   } finally {
     fetchRegistry.mockRestore();
     progress.stop();

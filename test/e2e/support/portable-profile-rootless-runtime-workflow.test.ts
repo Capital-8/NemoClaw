@@ -99,6 +99,7 @@ describe("portable profile rootless runtime workflow", () => {
     const finalizationHelper =
       "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts";
     const buildDiagnostics = "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts";
+    const processSupervisor = "test/helpers/process-supervisor.ts";
     const finalizationSources = [
       "src/lib/onboard/machine/final-flow-composition.ts",
       "src/lib/onboard/machine/finalization-deps.ts",
@@ -134,6 +135,8 @@ describe("portable profile rootless runtime workflow", () => {
     expect(workflow.on.push.paths).toContain(finalizationHelper);
     expect(workflow.on.pull_request.paths).toContain(buildDiagnostics);
     expect(workflow.on.push.paths).toContain(buildDiagnostics);
+    expect(workflow.on.pull_request.paths).toContain(processSupervisor);
+    expect(workflow.on.push.paths).toContain(processSupervisor);
     expect(workflow.on.push.paths).toContain("scripts/checks/download-hermes-source-archive.sh");
     expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(finalizationSources));
     expect(workflow.on.pull_request.paths).toEqual(expect.arrayContaining(doctorSources));
