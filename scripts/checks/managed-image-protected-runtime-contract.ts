@@ -409,8 +409,11 @@ export async function waitForLocalInferenceAgentPairing<
 export function assertLocalInferenceAgentResponse(
   input: ManagedImageOpenShellE2eInputs,
   stdout: string,
+  routeCompleted: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
+  if (!routeCompleted)
+    throw new Error(`${input.agent} did not complete a request through its configured local model`);
   let response: unknown = stdout;
   if (input.agent === "openclaw") {
     const envelope = JSON.parse(stdout);
@@ -436,6 +439,44 @@ export function assertLocalInferenceAgentResponse(
     throw new Error(
       `${input.agent} local inference returned no assistant answer; response=${JSON.stringify(managedImageFailureDetail(response, env).slice(0, 512))}`,
     );
+}
+
+export async function readProtectedLocalInferenceCount(
+  input: ManagedImageOpenShellE2eInputs,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number> {
+  const ollama = input.localProvider === "ollama";
+  const routePort = Number(new URL(localInferenceBaseUrl(input)).port);
+  const portText = ollama ? String(routePort) : env.NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_PORT;
+  const token = ollama
+    ? env.NEMOCLAW_OLLAMA_PROXY_TOKEN
+    : env.NEMOCLAW_PROTECTED_INFERENCE_RECEIPT_TOKEN;
+  const port = Number(portText);
+  if (
+    !Number.isInteger(port) ||
+    port < 1024 ||
+    port > 65_535 ||
+    port !== routePort ||
+    !token ||
+    !/^[a-f0-9]{48}$/u.test(token)
+  )
+    throw new Error("protected local inference receipt authority is unavailable");
+  const route = ollama ? "/_nemoclaw/proxy-config" : "/_nemoclaw/e2e-inference-receipt";
+  const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) throw new Error("protected local inference receipt is unavailable");
+  const receipt: unknown = await response.json();
+  if (
+    !receipt ||
+    typeof receipt !== "object" ||
+    !("completedRequests" in receipt) ||
+    !Number.isSafeInteger(receipt.completedRequests) ||
+    (receipt.completedRequests as number) < 0
+  )
+    throw new Error("protected local inference receipt is malformed");
+  return receipt.completedRequests as number;
 }
 
 export async function verifyManagedImageLocalInferenceRoute(

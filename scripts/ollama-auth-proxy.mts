@@ -339,6 +339,7 @@ function assertBackendBoundToLoopback(port: number): void {
 
 function buildProxyServer(token: string, backendUrl: URL): http.Server {
   const expectedBuf = Buffer.from(`Bearer ${token}`);
+  let completedChatRequests = 0;
   const server = http.createServer((clientReq, clientRes) => {
     // Every request must present a valid Bearer token. The proxy binds 0.0.0.0
     // so the OpenShell sandbox container can reach it via the docker bridge —
@@ -385,6 +386,7 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
               ? { address: listener.address, port: listener.port }
               : null,
           backendOrigin: backendUrl.origin,
+          completedRequests: completedChatRequests,
         }),
       );
       return;
@@ -415,6 +417,16 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
       },
       (proxyRes: http.IncomingMessage) => {
         proxyRes.once("error", handleBackendError);
+        if (
+          clientReq.method === "POST" &&
+          clientReq.url === "/v1/chat/completions" &&
+          (proxyRes.statusCode ?? 500) >= 200 &&
+          (proxyRes.statusCode ?? 500) < 300
+        ) {
+          clientRes.once("finish", () => {
+            completedChatRequests += 1;
+          });
+        }
         clientRes.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
         proxyRes.pipe(clientRes);
       },
@@ -488,6 +500,7 @@ if (import.meta.main) {
 }
 
 export {
+  buildProxyServer,
   clearExitStatus,
   decodeProcAddress,
   EXIT_BACKEND_NOT_LOOPBACK,

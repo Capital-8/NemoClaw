@@ -285,6 +285,7 @@ describe("protected local inference agent response", () => {
           model: "fixture-model",
         },
         response,
+        true,
         { NVIDIA_API_KEY: "fixture-private-value" },
       ),
     ).toThrow(expected);
@@ -316,7 +317,7 @@ describe("protected local inference agent response", () => {
       expect(command[0]).toBe(binary);
       expect(command).not.toContain("--model");
       expect(command).not.toContain("--provider");
-      expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).not.toThrow();
+      expect(() => assertLocalInferenceAgentResponse(input(agent), stdout, true)).not.toThrow();
     },
   );
 
@@ -328,8 +329,23 @@ describe("protected local inference agent response", () => {
     ["hermes", "PING localhost completed successfully.\n"],
     ["langchain-deepagents-code", JSON.stringify({ data: { ...dcode.data, response: "LONG" } })],
   ] as const)("accepts a completed %s turn when its answer differs from PONG", (agent, stdout) => {
-    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).not.toThrow();
+    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout, true)).not.toThrow();
   });
+
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
+    "rejects a nonempty %s diagnostic without a completed local-model request",
+    (agent) => {
+      const diagnostic =
+        agent === "hermes"
+          ? "PING localhost completed successfully.\n"
+          : JSON.stringify({
+              data: { ...dcode.data, response: "PING localhost completed successfully." },
+            });
+      expect(() => assertLocalInferenceAgentResponse(input(agent), diagnostic, false)).toThrow(
+        "did not complete a request through its configured local model",
+      );
+    },
+  );
 
   it.each([
     [
@@ -349,7 +365,7 @@ describe("protected local inference agent response", () => {
     ["openclaw", "not JSON"],
     ["langchain-deepagents-code", "null"],
   ] as const)("rejects %s diagnostics or an incomplete turn", (agent, stdout) => {
-    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout)).toThrow();
+    expect(() => assertLocalInferenceAgentResponse(input(agent), stdout, true)).toThrow();
   });
 
   it.each([
@@ -370,6 +386,7 @@ describe("protected local inference agent response", () => {
           ...openclaw,
           result: { ...openclaw.result, meta },
         }),
+        true,
       ),
     ).toThrow("configured local model");
   });
