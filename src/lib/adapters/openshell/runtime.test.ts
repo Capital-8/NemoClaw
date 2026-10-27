@@ -18,6 +18,7 @@ import {
 import {
   captureResolvedOpenshell,
   captureResolvedOpenshellAsync,
+  captureSandboxPhasesForGateway,
   getStatusProbeTimeoutMs,
   runOpenshell,
 } from "./runtime";
@@ -130,6 +131,48 @@ describe("captureResolvedOpenshell", () => {
 
     expect(result.status).toBe(0);
     expect(result.output).toBe("snapshot");
+  });
+});
+
+describe("captureSandboxPhasesForGateway", () => {
+  it("rejects an endpoint override before probing another gateway", () => {
+    const marker = path.join(os.tmpdir(), `nemoclaw-openshell-probe-${process.pid}.marker`);
+    const openshell = nodeExecutable(
+      "openshell",
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");`,
+    );
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
+    try {
+      expect(() =>
+        captureSandboxPhasesForGateway("recorded-gateway", {
+          ...process.env,
+          OPENSHELL_GATEWAY_ENDPOINT: "https://wrong-gateway.invalid",
+        }),
+      ).toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(marker, { force: true });
+    }
+  });
+
+  it("rejects an ambient endpoint override omitted from the supplied environment", () => {
+    const marker = path.join(os.tmpdir(), `nemoclaw-openshell-ambient-${process.pid}.marker`);
+    const openshell = nodeExecutable(
+      "openshell",
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");`,
+    );
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshell);
+    const environment = { ...process.env };
+    delete environment.OPENSHELL_GATEWAY_ENDPOINT;
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://wrong-gateway.invalid");
+    try {
+      expect(() => captureSandboxPhasesForGateway("recorded-gateway", environment)).toThrow(
+        /OPENSHELL_GATEWAY_ENDPOINT is set/,
+      );
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      fs.rmSync(marker, { force: true });
+    }
   });
 });
 

@@ -15,6 +15,7 @@ import {
   runOpenshellCommand,
 } from "./command-execution";
 import { cliOpenShellInstalledVersionObserver } from "./installed-version-cli";
+import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 
 type CommandArgs = string[];
@@ -120,6 +121,9 @@ export function captureSandboxPhasesForGateway(
   gatewayName: string,
   environment: NodeJS.ProcessEnv,
 ): { readonly output: string; readonly status: number | null } {
+  // captureOpenshell also inherits ambient variables when it builds the child environment.
+  assertNoOpenShellGatewayEndpointOverride();
+  assertNoOpenShellGatewayEndpointOverride(environment);
   const result = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
     env: environment,
     ignoreError: true,
