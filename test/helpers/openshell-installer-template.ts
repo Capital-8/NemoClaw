@@ -153,10 +153,10 @@ fi
 `;
     assert.equal(
       source.split(activeDirectorySafetyCheck).length - 1,
-      1,
-      "active directory guard call",
+      2,
+      "active and privileged directory guard calls",
     );
-    source = source.replace(activeDirectorySafetyCheck, "");
+    source = source.replaceAll(activeDirectorySafetyCheck, "");
     const start = source.indexOf(safetyHelper);
     const end = source.indexOf('if [ -w "$target_dir" ]; then', start);
     assert.ok(end > start, "user-local directory guard fixture boundaries");

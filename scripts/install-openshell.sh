@@ -1091,6 +1091,9 @@ elif [ "$force_user_local" = "1" ] || [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] 
   warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
   warn "Add that export to your shell profile, or open a new shell before using openshell directly."
 else
+  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
   if [ -x "$tmpdir/openshell-gateway" ]; then
     sudo install -m 755 "$tmpdir/openshell-gateway" "$target_dir/openshell-gateway"
