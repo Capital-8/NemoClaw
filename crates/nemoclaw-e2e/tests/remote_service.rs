@@ -292,19 +292,32 @@ async fn managed_bearer_credentials_survive_recovery_reapply_and_replacement_out
     bearer_survives_compute_replacement(&s, &stable["volume"]).await;
     destroy_retains_storage(&s, &stable["volume"]).await;
 }
+// The cleanup checks run in two scenarios, one runtime each, so the lifecycle
+// profile runs them side by side instead of one test spending twice as long on
+// the provider's network reads.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
-async fn managed_bearer_cleanup_recovers_damage_keeps_bindings_and_teardown_accepts_both_identities()
- {
+async fn managed_bearer_cleanup_recovers_and_damaged_storage_keeps_bindings() {
     let s = Scenario::new("nvidia.fabric.hermes", true, "vllm").await;
-    let volume = s.apply().await["volume"].clone();
+    s.apply().await;
     replacement_cleanup(&s.root, &s.bundle).await;
     // Cleanup ends with applies that settle the state; a failed apply that
     // refreshes must be compared with that settled state.
     let stable = read(&s.root, "engine.json");
     let state = s.runtime_state();
-    plans_stop_on_observation_failure(&s, &stable, &state, json!({"daemon":"other-engine"})).await;
     damaged_bearer_storage_stops_plan_and_apply(&s, &stable, &state).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE; isolated credential and SSH fixtures"]
+async fn managed_bearer_failures_keep_bindings_and_teardown_accepts_both_identities() {
+    let s = Scenario::new("nvidia.fabric.hermes", true, "vllm").await;
+    s.apply().await;
+    // A second apply settles the state that a failed apply's refresh is
+    // compared with, as cleanup's applies do in the scenario above.
+    let stable = s.apply().await;
+    let volume = stable["volume"].clone();
+    let state = s.runtime_state();
+    plans_stop_on_observation_failure(&s, &stable, &state, json!({"daemon":"other-engine"})).await;
     insecure_bearer_key_stops_apply(&s, &stable, &state).await;
     // Teardown must also accept both current and pending-delete identities.
     interrupt_cleanup(&s.root, true);
