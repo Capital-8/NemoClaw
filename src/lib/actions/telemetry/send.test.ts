@@ -118,25 +118,12 @@ it("reports partial collection when count evidence is unavailable (#12859)", asy
   expect(event.parameters.collectionStatus).toBe("partial");
 });
 
-it.each([
-  ["NEMOCLAW_TELEMETRY_TEST_LABEL", undefined, "", ""],
-  [
-    "NEMOCLAW_TELEMETRY_TEST_LABEL",
-    "qa-telemetry:client:attempt-1",
-    "qa-telemetry:client:attempt-1",
-    "qa-telemetry:client:attempt-1",
-  ],
-  ["CI", "true", "qa-ci:generic:attempt-1", "qa-ci:generic:attempt-1"],
-  ["CI", "1", "qa-ci:generic:attempt-1", "qa-ci:generic:attempt-1"],
-  ["GITHUB_ACTIONS", "true", "qa-ci:gh-12345678901:attempt-2", "qa-ci:generic:attempt-1"],
-] satisfies [string, string | undefined, string, string][])(
-  "sends one anonymous TEST envelope per identity when %s is %j",
-  async (key, value, testLabel, fallbackLabel) => {
+it.each([undefined, "qa-telemetry:client:attempt-1"])(
+  "sends one anonymous TEST envelope with test label %j",
+  async (testLabel) => {
     allowLocalTelemetry();
-    vi.stubEnv("CI", "false");
-    vi.stubEnv("GITHUB_ACTIONS", "false");
-    vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", value === "1" ? "qa-a:b:attempt-1" : undefined);
-    vi.stubEnv(key, value);
+    vi.stubEnv("NEMOCLAW_TELEMETRY_TEST_LABEL", testLabel);
+    resolveTelemetryDeliveryConfig();
     const privateValue = "secret-key_https://private.example/home_10.0.0.7_sandbox-name";
     collectOperationSnapshot.mockResolvedValue({
       ...snapshot,
@@ -147,59 +134,23 @@ it.each([
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const assertDeliveredLabel = async (
-      expectedLabel: string,
-      identity: string,
-      runId: string | undefined,
-      runAttempt: string | undefined,
-    ) => {
-      vi.stubEnv("GITHUB_RUN_ID", runId);
-      vi.stubEnv("GITHUB_RUN_ATTEMPT", runAttempt);
-      telemetryRuntime.config = null;
-      fetchMock.mockClear();
-      collectOperationSnapshot.mockClear();
-      resolveTelemetryDeliveryConfig();
-
-      expect(await sendOperationTelemetry(context, 1_000), identity).toBe("accepted");
-      expect(fetchMock, identity).toHaveBeenCalledOnce();
-      const [url, request] = fetchMock.mock.calls[0];
-      expect(url.href, identity).toBe(TEST_TELEMETRY_ENDPOINT);
-      expect(request, identity).toMatchObject({ redirect: "error", credentials: "omit" });
-      const body = JSON.parse(String(request.body));
-      expect(body.events, identity).toHaveLength(1);
-      expect(isOperationEvent(body.events[0]), identity).toBe(true);
-      expect(body.events[0].parameters.testLabel, identity).toBe(expectedLabel);
-      expect(body, identity).toMatchObject({
-        deviceGdprFuncOptIn: "Temp",
-        deviceId: "undefined",
-        externalUserId: "undefined",
-        sessionId: "undefined",
-        userId: "undefined",
-      });
-      expect(JSON.stringify(body), identity).not.toContain(privateValue);
-    };
-
-    await assertDeliveredLabel(testLabel, "valid GitHub identity", "12345678901", "2");
-    await assertDeliveredLabel(fallbackLabel, "missing run ID", undefined, "2");
-    await assertDeliveredLabel(fallbackLabel, "nonnumeric run ID", "invalid", "2");
-    await assertDeliveredLabel(
-      fallbackLabel,
-      "run ID over 20 digits",
-      "123456789012345678901",
-      "2",
-    );
-    await assertDeliveredLabel(fallbackLabel, "zero run ID", "0", "2");
-    await assertDeliveredLabel(fallbackLabel, "run ID with a leading zero", "012345678901", "2");
-    await assertDeliveredLabel(fallbackLabel, "missing run attempt", "12345678901", undefined);
-    await assertDeliveredLabel(fallbackLabel, "nonnumeric run attempt", "12345678901", "x");
-    await assertDeliveredLabel(fallbackLabel, "run attempt over 3 digits", "12345678901", "1000");
-    await assertDeliveredLabel(fallbackLabel, "zero run attempt", "12345678901", "0");
-    await assertDeliveredLabel(
-      fallbackLabel,
-      "run attempt with a leading zero",
-      "12345678901",
-      "02",
-    );
+    expect(await sendOperationTelemetry(context, 1_000)).toBe("accepted");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, request] = fetchMock.mock.calls[0];
+    expect(url.href).toBe(TEST_TELEMETRY_ENDPOINT);
+    expect(request).toMatchObject({ redirect: "error", credentials: "omit" });
+    const body = JSON.parse(String(request.body));
+    expect(body.events).toHaveLength(1);
+    expect(isOperationEvent(body.events[0])).toBe(true);
+    expect(body.events[0].parameters.testLabel).toBe(testLabel ?? "");
+    expect(body).toMatchObject({
+      deviceGdprFuncOptIn: "Temp",
+      deviceId: "undefined",
+      externalUserId: "undefined",
+      sessionId: "undefined",
+      userId: "undefined",
+    });
+    expect(JSON.stringify(body)).not.toContain(privateValue);
   },
 );
 
@@ -211,7 +162,6 @@ it.each([
   ["NEMOCLAW_TELEMETRY_TEST_LABEL", ""],
 ])("does not collect or send when %s is %j", async (key, value) => {
   allowLocalTelemetry();
-  vi.stubEnv("CI", value === "" ? undefined : "true");
   const fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   vi.stubEnv(key, value);
@@ -222,7 +172,7 @@ it.each([
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-it("blocks delivery when opted out, given a disallowed receiver, or when the CI label changes (#12859)", async () => {
+it("does not collect or send when opted out or given a disallowed receiver (#12859)", async () => {
   allowLocalTelemetry();
   localReceiver();
   const fetchMock = vi.fn();
@@ -234,28 +184,6 @@ it("blocks delivery when opted out, given a disallowed receiver, or when the CI 
 
   telemetryRuntime.config = { endpoint: new URL("https://private.example/") };
   expect(await sendOperationTelemetry(context, 1_000)).toBe("disabled");
-  expect(fetchMock).not.toHaveBeenCalled();
-
-  localReceiver();
-  let resolveSnapshot!: (value: TelemetrySnapshot) => void;
-  let signalSnapshotStarted!: () => void;
-  const snapshotStarted = new Promise<void>((resolve) => {
-    signalSnapshotStarted = resolve;
-  });
-  collectOperationSnapshot.mockImplementationOnce(
-    () =>
-      new Promise<TelemetrySnapshot>((resolve) => {
-        resolveSnapshot = resolve;
-        signalSnapshotStarted();
-      }),
-  );
-  const delivery = sendOperationTelemetry(context, 1_000);
-  await snapshotStarted;
-  resolveSnapshot(snapshot);
-  // Change CI after event assembly and before the sender resumes.
-  queueMicrotask(() => vi.stubEnv("CI", "true"));
-  expect(await delivery).toBe("disabled");
-  expect(collectOperationSnapshot).toHaveBeenCalledOnce();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 

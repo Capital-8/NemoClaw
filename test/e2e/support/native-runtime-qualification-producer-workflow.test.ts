@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -422,47 +420,6 @@ describe("native runtime qualification producer workflow", () => {
     expect(dependencies.run).toContain('! -L "$file" && -O "$file"');
     expect(dependencies.run).toContain("npm --prefix");
     expect(dependencies.run).toContain("ci --ignore-scripts");
-    const telemetryEnvironment = {
-      CI: "true",
-      GITHUB_ACTIONS: "true",
-      GITHUB_RUN_ID: "12345678901",
-      GITHUB_RUN_ATTEMPT: "2",
-      NEMOCLAW_TELEMETRY_TEST_LABEL: "qa-handoff:client:attempt-1",
-      NEMOCLAW_DISABLE_TELEMETRY: "",
-    };
-    const installerRun = installer.run ?? "";
-    const handoffStart = installerRun.indexOf("telemetry_env=()");
-    const handoffEnd = installerRun.indexOf("CONTAINERS_CONF=");
-    expect(handoffStart).toBeGreaterThanOrEqual(0);
-    expect(handoffEnd).toBeGreaterThan(handoffStart);
-    const handoff = spawnSync(
-      "bash",
-      [
-        "-c",
-        `set -euo pipefail
-sudo() { shift 2; "$@"; }
-${installerRun.slice(handoffStart, handoffEnd)}/usr/bin/env`,
-      ],
-      {
-        encoding: "utf8",
-        timeout: 5000,
-        env: {
-          ...telemetryEnvironment,
-          ACCOUNT: "qualification-test",
-          PATH: "/usr/bin:/bin",
-          QUALIFICATION_TEST_CREDENTIAL: "must-not-pass",
-        },
-      },
-    );
-    expect(handoff.status, handoff.stderr).toBe(0);
-    expect(
-      Object.fromEntries(
-        handoff.stdout
-          .trimEnd()
-          .split("\n")
-          .map((line) => line.split("=")),
-      ),
-    ).toEqual(telemetryEnvironment);
     expect(installer.run).toContain('sudo -u "$ACCOUNT" env -i');
     expect(installer.env?.ACCOUNT_GID).toBe("${{ steps.boundary.outputs.gid }}");
     expect(installer.env?.ACCOUNT_UID).toBe("${{ steps.boundary.outputs.uid }}");

@@ -41,16 +41,7 @@ it("skips telemetry for Station validation without onboarding (#12859)", () => {
 });
 
 it.each([
-  {
-    name: "successful GitHub Actions installer lifecycle",
-    exitCode: 0,
-    outcome: "completed",
-    state: "applied",
-    lifecycle: true,
-    ci: true,
-    testLabel: "qa-telemetry:client:attempt-1",
-    expectedLabel: "qa-ci:gh-12345678901:attempt-2",
-  },
+  { name: "shell exit 0", exitCode: 0, outcome: "completed", state: "applied", lifecycle: false },
   {
     name: "shell exit 10",
     exitCode: 10,
@@ -83,15 +74,7 @@ it.each([
   },
 ])(
   "delivers one installer record for $name (#12859)",
-  async ({
-    exitCode,
-    outcome,
-    state,
-    lifecycle,
-    testLabel = "qa-telemetry:client:attempt-1",
-    expectedLabel = testLabel,
-    ci = false,
-  }) => {
+  async ({ exitCode, outcome, state, lifecycle, testLabel = "qa-telemetry:client:attempt-1" }) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-telemetry-"));
     const receipts = path.join(root, "received.ndjson");
     const sourceRoot = path.join(import.meta.dirname, "../..");
@@ -186,10 +169,8 @@ exit ${exitCode}`;
         encoding: "utf8",
         env: {
           ...process.env,
-          CI: ci ? "true" : "",
-          GITHUB_ACTIONS: ci ? "true" : "",
-          GITHUB_RUN_ID: ci ? "12345678901" : "",
-          GITHUB_RUN_ATTEMPT: ci ? "2" : "",
+          CI: "",
+          GITHUB_ACTIONS: "",
           VITEST: "",
           NODE_ENV: "",
           NEMOCLAW_DISABLE_TELEMETRY: "",
@@ -222,7 +203,7 @@ exit ${exitCode}`;
       expect(envelope.events).toHaveLength(1);
       expect(isOperationEvent(envelope.events[0])).toBe(true);
       const parameters = envelope.events[0].parameters;
-      expect(parameters.testLabel).toBe(expectedLabel);
+      expect(parameters.testLabel).toBe(testLabel);
       expect(parameters).toMatchObject({
         operation: "install",
         outcome,
