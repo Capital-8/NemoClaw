@@ -222,8 +222,16 @@ describe.each(["undici", "ip-address"] as const)("%s staging recovery", (package
       intercepted.mockRestore();
       syncBuiltinESMExports();
     }
-    expect(fs.statSync(payload).mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(payload, "utf8")).toBe("old");
+    const payloadDescriptor = fs.openSync(
+      payload,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    try {
+      expect(fs.fstatSync(payloadDescriptor).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(payloadDescriptor, "utf8")).toBe("old");
+    } finally {
+      fs.closeSync(payloadDescriptor);
+    }
     expect(fs.existsSync(stage)).toBe(true);
     expect(snapshotBackupFiles(backup)).toEqual(originalBackup);
     expect(fs.statSync(path.join(backup, "payload")).mode & 0o777).toBe(0o644);
