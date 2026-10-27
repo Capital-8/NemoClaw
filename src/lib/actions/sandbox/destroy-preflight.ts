@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createCliOpenShellGatewayLifecycleFromRunner } from "../../adapters/openshell/gateway-lifecycle-cli";
 import os from "node:os";
 
-import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
+import {
+  buildOpenShellCommandEnv,
+  buildSelectedOpenShellSubprocessEnv,
+} from "../../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import type { DestroySandboxOptions } from "../../domain/lifecycle/options";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import {
@@ -26,11 +27,10 @@ import {
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
 import {
-  GATEWAY_PORT,
   listHostGatewayRegistryEntries,
-  readGatewayRegistryFile,
   registryEntryGatewayPort,
 } from "../../state/gateway-registry";
+import { resolveNemoclawStateGatewayPort } from "../../state/paths";
 import type {
   acquireOnboardLock,
   compareAndSwapSession,
@@ -49,19 +49,16 @@ import {
 } from "../../state/registry/cross-port";
 
 export { listInferenceRouteOwnersAcrossGatewayRoots };
-import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
+import {
+  type DestroyRunOpenshell,
+  createGatewayScopedDestroyRunner,
+  scopeSandboxDestroyOpenShellArgs,
+} from "./destroy-gateway";
 import { classifyDestroySandboxPresence, type DestroySandboxPresence } from "./destroy-presence";
 import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
-import {
-  delegatedDestroyExitCode,
-  delegateDestroyToOwningRegistry,
-  isDelegatedDestroyWorkerFailure,
-} from "./rebuild/owning-registry";
-
-export { isDelegatedDestroyWorkerFailure };
 
 export { teardownSandboxDashboardForward } from "./forward-recovery";
 import {
@@ -158,10 +155,17 @@ export type SandboxDestroyRegistryAuthority = {
   entry: SandboxEntry | null;
   gatewayPort: number;
   getSandbox: typeof registry.getSandbox;
-  listOwningSandboxes: typeof registry.listSandboxes;
   listSandboxes: typeof registry.listSandboxes;
+  listGatewayCleanupOwners: typeof registry.listSandboxes;
   removeSandbox: typeof registry.removeSandbox;
 };
+
+function listGatewayCleanupOwners(): ReturnType<typeof registry.listSandboxes> {
+  return {
+    sandboxes: listInferenceRouteOwnersAcrossGatewayRoots(),
+    defaultSandbox: null,
+  };
+}
 
 /** Pin destroy reads and mutation to the registry file that owns the named sandbox. */
 export function resolveSandboxDestroyRegistryAuthority(
@@ -171,10 +175,10 @@ export function resolveSandboxDestroyRegistryAuthority(
   if (!hit) {
     return {
       entry: registry.getSandbox(sandboxName),
-      gatewayPort: GATEWAY_PORT,
+      gatewayPort: resolveNemoclawStateGatewayPort(),
       getSandbox: registry.getSandbox,
-      listOwningSandboxes: registry.listSandboxes,
       listSandboxes: registry.listSandboxes,
+      listGatewayCleanupOwners,
       removeSandbox: registry.removeSandbox,
     };
   }
@@ -182,102 +186,28 @@ export function resolveSandboxDestroyRegistryAuthority(
     entry: hit.entry,
     gatewayPort: hit.registryGatewayPort ?? sandboxGatewayPort(hit.entry),
     getSandbox: getSandboxAcrossGatewayRoots,
-    listOwningSandboxes: () => {
-      const owningRegistry = readGatewayRegistryFile(resolveDestroyHomeDir({}), hit.registryFile);
-      return {
-        sandboxes: Object.values(owningRegistry?.sandboxes ?? {})
-          .filter((entry) => entry.pendingRouteReservation !== true)
-          .map((entry) => entry as SandboxEntry),
-        defaultSandbox: owningRegistry?.defaultSandbox ?? null,
-      };
-    },
     listSandboxes: () => ({
       sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
       defaultSandbox: null,
     }),
+    listGatewayCleanupOwners,
     removeSandbox: (name) =>
       name === hit.entry.name ? removeSandboxFromOwningGatewayRegistry(hit) : false,
   };
 }
 
-/** Report whether the named sandbox is the only published sandbox in its owning gateway state root. */
-export function isOnlyPublishedSandbox(sandboxName: string): boolean {
-  const home = resolveDestroyHomeDir({});
-  const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
-  const owningRegistry = hit ? readGatewayRegistryFile(home, hit.registryFile) : null;
-  if (!owningRegistry) return false;
-  return Object.values(owningRegistry.sandboxes).every(
-    (entry) => entry.pendingRouteReservation === true || entry.name === sandboxName,
-  );
-}
-
-export type SandboxDestroyDelegation =
-  | Readonly<{ delegated: false }>
-  | Readonly<{
-      delegated: true;
-      cancelled: boolean;
-      exitCode: number | null;
-      gatewayName?: string;
-    }>;
-
-/** Resolve the owning gateway name for a sandbox registered in any gateway state root. */
-export function resolveDelegatedDestroyGatewayName(
-  sandboxName: string,
-  home = resolveDestroyHomeDir({}),
-): string | undefined {
-  try {
-    const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
-    return hit ? resolveSandboxDestroyGatewayName(sandboxName, hit.entry) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Hand a sandbox that another gateway state root owns to a worker bound to
- * that root. The detached worker cannot prompt, so `confirm` resolves every
- * prompt first. A delegated result carries the exit status that the worker
- * requested after printing its own diagnostics, or null.
- */
-export async function delegateSandboxDestroyToOwningRoot(
-  sandboxName: string,
-  options: DestroySandboxOptions,
-  confirm: (options: DestroySandboxOptions) => Promise<DestroySandboxOptions | null>,
-  cliName: string,
-): Promise<SandboxDestroyDelegation> {
-  const home = resolveDestroyHomeDir({});
-  const gatewayName = resolveDelegatedDestroyGatewayName(sandboxName, home);
-  let cancelled = false;
-  try {
-    const delegated = await delegateDestroyToOwningRegistry(
-      { sandboxName, options },
-      home,
-      registry.REGISTRY_FILE,
-      async (requested) => {
-        const confirmed = await confirm(requested);
-        if (!confirmed) cancelled = true;
-        return confirmed;
-      },
-      cliName,
-    );
-    return delegated
-      ? {
-          delegated: true,
-          cancelled,
-          exitCode: null,
-          ...(gatewayName ? { gatewayName } : {}),
-        }
-      : { delegated: false };
-  } catch (error) {
-    const exitCode = delegatedDestroyExitCode(error);
-    if (exitCode === undefined) throw error;
-    return {
-      delegated: true,
-      cancelled: false,
-      exitCode,
-      ...(gatewayName ? { gatewayName } : {}),
-    };
-  }
+/** Keep final gateway cleanup local to its owner, including pending route reservations. */
+export function listSandboxDestroyGatewayRegistrations(
+  listSandboxes: typeof registry.listSandboxes,
+  gatewayName: string,
+): ReturnType<typeof registry.listSandboxes> {
+  const registered = listSandboxes();
+  return {
+    ...registered,
+    sandboxes: registered.sandboxes.filter(
+      (entry) => getPersistedSandboxTargetGatewayName(entry) === gatewayName,
+    ),
+  };
 }
 
 export function resolveSandboxDestroyGatewayName(
@@ -286,6 +216,12 @@ export function resolveSandboxDestroyGatewayName(
   retainedRecoveryGatewayName?: string,
 ): string {
   const registeredGatewayName = sandbox ? getPersistedSandboxTargetGatewayName(sandbox) : null;
+  const pendingCreateGatewayName = sandbox?.pendingCreateIdentity?.gatewayName;
+  if (sandbox?.pendingCreateIdentity && pendingCreateGatewayName !== registeredGatewayName) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': pending create gateway '${pendingCreateGatewayName}' does not match registered gateway '${registeredGatewayName}'.`,
+    );
+  }
   if (
     retainedRecoveryGatewayName &&
     registeredGatewayName &&
@@ -304,6 +240,17 @@ export function resolveSandboxDestroyRuntimeSelection(
   // MCP source inspection freezes its gateway target during preparation. The
   // non-MCP registry is only a routing hint and cannot assert MCP ownership.
   return undefined;
+}
+
+/** Refuse an ambient endpoint before confirmation or retained recovery can probe it. */
+export function assertSandboxDestroyEndpointAuthority(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
+  if (!runtimeSelection && process.env.OPENSHELL_GATEWAY_ENDPOINT?.trim()) {
+    throw new Error(
+      "OPENSHELL_GATEWAY_ENDPOINT is set, so OpenShell may bypass the gateway recorded for this sandbox. Unset OPENSHELL_GATEWAY_ENDPOINT and retry.",
+    );
+  }
 }
 
 function sandboxGatewayPort(entry: SandboxEntry): number {
@@ -725,10 +672,12 @@ export async function prepareSandboxDestroy(
     getSandbox = registry.getSandbox,
     retainedRecoveryGatewayName,
     operationRuntimeSelection,
+    identityFreeRecovery = false,
   }: {
     getSandbox?: typeof registry.getSandbox;
     retainedRecoveryGatewayName?: string;
     operationRuntimeSelection?: OpenShellRuntimeSelection;
+    identityFreeRecovery?: boolean;
   } = {},
 ): Promise<SandboxDestroyPreflight> {
   const sandbox = getSandbox(sandboxName);
@@ -749,35 +698,58 @@ export async function prepareSandboxDestroy(
   );
   const runtimeSelection =
     operationRuntimeSelection ?? resolveSandboxDestroyRuntimeSelection(sandbox);
+  assertSandboxDestroyEndpointAuthority(runtimeSelection);
   if (runtimeSelection && runtimeSelection.gatewayName !== cleanupGatewayName) {
     throw new Error(
       `Refusing to destroy sandbox '${sandboxName}': recorded MCP gateway '${runtimeSelection.gatewayName}' does not match destroy gateway '${cleanupGatewayName}'.`,
     );
   }
-  const selectedRunOpenshell: DestroyRunOpenshell = runtimeSelection
-    ? (args, options = {}) =>
-        runOpenshell(args, {
-          ...options,
-          env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
-          replaceEnv: true,
-        })
-    : runOpenshell;
+  const scopeDestroyCommand = (args: string[]): string[] =>
+    scopeSandboxDestroyOpenShellArgs(args, cleanupGatewayName);
+  const selectedRunOpenshell = createGatewayScopedDestroyRunner(
+    runOpenshell,
+    cleanupGatewayName,
+    runtimeSelection ? () => buildSelectedOpenShellSubprocessEnv(runtimeSelection) : undefined,
+  );
   const selectedCaptureOpenshell = runtimeSelection
     ? (args: string[], options: Record<string, unknown> = {}) =>
-        captureOpenshell(args, {
+        captureOpenshell(scopeDestroyCommand(args), {
           ...options,
           env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
           replaceEnv: true,
         })
-    : undefined;
-  await selectGatewayForSandboxDestroy(
-    sandboxName,
-    cleanupGatewayName,
-    createCliOpenShellGatewayLifecycleFromRunner(selectedRunOpenshell),
-    runtimeSelection,
-  );
-  process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
-
+    : (args: string[], options: Record<string, unknown> = {}) =>
+        captureOpenshell(scopeDestroyCommand(args), options);
+  if (identityFreeRecovery && !runtimeSelection) {
+    const environment = buildOpenShellCommandEnv();
+    delete environment.OPENSHELL_GATEWAY;
+    const identityFreeCaptureOpenshell = (args: string[], options: Record<string, unknown> = {}) =>
+      captureOpenshell(scopeDestroyCommand(args), {
+        ...options,
+        env: environment,
+        replaceEnv: true,
+      });
+    const result = identityFreeCaptureOpenshell(["sandbox", "list", "--output", "json"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    const sandboxPresence = classifyDestroySandboxPresence(sandboxName, {
+      status: result.status,
+      stdout: result.stdout ?? result.output,
+      stderr: result.stderr,
+    });
+    return {
+      cleanupGatewayName,
+      runOpenshell,
+      selectedRunOpenshell,
+      selectedCaptureOpenshell: identityFreeCaptureOpenshell,
+      sandbox,
+      sandboxConfirmedAbsent: sandboxPresence === "absent",
+      sandboxPresence,
+    };
+  }
   const sandboxPresence = classifyDestroySandboxPresence(
     sandboxName,
     selectedRunOpenshell(["sandbox", "list", "-o", "json"], {
@@ -794,7 +766,7 @@ export async function prepareSandboxDestroy(
     sandbox,
     sandboxConfirmedAbsent: sandboxPresence === "absent",
     sandboxPresence,
-    ...(selectedCaptureOpenshell ? { selectedCaptureOpenshell } : {}),
+    selectedCaptureOpenshell,
     ...(runtimeSelection ? { runtimeSelection } : {}),
   };
 }
