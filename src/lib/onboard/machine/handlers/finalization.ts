@@ -5,8 +5,11 @@ import { CLI_NAME } from "../../../cli/branding";
 import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
 import type { ExternalComponentActivationIncomplete } from "../../../state/onboard-session";
 import { DCODE_AGENT_NAME } from "../../observability-policy-presets";
-import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
-import { manageLaterLines } from "../../manage-later";
+import {
+  type DashboardRuntimeAgent,
+  manageLaterLines,
+  shouldManageDashboardForAgent,
+} from "../../dashboard-runtime";
 import type { PreparedExternalComponent } from "../../external-component";
 import type {
   ExternalComponentActivationProof,

@@ -44,12 +44,15 @@ import {
   type ListSandboxesFn,
   type OpenShellForwardPortObserver,
 } from "./dashboard-port";
-import { canReuseDashboardForwardForAgent, resolveDashboardForwardBind } from "./dashboard-runtime";
+import {
+  canReuseDashboardForwardForAgent,
+  manageLaterLines,
+  resolveDashboardForwardBind,
+} from "./dashboard-runtime";
 import {
   ensureMessagingHostForwardForSandbox,
   productionForwardServiceRegistryContext,
 } from "./messaging-host-forward";
-import { manageLaterLines } from "./manage-later";
 import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 export const CONTROL_UI_PORT = DASHBOARD_PORT;

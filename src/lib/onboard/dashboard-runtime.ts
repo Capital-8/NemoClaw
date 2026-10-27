@@ -75,3 +75,21 @@ export function canReuseDashboardForwardForAgent(
 ): boolean {
   return agent == null || agent.name === "openclaw" || agent.name === "hermes";
 }
+
+/** Lines of the onboarding completion "Manage later" block. */
+export function manageLaterLines(
+  cliName: string,
+  sandboxName: string,
+  modelCommand: string,
+): string[] {
+  return [
+    "",
+    "  Manage later",
+    "",
+    `    Status:      ${cliName} ${sandboxName} status`,
+    `    Logs:        ${cliName} ${sandboxName} logs --follow`,
+    `    Model:       ${modelCommand}`,
+    `    Policies:    ${cliName} ${sandboxName} policy add`,
+    `    Credentials: ${cliName} credentials reset <PROVIDER> && ${cliName} onboard`,
+  ];
+}
