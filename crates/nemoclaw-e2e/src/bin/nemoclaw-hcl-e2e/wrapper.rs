@@ -65,21 +65,13 @@ pub(super) async fn execute(
         probe: std::env::current_exe().map_err(|_| "cannot locate probe executable")?,
         environment: BTreeMap::new(),
     };
-    execute_with_tools(
-        deployment_path,
-        suite,
-        &bundle.directory,
-        directory,
-        &tools,
-        cancel,
-    )
-    .await
+    execute_with_tools(deployment_path, suite, &bundle, directory, &tools, cancel).await
 }
 
 pub(super) async fn execute_with_tools(
     deployment_path: &Path,
     suite: &Path,
-    bundle: &Path,
+    bundle: &Bundle,
     directory: &Path,
     tools: &Tools,
     cancel: &CancellationToken,
@@ -119,14 +111,32 @@ pub(super) async fn execute_with_tools(
     let reports = verification.join("reports");
     fs::create_dir(&reports).map_err(|_| "cannot create probe evidence directory")?;
     let mirror = bundle
+        .directory
         .join("providers")
         .to_string_lossy()
         .replace('\\', "/");
     let quoted = serde_json::to_string(&mirror).map_err(|_| "cannot encode provider mirror")?;
+    // Bundle providers use source-derived prerelease versions. Select their
+    // verified binaries directly; unconstrained registry resolution excludes them.
+    let overrides = bundle
+        .manifest
+        .files
+        .keys()
+        .filter_map(|name| {
+            let parts: Vec<_> = name.split('/').collect();
+            if parts.len() != 7 || parts[0] != "providers" {
+                return None;
+            }
+            let address = json!(parts[1..4].join("/"));
+            let path = bundle.directory.join(name);
+            let directory = json!(path.parent()?.to_string_lossy().replace('\\', "/"));
+            Some(format!(" {address} = {directory}\n"))
+        })
+        .collect::<String>();
     fs::write(
         verification.join("cli.tfrc"),
         format!(
-            "disable_checkpoint = true\nprovider_installation {{\n filesystem_mirror {{ path = {quoted} }}\n}}\n"
+            "disable_checkpoint = true\nprovider_installation {{\n dev_overrides {{\n{overrides} }}\n filesystem_mirror {{ path = {quoted} }}\n}}\n"
         ),
     )
     .map_err(|_| "cannot write verifier CLI configuration")?;
@@ -175,7 +185,7 @@ pub(super) async fn execute_with_tools(
             "--bundle",
         ]);
         args.extend([
-            bundle.as_os_str().to_owned(),
+            bundle.directory.as_os_str().to_owned(),
             "--state-dir".into(),
             state.as_os_str().to_owned(),
         ]);
@@ -226,16 +236,11 @@ pub(super) async fn execute_with_tools(
             .into(),
         );
         let chdir: OsString = format!("-chdir={}", suite.display()).into();
-        phase = "tofu-init";
+        // Only modules need initialization: providers come from the verified bundle.
+        phase = "tofu-get";
         process::execute(
             &tools.tofu,
-            &[
-                chdir.clone(),
-                "init".into(),
-                "-backend=false".into(),
-                "-input=false".into(),
-                "-no-color".into(),
-            ],
+            &[chdir.clone(), "get".into(), "-no-color".into()],
             &verification,
             phase,
             &verifier_environment,

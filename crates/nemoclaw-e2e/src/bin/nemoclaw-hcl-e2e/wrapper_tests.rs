@@ -102,10 +102,13 @@ async fn shared_hcl_assertions_load_targets_from_disk_and_reject_unhealthy_obser
     let root = tempfile::tempdir().unwrap();
     let suite = suite(root.path());
     let mut tools = tools(root.path());
-    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let bundle = Bundle::open(Path::new(
+        &std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap(),
+    ))
+    .unwrap();
     tools.tofu = std::env::var_os("NEMOCLAW_HCL_TOFU")
         .map(PathBuf::from)
-        .unwrap_or_else(|| Bundle::open(&bundle).unwrap().tofu());
+        .unwrap_or_else(|| bundle.tofu());
     let healthy = root.path().join("healthy");
     execute_with_tools(
         &deployment(),
@@ -193,11 +196,20 @@ async fn deployment_or_verification_failure_still_cleans_up_and_preserves_the_or
         tools.environment.insert("FAIL_PHASE".into(), phase.into());
         tools.environment.insert("FAIL_CLEANUP".into(), "1".into());
         let run = root.path().join("run");
+        let bundle = Bundle {
+            directory: root.path().into(),
+            manifest: nemoclaw_sdk::bundle::Manifest {
+                version: "0.1.0-dev.fixture".into(),
+                rust: "fixture".into(),
+                opentofu: "1.12.9".into(),
+                files: BTreeMap::new(),
+            },
+        };
         assert!(
             execute_with_tools(
                 &deployment(),
                 root.path(),
-                root.path(),
+                &bundle,
                 &run,
                 &tools,
                 &CancellationToken::new()
