@@ -73,6 +73,7 @@ vi.mock("../../agent/runtime", async (importOriginal) => ({
 vi.mock("../../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/registry")>()),
   getSandbox: mocks.getSandbox,
+  getSandboxAcrossGatewayRoots: mocks.getSandbox,
 }));
 
 vi.mock("./hermes-dashboard-recovery", async (importOriginal) => ({
