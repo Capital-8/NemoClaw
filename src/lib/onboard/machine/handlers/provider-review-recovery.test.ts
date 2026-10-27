@@ -400,4 +400,39 @@ describe("provider inference review recovery", () => {
       endpointUrl: "http://host.openshell.internal:11435/v1",
     });
   });
+
+  it("selects again when a pre-#13802 review checkpoint has no host-local endpoint", async () => {
+    const session = failedReviewSession();
+    session.endpointUrl = null;
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      credentialEnv: null,
+    }));
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => true,
+      setupNim,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "review-interrupted",
+    });
+
+    expect(setupNim).toHaveBeenCalledOnce();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "review-interrupted",
+      "qwen3.5:9b",
+      "ollama-local",
+      "http://host.openshell.internal:11435/v1",
+      null,
+      null,
+      [],
+      expect.any(Object),
+    );
+  });
 });
