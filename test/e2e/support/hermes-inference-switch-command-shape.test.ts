@@ -195,13 +195,13 @@ describe("Hermes inference switch command shape", () => {
     expect(command).not.toContain("inference.local");
   });
 
-  it("probes the native Anthropic bridge using its injected credential and recorded endpoint", async () => {
+  it("probes a custom hosted Anthropic provider using its injected credential and recorded endpoint", async () => {
     const definition = customNativeProvider({
       provider: "compatible-anthropic-endpoint",
       api: "openai-completions",
-      endpointUrl: "http://host.openshell.internal:49152",
+      endpointUrl: "https://anthropic.example.com/team",
       credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      allowedIps: [],
+      allowedIps: ["8.8.8.8"],
     });
     const receipt = {
       schemaVersion: 1,
@@ -209,6 +209,7 @@ describe("Hermes inference switch command shape", () => {
       providerName: definition.providerName,
       providerId: "owned-id",
       endpointUrl: definition.endpointUrl,
+      allowedIps: definition.allowedIps,
       custom: definition.custom,
     };
     const command = sandboxInferenceCommand(
@@ -216,7 +217,7 @@ describe("Hermes inference switch command shape", () => {
       definition.endpoint,
       "compatible-anthropic-endpoint",
     );
-    expect(command).toContain("http://host.openshell.internal:49152/v1/chat/completions");
+    expect(command).toContain("https://anthropic.example.com/team/v1/chat/completions");
     expect(command).toContain(
       'AUTH_HEADER="Authorization: Bearer ${COMPATIBLE_ANTHROPIC_API_KEY:-}"',
     );

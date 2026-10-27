@@ -597,15 +597,7 @@ describe("custom native inference selection", () => {
       ...nativeLocalIdentity(binding),
       providerId: `id-${nativeLocalIdentity(binding).providerName}`,
     };
-    const bridge = customNativeProvider({
-      provider: "compatible-anthropic-endpoint",
-      api: "openai-completions",
-      endpointUrl: "http://host.openshell.internal:49152",
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      allowedIps: [],
-    });
     const { deps, entry, calls, attached, existing } = fixture([
-      bridge,
       {
         ...local,
         logicalProvider: local.provider,
@@ -631,9 +623,9 @@ describe("custom native inference selection", () => {
     await expect(
       runInferenceSet(
         {
-          provider: bridge.logicalProvider,
+          provider: "compatible-anthropic-endpoint",
           model: "mock-anthropic-model",
-          endpointUrl: bridge.custom.endpointUrl,
+          endpointUrl: "http://host.openshell.internal:49152",
           inferenceApi: "openai-completions",
         },
         deps,
