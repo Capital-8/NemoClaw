@@ -2224,10 +2224,6 @@ async function runInferenceSetWithoutHostLock(
           `in-sandbox config failed: ${detail}`,
       );
       failOpenClawInferenceConfigSync(agentName, sandboxName, detail, deps);
-      deps.log(
-        registeredConfigRecovery ??
-          `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
-      );
     }
     const sessionUpdated =
       agentName === "openclaw"
@@ -2280,7 +2276,12 @@ async function runInferenceSetWithoutHostLock(
       throw new InferenceSetError(
         `Hermes inference route synchronization did not complete for '${sandboxName}'. ` +
           `The OpenShell route and NemoClaw registry remain committed, but the in-sandbox ` +
-          `Hermes configuration did not fully converge. ${registeredConfigRecovery ?? `Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`}`,
+          `Hermes configuration did not fully converge. ` +
+          (registeredConfigRecovery ? `${registeredConfigRecovery} ` : "") +
+          `Review the preceding configuration warning. ` +
+          `If integrity metadata is invalid, back up needed data and restore matching configuration ` +
+          `and integrity files from a trusted backup or create a fresh Hermes sandbox. ` +
+          `Rebuild preserves the native home and may retain the mismatch.`,
       );
     }
     await retirePreviousOpenClawLocal({
