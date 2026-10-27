@@ -189,6 +189,44 @@ describe("custom native endpoint ownership", () => {
     expect(h.adapter.createProvider).not.toHaveBeenCalled();
   });
 
+  it("rejects a saved unverified Anthropic bridge before recovery or profile reconstruction", () => {
+    // This receipt was accepted by the earlier bridge exception.
+    const custom = {
+      provider: "compatible-anthropic-endpoint",
+      endpointUrl: "http://host.openshell.internal:49152",
+      api: "anthropic-messages",
+      credentialEnv: "SYNTHETIC_TEST_KEY",
+      allowedIps: [],
+    } as const;
+    const receipt = {
+      schemaVersion: 1,
+      profileId: "nemoclaw-custom-b2b8be7bf9dee6b604ca6933660085f7-v1",
+      providerName: "nemoclaw-custom-b2b8be7bf9dee6b604ca6933660085f7-v1",
+      providerId: "synthetic-provider-id",
+      endpointUrl: custom.endpointUrl,
+      custom,
+    } as const;
+    expect(() => customNativeProvider(custom)).toThrow("requires a hosted endpoint");
+    expect(() =>
+      recordedNativeProviderAttachment({
+        provider: custom.provider,
+        endpointUrl: custom.endpointUrl,
+        nativeHostedProviderAttachment: receipt,
+      }),
+    ).toThrow("Invalid native hosted provider attachment");
+    expect(() =>
+      boundCustomNativeProfile(
+        {
+          ...receipt,
+          logicalProvider: custom.provider,
+          label: "custom hosted",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        },
+        "unread-template.yaml",
+      ),
+    ).toThrow("requires a hosted endpoint");
+  });
+
   it.each([
     "http://host.openshell.internal:80",
     "https://host.openshell.internal:49152",

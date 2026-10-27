@@ -84,13 +84,7 @@ export function customNativeProvider(value: unknown): NativeProviderDefinition &
   )
     throw new Error("Invalid custom native provider binding");
   const endpoint = new URL(binding.endpointUrl);
-  const bridge =
-    binding.provider === "compatible-anthropic-endpoint" &&
-    isAllowedOpenShellSandboxBridgeUrl(endpoint);
-  if (
-    !bridge &&
-    (isOpenShellManagedHost(endpoint.hostname) || isLoopbackHostname(endpoint.hostname))
-  )
+  if (isOpenShellManagedHost(endpoint.hostname) || isLoopbackHostname(endpoint.hostname))
     throw new Error("Custom hosted native inference requires a hosted endpoint");
   const canonical = normalizeProviderBaseUrl(
     binding.endpointUrl,
@@ -109,8 +103,8 @@ export function customNativeProvider(value: unknown): NativeProviderDefinition &
     throw new Error("Invalid native Bedrock adapter binding");
   if (
     !Array.isArray(binding.allowedIps) ||
-    (!bedrock && !bridge && binding.allowedIps.length === 0) ||
-    ((bedrock || bridge) && binding.allowedIps.length !== 0) ||
+    (!bedrock && binding.allowedIps.length === 0) ||
+    (bedrock && binding.allowedIps.length !== 0) ||
     binding.allowedIps.some(
       (address) =>
         typeof address !== "string" ||

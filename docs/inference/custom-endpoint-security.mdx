@@ -157,6 +157,8 @@ Hermes Provider setup, Hermes host-side `config set`, and a direct blueprint run
 ## Use a Private Host Endpoint
 
 NemoClaw rejects an unverified custom route that uses `host.openshell.internal` because the alias and port do not prove which host process owns the destination.
+Saved custom hosted provider bindings also reject loopback or OpenShell-managed hostnames as their upstream endpoint.
+AWS Bedrock retains its separately validated adapter binding.
 Qualified OpenAI-compatible native-local routes can retain their recorded host bridge endpoint.
 NemoClaw also uses the alias for routes created from recorded runtime authority, such as its managed credential and HTTPS pin adapters.
 
