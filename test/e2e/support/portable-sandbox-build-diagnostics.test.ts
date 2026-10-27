@@ -19,9 +19,153 @@ import {
   PORTABLE_SANDBOX_CREATE_BUDGET_MS,
   PORTABLE_SANDBOX_DELETE_BUDGET_MS,
   buildPortableSandboxImageWithEvidence,
+  probePodmanStore,
   publishPortableSandboxImage,
+  verifyPortablePodmanStoreAuthority,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
+
+it("parses only the fixed Podman store fields from the selected service", () => {
+  const env = { XDG_CONFIG_HOME: "/private/config" };
+  const runInfo = vi.fn(() => ({
+    status: 0,
+    stdout: JSON.stringify({ store: { graphRoot: "/private/graph", runRoot: "/private/run" } }),
+  }));
+  expect(probePodmanStore(env, "unix:///run/user/1001/podman/podman.sock", runInfo)).toEqual({
+    graphRoot: "/private/graph",
+    runRoot: "/private/run",
+  });
+  expect(runInfo).toHaveBeenCalledWith(
+    ["--url", "unix:///run/user/1001/podman/podman.sock", "info", "--format", "json"],
+    env,
+  );
+  expect(() => probePodmanStore(env, undefined, () => ({ status: 1, stdout: "secret" }))).toThrow(
+    "probe",
+  );
+  expect(() => probePodmanStore(env, undefined, () => ({ status: 0, stdout: "secret" }))).toThrow(
+    "parse",
+  );
+  expect(() => probePodmanStore(env, undefined, () => ({ status: 0, stdout: "{}" }))).toThrow(
+    "missing-field",
+  );
+});
+
+it("aligns only a trusted selected storage config and records fixed equality evidence", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-store-authority-"));
+  try {
+    const source = path.join(root, "selected-storage.conf");
+    const configHome = path.join(root, "fixture-config");
+    fs.writeFileSync(source, '[storage]\ngraphroot="/private/graph"\nrunroot="/private/run"\n');
+    const artifacts = new ArtifactSink(path.join(root, "artifacts"));
+    const fullEnv = { CONTAINERS_STORAGE_CONF: source };
+    const childEnv = { XDG_CONFIG_HOME: configHome };
+    const probe = vi.fn(() => ({ graphRoot: "/private/graph", runRoot: "/private/run" }));
+    const selectedUrl = "unix:///run/user/1001/podman/podman.sock";
+    await verifyPortablePodmanStoreAuthority(
+      childEnv,
+      fullEnv,
+      selectedUrl,
+      configHome,
+      "store-first.json",
+      artifacts,
+      probe,
+    );
+    await verifyPortablePodmanStoreAuthority(
+      childEnv,
+      fullEnv,
+      selectedUrl,
+      configHome,
+      "store-second.json",
+      artifacts,
+      probe,
+    );
+    const destination = path.join(configHome, "containers", "storage.conf");
+    expect(fs.readFileSync(destination, "utf8")).toBe(fs.readFileSync(source, "utf8"));
+    expect(fs.statSync(destination).mode & 0o777).toBe(0o600);
+    expect(probe.mock.calls).toHaveLength(6);
+    expect(probe.mock.calls[0]).toEqual([childEnv]);
+    expect(probe.mock.calls[1]).toEqual([fullEnv]);
+    expect(probe.mock.calls[2]).toEqual([fullEnv, selectedUrl]);
+    const evidence = fs.readFileSync(artifacts.pathFor("store-first.json"), "utf8");
+    expect(JSON.parse(evidence)).toEqual({
+      schemaVersion: 1,
+      category: "match",
+      childMatchesHost: true,
+      hostMatchesService: true,
+    });
+    expect(evidence).not.toContain("/private/graph");
+    fs.writeFileSync(source, "changed");
+    await expect(
+      verifyPortablePodmanStoreAuthority(
+        childEnv,
+        fullEnv,
+        selectedUrl,
+        configHome,
+        "store-third.json",
+        artifacts,
+        probe,
+      ),
+    ).rejects.toThrow("Portable Podman storage config alignment failed");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("keeps the automatic lane unchanged and rejects mismatched or linked storage", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-store-guard-"));
+  try {
+    const configHome = path.join(root, "config");
+    const artifacts = new ArtifactSink(path.join(root, "artifacts"));
+    const selectedUrl = "unix:///run/user/1001/podman/podman.sock";
+    const probe = vi.fn(() => ({ graphRoot: "/private/graph", runRoot: "/private/run" }));
+    await verifyPortablePodmanStoreAuthority(
+      {},
+      {},
+      selectedUrl,
+      configHome,
+      "store-absent.json",
+      artifacts,
+      probe,
+    );
+    expect(probe).not.toHaveBeenCalled();
+    expect(fs.existsSync(configHome)).toBe(false);
+    const source = path.join(root, "storage.conf");
+    fs.writeFileSync(source, "[storage]\n");
+    const linked = path.join(root, "linked-storage.conf");
+    fs.symlinkSync(source, linked);
+    await expect(
+      verifyPortablePodmanStoreAuthority(
+        { XDG_CONFIG_HOME: configHome },
+        { CONTAINERS_STORAGE_CONF: linked },
+        selectedUrl,
+        configHome,
+        "store-linked.json",
+        artifacts,
+        probe,
+      ),
+    ).rejects.toThrow("Portable Podman storage config alignment failed");
+    const mismatched = vi
+      .fn()
+      .mockReturnValueOnce({ graphRoot: "/private/other", runRoot: "/private/run" })
+      .mockReturnValue({ graphRoot: "/private/graph", runRoot: "/private/run" });
+    await expect(
+      verifyPortablePodmanStoreAuthority(
+        { XDG_CONFIG_HOME: configHome },
+        { CONTAINERS_STORAGE_CONF: source },
+        selectedUrl,
+        configHome,
+        "store-mismatch.json",
+        artifacts,
+        mismatched,
+      ),
+    ).rejects.toThrow("Portable Podman store authority mismatch");
+    const evidence = fs.readFileSync(artifacts.pathFor("store-mismatch.json"), "utf8");
+    expect(JSON.parse(evidence)).toMatchObject({ category: "mismatch", childMatchesHost: false });
+    expect(evidence).not.toContain("/private/other");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 it("records fixed Podman failure category and build step without output (#13482)", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-diagnostic-"));

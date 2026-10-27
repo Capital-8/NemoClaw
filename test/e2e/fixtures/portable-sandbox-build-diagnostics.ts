@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ArtifactSink } from "./artifacts.ts";
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { superviseChild } from "../../helpers/process-supervisor.ts";
 import { spawnObservedChild } from "./observed-child-process.ts";
 import type { TestProgress } from "./progress.ts";
@@ -37,6 +40,140 @@ type ImageCommandRunner = (
   timeoutMs: number,
   progress: TestProgress,
 ) => Promise<BuildResult>;
+
+type StoreIdentity = { graphRoot: string; runRoot: string };
+type StoreProbe = (env: NodeJS.ProcessEnv, selectedUrl?: string) => StoreIdentity;
+
+function alignPrivatePodmanStorage(configHome: string, env: NodeJS.ProcessEnv): boolean {
+  const source = env.CONTAINERS_STORAGE_CONF;
+  if (!source) return false;
+  const destination = path.join(configHome, "containers", "storage.conf");
+  const noFollow = fs.constants.O_NOFOLLOW;
+  try {
+    const sourceFd = fs.openSync(source, fs.constants.O_RDONLY | noFollow);
+    let contents: Buffer;
+    try {
+      const sourceStat = fs.fstatSync(sourceFd);
+      if (!sourceStat.isFile() || sourceStat.size > 65_536) throw new Error("invalid source");
+      contents = fs.readFileSync(sourceFd);
+    } finally {
+      fs.closeSync(sourceFd);
+    }
+    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+    let destinationFd: number;
+    try {
+      destinationFd = fs.openSync(
+        destination,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+        0o600,
+      );
+      try {
+        fs.writeFileSync(destinationFd, contents);
+      } finally {
+        fs.closeSync(destinationFd);
+      }
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+      destinationFd = fs.openSync(destination, fs.constants.O_RDONLY | noFollow);
+      try {
+        const destinationStat = fs.fstatSync(destinationFd);
+        if (
+          !destinationStat.isFile() ||
+          (destinationStat.mode & 0o777) !== 0o600 ||
+          !fs.readFileSync(destinationFd).equals(contents)
+        ) {
+          throw new Error("existing config differs");
+        }
+      } finally {
+        fs.closeSync(destinationFd);
+      }
+    }
+    return true;
+  } catch {
+    throw new Error("Portable Podman storage config alignment failed");
+  }
+}
+
+export function probePodmanStore(
+  env: NodeJS.ProcessEnv,
+  selectedUrl?: string,
+  runInfo: (
+    args: string[],
+    env: NodeJS.ProcessEnv,
+  ) => {
+    status: number | null;
+    stdout: string;
+    error?: Error;
+  } = (args, selectedEnv) =>
+    spawnSync("podman", args, {
+      env: selectedEnv,
+      encoding: "utf8",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+      maxBuffer: 65_536,
+    }),
+): StoreIdentity {
+  const result = runInfo(
+    selectedUrl ? ["--url", selectedUrl, "info", "--format", "json"] : ["info", "--format", "json"],
+    env,
+  );
+  if (result.error || result.status !== 0) throw new Error("probe");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    throw new Error("parse");
+  }
+  const store = (parsed as { store?: Partial<StoreIdentity> })?.store;
+  if (
+    typeof store?.graphRoot !== "string" ||
+    !store.graphRoot ||
+    typeof store.runRoot !== "string" ||
+    !store.runRoot
+  ) {
+    throw new Error("missing-field");
+  }
+  return { graphRoot: store.graphRoot, runRoot: store.runRoot };
+}
+
+/** Compare only fixed store fields; never publish Podman paths or command output. */
+export async function verifyPortablePodmanStoreAuthority(
+  childEnv: NodeJS.ProcessEnv,
+  fullEnv: NodeJS.ProcessEnv,
+  selectedUrl: string,
+  configHome: string,
+  artifactName: string,
+  artifacts: ArtifactSink,
+  probe: StoreProbe = probePodmanStore,
+): Promise<void> {
+  if (fullEnv.CONTAINERS_STORAGE_CONF && (!configHome || childEnv.XDG_CONFIG_HOME !== configHome)) {
+    throw new Error("Portable Podman storage config alignment failed");
+  }
+  if (!alignPrivatePodmanStorage(configHome, fullEnv)) return;
+  let category = "match";
+  let childMatchesHost: boolean | null = null;
+  let hostMatchesService: boolean | null = null;
+  try {
+    if (!selectedUrl.startsWith("unix:///")) throw new Error("probe");
+    const child = probe(childEnv);
+    const host = probe(fullEnv);
+    const service = probe(fullEnv, selectedUrl);
+    childMatchesHost = child.graphRoot === host.graphRoot && child.runRoot === host.runRoot;
+    hostMatchesService = host.graphRoot === service.graphRoot && host.runRoot === service.runRoot;
+    if (!childMatchesHost || !hostMatchesService) throw new Error("mismatch");
+  } catch (cause) {
+    category = ["probe", "parse", "missing-field", "mismatch"].includes((cause as Error).message)
+      ? (cause as Error).message
+      : "probe";
+  }
+  await artifacts.writeJson(artifactName, {
+    schemaVersion: 1,
+    category,
+    childMatchesHost,
+    hostMatchesService,
+  });
+  if (category !== "match") throw new Error(`Portable Podman store authority ${category}`);
+}
 
 async function runPodmanBuild(
   args: readonly string[],
@@ -143,6 +280,26 @@ export async function buildPortableSandboxImageWithEvidence(
     );
   }
   return result.error ? null : result.status;
+}
+
+/** Use the exact filtered child environment passed by the production prebuild callback. */
+export function portableSandboxImageBuilder(
+  artifacts: ArtifactSink,
+  progress: TestProgress,
+  selectedUrl: string,
+) {
+  return (label: "sandbox" | "hermes") =>
+    async (args: readonly string[], options: { env: NodeJS.ProcessEnv; stdio: "inherit" }) => {
+      await verifyPortablePodmanStoreAuthority(
+        options.env,
+        process.env,
+        selectedUrl,
+        options.env.XDG_CONFIG_HOME ?? "",
+        `portable-podman-store-${label}.json`,
+        artifacts,
+      );
+      return buildPortableSandboxImageWithEvidence(args, options, artifacts, progress);
+    };
 }
 
 /** Keep registry publication separate from build-failure evidence. */

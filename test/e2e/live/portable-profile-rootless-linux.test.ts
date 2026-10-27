@@ -81,7 +81,7 @@ import {
 } from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
 import {
   PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
-  buildPortableSandboxImageWithEvidence,
+  portableSandboxImageBuilder,
   publishPortableSandboxImage as publishImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -1036,6 +1036,7 @@ async function main(
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
+    const buildImage = portableSandboxImageBuilder(artifacts, progress, verifiedPodmanUrl);
     await waitForRegistry(artifacts, shellProbe);
     process.env.E2E_TARGET_ID === "portable-hermes-finalization" &&
       (await capturePortableRegistryProcessBoundary({
@@ -1110,8 +1111,7 @@ async function main(
       dockerDriverGateway: true,
       env: process.env,
       origin: "generated",
-      buildImage: (args, options) =>
-        buildPortableSandboxImageWithEvidence(args, options, artifacts, progress),
+      buildImage: buildImage("sandbox"),
       publishImage: (args, options) => publishImage(args, options, artifacts, progress),
       log: console.log,
     });
@@ -1172,8 +1172,7 @@ async function main(
         sandboxName: HERMES_PORTABLE_E2E_SANDBOX_NAME,
         dockerDriverGateway: true,
         env: process.env,
-        buildImage: (args, options) =>
-          buildPortableSandboxImageWithEvidence(args, options, artifacts, progress),
+        buildImage: buildImage("hermes"),
         publishImage: (args, options) => publishImage(args, options, artifacts, progress),
         origin: "generated",
         log: console.log,
