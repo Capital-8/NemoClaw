@@ -567,7 +567,13 @@ function prepareManagedLlamaCppMenu(input: {
 } {
   const { deps, gpu, requestedProvider } = input;
   const platform = gpu?.platform;
+  // Discovery is the catalog's own compatibility authority, so running it for
+  // any NVIDIA host keeps the interactive menu aligned with `profiles list` and
+  // `--profile`, which already qualify generic Linux x86_64 NVIDIA hosts
+  // (#12155). A host with no compatible managed profile still yields no menu
+  // entry, so default provider selection is unchanged.
   const candidate =
+    gpu?.type === "nvidia" ||
     platform === "spark" ||
     platform === "n1x" ||
     gpu?.stationGb300WslProduct === true ||
