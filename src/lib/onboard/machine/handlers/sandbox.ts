@@ -959,7 +959,10 @@ class SandboxStateFlow<
       : decision;
   }
 
-  private sandboxCreateFingerprintPrefix(sandboxName: string): string {
+  private sandboxCreateFingerprintPrefix(
+    sandboxName: string,
+    recordedReasoning?: string | null,
+  ): string {
     const { nemoclawVersion: builtFingerprint } = this.deps.getSandboxAgentRegistryFields(
       this.options.agent,
       !this.options.fromDockerfile,
@@ -971,7 +974,11 @@ class SandboxStateFlow<
       this.options.model,
       this.options.preferredInferenceApi ?? "default",
       ...Object.values(
-        compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
+        compatibleEndpointReasoningForCreateIntent(
+          recordedReasoning === undefined
+            ? this.options.compatibleEndpointReasoning
+            : recordedReasoning,
+        ),
       ),
       this.options.fromDockerfile ?? "",
     ].join("|");
@@ -980,9 +987,10 @@ class SandboxStateFlow<
   private currentSandboxCreateFingerprint(
     sandboxName: string,
     createIntent?: ResolvedSandboxCreateIntent,
+    recordedReasoning?: string | null,
   ): string {
     const lightFingerprint = [
-      this.sandboxCreateFingerprintPrefix(sandboxName),
+      this.sandboxCreateFingerprintPrefix(sandboxName, recordedReasoning),
       JSON.stringify(sandboxGpuCreateInputs(this.options.sandboxGpuConfig)),
       [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
@@ -1503,10 +1511,14 @@ class SandboxStateFlow<
         return current;
       }
       if (!checkpoint.effectGroups.sandbox_create) {
+        // A reused Ready sandbox was built with its registry value, not the
+        // reasoning value saved by the interrupted onboarding request.
+        const recordedReasoning =
+          this.deps.getSandboxRegistryEntry(sandboxName)?.compatibleEndpointReasoning ?? null;
         recordCheckpointEffectGroup(
           current,
           "sandbox_create",
-          this.currentSandboxCreateFingerprint(sandboxName),
+          this.currentSandboxCreateFingerprint(sandboxName, undefined, recordedReasoning),
         );
       }
       if (!checkpoint.effectGroups.sandbox_register) {
