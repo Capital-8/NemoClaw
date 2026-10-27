@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -318,6 +319,7 @@ describe("rebuild gateway state directory preflight (#13330)", () => {
       const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(errors).toContain("Gateway client certificate is not signed by the gateway CA");
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     } finally {
       restoreEnv();
