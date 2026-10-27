@@ -155,7 +155,7 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
     try {
       return directory.readSync();
     } catch {
-      reject();
+      return reject();
     }
   };
   const pending = [{ entryPath: stagedArtifact, depth: 0, checkSegmentName: false }];

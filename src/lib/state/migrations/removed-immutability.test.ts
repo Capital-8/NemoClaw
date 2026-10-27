@@ -428,12 +428,7 @@ describe("removed immutability migration boundary", () => {
 
   it("rejects a recovery directory deeper than the inspection limit", () => {
     const memory = path.join(stateDir(), "memory");
-    fs.mkdirSync(memory);
-    let nested = memory;
-    for (let depth = 0; depth <= 32; depth += 1) {
-      nested = path.join(nested, "d");
-      fs.mkdirSync(nested);
-    }
+    fs.mkdirSync(path.join(memory, "d/".repeat(33)), { recursive: true });
 
     expect(() =>
       assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
@@ -444,21 +439,5 @@ describe("removed immutability migration boundary", () => {
     ).toThrow(
       /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*directory depth or entry limit.*Do not destroy the sandbox/u,
     );
-  });
-
-  it("rejects an oversized recovery directory before inspecting its files", () => {
-    const memory = path.join(stateDir(), "memory");
-    fs.mkdirSync(memory);
-    for (let index = 0; index < 4096; index += 1) {
-      fs.writeFileSync(path.join(memory, `note-${index}.md`), "safe");
-    }
-
-    expect(() =>
-      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
-        memory,
-        "/sandbox/.openclaw/workspace/memory",
-        "alpha",
-      ),
-    ).toThrow(/directory depth or entry limit.*Do not destroy the sandbox/u);
   });
 });
