@@ -345,6 +345,8 @@ describe("removed immutability migration boundary", () => {
     fs.writeFileSync(safeFile, "# Soul\nReference: https://example.com\n");
     const secretFile = touch(root, "secret.md");
     fs.writeFileSync(secretFile, `OPENAI_API_KEY=${"sk-" + "a".repeat(32)}\n`);
+    const oversizeFile = touch(root, "oversize.md");
+    fs.truncateSync(oversizeFile, 16 * 1024 * 1024 + 1);
     const nestedSecretDir = path.join(root, "memory");
     touch(nestedSecretDir, ".env");
 
@@ -371,6 +373,13 @@ describe("removed immutability migration boundary", () => {
     expect(() =>
       assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
         secretFile,
+        "/sandbox/.openclaw/workspace/SOUL.md",
+        "alpha",
+      ),
+    ).toThrow(/credential-bearing or uninspectable material/u);
+    expect(() =>
+      assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
+        oversizeFile,
         "/sandbox/.openclaw/workspace/SOUL.md",
         "alpha",
       ),

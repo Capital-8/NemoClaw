@@ -5,18 +5,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import {
-  SECRET_BLOCK_PATTERNS,
-  STRUCTURED_TOKEN_PATTERNS,
-  TOKEN_PREFIX_PATTERNS,
-  isCredentialField,
-  isSafeCredentialPlaceholder,
-  isSensitiveFile,
-  sanitizeEnvFileContent,
-} from "../../../../nemoclaw/dist/shared/credential-filter-boundary.cjs";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { isErrnoException } from "../../core/errno";
 import { isValidName } from "../../sandbox-name-contract";
+import {
+  isSensitiveFile,
+  recoveryDownloadContentContainsCredential,
+} from "../../security/credential-filter";
 import { isMcpLifecycleLockHeld } from "../mcp-lifecycle-lock/inspection";
 import { MCP_LIFECYCLE_LOCK_DIRNAME } from "../mcp-lifecycle-lock-storage";
 import { resolveNemoclawStateDir } from "../paths";
@@ -50,7 +45,7 @@ const LEGACY_PROVIDER_RECORD_NAMES = new Set([
 ]);
 const MAX_LEGACY_LEDGER_ENTRIES = 4096;
 const MAX_LEGACY_LEDGER_RECORD_BYTES = 128 * 1024;
-const MAX_REMOVED_IMMUTABILITY_DOWNLOAD_SCAN_BYTES = 16 * 1024 * 1024;
+const MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES = 16 * 1024 * 1024;
 const REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILES = new Set([
   "/sandbox/.openclaw/workspace/AGENTS.md",
   "/sandbox/.openclaw/workspace/HEARTBEAT.md",
@@ -139,32 +134,6 @@ export function isRemovedImmutabilityRecoveryDownloadPath(
   return !segments.some(isDisallowedRemovedImmutabilityDownloadSegment);
 }
 
-function downloadContentContainsCredential(content: string): boolean {
-  if (sanitizeEnvFileContent(content) !== content) return true;
-  if (/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u.test(content)) return true;
-  for (const pattern of [
-    ...TOKEN_PREFIX_PATTERNS,
-    ...STRUCTURED_TOKEN_PATTERNS,
-    ...SECRET_BLOCK_PATTERNS,
-  ]) {
-    pattern.lastIndex = 0;
-    if (pattern.test(content)) return true;
-  }
-  const assignment =
-    /(?<![A-Za-z0-9_.-])["']?([_A-Za-z][_A-Za-z0-9.-]{0,127})["']?[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}]+))/gu;
-  for (;;) {
-    const match = assignment.exec(content);
-    if (!match) break;
-    const field = match[1]!.replace(/^_+/u, "");
-    const candidate = match[2] ?? match[3] ?? match[4] ?? "";
-    if (isCredentialField(field) && !isSafeCredentialPlaceholder(candidate)) {
-      return true;
-    }
-    assignment.lastIndex = match.index + 1;
-  }
-  return false;
-}
-
 export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
   stagedArtifact: string,
   sandboxPath: string,
@@ -201,7 +170,9 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
       }
       return;
     }
-    if (!stat!.isFile()) reject();
+    if (!stat!.isFile() || stat!.size > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES) {
+      reject();
+    }
     let opened: ReturnType<typeof openRegularFileNoFollow>;
     try {
       opened = openRegularFileNoFollow(entryPath);
@@ -210,9 +181,9 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
     }
     try {
       const content = opened!
-        .readBytes(MAX_REMOVED_IMMUTABILITY_DOWNLOAD_SCAN_BYTES)
+        .readBytes(MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES)
         .toString("utf8");
-      if (downloadContentContainsCredential(content)) {
+      if (recoveryDownloadContentContainsCredential(content)) {
         reject();
       }
     } catch (error) {
