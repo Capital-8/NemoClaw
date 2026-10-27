@@ -19,6 +19,7 @@ export interface OnboardExitFailureProcessLike {
   once(event: "exit", listener: (code: number) => void): unknown;
   on?(event: OnboardInterruptSignal, listener: () => void): unknown;
   removeListener?(event: OnboardInterruptSignal, listener: () => void): unknown;
+  listeners?(event: OnboardInterruptSignal): Array<(...args: unknown[]) => void>;
   kill?(pid: number, signal: OnboardInterruptSignal): unknown;
   pid?: number;
 }
@@ -68,9 +69,15 @@ export function registerIncompleteOnboardExitFailureHandler(
 
   const on = processLike.on?.bind(processLike);
   const removeListener = processLike.removeListener?.bind(processLike);
+  const getListeners = processLike.listeners?.bind(processLike);
   const kill = processLike.kill?.bind(processLike);
   const pid = processLike.pid;
   if (!on || !removeListener || !kill || pid === undefined) return;
+
+  const preExistingListeners: Record<OnboardInterruptSignal, Set<(...args: unknown[]) => void>> = {
+    SIGINT: new Set(getListeners?.("SIGINT") ?? []),
+    SIGTERM: new Set(getListeners?.("SIGTERM") ?? []),
+  };
 
   let pendingSignal: OnboardInterruptSignal | null = null;
   const handleSignal = (signal: OnboardInterruptSignal): void => {
@@ -79,6 +86,7 @@ export function registerIncompleteOnboardExitFailureHandler(
     // delivery cannot terminate the process before the resume hint is printed.
     if (pendingSignal) return;
     pendingSignal = signal;
+    const deliveredListeners = new Set(getListeners?.(signal) ?? []);
     setImmediate(() => {
       removeListener("SIGINT", onSigint);
       removeListener("SIGTERM", onSigterm);
@@ -88,6 +96,17 @@ export function registerIncompleteOnboardExitFailureHandler(
         try {
           deps.releaseOnboardLock?.();
         } finally {
+          for (const listener of getListeners?.(signal) ?? []) {
+            if (preExistingListeners[signal].has(listener)) continue;
+            removeListener(signal, listener as () => void);
+            if (!deliveredListeners.has(listener)) {
+              try {
+                listener(signal);
+              } catch {
+                continue;
+              }
+            }
+          }
           kill(pid, signal);
         }
       }

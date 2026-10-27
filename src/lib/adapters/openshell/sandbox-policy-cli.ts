@@ -312,20 +312,35 @@ export function createCliOpenShellSandboxPolicyWriter(
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
       let submission!: OpenShellSandboxPolicySetSubmission;
       let failure: { error: unknown } | undefined;
+      let releaseCleanupListeners = () => {};
       try {
         const policyPath = path.join(directory, "policy.yaml");
         fs.writeFileSync(policyPath, request.document, { encoding: "utf-8", mode: 0o600 });
-        submission = parsePolicySet(
-          await deps.capture(
-            policySetArgs(request, policyPath),
-            captureOptions(
-              request,
-              deps.defaultTimeoutMs ?? OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS,
-            ),
-          ),
+        const captured = deps.capture(
+          policySetArgs(request, policyPath),
+          captureOptions(request, deps.defaultTimeoutMs ?? OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS),
         );
+        const removeDirectoryOnInterrupt = () => {
+          releaseCleanupListeners();
+          try {
+            fs.rmSync(directory, { recursive: true, force: true });
+          } catch {
+            return;
+          }
+        };
+        releaseCleanupListeners = () => {
+          process.removeListener("SIGINT", removeDirectoryOnInterrupt);
+          process.removeListener("SIGTERM", removeDirectoryOnInterrupt);
+          process.removeListener("exit", removeDirectoryOnInterrupt);
+        };
+        process.once("SIGINT", removeDirectoryOnInterrupt);
+        process.once("SIGTERM", removeDirectoryOnInterrupt);
+        process.once("exit", removeDirectoryOnInterrupt);
+        submission = parsePolicySet(await captured);
       } catch (error) {
         failure = { error };
+      } finally {
+        releaseCleanupListeners();
       }
       // A retained policy is never reported as a clean result, even after a successful write.
       let reason: string | null = null;

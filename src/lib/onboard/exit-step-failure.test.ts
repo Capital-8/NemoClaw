@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -398,6 +398,178 @@ setInterval(() => {}, 1_000);
         expect(signal).toBe("SIGINT");
         expect(stderr).toContain("onboard --resume");
         expect(fs.existsSync(lockFile)).toBe(false);
+      } finally {
+        child.kill("SIGKILL");
+        fs.rmSync(childDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("removes SIGINT listeners added after registration and calls only undelivered ones before re-raising SIGINT", async () => {
+    const signalEvents = new EventEmitter();
+    const outerListener = vi.fn();
+    signalEvents.on("SIGINT", outerListener);
+    const innerActiveListener = vi.fn();
+    const innerLateListener = vi.fn();
+    const kill = vi.fn();
+    const processLike = {
+      once: vi.fn(),
+      on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => {
+        signalEvents.on(signal, listener);
+      },
+      removeListener: (signal: "SIGINT" | "SIGTERM", listener: () => void) => {
+        signalEvents.removeListener(signal, listener);
+      },
+      listeners: (signal: "SIGINT" | "SIGTERM") =>
+        signalEvents.listeners(signal) as Array<(...args: unknown[]) => void>,
+      kill,
+      pid: 4242,
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    session.saveSession(
+      session.createSession({ lastStepStarted: "policies", sandboxName: "test-a" }),
+    );
+
+    try {
+      registerIncompleteOnboardExitFailureHandler(
+        session,
+        () => false,
+        "Onboarding exited before the step completed.",
+        processLike,
+      );
+      signalEvents.on("SIGINT", innerActiveListener);
+      signalEvents.emit("SIGINT", "SIGINT");
+      signalEvents.on("SIGINT", innerLateListener);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(innerActiveListener).toHaveBeenCalledTimes(1);
+      expect(innerLateListener).toHaveBeenCalledWith("SIGINT");
+      expect(signalEvents.listeners("SIGINT")).toEqual([outerListener]);
+      expect(kill).toHaveBeenCalledWith(4242, "SIGINT");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "removes the policy directory, releases the lock, and skips later steps when SIGINT interrupts a policy preset submission",
+    async () => {
+      const childDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-signal-"));
+      const openshellBin = path.join(childDir, "openshell");
+      const policyStartedFile = path.join(childDir, "policy-started.json");
+      const childScript = path.join(childDir, "policy-signal-child.cjs");
+      const helperPath = path.resolve("src/lib/onboard/exit-step-failure.ts");
+      const onboardSessionPath = path.resolve("src/lib/state/onboard-session.ts");
+      const policyCliPath = path.resolve("src/lib/adapters/openshell/sandbox-policy-cli.ts");
+      const observerPath = path.resolve("src/lib/adapters/openshell/sandbox-observer.ts");
+
+      fs.writeFileSync(
+        openshellBin,
+        `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const policyIdx = process.argv.indexOf("--policy");
+const policyPath = policyIdx >= 0 ? process.argv[policyIdx + 1] : null;
+fs.writeFileSync(
+  ${JSON.stringify(policyStartedFile)},
+  JSON.stringify({ policyDir: policyPath ? path.dirname(policyPath) : null }),
+);
+setInterval(() => {}, 1_000);
+`,
+        { mode: 0o755 },
+      );
+
+      fs.writeFileSync(
+        childScript,
+        `
+const fs = require("node:fs");
+const { registerIncompleteOnboardExitFailureHandler } = require(${JSON.stringify(helperPath)});
+const onboardSession = require(${JSON.stringify(onboardSessionPath)});
+const { cliOpenShellSandboxPolicyWriter } = require(${JSON.stringify(policyCliPath)});
+const { namedOpenShellGateway } = require(${JSON.stringify(observerPath)});
+
+if (!onboardSession.acquireOnboardLock("policy signal test").acquired) process.exit(2);
+onboardSession.saveSession(
+  onboardSession.createSession({ lastStepStarted: "policies", sandboxName: "test-a" }),
+);
+registerIncompleteOnboardExitFailureHandler(
+  {
+    ...onboardSession,
+    releaseOnboardLock: onboardSession.releaseOnboardLock,
+  },
+  () => false,
+  "Onboarding exited before the step completed.",
+);
+
+(async () => {
+  const waiter = setInterval(() => {
+    if (fs.existsSync(${JSON.stringify(policyStartedFile)})) {
+      clearInterval(waiter);
+      process.stdout.write(
+        JSON.stringify({
+          lockFile: onboardSession.LOCK_FILE,
+          ...JSON.parse(fs.readFileSync(${JSON.stringify(policyStartedFile)}, "utf8")),
+        }) + "\\n",
+      );
+    }
+  }, 10);
+  await cliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+    target: namedOpenShellGateway("nemoclaw"),
+    sandboxName: "test-a",
+    document: "version: 1\\nnetwork_policies: {}\\n",
+  });
+  console.log("OpenClaw is ready");
+  process.exit(1);
+})();
+`,
+      );
+
+      const child = spawn(process.execPath, ["--require", "tsx/cjs", childScript], {
+        env: {
+          ...process.env,
+          HOME: childDir,
+          NEMOCLAW_OPENSHELL_BIN: openshellBin,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+
+      try {
+        const [ready] = await once(child.stdout, "data");
+        const { lockFile, policyDir } = JSON.parse(String(ready)) as {
+          lockFile: string;
+          policyDir: string;
+        };
+        expect(fs.existsSync(lockFile)).toBe(true);
+        expect(fs.existsSync(policyDir)).toBe(true);
+        const exited = once(child, "exit");
+        child.kill("SIGINT");
+        const [code, signal] = await exited;
+        expect(code).toBeNull();
+        expect(signal).toBe("SIGINT");
+        expect(stderr).toContain("onboard --resume");
+        expect(stdout).not.toContain("OpenClaw is ready");
+        expect(fs.existsSync(lockFile)).toBe(false);
+        expect(fs.existsSync(policyDir)).toBe(false);
+        const savedSession = JSON.parse(
+          fs.readFileSync(path.join(childDir, ".nemoclaw", "onboard-session.json"), "utf8"),
+        ) as {
+          status: string;
+          machine: { state: string };
+          failure: { step: string; interrupted: boolean };
+        };
+        expect(savedSession.status).toBe("failed");
+        expect(savedSession.machine.state).toBe("failed");
+        expect(savedSession.failure).toMatchObject({ step: "policies", interrupted: true });
       } finally {
         child.kill("SIGKILL");
         fs.rmSync(childDir, { recursive: true, force: true });

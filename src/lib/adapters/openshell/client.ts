@@ -409,6 +409,7 @@ export function captureOpenshellCommandAsyncResult(
     const beginInterruption = (signal: "SIGTERM" | "SIGINT") => {
       if (settled || timedOut || interruptedBy) return;
       interruptedBy = signal;
+      releaseSignals();
       if (timeoutHandle) clearTimeout(timeoutHandle);
       signalProcessTree(child, signal);
       killHandle = setTimeout(() => {
