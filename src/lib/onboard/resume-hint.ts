@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
+import { isValidName } from "../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
 export function onboardResumeRecoveryCommand(sandboxName?: string | null): string {
-  const nameArg = sandboxName === null ? " --name <sandbox>" : "";
+  const nameArg = isValidName(sandboxName) ? ` --name ${sandboxName}` : "";
   return `${CLI_NAME} onboard --resume${nameArg}`;
 }
 
