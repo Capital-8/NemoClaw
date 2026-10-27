@@ -241,8 +241,11 @@ export async function removeMcpBridge(
         );
       }
       if (provider.exists !== false) {
+        const deleteCommand = runtimeSelection.gatewayName
+          ? `openshell provider delete ${entry.providerName} -g ${runtimeSelection.gatewayName}`
+          : `openshell provider delete ${entry.providerName}`;
         console.warn(
-          `  Preserved OpenShell provider '${entry.providerName}'. Remove it explicitly after confirming no sandbox uses it.`,
+          `  Preserved OpenShell provider '${entry.providerName}'. Confirm that no sandbox uses it, then delete it with \`${deleteCommand}\` before you add '${server}' again.`,
         );
       }
     }

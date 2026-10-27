@@ -15,19 +15,28 @@ Use the reported status or lifecycle error to choose the matching remediation.
 
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
 Restart validates and reloads the current provider-backed registration; it never consumes an exported replacement credential.
-To replace the credential, follow the conservative remove and re-add procedure:
+To replace the credential, export the replacement value and remove the server:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
 $$nemoclaw <sandbox> mcp remove <server>
-# Confirm no sandbox uses the retained provider named by remove, then delete it.
-openshell provider delete <PROVIDER_NAME>
+```
+
+Confirm that no sandbox uses the preserved provider named by `mcp remove`, then delete it:
+
+```bash
+openshell provider delete <PROVIDER_NAME> -g <GATEWAY_NAME>
+```
+
+Add the server again:
+
+```bash
 $$nemoclaw <sandbox> mcp add <server> --url <MCP_URL> --env <CREDENTIAL_ENV>
 unset <CREDENTIAL_ENV>
 ```
 
 Preserve the original denied-tool selectors and `--trusted-private-host` declaration on the re-add.
-See [Rotate a Credential](../manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential) for the complete provider-cleanup sequence.
+Refer to [Rotate a Credential](../manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential) for the complete provider-cleanup sequence.
 
 For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
 Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
@@ -50,7 +59,8 @@ If restart reports a missing provider, remove the native registration and re-add
 
 ## Provider Uses the Legacy Generic Profile
 
-If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
+If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server.
+Confirm that no sandbox uses the preserved OpenShell provider, delete it with the `openshell provider delete` command that `mcp remove` prints, and add the server again with the recorded credential variable exported.
 OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
 
 ## Rebuild Cannot Prove a Credential Handle
@@ -66,11 +76,22 @@ $$nemoclaw <sandbox> mcp status <server> --json
 ```
 
 If status cannot reach the sandbox, repair the reported gateway condition first.
-Export the replacement under the same environment-variable name, then remove and re-add the server so a fresh provider binding and agent placeholder are created:
+Export the replacement under the same environment-variable name and remove the server:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
 $$nemoclaw <sandbox> mcp remove <server>
+```
+
+Confirm that no sandbox uses the preserved provider named by `mcp remove`, then delete it:
+
+```bash
+openshell provider delete <PROVIDER_NAME> -g <GATEWAY_NAME>
+```
+
+Add the server again so NemoClaw creates a fresh provider binding and agent placeholder:
+
+```bash
 $$nemoclaw <sandbox> mcp add <server> --url <HTTPS_MCP_URL> --env <CREDENTIAL_ENV>
 unset <CREDENTIAL_ENV>
 ```
@@ -100,14 +121,22 @@ Repair any reported sandbox readiness, gateway health, provider, policy, attachm
 Keep the registration unchanged while status remains unavailable, conflicting, or incomplete.
 </AgentOnly>
 
+## Add Reports an Existing Provider
+
+If `mcp add` reports that an OpenShell provider already exists with no active MCP registration, an earlier `mcp remove`, add rollback, or sandbox destroy preserved it.
+Confirm that no sandbox uses the provider, run the `openshell provider delete` command from the error, and rerun `mcp add`.
+
 ## Add Transaction Is Incomplete
 
 For an interrupted `mcp add` that does not report an unknown outcome, inspect the native source and live status first.
 If no native registration exists, rerun the original command with the same URL, environment-variable name, and any `--deny-tool` options.
-If the native registration exists, remove it and then re-add it after re-exporting the credential.
+If `mcp add` reports that the OpenShell provider already exists with no active registration, confirm that no sandbox uses that provider, run the `openshell provider delete` command from the error, and rerun `mcp add`.
+If the native registration exists, remove it, confirm that no sandbox uses the preserved OpenShell provider, delete that provider with the `openshell provider delete` command that `mcp remove` prints, and add the server again after re-exporting the credential.
 
 To abandon the transaction, run `mcp remove <server> --force`.
-NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove. It preserves the workspace provider and reports any residual policy or attachment cleanup.
+NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove.
+It preserves the workspace provider and reports any residual policy or attachment cleanup.
+Before you add the same server name again, confirm that no sandbox uses that preserved provider and delete it with `openshell provider delete <PROVIDER_NAME> -g <GATEWAY_NAME>`.
 
 ## Agent MCP Capability Is Missing
 

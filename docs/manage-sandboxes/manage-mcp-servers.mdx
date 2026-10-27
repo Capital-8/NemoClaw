@@ -139,18 +139,28 @@ The bare `mcp list` and `mcp status` forms never probe, so they stay fast. Endpo
 
 ## Rotate a Credential
 
-Export the replacement under the same host environment name used by `mcp add`, remove the native registration, and add it again so NemoClaw creates a fresh provider binding:
+Export the replacement under the same host environment name used by `mcp add`, and remove the native registration:
 
 ```bash
 export GITHUB_MCP_TOKEN='replacement-value'
 $$nemoclaw my-sandbox mcp remove github
+```
+
+`remove` deletes the agent-native registration and detaches the managed provider, but preserves the provider object and prints its `openshell provider delete` command.
+Before you run that command, confirm that no sandbox lists the preserved provider in `openshell sandbox provider list <sandbox-name> -g <gateway-name>`, then delete the provider:
+
+```bash
+openshell provider delete my-sandbox-mcp-github -g nemoclaw
+```
+
+Add the server again so NemoClaw creates a new provider with the replacement credential and reconnects the native registration:
+
+```bash
 $$nemoclaw my-sandbox mcp add github \
   --url https://api.githubcopilot.com/mcp/ \
   --env GITHUB_MCP_TOKEN
 unset GITHUB_MCP_TOKEN
 ```
-
-`remove` deletes the agent-native registration and detaches the exact managed provider, but conservatively preserves the provider object. Remove that preserved provider explicitly after confirming no sandbox uses it; then `add` creates a new provider with the replacement credential and reconnects the native registration.
 
 For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`; NemoClaw resolves and records the replacement pins again. For a public entry, `add` resolves the hostname and creates a policy for the current validated public addresses.
 
@@ -158,7 +168,9 @@ The raw value passes only through the OpenShell provider command's process envir
 
 If the provider was deleted, restart reports the source as unbound. Remove and add the server again when you intend to create a replacement provider.
 
-Restart follows the live policy credential binding and reloads only when the current provider ID, type, attachment, and credential-key metadata agree with the agent registration. It does not recreate or update the provider and does not reapply policy. If a source is missing or conflicting, repair it explicitly or remove and add the server again.
+Restart follows the live policy credential binding and reloads only when the current provider ID, type, attachment, and credential-key metadata agree with the agent registration.
+It does not recreate or update the provider and does not reapply policy.
+If a source is missing or conflicting, repair it explicitly or follow [Rotate a Credential](#rotate-a-credential).
 
 Running restart without a server name validates and reloads every managed server at its current credential handle. It does not rotate credentials.
 
@@ -206,19 +218,29 @@ Successful tool discovery verifies that the endpoint is reachable through its ex
 
 For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.
 
-If the endpoint moves to another address, remove and re-add the server:
+If the endpoint moves to another address, export the credential and remove the server:
 
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
 $$nemoclaw my-sandbox mcp remove local-tools
+```
+
+Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider while preserving the provider object.
+Confirm that no sandbox uses the preserved provider, then delete it with the command that `mcp remove` prints:
+
+```bash
+openshell provider delete my-sandbox-mcp-local-tools -g nemoclaw
+```
+
+Add the server again to perform a new DNS preflight and record the reviewed address set:
+
+```bash
 $$nemoclaw my-sandbox mcp add local-tools \
   --url https://mcp-host.corp.example/mcp \
   --env LOCAL_MCP_TOKEN \
   --trusted-private-host mcp-host.corp.example
 unset LOCAL_MCP_TOKEN
 ```
-
-Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
 
 ## Remove a Server
 
@@ -246,7 +268,11 @@ Removing a server blocks new requests and reconnects but does not terminate a re
 
 Policy removal targets the deterministic current MCP policy key. Force never claims an unrelated policy or provider.
 
-NemoClaw removes the agent registration first, removes the policy key, and then detaches a provider only when the live policy binding, provider ID, type, and credential key agree. This ordering blocks new agent use before cleanup. The workspace provider is retained because current OpenShell provider deletion is name-based.
+NemoClaw removes the agent registration first, removes the policy key, and then detaches a provider only when the live policy binding, provider ID, type, and credential key agree.
+This ordering blocks new agent use before cleanup.
+The workspace provider is preserved because current OpenShell provider deletion is name-based.
+Before you add the same server name again, confirm that no sandbox uses the preserved provider.
+Then delete it with the `openshell provider delete` command that `mcp remove` prints.
 
 If cleanup leaves a residual, the command reports the exact policy or attachment warning and the provider name to inspect. It never detaches the provider from another sandbox or silently reports that the provider was deleted.
 

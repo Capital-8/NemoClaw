@@ -148,7 +148,8 @@ NemoClaw records the normalized host and every validated address as OpenShell po
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
 The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
-To replace it, remove and re-add the server with the replacement exported under the same host variable name. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
+To replace it, run `mcp remove`, confirm that no sandbox uses the preserved OpenShell provider, delete that provider with the `openshell provider delete` command that `mcp remove` prints, and run `mcp add` with the replacement exported under the same host variable name.
+`mcp remove` and sandbox destroy preserve the detached provider for explicit operator cleanup.
 
 Inspect the registration after the add returns:
 

@@ -2908,7 +2908,7 @@ $$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe] [--too
 ### `$$nemoclaw <name> mcp restart`
 
 Refresh one MCP server registration, or every server on the sandbox when no server is supplied.
-Restart reads the current agent configuration and live OpenShell state, verifies that the policy, provider, attachment, and credential binding are ready, then reloads the agent registration from that current configuration. It does not recreate a missing provider, rotate a credential, regenerate policy, or restore agent configuration from local intent. Repair the reported source directly, or remove and add the server when you intend to establish new policy or credential state.
+Restart reads the current agent configuration and live OpenShell state, verifies that the policy, provider, attachment, and credential binding are ready, then reloads the agent registration from that current configuration. It does not recreate a missing provider, rotate a credential, regenerate policy, or restore agent configuration from local intent. Repair the reported source directly. To set up new policy or credential state, remove the server, delete the preserved OpenShell provider after confirming that no sandbox uses it, and add the server again.
 
 <AgentOnly variant="deepagents">
 
@@ -2924,7 +2924,7 @@ $$nemoclaw my-assistant mcp restart [server]
 
 Remove an MCP server from a sandbox.
 
-NemoClaw first removes the named agent-native entry so the agent can no longer use it, then removes the deterministic policy key and detaches the exact live provider when the policy binding, provider identity, type, and credential key agree. The workspace provider and its stored credential are deliberately preserved because current OpenShell provider deletion is name-based. The command reports the retained provider name so an operator can inspect or remove it separately after confirming it is unused.
+NemoClaw first removes the named agent-native entry so the agent can no longer use it, then removes the deterministic policy key and detaches the exact live provider when the policy binding, provider identity, type, and credential key agree. The workspace provider and its stored credential are deliberately preserved because current OpenShell provider deletion is name-based. The command prints the preserved provider name and its `openshell provider delete <provider-name> -g <gateway-name>` command. Before you add the same server name to that sandbox again, confirm that no sandbox uses the provider, then run the printed command.
 
 The command fails closed when it cannot safely identify the source entry. `--force` permits removal of a modified same-name agent entry, but it does not widen policy or provider authority and never deletes a provider. A named legacy Mcporter or `.nemoclaw-mcp.json` entry can be removed directly only when its committed NemoClaw registry row proves ownership. An unproven legacy entry is preserved; use `mcp migrate --apply` when you intend to convert it to native state.
 

@@ -290,10 +290,9 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
 process.env.GITHUB_TOKEN = "replacement-host-only-secret";
+process.env.OTHER_TOKEN = "rotated-host-only-secret";
 require("node:dns/promises").lookup = async () => [{ address: "8.8.8.8", family: 4 }];
-const replace = (module, name, value) => Object.defineProperty(module, name, {
-  configurable: true, enumerable: true, value, writable: true,
-});
+const replace = (module, name, value) => Object.defineProperty(module, name, { configurable: true, enumerable: true, value, writable: true });
 const registry = require("./src/lib/state/registry.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policies = require("./src/lib/policy/index.js");
@@ -301,44 +300,40 @@ const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
-const nativeSourceState = {};
+const warnings = [];
+console.warn = (line) => warnings.push(String(line));
+const nativeSourceState = {
+  github: { server: "github", agent: "openclaw", adapter: "openclaw-config", url: "https://8.8.8.8/mcp", env: ["GITHUB_TOKEN"], providerName: "alpha-mcp-github", providerId: "11111111-2222-4333-8444-555555555555", policyName: "mcp-bridge-github", source: "native" },
+};
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
+replace(adapters, "assertAgentMcpTeardownRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
-replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", (_sandbox, _adapter, entry) => {
-  nativeSourceState[entry.server] = { ...entry, source: "native" };
-  return "v1";
-});
+replace(adapters, "unregisterAgentAdapter", (_sandbox, _adapter, entry) => (delete nativeSourceState[entry.server], "removed"));
+replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", (_sandbox, _adapter, entry) => ((nativeSourceState[entry.server] = { ...entry, source: "native" }), "v1"));
+replace(require("./src/lib/actions/sandbox/mcp-bridge-policy.js"), "removeGeneratedPolicy", () => {});
 replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 replace(provider, "assertNoProviderCredentialCollisions", () => {});
-replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({
-  gatewayName: "nemoclaw-9090", workspace: "default",
-}));
-replace(provider, "inspectMcpProvider", () => ({
-  credentialKeys: ["GITHUB_TOKEN"], exists: true,
-  id: "11111111-2222-4333-8444-555555555555", resourceVersion: 7,
-  type: "nemoclaw-mcp-v1",
-}));
+replace(provider, "detachProvider", () => "detached");
+replace(provider, "waitForDetachedMcpCredential", () => {});
+replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({ gatewayName: "nemoclaw-9090", workspace: "default" }));
+replace(provider, "inspectMcpProvider", () => ({ credentialKeys: ["GITHUB_TOKEN"], exists: true, id: "11111111-2222-4333-8444-555555555555", resourceVersion: 7, type: "nemoclaw-mcp-v1" }));
 replace(provider, "inspectMcpProviderAttachments", () => ({ attachments: [] }));
 replace(policies, "getPresetContentGatewayState", () => "absent");
-replace(sourceState, "inspectSourceBridgeState", () => ({
-  bridges: { ...nativeSourceState }, sources: { native: { ...nativeSourceState }, legacy: {} },
-}));
-const sandbox = {
-  name: "alpha", agent: "openclaw", gatewayName: "nemoclaw-9090", gatewayPort: 9090,
-};
+replace(sourceState, "inspectSourceBridgeState", () => ({ bridges: { ...nativeSourceState }, sources: { native: { ...nativeSourceState }, legacy: {} } }));
+const sandbox = { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw-9090", gatewayPort: 9090 };
 registry.registerSandbox(sandbox);
 const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
-const before = sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native;
-require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
-  server: "github",
-  url: "https://8.8.8.8/mcp",
-  env: [{ name: "GITHUB_TOKEN" }],
-}).then(() => process.exit(2), (error) => {
-  const after = sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native;
-  process.stdout.write(JSON.stringify({
-    message: String(error && error.message ? error.message : error), before, after,
-  }), () => process.exit(0));
+const mcpBridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+mcpBridge.removeMcpBridge("alpha", "github", { force: true }).then(() => {
+  const before = sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native;
+  return Promise.all([
+    mcpBridge.addMcpBridge("alpha", { server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "GITHUB_TOKEN" }] }).then(() => "resolved", (e) => String(e.message || e)),
+    mcpBridge.addMcpBridge("alpha", { server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "OTHER_TOKEN" }] }).then(() => "resolved", (e) => String(e.message || e)),
+  ]).then(([sameEnvMessage, rotatedEnvMessage]) => {
+    const after = sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native;
+    process.stdout.write(JSON.stringify({ warnings, message: sameEnvMessage, rotatedEnvMessage, before, after }), () => process.exit(0));
+  });
 });
 `;
     try {
@@ -355,13 +350,22 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
         timeout: 30_000,
       });
       expect(result.status, result.stderr).toBe(0);
-      const rejection = JSON.parse(result.stdout) as {
+      const rejection = trailingJsonPayload<{
+        warnings: string[];
         message: string;
+        rotatedEnvMessage: string;
         before: Record<string, unknown>;
         after: Record<string, unknown>;
-      };
-      expect(rejection.message).toContain("non-prefix partial state");
+      }>(result.stdout);
+      expect(rejection.warnings.join("\n")).toContain(
+        "openshell provider delete alpha-mcp-github -g nemoclaw-9090",
+      );
+      expect(rejection.message).toContain("OpenShell provider 'alpha-mcp-github' already exists");
+      expect(rejection.message).toContain(
+        "openshell provider delete alpha-mcp-github -g nemoclaw-9090",
+      );
       expect(rejection.message).toContain("No source was changed");
+      expect(rejection.rotatedEnvMessage).toBe(rejection.message);
       expect(rejection.after).toEqual(rejection.before);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
