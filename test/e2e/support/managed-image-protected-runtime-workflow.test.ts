@@ -246,7 +246,8 @@ describe("protected managed-image runtime workflow", () => {
     '"$verified" == "$reference"',
     '"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE/${name}-base-receipt.json" "$agent"',
     '"$CANDIDATE_BASES" == false',
-    '[[ "$CANDIDATE_BASES" == false &&',
+    '[[ ( "$CANDIDATE_BASES" == false || "$agent" == openclaw ) &&',
+    '"$agent" == openclaw',
   ])("rejects a candidate OCI base handoff without %s", (fragment) => {
     const value = workflow();
     const step = namedStep(value, "Resolve digest-pinned amd64 runtime base images");
