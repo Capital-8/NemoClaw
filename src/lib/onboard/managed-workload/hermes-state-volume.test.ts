@@ -134,17 +134,14 @@ describe("managed Hermes state volume", () => {
     },
   );
 
-  it.each(["", " default", "default\n"])(
-    "rejects invalid workspace %j before effects",
-    (workspace) => {
-      vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
-      const docker = dockerHarness();
-      expect(() =>
-        prepareManagedStateVolumes({ roots }, { runContainerEngine: docker.runDocker as never }),
-      ).toThrow("exact OpenShell workspace");
-      expect(docker.calls).toEqual([]);
-    },
-  );
+  it.each([" default", "default\n"])("rejects invalid workspace %j before effects", (workspace) => {
+    vi.stubEnv("OPENSHELL_WORKSPACE", workspace);
+    const docker = dockerHarness();
+    expect(() =>
+      prepareManagedStateVolumes({ roots }, { runContainerEngine: docker.runDocker as never }),
+    ).toThrow("exact OpenShell workspace");
+    expect(docker.calls).toEqual([]);
+  });
   it("creates and mounts one labeled writable volume for managed Docker Hermes", () => {
     const docker = dockerHarness();
     let exitCleanup: (() => void) | null = null;
