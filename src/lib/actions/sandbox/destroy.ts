@@ -492,8 +492,7 @@ export async function cleanupSandboxServices(
         }
         return resolveSandboxDestroyGatewayName(owner.name, owner as registry.SandboxEntry);
       });
-    const releasable: string[] = [];
-    for (const model of candidates) {
+    const peersByModel = candidates.map((model) => {
       const holder = {
         name: validatedSandboxName,
         gatewayName: sb?.gatewayName ?? null,
@@ -502,19 +501,23 @@ export async function cleanupSandboxServices(
         model,
         endpointUrl: null,
       };
-      const matchingPeers = matchingOllamaModelPeers(holder, ownerRows, selectedHost);
-      const discovery = (deps.discoverOllamaModelOwnership ?? discoverOllamaModelOwnership)(
-        matchingPeers,
-        process.env,
-        captureOwnershipPhases,
-        { resolvePersistedSandboxOwnershipGateway: resolveOwnerGateway },
+      return matchingOllamaModelPeers(holder, ownerRows, selectedHost);
+    });
+    const discovery = (deps.discoverOllamaModelOwnership ?? discoverOllamaModelOwnership)(
+      [...new Set(peersByModel.flat())],
+      process.env,
+      captureOwnershipPhases,
+      { resolvePersistedSandboxOwnershipGateway: resolveOwnerGateway },
+    );
+    if (!discovery.ok) {
+      throw new Error(
+        `Ollama model ownership could not be verified for '${candidates.join(", ")}': ${discovery.message}. ` +
+          "No model was unloaded; retry destroy after restoring gateway access.",
       );
-      if (!discovery.ok) {
-        throw new Error(
-          `Ollama model ownership could not be verified for '${model}': ${discovery.message}. ` +
-            "No model was unloaded; retry destroy after restoring gateway access.",
-        );
-      }
+    }
+    const releasable: string[] = [];
+    for (const [index, model] of candidates.entries()) {
+      const matchingPeers = peersByModel[index]!;
       const activePeers = discovery.activePeers
         ? matchingPeers.filter((peer) => discovery.activePeers?.has(peer))
         : matchingPeers.filter((peer) => discovery.activeSandboxNames.has(peer.name));

@@ -130,6 +130,72 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
 });
 
 describe("cleanupSandboxServices Ollama ownership", () => {
+  it("discovers two pending models in one gateway once and keeps cleanup fail-closed", async () => {
+    const own = {
+      name: SANDBOX,
+      gatewayName: "gateway-a",
+      gatewayPort: 18080,
+      provider: "nvidia-prod",
+      model: "replacement",
+    } as SandboxEntry;
+    const activePeer = {
+      name: "active-peer",
+      gatewayName: "gateway-b",
+      gatewayPort: 18081,
+      provider: "ollama-local",
+      model: "old-model",
+    } as SandboxEntry;
+    const stoppedPeer = {
+      ...activePeer,
+      name: "stopped-peer",
+      model: "other-model",
+    };
+    const captureSandboxOwnershipPhases = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        output: "NAME CREATED PHASE\nactive-peer 2026-01-01 Running",
+      })
+      .mockReturnValue({
+        status: 0,
+        output:
+          "NAME CREATED PHASE\nactive-peer 2026-01-01 Running\nstopped-peer 2026-01-01 Stopped",
+      });
+    const unloadOllamaModels = vi.fn();
+    const clearPendingOllamaModelCleanup = vi.fn();
+    const cleanup = () =>
+      cleanupSandboxServices(
+        SANDBOX,
+        { stopHostServices: false, gatewayPort: 18080 },
+        {
+          getSandbox: () => own,
+          listOllamaModelOwnershipPeers: () => [own, activePeer, stoppedPeer],
+          loadPersistedOllamaHost: () => "127.0.0.1",
+          loadPendingOllamaModelCleanup: () => ["old-model", "other-model"],
+          clearPendingOllamaModelCleanup,
+          captureSandboxOwnershipPhases,
+          resolvePersistedSandboxOwnershipGateway: () => "gateway-b",
+          migrateLegacyCloudflaredState: vi.fn(() => false),
+          unloadOllamaModels,
+          withOllamaModelOwnershipLock: (operation) => operation(),
+          rmSync: vi.fn(),
+          runOpenshell: vi.fn(() => ({ status: 0 })),
+          stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+          googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+        },
+      );
+
+    await expect(cleanup()).rejects.toThrow(/omitted sibling/);
+    expect(captureSandboxOwnershipPhases).toHaveBeenCalledTimes(1);
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+    expect(clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
+
+    await cleanup();
+    expect(captureSandboxOwnershipPhases).toHaveBeenCalledTimes(2);
+    expect(unloadOllamaModels).toHaveBeenCalledExactlyOnceWith(["other-model"]);
+    expect(clearPendingOllamaModelCleanup).toHaveBeenCalledExactlyOnceWith(own, ["other-model"]);
+  });
+
   it("retains a pending model owned by an active sandbox in another gateway root", async () => {
     const own = {
       name: SANDBOX,
