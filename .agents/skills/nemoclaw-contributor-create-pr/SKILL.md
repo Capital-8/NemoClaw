@@ -26,6 +26,10 @@ Preserve the user's scope and any explicit instruction to stop at a draft or wit
 
 ## Publication requirements
 
+Every PR description must include the [authoring-session report](references/session-report.md),
+including unavailable fields. Inspect recorded authoring evidence; load only the applicable
+[Codex](references/codex.md) or [Pi](references/pi.md) reference. Preserve the report cutoff on updates.
+
 Use the canonical NVIDIA/NemoClaw base, template, sensitive-path policy, and trusted validation
 surface described in the references. Publish from a clean feature branch. Every published commit
 must be GitHub `Verified`; the PR body must contain the configured identity's DCO declaration.

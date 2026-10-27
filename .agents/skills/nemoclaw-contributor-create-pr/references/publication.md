@@ -143,6 +143,17 @@ Follow [Documentation Writing and Review](../../_shared/documentation-writing-re
 | Review notes | Available review context for any sensitive path, approved CI waiver, or required hardware validation. Remove the section when none apply. |
 | DCO Sign-Off | Configured Git name and email. |
 
+Include the [authoring-session report](session-report.md) before DCO, using the proposed template when this PR adds the contract.
+Preserve all canonical template requirements. Human authors and publication-only sessions must also include the report;
+use unavailable when authoring evidence cannot be established. Keep validation results separate from session evidence.
+Validate the saved PR body before creation and every description update:
+
+```bash
+node --import tsx scripts/checks/pr-session-report.mts --body-file /path/to/pr-body.md
+```
+
+Review the evidence limits yourself. The validator checks structure and statuses, not truth or compliance.
+
 ## Publish once
 
 Before creating the PR, decide its draft state and whether assignment is allowed. Assemble the

@@ -21,6 +21,23 @@ For a sensitive-path change, record the review context or maintainer-approved wa
 For an accepted non-success, skipped, or missing CI check, name the check, approval link, and follow-up issue.
 If scripts/prepare-dgx-station-host.sh changes, identify the tested commit, Station profile or scenario, result, and supporting link. Maintainers must review that evidence before merge. If repository governance permits an exception, document the reason. -->
 
+## Authoring session
+
+<!-- Read .agents/skills/nemoclaw-contributor-create-pr/references/session-report.md.
+Replace unavailable rows only when authoring evidence exists. State a cutoff; exclude future activity. -->
+<!-- agent-session-report:v1 -->
+| Field | Status | Value | Evidence or limit |
+| --- | --- | --- | --- |
+| Harness | unavailable | - | Authoring harness evidence unavailable. |
+| Skills | unavailable | - | Authoring instruction evidence unavailable. |
+| Instruction files | unavailable | - | Authoring instruction-file evidence unavailable. |
+| Tool calls | unavailable | - | Authoring tool invocation evidence unavailable. |
+| Session window | unavailable | - | Authoring session timestamps unavailable. |
+| Compactions | unavailable | - | Authoring compaction evidence unavailable. |
+| Models | unavailable | - | Authoring model history unavailable. |
+| Reasoning levels | unavailable | - | Authoring reasoning-level history unavailable. |
+<!-- /agent-session-report -->
+
 ---
 <!-- DCO sign-off is required in this PR description. Every commit must appear as Verified in GitHub. -->
 Signed-off-by: Your Name <your-email@example.com>

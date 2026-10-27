@@ -40,3 +40,12 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
+
+      - name: Test session report validation
+        if: ${{ !cancelled() }}
+        run: npx vitest run --project integration test/automation/pull-requests/session-report.test.ts
+
+      - name: Validate PR authoring-session report
+        if: ${{ !cancelled() }}
+        # Read the event as data; never interpolate the PR body into shell source.
+        run: node --import tsx scripts/checks/pr-session-report.mts --event-file "$GITHUB_EVENT_PATH"
