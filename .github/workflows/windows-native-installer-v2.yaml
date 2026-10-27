@@ -2986,7 +2986,7 @@ jobs:
               --target aarch64-pc-windows-msvc edge_trust:: -- --nocapture 2>&1 | Tee-Object -FilePath $log
             $result = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
-          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 4 passed; 0 failed; 0 ignored;') {
+          if ($result -ne 0 -or (Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 6 passed; 0 failed; 0 ignored;') {
             throw 'The native Edge certificate trust controls did not all pass.'
           }
 

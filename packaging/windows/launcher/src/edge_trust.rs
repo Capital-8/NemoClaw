@@ -50,6 +50,28 @@ struct CryptProviderCert {
 }
 
 #[repr(C)]
+struct CryptProviderSigner {
+    size: u32,
+    verified_at: FileTime,
+    cert_count: u32,
+    certs: *mut CryptProviderCert,
+    signer_type: u32,
+    signer_info: *mut c_void,
+    error: u32,
+    countersigner_count: u32,
+    countersigners: *mut CryptProviderSigner,
+    chain: *const CertChainContext,
+}
+
+#[repr(C)]
+struct CertChainContext {
+    size: u32,
+    error_status: u32,
+    info_status: u32,
+    chain_count: u32,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 struct Translation {
     language: u16,
@@ -273,9 +295,26 @@ fn version_metadata(path: &[u16]) -> Result<(String, String, String), u32> {
     Err(13)
 }
 
+fn validate_chain_status(chain: &CertChainContext) -> Result<(), u32> {
+    const CERT_TRUST_IS_REVOKED: u32 = 0x4;
+    const CERT_TRUST_REVOCATION_STATUS_UNKNOWN: u32 = 0x40;
+    const CERT_TRUST_IS_OFFLINE_REVOCATION: u32 = 0x01000000;
+    if chain.size < std::mem::size_of::<CertChainContext>() as u32 || chain.chain_count == 0 {
+        return Err(13);
+    }
+    match chain.error_status {
+        status if status & CERT_TRUST_IS_REVOKED != 0 => Err(0x800b010c),
+        status if status & CERT_TRUST_IS_OFFLINE_REVOCATION != 0 => Err(0x80092013),
+        status if status & CERT_TRUST_REVOCATION_STATUS_UNKNOWN != 0 => Err(0x80092012),
+        0 => Ok(()),
+        _ => Err(0x800b0004),
+    }
+}
+
 fn signer_metadata(state: RawHandle) -> Result<(String, String), u32> {
     type FromState = unsafe extern "system" fn(RawHandle) -> *mut c_void;
-    type GetSigner = unsafe extern "system" fn(*mut c_void, u32, i32, u32) -> *mut c_void;
+    type GetSigner =
+        unsafe extern "system" fn(*mut c_void, u32, i32, u32) -> *mut CryptProviderSigner;
     type GetCert = unsafe extern "system" fn(*mut c_void, u32) -> *mut CryptProviderCert;
 
     let module_name = wide(OsStr::new("wintrust.dll"));
@@ -301,11 +340,21 @@ fn signer_metadata(state: RawHandle) -> Result<(String, String), u32> {
     } else {
         unsafe { get_signer(provider, 0, 0, 0) }
     };
-    let provider_cert = if signer.is_null() {
-        null_mut()
-    } else {
-        unsafe { get_cert(signer, 0) }
-    };
+    if signer.is_null() {
+        return Err(13);
+    }
+    let signer_data = unsafe { &*signer };
+    if signer_data.size < std::mem::size_of::<CryptProviderSigner>() as u32
+        || signer_data.cert_count == 0
+        || signer_data.chain.is_null()
+    {
+        return Err(13);
+    }
+    if signer_data.error != 0 {
+        return Err(signer_data.error);
+    }
+    validate_chain_status(unsafe { &*signer_data.chain })?;
+    let provider_cert = unsafe { get_cert(signer.cast(), 0) };
     let cert = if provider_cert.is_null() {
         null()
     } else {
@@ -497,7 +546,45 @@ pub(crate) fn process(pid: u32) -> Result<ProcessIdentity, u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{json_string, trusted_signer, trusted_signer_with, wide};
+    use super::{
+        CertChainContext, json_string, trusted_signer, trusted_signer_with, validate_chain_status,
+        wide,
+    };
+
+    #[test]
+    fn provider_policy_cannot_hide_revocation_chain_errors() {
+        for (error_status, expected) in [
+            (0x4, 0x800b010c),
+            (0x40, 0x80092012),
+            (0x01000040, 0x80092013),
+            (0x20, 0x800b0004),
+            (0, 0),
+        ] {
+            let chain = CertChainContext {
+                size: std::mem::size_of::<CertChainContext>() as u32,
+                error_status,
+                info_status: 0,
+                chain_count: 1,
+            };
+            assert_eq!(
+                validate_chain_status(&chain),
+                if expected == 0 { Ok(()) } else { Err(expected) }
+            );
+        }
+    }
+
+    #[test]
+    fn missing_or_truncated_chain_cannot_prove_trust() {
+        for (size, chain_count) in [(0, 1), (16, 0)] {
+            let chain = CertChainContext {
+                size,
+                error_status: 0,
+                info_status: 0,
+                chain_count,
+            };
+            assert_eq!(validate_chain_status(&chain), Err(13));
+        }
+    }
 
     #[test]
     fn windows_trust_rejects_the_unsigned_test_executable() {
@@ -526,22 +613,26 @@ mod tests {
 
     #[test]
     fn verified_chain_reads_metadata_and_closes_trust_state() {
-        let mut actions = Vec::new();
-        let result = trusted_signer_with(
-            &[0],
-            |_, data| {
-                assert_eq!(data.revocation_checks, 1);
-                assert_eq!(data.provider_flags, 0x80);
-                actions.push(data.state_action);
-                0
-            },
-            |_| Ok(("Microsoft Corporation".into(), "fixture-thumbprint".into())),
-        );
-        assert_eq!(
-            result,
-            Ok(("Microsoft Corporation".into(), "fixture-thumbprint".into()))
-        );
-        assert_eq!(actions, [1, 2]);
+        for expected in [
+            Ok(("Microsoft Corporation".into(), "fixture-thumbprint".into())),
+            Err(0x80092012),
+            Err(0x80092013),
+            Err(13),
+        ] {
+            let mut actions = Vec::new();
+            let result = trusted_signer_with(
+                &[0],
+                |_, data| {
+                    assert_eq!(data.revocation_checks, 1);
+                    assert_eq!(data.provider_flags, 0x80);
+                    actions.push(data.state_action);
+                    0
+                },
+                |_| expected.clone(),
+            );
+            assert_eq!(result, expected);
+            assert_eq!(actions, [1, 2]);
+        }
     }
 
     #[test]
