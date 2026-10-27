@@ -2492,12 +2492,6 @@ NODE
   info "Installed OpenShell gateway user service at $service_path"
 }
 
-# Its user-local fallback creates ~/.local/bin. Ubuntu's login umask 0002 would
-# leave ~/.local group-writable, and the OpenShell gateway state check rejects it.
-run_install_openshell_script() {
-  (umask g-w,o-w && bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh")
-}
-
 # Run scripts/install-openshell.sh during install_nemoclaw when appropriate.
 # - mode=force:      always invoke (GitHub-clone branch — fresh install path)
 # - mode=if-missing: invoke only when openshell is absent from PATH
@@ -2575,11 +2569,11 @@ maybe_install_openshell_during_install() {
     macos_install_method="$(observed_macos_openshell_install_method)" || return 1
   fi
   if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
-    spin "Installing OpenShell CLI" run_install_openshell_script; then
+    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
     if [[ "$platform" == "Darwin" && "$macos_install_method" == "homebrew" ]] \
       && truthy_env "${FORCE_FRESH_INSTALL:-}" \
       && _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
-        spin "Verifying the installed OpenShell CLI" run_install_openshell_script; then
+        spin "Verifying the installed OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
       warn "Homebrew reported an install failure after placing OpenShell; the pinned OpenShell verifier passed, so force-fresh installation will continue."
     else
       return 1
@@ -2819,6 +2813,38 @@ try {
 ' "$source_path" "$destination_path" "$expected_identity"
 }
 
+user_local_executable_directory_safe() {
+  local current="$1" uid owner mode metadata mode_value
+  UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+  [[ "$current" == /* && "$current" != */../* && "$current" != */.. &&
+    "$current" != */./* && "$current" != */. ]] || return 1
+  uid="$(id -u)" || return 1
+  while :; do
+    UNSAFE_USER_LOCAL_EXECUTABLE_PATH="$current"
+    [[ ! -L "$current" ]] || return 1
+    if [[ -e "$current" ]]; then
+      [[ -d "$current" ]] || return 1
+      if metadata="$(stat -c '%u %a' -- "$current" 2>/dev/null)"; then
+        :
+      elif metadata="$(stat -f '%u %Lp' "$current" 2>/dev/null)"; then
+        :
+      else
+        return 1
+      fi
+      read -r owner mode <<<"$metadata"
+      [[ "$owner" =~ ^[0-9]+$ && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+      mode_value=$((8#$mode))
+      [[ "$owner" == "$uid" || "$owner" == 0 ]] || return 1
+      if ((mode_value & 022)); then
+        [[ "$current" != "$1" && "$owner" == 0 ]] && ((mode_value & 01000)) || return 1
+      fi
+    fi
+    [[ "$current" != / ]] || return 0
+    current="${current%/*}"
+    [[ -n "$current" ]] || current=/
+  done
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path expected_shim temp_shim=""
@@ -2888,8 +2914,14 @@ EOF
     return 0
   fi
 
-  # Same reason as run_install_openshell_script: keep ~/.local free of group write.
+  # The shim parent must not become group-writable under a permissive umask.
+  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   (umask g-w,o-w && mkdir -p "$NEMOCLAW_SHIM_DIR")
+  if ! user_local_executable_directory_safe "$NEMOCLAW_SHIM_DIR"; then
+    error "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
   temp_shim="$(mktemp "${shim_path}.tmp.XXXXXX")" \
     || error "Could not create a temporary shim beside $shim_path."
   _cleanup_files+=("$temp_shim")

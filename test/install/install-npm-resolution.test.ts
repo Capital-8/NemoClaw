@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+const itWithPosixModes = it.skipIf(process.platform === "win32");
+
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
 const BASH_BIN = resolveBashBin();
 
@@ -280,51 +282,95 @@ echo "${cliBin} v0.1.0"
     },
   );
 
-  it("creates the user-local shim directories without group write under umask 0002", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-shim-umask-"));
-    const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+  itWithPosixModes(
+    "creates the user-local shim directories without group write under umask 0002",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-shim-umask-"));
+      const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
 
-    const result = runInstallerFunction(
-      "umask 0002; _CLI_BIN=nemoclaw; ensure_nemoclaw_shim",
-      fakeBin,
-      {
-        ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
-        HOME: tmp,
-        NO_COLOR: "1",
-      },
-    );
+      const result = runInstallerFunction(
+        "umask 0002; _CLI_BIN=nemoclaw; ensure_nemoclaw_shim",
+        fakeBin,
+        {
+          ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+          HOME: tmp,
+          NO_COLOR: "1",
+        },
+      );
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect({
-      local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
-      bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
-    }).toEqual({ local: 0o755, bin: 0o755 });
-  });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect({
+        local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
+        bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
+      }).toEqual({ local: 0o755, bin: 0o755 });
+    },
+  );
 
-  it("runs install-openshell.sh without group write under umask 0002", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-openshell-umask-"));
-    const fakeBin = path.join(tmp, "bin");
-    const sourceRoot = path.join(tmp, "source");
-    fs.mkdirSync(fakeBin);
-    fs.mkdirSync(path.join(sourceRoot, "scripts"), { recursive: true });
-    // Stands in for the user-local fallback, which creates ~/.local/bin.
-    fs.writeFileSync(
-      path.join(sourceRoot, "scripts", "install-openshell.sh"),
-      'mkdir -p "$HOME/.local/bin"\n',
-    );
+  itWithPosixModes(
+    "rejects an existing writable user-local ancestor before publishing a shim (#12496)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-unsafe-shim-"));
+      try {
+        const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+        const local = path.join(tmp, ".local");
+        const bin = path.join(local, "bin");
+        fs.mkdirSync(bin, { recursive: true });
+        fs.chmodSync(local, 0o775);
 
-    const result = runInstallerFunction(
-      `umask 0002; NEMOCLAW_SOURCE_ROOT=${JSON.stringify(sourceRoot)}; run_install_openshell_script`,
-      fakeBin,
-      { HOME: tmp, NO_COLOR: "1" },
-    );
+        const result = runInstallerFunction("_CLI_BIN=nemoclaw; ensure_nemoclaw_shim", fakeBin, {
+          ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+          HOME: tmp,
+          NO_COLOR: "1",
+        });
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect({
-      local: fs.statSync(path.join(tmp, ".local")).mode & 0o777,
-      bin: fs.statSync(path.join(tmp, ".local", "bin")).mode & 0o777,
-    }).toEqual({ local: 0o755, bin: 0o755 });
-  });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).toContain(local);
+        expect(fs.readdirSync(bin)).toEqual([]);
+        expect(fs.statSync(local).mode & 0o777).toBe(0o775);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  itWithPosixModes(
+    "rejects a root-owned sticky shim target without publishing an executable (#12496)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-sticky-shim-"));
+      try {
+        const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+        const sticky = path.join(tmp, "sticky");
+        fs.mkdirSync(sticky, { mode: 0o1777 });
+        fs.chmodSync(sticky, 0o1777);
+        const bashEnv = path.join(tmp, "root-sticky-stat.sh");
+        fs.writeFileSync(
+          bashEnv,
+          `function stat {
+  if [[ " $* " == *" $NEMOCLAW_TEST_ROOT_STICKY_DIR "* ]]; then printf '0 1777\\n'; return 0; fi
+  command stat "$@"
+}
+`,
+        );
+        const result = runInstallerFunction(
+          '_CLI_BIN=nemoclaw; NEMOCLAW_SHIM_DIR="$NEMOCLAW_TEST_ROOT_STICKY_DIR"; ensure_nemoclaw_shim',
+          fakeBin,
+          {
+            ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+            BASH_ENV: bashEnv,
+            HOME: tmp,
+            NEMOCLAW_TEST_ROOT_STICKY_DIR: sticky,
+            NO_COLOR: "1",
+          },
+        );
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).toContain(sticky);
+        expect(fs.readdirSync(sticky)).toEqual([]);
+        expect(fs.statSync(sticky).mode & 0o1777).toBe(0o1777);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("leaves a foreign nemoclaw-acp executable untouched and stops before creating sibling shims (#10947)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-collision-"));
