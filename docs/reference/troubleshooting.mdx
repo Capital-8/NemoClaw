@@ -512,6 +512,11 @@ A gateway port that keeps listening after you uninstall, or that keeps serving a
 
 Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`. Gateway-lifecycle commands such as `$$nemoclaw onboard`, `$$nemoclaw uninstall`, and the deprecated `$$nemoclaw stop` act on the state root that their own `NEMOCLAW_GATEWAY_PORT` selects, while sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `$$nemoclaw <name> exec` and `$$nemoclaw <name> status`, resolve the named sandbox across every per-port registry root and address its recorded gateway binding. A gateway-lifecycle command without that variable uses port `8080` unless the installer recorded an automatic alternate-port selection; in that case, the CLI restores the recorded port. Clearing an explicitly supplied variable does not move an existing sandbox back to the default port.
 
+`status` prints `Recorded gateway` from the sandbox registry: the gateway name, a recorded port when no name exists, or `not recorded`.
+`recover` and `connect --probe-only` print `Target gateway` for the selected target.
+Use these labels to identify the gateway involved in a failed operation.
+Neither label proves gateway reachability; `Target gateway` alone does not establish registered sandbox ownership.
+
 List the gateways the host still has:
 
 ```bash
