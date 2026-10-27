@@ -412,6 +412,194 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     },
   );
 
+  it(
+    "admits a trusted-private sibling on a shared host only when current DNS matches its recorded pins",
+    {
+      timeout: 40_000,
+    },
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shared-private-mcp-add-"));
+      const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
+      const script = `
+process.env.HOME = ${JSON.stringify(home)};
+process.env.T_MCP_02 = "host-only-secret-02";
+let currentAddress = "10.20.30.41";
+require("node:dns/promises").lookup = async () => [{ address: currentAddress, family: 4 }];
+const replace = (module, name, value) => Object.defineProperty(module, name, {
+  configurable: true, enumerable: true, value, writable: true,
+});
+const registry = require("./src/lib/state/registry.js");
+const policies = require("./src/lib/policy/index.js");
+const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
+const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
+const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
+const trusted = require("./src/lib/security/trusted-private-endpoint.js");
+const srv01 = {
+  server: "srv01",
+  agent: "openclaw",
+  adapter: "openclaw-config",
+  url: "https://mcp.corp.example/mcp/one",
+  env: ["T_MCP_01"],
+  allowedIps: ["10.20.30.40"],
+  trustedPrivateHost: "mcp.corp.example",
+  providerName: "alpha-mcp-srv01",
+  providerId: "11111111-2222-4333-8444-555555555555",
+  policyName: "mcp-bridge-srv01",
+  source: "native",
+};
+const mutations = {
+  adapterRegistered: false,
+  attachCalled: false,
+  gatewayRestarted: false,
+  policyApplied: false,
+  upsertCalled: false,
+};
+let admittedTarget;
+let registeredEntry;
+replace(policies, "getPresetContentGatewayState", () => "absent");
+replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
+replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
+replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", (_sandbox, _adapter, entry) => {
+  mutations.adapterRegistered = true;
+  registeredEntry = entry;
+  return "v1";
+});
+replace(policy, "applyGeneratedPolicy", (_sandbox, _entry, target) => {
+  mutations.policyApplied = true;
+  admittedTarget = target;
+});
+replace(state, "ensureSandboxGatewaySelected", async () => {});
+replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
+replace(provider, "assertNoProviderCredentialCollisions", () => {});
+replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({
+  gatewayName: "nemoclaw-9090", workspace: "default",
+}));
+replace(provider, "ensureMcpBridgeProviderProfile", () => {});
+replace(provider, "inspectMcpProvider", () => ({
+  credentialKeys: null, exists: false, id: null, resourceVersion: null, type: null,
+}));
+replace(provider, "inspectMcpProviderAttachments", () => ({ attachments: [] }));
+replace(provider, "upsertMcpProvider", () => {
+  mutations.upsertCalled = true;
+  return {
+    action: "created",
+    inspection: {
+      credentialKeys: ["T_MCP_02"], exists: true,
+      id: "22222222-2222-4333-8444-555555555555", resourceVersion: 1, type: "nemoclaw-mcp-v1",
+    },
+  };
+});
+replace(provider, "attachProvider", () => {
+  mutations.attachCalled = true;
+});
+replace(provider, "refreshMcpProviderEnvironment", () => {});
+replace(provider, "observeMcpCredentialRevision", () => "v1");
+replace(provider, "waitForAttachedMcpCredential", () => "v1");
+replace(processRecovery, "restartSandboxGateway", () => {
+  mutations.gatewayRestarted = true;
+  return { ok: true, restarted: true, healthPassed: true, forwardRecovered: true };
+});
+replace(sourceState, "inspectSourceBridgeState", () => ({
+  bridges: { srv01 },
+  sources: { native: { srv01 }, legacy: {} },
+}));
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
+});
+(async () => {
+  const { addMcpBridge } = require("./src/lib/actions/sandbox/mcp-bridge.js");
+  let mismatchMessage = "";
+  try {
+    await addMcpBridge("alpha", {
+      server: "srv02",
+      url: "https://mcp.corp.example/mcp/two",
+      env: [{ name: "T_MCP_02" }],
+      trustedPrivateHosts: ["mcp.corp.example"],
+    });
+    process.exit(2);
+  } catch (error) {
+    mismatchMessage = String(error && error.message ? error.message : error);
+  }
+  const mismatchMutations = { ...mutations };
+  currentAddress = "10.20.30.40";
+  await addMcpBridge("alpha", {
+    server: "srv02",
+    url: "https://mcp.corp.example/mcp/two",
+    env: [{ name: "T_MCP_02" }],
+    trustedPrivateHosts: ["mcp.corp.example"],
+  });
+  process.stdout.write(JSON.stringify({
+    entry: registeredEntry,
+    mismatchMessage,
+    mismatchMutations,
+    target: {
+      addresses: admittedTarget.addresses,
+      capability: trusted.isTrustedPrivateEndpointCapability(
+        admittedTarget.trustedPrivateCapability,
+      ),
+      capabilityAddresses: admittedTarget.trustedPrivateCapability.addresses,
+      trustedPrivateHost: admittedTarget.trustedPrivateHost,
+    },
+  }), () => process.exit(0));
+})().catch((error) => {
+  process.stderr.write(error.stack || error.message, () => process.exit(1));
+});
+`;
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
+              .filter(Boolean)
+              .join(" "),
+          },
+          timeout: 30_000,
+        });
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        const payload = JSON.parse(result.stdout) as {
+          entry: Record<string, unknown>;
+          mismatchMessage: string;
+          mismatchMutations: Record<string, boolean>;
+          target: Record<string, unknown>;
+        };
+        expect(payload.mismatchMessage).toContain(
+          "resolved trusted-private address pins (10.20.30.41) for 'mcp.corp.example:443' that differ from existing MCP server 'srv01' (10.20.30.40)",
+        );
+        expect(payload.mismatchMutations).toEqual({
+          adapterRegistered: false,
+          attachCalled: false,
+          gatewayRestarted: false,
+          policyApplied: false,
+          upsertCalled: false,
+        });
+        expect(payload.entry).toMatchObject({
+          server: "srv02",
+          url: "https://mcp.corp.example/mcp/two",
+          allowedIps: ["10.20.30.40"],
+          trustedPrivateHost: "mcp.corp.example",
+        });
+        expect(payload.target).toEqual({
+          addresses: ["10.20.30.40"],
+          capability: true,
+          capabilityAddresses: ["10.20.30.40"],
+          trustedPrivateHost: "mcp.corp.example",
+        });
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("does not adopt a retained same-name provider after remove then add", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-retained-provider-"));
     const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
