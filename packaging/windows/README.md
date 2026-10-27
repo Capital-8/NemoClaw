@@ -10,6 +10,9 @@ contains its build-selected agent; the other remains unavailable in that package
 Standalone Pi, Deep Agents Code, and NemoCUA integrations have been removed.
 Their source remains in Git history. Existing state and credential cleanup still
 recognize those historical identities; they cannot start a new agent session.
+Setup's selectable data-removal choices are OpenClaw and Hermes only. Historical
+shortcut cleanup and recognition of retained legacy state remain separate from
+those choices; uninstall does not silently delete retired agents' data or keys.
 Non-Windows integrations and OpenClaw's internal dependencies are unchanged.
 This scope reduction does not establish installed qualification or release approval.
 

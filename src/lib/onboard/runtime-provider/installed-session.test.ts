@@ -6,10 +6,48 @@ import { createInstalledMxcRuntimeProviderBundle } from "./mxc-installed";
 import { createInstalledRuntimeSession, type InstalledRuntimeSession } from "./installed-session";
 import { createRuntimeProviderBundleRegistry, requireRuntimeProviderBundle } from "./registry";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
+import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
+import { resolveSandboxWorkloadSource } from "../workload/source";
 
 const input = { installation: "owned-installation", runRoot: "owned-run" };
 
 describe("installed runtime provider sessions", () => {
+  it.each([
+    ["arm64", "openclaw"],
+    ["arm64", "hermes"],
+    ["x64", "openclaw"],
+    ["x64", "hermes"],
+  ])("rejects portable workload selection on %s for %s", (architecture, agentName) => {
+    const create = vi.fn(() => ({ providerId: "mxc" }) as InstalledRuntimeSession);
+    const registry = createRuntimeProviderBundleRegistry([
+      ["mxc", createInstalledMxcRuntimeProviderBundle(create)],
+    ]);
+    const runtime = resolveSandboxWorkloadRuntimeCapabilities(
+      { driverName: "mxc" },
+      registry,
+      architecture,
+    );
+    expect(runtime.managedImages).toBeNull();
+    expect(runtime.externalImages).toBeNull();
+    expect(runtime.portableAgentRuntime).toBeNull();
+    expect(runtime.legacyDockerfileBuilds).toBe(false);
+    const options = {
+      agentName,
+      legacyDockerfilePath: "Dockerfile",
+      runtime,
+      catalog: {},
+      candidateAgentsEnabled: true,
+    };
+    expect(() => resolveSandboxWorkloadSource(options)).toThrow(
+      "does not advertise managed images",
+    );
+    expect(() => resolveSandboxWorkloadSource({ ...options, policy: "prefer-managed" })).toThrow();
+    expect(() =>
+      resolveSandboxWorkloadSource({ ...options, customDockerfilePath: "custom.Dockerfile" }),
+    ).toThrow();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("resolves the registered bundle without enabling portable MXC", () => {
     const session = { providerId: "mxc" } as InstalledRuntimeSession;
     const create = vi.fn(() => session);

@@ -19,6 +19,26 @@ internal static class WindowRecoveryControls
 {
     private static bool recoveryLeaseUnavailable;
 
+    private static void AssertRemovalChoices()
+    {
+        var options = new NativeBootstrapper::Nvidia.NemoClaw.Bootstrapper.NativeRemovalOptions();
+        var panel = (WrapPanel)options.FindName("Agents");
+        var choices = panel.Children.OfType<CheckBox>().ToArray();
+        if (!choices.Select(choice => (string)choice.Tag).SequenceEqual(new[] { "openclaw", "hermes" }) ||
+            !choices.Select(choice => (string)choice.Content).SequenceEqual(new[] { "OpenClaw", "Hermes" }))
+            throw new InvalidOperationException("Removal choices include an unsupported agent.");
+        var removal = (CheckBox)options.FindName("RemoveData");
+        if (options.SelectedAgents.Length != 0) throw new InvalidOperationException("Removal selected data without consent.");
+        removal.IsChecked = true;
+        if (!options.RequiresSelection) throw new InvalidOperationException("Removal accepted an empty selection.");
+        foreach (var choice in choices) choice.IsChecked = true;
+        if (options.RequiresSelection || !options.SelectedAgents.SequenceEqual(new[] { "openclaw", "hermes" }))
+            throw new InvalidOperationException("Removal lost the explicit supported-agent selection.");
+        options.SetAvailable(false);
+        if (options.SelectedAgents.Length != 0 || removal.IsEnabled)
+            throw new InvalidOperationException("Unavailable removal retained consent.");
+    }
+
     private static Task<T> PendingRecoveryFixture<T>(string agent)
     {
         if (agent is not ("openclaw" or "hermes")) throw new InvalidOperationException("Unexpected recovery agent.");
@@ -873,6 +893,7 @@ internal static class WindowRecoveryControls
                 AssertSupersededBundleCallbacks();
                 AssertCancellationPresentation();
                 AssertOnboardingAdmission();
+                AssertRemovalChoices();
                 window = new MainWindow();
                 AssertCompletionPresentation(window);
                 AssertProviderChoices(window);

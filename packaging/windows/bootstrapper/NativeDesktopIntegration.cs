@@ -10,7 +10,8 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 internal static class NativeDesktopIntegration
 {
     private const string Owner = "NVIDIA NemoClaw native desktop shortcut v1";
-    internal static readonly string[] Agents = { "openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua" };
+    internal static readonly string[] Agents = { "openclaw", "hermes" };
+    private static readonly string[] HistoricalAgents = { "openclaw", "hermes", "langchain-deepagents-code", "pi", "nemocua" };
 
     internal static string AgentName(string agent) => agent switch
     {
@@ -45,7 +46,7 @@ internal static class NativeDesktopIntegration
         using var reader = new StreamReader(file);
         var marker = reader.ReadToEnd();
         var agent = marker.TrimEnd('\n');
-        if (marker != agent + "\n" || !Agents.Contains(agent, StringComparer.Ordinal))
+        if (marker != agent + "\n" || !HistoricalAgents.Contains(agent, StringComparer.Ordinal))
             throw new InvalidOperationException("The remembered agent selection is invalid.");
         // Preserve historical settings, but do not recreate retired agent shortcuts.
         if (agent is not ("openclaw" or "hermes")) return;
@@ -55,7 +56,7 @@ internal static class NativeDesktopIntegration
     internal static void RemoveOwned(string launcher)
     {
         var names = new List<string> { "NemoClaw Setup" };
-        foreach (var agent in Agents)
+        foreach (var agent in HistoricalAgents)
         {
             names.Add($"NemoClaw {AgentName(agent)}");
         }
