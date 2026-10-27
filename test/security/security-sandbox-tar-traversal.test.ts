@@ -450,7 +450,7 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
       safe: false,
       entries: [],
       violations: [
-        "tar listing failed: archive header inspection exceeded the header-count or metadata-byte limit",
+        "tar listing failed: archive header inspection exceeded the metadata-byte limit",
       ],
     });
   });
@@ -638,17 +638,18 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
           'const { spawnSync } = require("node:child_process");',
           "const args = process.argv.slice(2);",
           'if (args.includes("--quoting-style=literal")) { process.stderr.write("tar: Option --quoting-style=literal is not supported\\n"); process.exit(1); }',
-          `process.exit(spawnSync(${JSON.stringify(systemTar)}, ${JSON.stringify(literalQuotingSupported ? ["--quoting-style=literal"] : [])}.concat(args), { stdio: "inherit" }).status ?? 90);`,
+          `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" }).status ?? 90);`,
         ].join("\n"),
         { mode: 0o755 },
       );
       process.env.PATH = `${fixture}:${oldPath ?? ""}`;
 
-      const safeEntry = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/.env";
+      const safeEntry = "workspace/back\\slash/.env";
+      const escapedSafeEntry = safeEntry.replaceAll("\\", "\\\\");
       const safeTar = buildTar([{ path: safeEntry, content: "CUSTOM_MODE=enabled\n" }]);
       expect(validateTarEntries(safeTar, "/tmp/private-stopped-state")).toEqual({
         safe: true,
-        entries: [listedRawTarName(safeEntry)],
+        entries: [escapedSafeEntry],
         violations: [],
       });
 
@@ -659,7 +660,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
       const symlinkValidation = validateTarEntries(symlinkTar, "/tmp/private-stopped-state");
       expect(symlinkValidation.safe).toBe(true);
       expect(rejectSymlinkExtractionTraversal(symlinkTar, symlinkValidation.entries)).toEqual([
-        `archive member '${listedRawTarName("workspace/sym\\link/payload.txt")}' would extract through symlink '${listedRawTarName("workspace/sym\\link")}'`,
+        "archive member 'workspace/sym\\\\link/payload.txt' would extract through symlink 'workspace/sym\\\\link'",
       ]);
 
       const hardLinkTar = buildTar([
@@ -669,7 +670,7 @@ describe("Fix: stopped-state extraction cannot write through archive symlinks", 
       const hardLinkValidation = validateTarEntries(hardLinkTar, "/tmp/private-stopped-state");
       expect(hardLinkValidation.safe).toBe(true);
       expect(rejectHardLinkExtractionTraversal(hardLinkTar, hardLinkValidation.entries)).toEqual([
-        `hard-link target '${listedRawTarName("workspace/sym\\link/.config/secret")}' in 'workspace/stolen' resolves through symlink '${listedRawTarName("workspace/sym\\link")}'`,
+        "hard-link target 'workspace/sym\\\\link/.config/secret' in 'workspace/stolen' resolves through symlink 'workspace/sym\\\\link'",
       ]);
 
       const replacementTar = path.join(fixture, "gnu-like-tar");

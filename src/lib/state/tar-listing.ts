@@ -30,7 +30,6 @@ const TAR_LISTING_MAX_LINE_CHARS = 1024 * 1024;
 export const TAR_BLOCK_BYTES = 512;
 const TAR_METADATA_MAX_BYTES = 1024 * 1024;
 const TAR_TOTAL_METADATA_MAX_BYTES = 4 * 1024 * 1024;
-const TAR_MAX_INSPECTED_HEADERS = 65_536;
 let unsupportedLiteralQuotingExecutable: string | null = null;
 
 /** Resolve the active tar executable and its filesystem identity from PATH. */
@@ -177,11 +176,11 @@ function inspectPaxHeaderForLineBreaks(payload: Buffer): TarHeaderLineBreakInspe
 }
 
 /**
- * Inspect every tar header before tar lists the archive, within the header,
- * metadata, and deadline budget. Return a failure when a member path or link
- * target contains a line break, when a header or its metadata is malformed or
- * exceeds TAR_METADATA_MAX_BYTES, or when cumulative inspection exceeds the
- * header-count, metadata-byte, or deadline budget.
+ * Inspect every tar header before tar lists the archive, within the metadata
+ * and deadline budget. Return a failure when a member path or link target
+ * contains a line break, when a header or its metadata is malformed or exceeds
+ * TAR_METADATA_MAX_BYTES, or when cumulative inspection exceeds the
+ * metadata-byte or deadline budget.
  */
 function inspectArchiveHeadersForLineBreaks(
   readRange: (position: number, length: number) => Buffer | "timeout" | null,
@@ -189,7 +188,6 @@ function inspectArchiveHeadersForLineBreaks(
   deadlineMs: number,
 ): TarHeaderLineBreakInspection {
   let offset = 0;
-  let inspectedHeaders = 0;
   let inspectedMetadataBytes = 0;
   while (offset < archiveSize) {
     if (listingDeadlineExpired(deadlineMs)) return "timeout";
@@ -198,8 +196,6 @@ function inspectArchiveHeadersForLineBreaks(
     if (header === "timeout") return "timeout";
     if (!header) return "uninspectable";
     if (header.every((byte) => byte === 0)) return "clean";
-    inspectedHeaders += 1;
-    if (inspectedHeaders > TAR_MAX_INSPECTED_HEADERS) return "limit-exceeded";
     if (
       hasHeaderLineBreak(tarHeaderString(header, 0, 100)) ||
       hasHeaderLineBreak(tarHeaderString(header, 157, 100)) ||
@@ -420,7 +416,7 @@ export function runTarListing(
       return `${failureLabel} failed: archive entry contains a line break`;
     }
     if (headerInspection === "limit-exceeded") {
-      return `${failureLabel} failed: archive header inspection exceeded the header-count or metadata-byte limit`;
+      return `${failureLabel} failed: archive header inspection exceeded the metadata-byte limit`;
     }
     if (headerInspection === "timeout") {
       return `${failureLabel} failed: archive header inspection timed out`;

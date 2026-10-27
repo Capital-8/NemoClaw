@@ -61,7 +61,7 @@ function createBackslashEnvFixture() {
   return { fixture, relativePath, content, backup };
 }
 
-describe("native backup with unsupported tar listing option", () => {
+describe("native backup of backslash paths across tar quoting modes", () => {
   it.skipIf(!HOST_TAR_SUPPORTS_LITERAL_QUOTING)(
     "preserves an .env under a backslash directory when tar lists literal names",
     () => {
@@ -95,7 +95,7 @@ describe("native backup with unsupported tar listing option", () => {
     },
   );
 
-  it("round-trips backslash paths after tar rejects --quoting-style=literal", async () => {
+  it("round-trips backslash paths and rejects credential-bearing backslash paths after tar rejects --quoting-style=literal", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-bsdtar-fallback-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -103,15 +103,14 @@ describe("native backup with unsupported tar listing option", () => {
     try {
       const binDir = path.join(fixture, "bin");
       const nativeRoot = path.join(fixture, "native-home");
-      const relativeFile = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates/notes.md";
+      const tarLog = path.join(fixture, "tar-args.log");
+      const relativeDir = "workspace/05-\u{1F6E0}\u{FE0F}\\ Systems\\ \\&\\ Templates";
+      const relativeFile = `${relativeDir}/notes.md`;
+      const relativeEnv = `${relativeDir}/.env`;
       const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
         encoding: "utf8",
       }).stdout.trim();
       expect(systemTar).not.toBe("");
-      const literalQuotingSupported =
-        spawnSync(systemTar, ["--quoting-style=literal", "-tf", "-"], {
-          input: Buffer.alloc(1024),
-        }).status === 0;
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(path.dirname(path.join(nativeRoot, relativeFile)), { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, relativeFile), "fallback-backslash-notes");
@@ -121,11 +120,12 @@ describe("native backup with unsupported tar listing option", () => {
         path.join(binDir, "tar"),
         [
           "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
           'const { spawnSync } = require("node:child_process");',
           "const args = process.argv.slice(2);",
+          `fs.appendFileSync(${JSON.stringify(tarLog)}, JSON.stringify(args) + "\\n");`,
           'if (args.includes("--quoting-style=literal")) { process.stderr.write("tar: Option --quoting-style=literal is not supported\\n"); process.exit(1); }',
-          `const forwarded = args.includes("-tf") || args.includes("-tvf") ? ${JSON.stringify(literalQuotingSupported ? ["--quoting-style=literal"] : [])}.concat(args) : args;`,
-          `process.exit(spawnSync(${JSON.stringify(systemTar)}, forwarded, { stdio: "inherit" }).status ?? 90);`,
+          `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" }).status ?? 90);`,
         ].join("\n"),
       );
       process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
@@ -135,12 +135,38 @@ describe("native backup with unsupported tar listing option", () => {
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success, backup.error).toBe(true);
+      const loggedInvocations = fs
+        .readFileSync(tarLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      expect(loggedInvocations).toContainEqual(["--quoting-style=literal", "-tf", "-"]);
+      expect(loggedInvocations).toContainEqual(["-tf", "-"]);
+      const fallbackValidation = sandboxState.validateTarEntries(
+        { filePath: path.join(backup.manifest!.backupPath, "native-home.tar") },
+        "/sandbox",
+      );
+      expect(fallbackValidation.safe).toBe(true);
+      expect(
+        fallbackValidation.entries.some((entry: string) =>
+          entry.includes("\\\\ Systems\\\\ \\\\&\\\\ Templates/notes.md"),
+        ),
+      ).toBe(true);
       fs.writeFileSync(path.join(nativeRoot, relativeFile), "mutated");
       const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success, restore.error).toBe(true);
       expect(fs.readFileSync(path.join(nativeRoot, relativeFile), "utf8")).toBe(
         "fallback-backslash-notes",
       );
+
+      fs.writeFileSync(
+        path.join(nativeRoot, relativeEnv),
+        `OPENAI_API_KEY=${["sk-proj", "fallbackSecret1234567890abcd"].join("-")}\n`,
+      );
+      const rejected = sandboxState.backupSandboxState("alpha");
+      expect(rejected.success).toBe(false);
+      expect(rejected.error).toContain("credential-bearing or uninspectable content");
+      expect(rejected.error).toContain(relativeEnv);
     } finally {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);

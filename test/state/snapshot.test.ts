@@ -96,6 +96,33 @@ function tarHeader(
   return header;
 }
 
+function writeCraftedCaptureTar(binDir: string, systemTar: string): void {
+  writeExecutable(
+    path.join(binDir, "tar"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (process.env.NEMOCLAW_TEST_TAR_LOG) {
+  fs.appendFileSync(process.env.NEMOCLAW_TEST_TAR_LOG, JSON.stringify(args) + "\\n");
+}
+if (args.includes("-C")) {
+  fs.writeFileSync(1, fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
+  process.exit(0);
+}
+const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
+process.exit(result.status ?? 90);
+`,
+  );
+}
+
+function buildManyMembersTar(count: number): Buffer {
+  return Buffer.concat([
+    ...Array.from({ length: count }, (_, index) => tarHeader(`w/${index}.txt`, Buffer.alloc(0))),
+    Buffer.alloc(1024, 0),
+  ]);
+}
+
 function paddedTarPayload(content: Buffer): Buffer {
   const padded = Buffer.alloc(Math.ceil(content.length / 512) * 512, 0);
   content.copy(padded);
@@ -1289,21 +1316,7 @@ process.stdout.write(String(uid) + "\\n");
         fs.mkdirSync(binDir, { recursive: true });
         fs.mkdirSync(nativeRoot, { recursive: true });
         fs.writeFileSync(craftedArchive, buildSparseTar(kind));
-        writeExecutable(
-          path.join(binDir, "tar"),
-          `#!/usr/bin/env node
-const fs = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const args = process.argv.slice(2);
-fs.appendFileSync(process.env.NEMOCLAW_TEST_TAR_LOG, JSON.stringify(args) + "\\n");
-if (args.includes("-C")) {
-  process.stdout.write(fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
-  process.exit(0);
-}
-const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
-process.exit(result.status ?? 90);
-`,
-        );
+        writeCraftedCaptureTar(binDir, systemTar);
         process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
         process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
         process.env.PATH = `${binDir}:${oldPath ?? ""}`;
@@ -1348,21 +1361,7 @@ process.exit(result.status ?? 90);
       fs.mkdirSync(nativeRoot, { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, "original.txt"), "payload");
       fs.writeFileSync(craftedArchive, buildSymlinkCredentialTraversalTar());
-      writeExecutable(
-        path.join(binDir, "tar"),
-        `#!/usr/bin/env node
-const fs = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const args = process.argv.slice(2);
-fs.appendFileSync(process.env.NEMOCLAW_TEST_TAR_LOG, JSON.stringify(args) + "\\n");
-if (args.includes("-C")) {
-  process.stdout.write(fs.readFileSync(process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE));
-  process.exit(0);
-}
-const result = spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" });
-process.exit(result.status ?? 90);
-`,
-      );
+      writeCraftedCaptureTar(binDir, systemTar);
       process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
       process.env.NEMOCLAW_TEST_TAR_LOG = tarLog;
       process.env.PATH = `${binDir}:${oldPath ?? ""}`;
@@ -1432,6 +1431,43 @@ process.exit(result.status ?? 90);
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("NEMOCLAW_TEST_NATIVE_ROOT", oldNativeRoot);
       restoreEnv("NEMOCLAW_TEST_SSH_COMMAND_LOG", oldCommandLog);
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a native archive with more than 65,536 valid members", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-many-members-"));
+    const oldPath = process.env.PATH;
+    const oldCraftedArchive = process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const nativeRoot = path.join(fixture, "native-home");
+      const craftedArchive = path.join(fixture, "many-members.tar");
+      const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(systemTar).not.toBe("");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(nativeRoot, { recursive: true });
+      fs.writeFileSync(craftedArchive, buildManyMembersTar(65_537));
+      writeCraftedCaptureTar(binDir, systemTar);
+      process.env.NEMOCLAW_TEST_CRAFTED_ARCHIVE = craftedArchive;
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      writeSandboxRegistry("alpha");
+
+      const backup = sandboxState.backupSandboxState("alpha", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+
+      expect(backup.success, backup.error).toBe(true);
+      expect(backup.nativeArchiveCounts).toEqual({ directories: 0, files: 65_537 });
+    } finally {
+      restoreEnv("NEMOCLAW_TEST_CRAFTED_ARCHIVE", oldCraftedArchive);
       restoreEnv("PATH", oldPath);
       fs.rmSync(fixture, { recursive: true, force: true });
     }
