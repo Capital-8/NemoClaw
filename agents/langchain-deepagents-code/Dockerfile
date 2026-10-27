@@ -117,7 +117,12 @@ COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
 
 # Standardize stale and same-run bases before applying npm 12 private-tree
 # remediations. The local archive is independently SHA-256 and SRI verified.
-RUN node /scripts/upgrade-bundled-npm.mts \
+RUN set -eu; \
+    dcode_npm_cache="$(mktemp -d /tmp/nemoclaw-dcode-npm-cache.XXXXXX)"; \
+    trap 'rm -rf "$dcode_npm_cache"' EXIT; \
+    trap 'exit 1' HUP INT TERM; \
+    export NPM_CONFIG_CACHE="$dcode_npm_cache" npm_config_cache="$dcode_npm_cache"; \
+    node /scripts/upgrade-bundled-npm.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /tmp/npm-12.0.2.tgz
 # hadolint ignore=DL3059

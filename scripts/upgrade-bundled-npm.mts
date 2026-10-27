@@ -200,25 +200,17 @@ export type BundledNpmUpgradeDependencies = Readonly<{
 }>;
 
 function installReviewedNpm(archivePath: string, commandRunner: BundledNpmCommandRunner): void {
-  // Image builds can inherit the agent's HOME; keep their cache out of native state.
-  const cacheDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-npm-install-cache-"));
-  try {
-    commandRunner("npm", [
-      "install",
-      "--global",
-      archivePath,
-      "--cache",
-      cacheDirectory,
-      "--userconfig",
-      "/dev/null",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      "--offline",
-    ]);
-  } finally {
-    rmSync(cacheDirectory, { force: true, recursive: true });
-  }
+  commandRunner("npm", [
+    "install",
+    "--global",
+    archivePath,
+    "--userconfig",
+    "/dev/null",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+    "--offline",
+  ]);
 }
 
 export function upgradeBundledNpm(
