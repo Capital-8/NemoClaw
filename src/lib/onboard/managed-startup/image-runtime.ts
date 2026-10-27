@@ -885,6 +885,50 @@ export function readStableRegularFile(target: string, maxBytes: number): Buffer 
   return readStableRegularFileSnapshot(target, maxBytes).bytes;
 }
 
+function removeHermesManagedPolicySourceAsSandbox(
+  source: string,
+  expectedStat: fs.BigIntStats,
+): void {
+  if (!trustedExecutable("/usr/bin/setpriv")) {
+    fail("a trusted setpriv executable is required");
+  }
+  const identity = readSandboxIdentity();
+  if (expectedStat.uid !== BigInt(identity.uid) || expectedStat.gid !== BigInt(identity.gid)) {
+    fail(`refusing to remove Hermes managed policy source with unexpected owner: ${source}`);
+  }
+  const removed = spawnSync(
+    "/usr/bin/setpriv",
+    [
+      `--reuid=${identity.uid}`,
+      `--regid=${identity.gid}`,
+      "--init-groups",
+      "--",
+      "/bin/rm",
+      "-f",
+      "--",
+      source,
+    ],
+    {
+      encoding: "utf8",
+      env: { PATH: FIXED_PATH },
+      stdio: "ignore",
+    },
+  );
+  let sourceRemoved = false;
+  try {
+    fs.lstatSync(source, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      sourceRemoved = true;
+    } else {
+      fail(`could not verify Hermes managed policy source cleanup: ${source}`);
+    }
+  }
+  if (removed.error || removed.status !== 0 || !sourceRemoved) {
+    fail(`could not remove Hermes managed policy source as the sandbox user: ${source}`);
+  }
+}
+
 /** Promote the generator output to the one root-owned policy artifact used at runtime. */
 export function installHermesManagedPolicy(
   source = HERMES_GENERATED_MANAGED_POLICY_FILE,
@@ -896,7 +940,15 @@ export function installHermesManagedPolicy(
   if (!sameStableFileMetadata(generated.stat, current)) {
     fail(`Hermes managed policy changed before source cleanup: ${source}`);
   }
-  fs.unlinkSync(source);
+  try {
+    fs.unlinkSync(source);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EACCES" && code !== "EPERM") {
+      throw error;
+    }
+    removeHermesManagedPolicySourceAsSandbox(source, generated.stat);
+  }
 }
 
 /**

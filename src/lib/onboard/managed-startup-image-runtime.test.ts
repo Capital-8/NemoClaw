@@ -557,7 +557,9 @@ describe("managed startup image runtime", () => {
     shareDirectory: string,
     target: string,
     beforeSourceCleanup?: () => void,
+    sourceOwner: { readonly uid: bigint; readonly gid: bigint } = { uid: 998n, gid: 999n },
   ): void {
+    const realFstatSync = fs.fstatSync.bind(fs);
     const realLstatSync = fs.lstatSync.bind(fs);
     const rootOwned = (stat: fs.Stats): fs.Stats =>
       new Proxy(stat, {
@@ -566,18 +568,69 @@ describe("managed startup image runtime", () => {
           return typeof value === "function" ? value.bind(inner) : value;
         },
       });
+    const sandboxOwnedBigInt = (stat: fs.BigIntStats): fs.BigIntStats =>
+      new Proxy(stat, {
+        get(inner, property) {
+          const value =
+            property === "uid"
+              ? sourceOwner.uid
+              : property === "gid"
+                ? sourceOwner.gid
+                : Reflect.get(inner, property);
+          return typeof value === "function" ? value.bind(inner) : value;
+        },
+      });
+    const setprivStat = {
+      gid: 0,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      mode: 0o755,
+      uid: 0,
+    } as fs.Stats;
+    vi.spyOn(fs, "fstatSync").mockImplementation(((
+      descriptor: number,
+      options?: { bigint?: boolean },
+    ) => {
+      const stat = options?.bigint
+        ? realFstatSync(descriptor, { bigint: true })
+        : realFstatSync(descriptor);
+      return options?.bigint ? sandboxOwnedBigInt(stat as fs.BigIntStats) : stat;
+    }) as typeof fs.fstatSync);
     vi.spyOn(fs, "lstatSync").mockImplementation(((
       file: fs.PathLike,
       options?: { bigint?: boolean },
     ) => {
+      const filePath = file.toString();
       const sourceCleanupHook =
-        file.toString() === source && options?.bigint === true ? beforeSourceCleanup : undefined;
+        filePath === source && options?.bigint === true ? beforeSourceCleanup : undefined;
       sourceCleanupHook?.();
-      const stat = options?.bigint ? realLstatSync(file, { bigint: true }) : realLstatSync(file);
-      const rootPath = file.toString() === shareDirectory || file.toString() === target;
-      return rootPath && options?.bigint !== true ? rootOwned(stat as fs.Stats) : stat;
+      const stat =
+        filePath === "/usr/bin/setpriv"
+          ? setprivStat
+          : options?.bigint
+            ? realLstatSync(file, { bigint: true })
+            : realLstatSync(file);
+      const rootPath = filePath === shareDirectory || filePath === target;
+      return filePath === "/usr/bin/setpriv"
+        ? setprivStat
+        : filePath === source && options?.bigint === true
+          ? sandboxOwnedBigInt(stat as fs.BigIntStats)
+          : rootPath && options?.bigint !== true
+            ? rootOwned(stat as fs.Stats)
+            : stat;
     }) as typeof fs.lstatSync);
     vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
+  }
+
+  function mockRootUnlinkFailure(source: string, code: "EACCES" | "EPERM"): () => void {
+    const realUnlinkSync = fs.unlinkSync.bind(fs);
+    const denySource = (): never => {
+      throw Object.assign(new Error(`${code}: permission denied, unlink '${source}'`), { code });
+    };
+    vi.spyOn(fs, "unlinkSync").mockImplementation((targetPath) =>
+      targetPath.toString() === source ? denySource() : realUnlinkSync(targetPath),
+    );
+    return () => realUnlinkSync(source);
   }
 
   it("promotes generated Hermes policy to one root-owned, read-only runtime artifact", () => {
@@ -614,6 +667,92 @@ describe("managed startup image runtime", () => {
     );
     expect(fs.readFileSync(source, "utf8")).toBe(`${policy}changed\n`);
     expect(fs.readFileSync(target, "utf8")).toBe(policy);
+  });
+
+  it.each(["EACCES", "EPERM"] as const)(
+    "removes the generated Hermes policy as the sandbox user when root unlink fails with %s",
+    (code) => {
+      const directory = temporaryPolicyDirectory();
+      const shareDirectory = path.join(directory, "share");
+      const source = path.join(directory, "managed-policy.json");
+      const target = path.join(shareDirectory, "hermes-managed-policy.json");
+      const policy = '{"schema_version":3}\n';
+      fs.mkdirSync(shareDirectory);
+      fs.writeFileSync(source, policy, { mode: 0o600 });
+      mockRootOwnedPolicyInstallPaths(source, shareDirectory, target);
+      const removeSource = mockRootUnlinkFailure(source, code);
+      childProcessMock.spawnSync.mockImplementation((command: string, args: readonly string[]) =>
+        command === "/usr/bin/id"
+          ? { status: 0, stdout: args[0] === "-u" ? "998\n" : "999\n" }
+          : (removeSource(), { status: 0, stdout: "" }),
+      );
+
+      installHermesManagedPolicy(source, target);
+
+      expect(fs.existsSync(source)).toBe(false);
+      expect(fs.readFileSync(target, "utf8")).toBe(policy);
+      expect(fs.statSync(target).mode & 0o777).toBe(0o444);
+      expect(childProcessMock.spawnSync).toHaveBeenCalledWith(
+        "/usr/bin/setpriv",
+        ["--reuid=998", "--regid=999", "--init-groups", "--", "/bin/rm", "-f", "--", source],
+        expect.objectContaining({
+          encoding: "utf8",
+          stdio: "ignore",
+        }),
+      );
+    },
+  );
+
+  it("refuses Hermes policy cleanup as the sandbox user when the source file has a different owner", () => {
+    const directory = temporaryPolicyDirectory();
+    const shareDirectory = path.join(directory, "share");
+    const source = path.join(directory, "managed-policy.json");
+    const target = path.join(shareDirectory, "hermes-managed-policy.json");
+    const policy = '{"schema_version":3}\n';
+    fs.mkdirSync(shareDirectory);
+    fs.writeFileSync(source, policy, { mode: 0o600 });
+    mockRootOwnedPolicyInstallPaths(source, shareDirectory, target, undefined, {
+      uid: 1000n,
+      gid: 1000n,
+    });
+    mockRootUnlinkFailure(source, "EACCES");
+    childProcessMock.spawnSync.mockImplementation((_command: string, args: readonly string[]) => ({
+      status: 0,
+      stdout: args[0] === "-u" ? "998\n" : "999\n",
+    }));
+
+    expect(() => installHermesManagedPolicy(source, target)).toThrow(/unexpected owner/u);
+    expect(fs.existsSync(source)).toBe(true);
+    expect(childProcessMock.spawnSync).not.toHaveBeenCalledWith(
+      "/usr/bin/setpriv",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    ["setpriv exits non-zero", 1, true],
+    ["source file remains present after setpriv", 0, false],
+  ] as const)("fails closed when %s during Hermes policy cleanup", (_label, status, removeFile) => {
+    const directory = temporaryPolicyDirectory();
+    const shareDirectory = path.join(directory, "share");
+    const source = path.join(directory, "managed-policy.json");
+    const target = path.join(shareDirectory, "hermes-managed-policy.json");
+    const policy = '{"schema_version":3}\n';
+    fs.mkdirSync(shareDirectory);
+    fs.writeFileSync(source, policy, { mode: 0o600 });
+    mockRootOwnedPolicyInstallPaths(source, shareDirectory, target);
+    const removeSource = mockRootUnlinkFailure(source, "EACCES");
+    const maybeRemoveSource = removeFile ? removeSource : () => undefined;
+    childProcessMock.spawnSync.mockImplementation((command: string, args: readonly string[]) =>
+      command === "/usr/bin/id"
+        ? { status: 0, stdout: args[0] === "-u" ? "998\n" : "999\n" }
+        : (maybeRemoveSource(), { status, stdout: "" }),
+    );
+
+    expect(() => installHermesManagedPolicy(source, target)).toThrow(
+      /could not remove Hermes managed policy source as the sandbox user/u,
+    );
   });
 
   it("verifies a host-copied transaction only through the explicit read-only receipt mode", async () => {
