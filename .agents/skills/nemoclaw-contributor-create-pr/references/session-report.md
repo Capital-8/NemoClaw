@@ -14,6 +14,10 @@ Inspect evidence for the current authoring session through a stated report cutof
 
 Every PR body must contain exactly one block from [the template](../../../../.github/PULL_REQUEST_TEMPLATE.md), including all eight rows. Preserve the markers, header, field names, and four-column table. Row order is flexible. Use semicolons instead of literal pipes inside cells.
 
+This reference owns the report's meaning. The validator enforces its versioned structure; the template supplies the default description.
+The metadata job validates the actual template through the same validator before checking the event body, so incompatible template changes fail CI.
+Synthetic test inputs exercise invalid reports independently of that template-to-validator check.
+
 | Status | Meaning | Value and evidence |
 | --- | --- | --- |
 | recorded | Evidence covers this field for the declared session window. | State the value and the evidence source in compact terms. |
@@ -54,3 +58,14 @@ main's CI workflow skips platform builds for description-only edits. The check v
 The existing `commit-lint` job contains this check, so rulesets that already require that context also require a valid report.
 Repositories without that required context need a separate maintainer ruleset decision. This change does not modify rulesets.
 The first PR introducing the validator exercises candidate code and still needs independent maintainer review.
+
+Like the existing title check, this job runs candidate code under `pull_request`. It is not a tamper-resistant policy boundary.
+Maintainers must review changes to the workflow and validator; passing candidate tests cannot approve those changes.
+Trusted-base enforcement would need a separately scoped rollout because the base of the introducing PR has no validator.
+
+## Existing and automated PRs
+
+On the next update, append the template's report block to an existing PR description and preserve its other content and DCO declaration.
+If historical authoring evidence is unavailable, keep each affected field unavailable and explain that limit. Do not reconstruct it from current files.
+A maintainer updating an automated PR, including Dependabot, follows the same process within their authority to edit that PR.
+The requirement has no bot or creation-date exemption. Missing authoring evidence is handled by the all-unavailable report, not by omitting it.

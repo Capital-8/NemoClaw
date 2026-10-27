@@ -41,9 +41,11 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
 
-      - name: Test session report validation
+      - name: Test and verify session report contract
         if: ${{ !cancelled() }}
-        run: npx vitest run --project integration test/automation/pull-requests/session-report.test.ts
+        run: |
+          npx vitest run --project integration test/automation/pull-requests/session-report.test.ts
+          node --import tsx scripts/checks/pr-session-report.mts --body-file .github/PULL_REQUEST_TEMPLATE.md
 
       - name: Validate PR authoring-session report
         if: ${{ !cancelled() }}
