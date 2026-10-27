@@ -686,6 +686,12 @@ export function releaseSupersededOllamaModel(
         revalidateSandboxIdentity?.("release the superseded Ollama model");
       } catch (error) {
         authorityRefusal = error;
+        pendingRecordFailure = persistRetry();
+        if (pendingRecordFailure) {
+          cleanupWarning =
+            `  Warning: Cleanup retry state could not be recorded for '${previous.name}' after the new inference route became active: ${pendingRecordFailure}. ` +
+            `No model was unloaded. Manually verify ownership before releasing only ${attemptedModels.join(", ") || "the superseded model"} from the saved local Ollama endpoint.`;
+        }
         return;
       }
       if (attemptedModels.length > 0 && deps.unloadOllamaModels) {

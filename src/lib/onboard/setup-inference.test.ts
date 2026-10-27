@@ -224,6 +224,31 @@ describe("releaseSupersededOllamaModel", () => {
     }
   });
 
+  it("keeps the model and records retry when a sibling gateway has state but no registry", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-missing-peer-registry-"));
+    vi.stubEnv("HOME", home);
+    const siblingRoot = path.join(home, ".nemoclaw", "gateways", "32665");
+    fs.mkdirSync(siblingRoot, { recursive: true });
+    fs.writeFileSync(path.join(siblingRoot, "onboard-session.json"), "{}");
+    const harness = createOllamaCleanupHarness({ useProductionPeerSource: true });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      releaseToNvidia(previousLocalOllamaRoute, harness.deps);
+
+      expect(harness.unloadOllamaModels).not.toHaveBeenCalled();
+      expect(harness.localInference.persistPendingOllamaModelCleanup).toHaveBeenCalledWith(
+        previousLocalOllamaRoute,
+        ["qwen2.5:1.5b"],
+      );
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("sandboxes.json is missing"));
+    } finally {
+      warning.mockRestore();
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("uses the injected phase capture for cross-gateway discovery", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-default-discovery-"));
     vi.stubEnv("HOME", home);
@@ -355,6 +380,43 @@ describe("releaseSupersededOllamaModel", () => {
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
         }),
         ["qwen2.5:1.5b"],
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("records the old model when identity changes after the new route commits", () => {
+    const harness = createOllamaCleanupHarness();
+    const refusal = new Error("sandbox lifecycle changed");
+    const attempt = () =>
+      releaseSupersededOllamaModel(
+        previousLocalOllamaRoute,
+        "nvidia-prod",
+        "nvidia/test-model",
+        "https://integrate.api.nvidia.com/v1",
+        { ok: true },
+        harness.deps,
+        () => {
+          throw refusal;
+        },
+      );
+
+    expect(attempt).toThrow(refusal);
+    expect(harness.unloadOllamaModels).not.toHaveBeenCalled();
+    expect(harness.localInference.persistPendingOllamaModelCleanup).toHaveBeenCalledExactlyOnceWith(
+      previousLocalOllamaRoute,
+      ["qwen2.5:1.5b"],
+    );
+    harness.localInference.persistPendingOllamaModelCleanup.mockImplementation(() => {
+      throw new Error("receipt write failed");
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(attempt).toThrow(refusal);
+      expect(harness.unloadOllamaModels).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining("Cleanup retry state could not be recorded"),
       );
     } finally {
       warning.mockRestore();
