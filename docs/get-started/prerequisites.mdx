@@ -54,8 +54,9 @@ Managed llama.cpp and Windows-host Ollama remain Docker Desktop-only on WSL. Man
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
-The native Linux Ollama install path also needs outbound HTTPS to `ollama.com` (for the release tarball used by the user-local path) and to `raw.githubusercontent.com` (for the pinned official installer used by the system path).
-If either host cannot be reached, onboarding reports which host failed and stops; allow the host in your firewall or proxy, then rerun onboarding.
+The native Linux Ollama system install needs outbound HTTPS to `raw.githubusercontent.com` for the pinned installer and `ollama.com` for the release tarball.
+The user-local install needs `ollama.com` for the release tarball.
+If a download fails, check the error for the failed host, allow it through your firewall or proxy, then rerun onboarding.
 
 <Warning title="Docker Group Access (Default Docker Path)">
 The default Docker runtime path needs Docker access.

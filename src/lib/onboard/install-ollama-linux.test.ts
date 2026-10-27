@@ -500,7 +500,7 @@ describe("installOllamaOnLinux (system)", () => {
     expect(message).toContain("Failed to connect to raw.githubusercontent.com port 443");
     expect(message).toContain("Allow outbound HTTPS to raw.githubusercontent.com");
     expect(message).toContain("export HTTPS_PROXY to a working proxy");
-    expect(message).toMatch(new RegExp(`curl -fsSI "${OFFICIAL_OLLAMA_INSTALLER_URL}"`));
+    expect(message).toContain(`curl -fsSI "${OFFICIAL_OLLAMA_INSTALLER_URL}"`);
     expect(message).toContain("rerun nemoclaw onboard");
   });
 
