@@ -102,7 +102,7 @@ describe("Hermes restart disclosure evidence", () => {
         ["mi-act-hermes", "gateway", "restart", "--quiet"],
         expect.objectContaining({ forbiddenOutputValues: ["SENTINEL_MANAGED_RESTART_RAW_SECRET"] }),
       );
-      expect(nemoclaw.mock.calls.some(([args]) => args[1] === "stop")).toBe(stopExpected);
+      expect(nemoclaw.mock.calls.some(([args]) => args?.[1] === "stop")).toBe(stopExpected);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
