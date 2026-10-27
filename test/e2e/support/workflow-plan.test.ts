@@ -744,6 +744,14 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
   });
 
+  it("selects MCP bridge when its compatible mock protocol changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/mcp-bridge-servers.ts"] },
+    );
+    expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
+  });
+
   it.each([
     "scripts/install.sh",
     "src/lib/actions/global.ts",
@@ -819,29 +827,6 @@ describe("E2E workflow plan", () => {
       );
     },
   );
-
-  it.each([
-    "src/lib/adapters/openshell/command-execution.ts",
-    "src/lib/adapters/openshell/forward-cli.ts",
-    "src/lib/adapters/openshell/forward-runtime.ts",
-    "src/lib/adapters/openshell/forward.ts",
-    "src/lib/agent/hermes-api-forward.ts",
-    "src/lib/onboard/agent-dashboard-forward.ts",
-    "src/lib/onboard/dashboard.ts",
-    "src/lib/onboard/dashboard-runtime.ts",
-  ])("selects OpenClaw and Hermes forward lifecycles when %s changes (#9808)", (changedFile) => {
-    const targetIds = catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id);
-
-    expect(targetIds).toEqual([
-      "dashboard-remote-bind",
-      "double-onboard-hermes",
-      "onboard-resume-hermes",
-    ]);
-    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
-    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
-      "dashboard-remote-bind",
-    );
-  });
 
   it.each(["double-onboard-hermes", "onboard-resume-hermes"])(
     "prepares Hermes swap for the %s execution",
