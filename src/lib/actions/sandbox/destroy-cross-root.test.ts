@@ -162,6 +162,13 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
     expect(harness.runOwningRegistryWorkerSpy).not.toHaveBeenCalled();
     expect(harness.executeSandboxDestroySpy).not.toHaveBeenCalled();
     expect(registeredNames(registryFile)).toEqual(["alpha"]);
+    expect(harness.recordTelemetryTargetSpy).toHaveBeenCalledExactlyOnceWith({
+      scope: "sandbox",
+      sandboxName: "alpha",
+      gatewayName: `nemoclaw-${String(SIBLING_PORT)}`,
+      outcome: "cancelled",
+      state: "unchanged",
+    });
   });
 
   it("asks the final gateway question before the worker destroys the last sandbox in its owning root", async () => {
@@ -217,6 +224,56 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
     );
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(3)");
+  });
+
+  it("records one partial completion for the owning gateway when a delegated worker fails after mutation", async () => {
+    writeSiblingRegistry(["alpha"]);
+    const harness = createDestroyHarness({
+      managedAgentStateVolumeCleanupResults: [
+        {
+          status: "failed",
+          volumeName: "nemoclaw-openclaw-alpha",
+          detail: "volume in use",
+        },
+      ],
+    });
+    harness.runOwningRegistryWorkerSpy.mockImplementationOnce(async (input, gatewayPort) => {
+      expect(input.operation).toBe("destroy");
+      try {
+        await harness.destroySandboxInSelectedRoot(
+          input.sandboxName,
+          input.options as Parameters<typeof harness.destroySandboxInSelectedRoot>[1],
+        );
+      } catch (error) {
+        const exitCode = harness.sandboxDestroyExitCode(error);
+        throw new Error(`Delegated destroy exited with status ${String(exitCode)}.`, {
+          cause: {
+            ok: false,
+            operation: "destroy",
+            sandboxName: input.sandboxName,
+            gatewayPort,
+            ...(exitCode === undefined ? {} : { exitCode }),
+          },
+        });
+      }
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.recordDestroyCompletionSpy).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "failed",
+      1,
+      `nemoclaw-${String(SIBLING_PORT)}`,
+      true,
+    );
+    expect(harness.recordTelemetryTargetSpy).toHaveBeenCalledExactlyOnceWith({
+      scope: "sandbox",
+      sandboxName: "alpha",
+      gatewayName: `nemoclaw-${String(SIBLING_PORT)}`,
+      outcome: "failed",
+      state: "partial",
+    });
   });
 
   it("reports a worker failure that carries no destroy exit status", async () => {
@@ -283,7 +340,7 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
       (stateDir: string) => {
         fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
       },
-      /managed gateway state root marker and legacy managed configuration are both missing/,
+      /Unsafe OpenShell gateway state directory:.*managed gateway state root marker and legacy managed configuration are both missing/,
     ],
     [
       "a managed-root marker for another gateway",
@@ -294,7 +351,7 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
           stateDir,
         });
       },
-      /does not identify the selected gateway and directory/,
+      /Unsafe OpenShell gateway state directory:.*does not identify the selected gateway and directory/,
     ],
     [
       "an unsafe managed-root marker mode",
@@ -306,11 +363,12 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
         });
         fs.chmodSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER), 0o644);
       },
-      /not a private owned regular file/,
+      /Unsafe OpenShell gateway state directory:.*not a private owned regular file/,
     ],
   ])(
     "rejects a sibling-root destroy before starting the worker when openshellGatewayStateDir has %s",
     async (_caseLabel, prepareStateDir, expectedError) => {
+      vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "0");
       const stateRootParent = fs.mkdtempSync(
         path.join(process.cwd(), "nemoclaw-destroy-untrusted-gateway-state-"),
       );
@@ -320,7 +378,7 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
         writeSiblingRegistry(["alpha"], { openshellGatewayStateDir: owningStateDir });
         const harness = createDestroyHarness();
 
-        await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(expectedError);
+        await expect(harness.destroySandbox("alpha")).rejects.toThrow(expectedError);
 
         expect(harness.promptSpy).not.toHaveBeenCalled();
         expect(harness.runOwningRegistryWorkerSpy).not.toHaveBeenCalled();

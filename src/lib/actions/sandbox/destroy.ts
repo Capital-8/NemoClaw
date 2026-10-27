@@ -59,6 +59,7 @@ import {
 } from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
+  finishTelemetryOperation,
   recordDestroyCompletion,
   retireDestroyedSandboxNativeLocalProvider,
   preparePortableDemoSandboxDestroyAuthority,
@@ -85,15 +86,18 @@ import {
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
   delegateSandboxDestroyToOwningRoot,
+  isDelegatedDestroyWorkerFailure,
   isOnlyPublishedSandbox,
   prepareSandboxDestroy,
   reconcileIdentityFreeRecovery,
   recordManagedVllmRetirementPending,
   reportManagedVllmDestroyOutcome,
+  resolveDelegatedDestroyGatewayName,
   resolveSandboxDestroyRegistryAuthority,
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
   retireManagedVllmForDestroyedSandbox,
+  type SandboxDestroyDelegation,
   listInferenceRouteOwnersAcrossGatewayRoots,
   stopModelRouterForDestroyedSandbox,
   stopDestroyedSandboxProxy,
@@ -726,28 +730,41 @@ export async function destroySandbox(
     finalGatewayCleanup?: FinalDestroyGatewayCleanupDeps;
   } = {},
 ): Promise<void> {
-  const telemetryTarget: { gatewayName?: string; mutationStarted?: boolean } = {};
+  const normalized = normalizeDestroySandboxOptions(options);
+  let delegation: SandboxDestroyDelegation;
   try {
-    const normalized = normalizeDestroySandboxOptions(options);
-    const delegation = await delegateSandboxDestroyToOwningRoot(
+    delegation = await delegateSandboxDestroyToOwningRoot(
       sandboxName,
       normalized,
       (requested) => confirmDelegatedSandboxDestroy(sandboxName, requested),
       CLI_NAME,
     );
-    if (delegation.delegated) {
-      if (delegation.exitCode !== null) requestSandboxDestroyExit(delegation.exitCode);
+  } catch (error) {
+    if (!isDelegatedDestroyWorkerFailure(error)) {
+      await recordDestroyCompletion(
+        sandboxName,
+        "failed",
+        undefined,
+        resolveDelegatedDestroyGatewayName(sandboxName),
+        false,
+      );
+    }
+    throw error;
+  }
+  if (delegation.delegated) {
+    if (delegation.cancelled) {
+      await recordDestroyCompletion(sandboxName, "cancelled", undefined, delegation.gatewayName);
       return;
     }
-    return await destroySandboxInSelectedRoot(sandboxName, normalized, deps, telemetryTarget);
+    if (delegation.exitCode !== null) {
+      await finishTelemetryOperation(delegation.exitCode);
+      process.exit(delegation.exitCode);
+    }
+    return;
+  }
+  try {
+    await destroySandboxInSelectedRoot(sandboxName, normalized, deps);
   } catch (error) {
-    await recordDestroyCompletion(
-      sandboxName,
-      "failed",
-      error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
-      telemetryTarget.gatewayName,
-      telemetryTarget.mutationStarted === true,
-    );
     if (error instanceof SandboxDestroyExitRequest) {
       process.exit(error.exitCode);
     }
@@ -767,19 +784,33 @@ export async function destroySandboxInSelectedRoot(
   } = {},
   telemetryTarget: { gatewayName?: string; mutationStarted?: boolean } = {},
 ): Promise<void> {
-  return withSandboxLifecycleLock(sandboxName, () => {
-    const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
-      allowStateRecord: true,
+  try {
+    return await withSandboxLifecycleLock(sandboxName, () => {
+      const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
+        sandboxName,
+        {
+          allowStateRecord: true,
+        },
+      );
+      assertSandboxDestroyCommandAvailable(sandboxName);
+      return destroySandboxUnlocked(
+        sandboxName,
+        options,
+        removedImmutabilityMigration.stateRecord !== null,
+        deps,
+        telemetryTarget,
+      );
     });
-    assertSandboxDestroyCommandAvailable(sandboxName);
-    return destroySandboxUnlocked(
+  } catch (error) {
+    await recordDestroyCompletion(
       sandboxName,
-      options,
-      removedImmutabilityMigration.stateRecord !== null,
-      deps,
-      telemetryTarget,
+      "failed",
+      error instanceof SandboxDestroyExitRequest ? error.exitCode : undefined,
+      telemetryTarget.gatewayName,
+      telemetryTarget.mutationStarted === true,
     );
-  });
+    throw error;
+  }
 }
 
 async function destroySandboxUnlocked(

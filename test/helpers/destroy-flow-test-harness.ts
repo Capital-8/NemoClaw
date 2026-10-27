@@ -15,6 +15,8 @@ import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/r
 type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
 type DestroySandboxInSelectedRoot =
   (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandboxInSelectedRoot"];
+type SandboxDestroyExitCode =
+  (typeof import("../../src/lib/actions/sandbox/destroy"))["sandboxDestroyExitCode"];
 type OwningRegistryModule = typeof import("../../src/lib/actions/sandbox/rebuild/owning-registry");
 
 const requireSource = createRequire(
@@ -31,8 +33,11 @@ export type DestroyHarness = {
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
   destroySandboxInSelectedRoot: DestroySandboxInSelectedRoot;
+  sandboxDestroyExitCode: SandboxDestroyExitCode;
   owningRegistryDependencies: OwningRegistryModule["rebuildOwningRegistryDependencies"];
   runOwningRegistryWorkerSpy: MockInstance;
+  recordDestroyCompletionSpy: MockInstance;
+  recordTelemetryTargetSpy: MockInstance;
   prepareSandboxDestroy: typeof import("../../src/lib/actions/sandbox/destroy-preflight").prepareSandboxDestroy;
   dockerCaptureSpy: MockInstance;
   dockerRunSpy: MockInstance;
@@ -296,6 +301,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     return removeExactDockerContainers(...args);
   });
   const destroyExecution = requireSource("./destroy-execution.js");
+  const telemetryOperation = requireSource("../telemetry/operation.js");
+  const recordDestroyCompletionSpy = vi.spyOn(destroyExecution, "recordDestroyCompletion");
+  const recordTelemetryTargetSpy = vi.spyOn(telemetryOperation, "recordTelemetryTarget");
   const forwardRecovery = requireSource("./forward-recovery.js");
   vi.spyOn(forwardRecovery, "teardownSandboxDashboardForward").mockResolvedValue(true);
   const owningRegistry = requireSource("./rebuild/owning-registry.js") as OwningRegistryModule;
@@ -792,8 +800,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
           sleep: finalGatewaySleepSpy,
         },
       }),
+    sandboxDestroyExitCode: (error) =>
+      requireSource(destroyModulePath).sandboxDestroyExitCode(error),
     owningRegistryDependencies: owningRegistry.rebuildOwningRegistryDependencies,
     runOwningRegistryWorkerSpy,
+    recordDestroyCompletionSpy,
+    recordTelemetryTargetSpy,
     prepareSandboxDestroy: requireSource("./destroy-preflight.js").prepareSandboxDestroy,
     errorSpy,
     events,

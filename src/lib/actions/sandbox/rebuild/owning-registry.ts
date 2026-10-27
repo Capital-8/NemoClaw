@@ -687,3 +687,11 @@ export function delegatedDestroyExitCode(error: unknown): number | undefined {
   const { operation, exitCode } = result as Partial<OwningRegistryWorkerResult>;
   return operation === "destroy" && typeof exitCode === "number" ? exitCode : undefined;
 }
+
+/** Report whether an error came from a delegated destroy worker that already ran. */
+export function isDelegatedDestroyWorkerFailure(error: unknown): boolean {
+  const result = error instanceof Error ? error.cause : undefined;
+  if (typeof result !== "object" || result === null) return false;
+  const { ok, operation } = result as Partial<OwningRegistryWorkerResult>;
+  return ok === false && operation === "destroy";
+}

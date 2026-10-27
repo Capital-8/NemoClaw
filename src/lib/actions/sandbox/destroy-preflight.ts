@@ -58,7 +58,10 @@ import {
 import {
   delegatedDestroyExitCode,
   delegateDestroyToOwningRegistry,
+  isDelegatedDestroyWorkerFailure,
 } from "./rebuild/owning-registry";
+
+export { isDelegatedDestroyWorkerFailure };
 
 export { teardownSandboxDashboardForward } from "./forward-recovery";
 import {
@@ -199,7 +202,25 @@ export function isOnlyPublishedSandbox(sandboxName: string): boolean {
 
 export type SandboxDestroyDelegation =
   | Readonly<{ delegated: false }>
-  | Readonly<{ delegated: true; exitCode: number | null }>;
+  | Readonly<{
+      delegated: true;
+      cancelled: boolean;
+      exitCode: number | null;
+      gatewayName?: string;
+    }>;
+
+/** Resolve the owning gateway name for a sandbox registered in any gateway state root. */
+export function resolveDelegatedDestroyGatewayName(
+  sandboxName: string,
+  home = resolveDestroyHomeDir({}),
+): string | undefined {
+  try {
+    const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
+    return hit ? resolveSandboxDestroyGatewayName(sandboxName, hit.entry) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Hand a sandbox that another gateway state root owns to a worker bound to
@@ -213,19 +234,38 @@ export async function delegateSandboxDestroyToOwningRoot(
   confirm: (options: DestroySandboxOptions) => Promise<DestroySandboxOptions | null>,
   cliName: string,
 ): Promise<SandboxDestroyDelegation> {
+  const home = resolveDestroyHomeDir({});
+  const gatewayName = resolveDelegatedDestroyGatewayName(sandboxName, home);
+  let cancelled = false;
   try {
     const delegated = await delegateDestroyToOwningRegistry(
       { sandboxName, options },
-      resolveDestroyHomeDir({}),
+      home,
       registry.REGISTRY_FILE,
-      confirm,
+      async (requested) => {
+        const confirmed = await confirm(requested);
+        if (!confirmed) cancelled = true;
+        return confirmed;
+      },
       cliName,
     );
-    return delegated ? { delegated: true, exitCode: null } : { delegated: false };
+    return delegated
+      ? {
+          delegated: true,
+          cancelled,
+          exitCode: null,
+          ...(gatewayName ? { gatewayName } : {}),
+        }
+      : { delegated: false };
   } catch (error) {
     const exitCode = delegatedDestroyExitCode(error);
     if (exitCode === undefined) throw error;
-    return { delegated: true, exitCode };
+    return {
+      delegated: true,
+      cancelled: false,
+      exitCode,
+      ...(gatewayName ? { gatewayName } : {}),
+    };
   }
 }
 
