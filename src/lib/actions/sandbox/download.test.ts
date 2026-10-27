@@ -541,6 +541,48 @@ describe("downloadFromSandbox", () => {
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 
+  it("publishes an allowlisted credential-free recovery artifact when a legacy Shields record exists", async () => {
+    vi.restoreAllMocks();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-shields-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+    let stagedDestination = "";
+    try {
+      fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+      runMock.mockImplementation(async ({ destination }: { destination: string }) => {
+        stagedDestination = destination;
+        fs.writeFileSync(destination, "# Agent Workspace\n\nSafe workspace instructions.\n");
+        return {
+          outcome: { kind: "completed", exitCode: 0 },
+          release: vi.fn(),
+          wasInterrupted: () => false,
+        };
+      });
+      const hostDest = path.join(root, "out");
+
+      const result = await downloadFromSandbox({
+        sandboxName: "alpha",
+        sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+        hostDest,
+      });
+
+      expect(runMock).toHaveBeenCalledWith({
+        direction: "download",
+        sandboxName: "alpha",
+        target: { kind: "selected" },
+        source: "/sandbox/.openclaw/workspace/SOUL.md",
+        destination: stagedDestination,
+      });
+      expect(publishMock).toHaveBeenCalledWith(stagedDestination, hostDest, "file");
+      expect(result).toEqual({
+        sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+        hostDest,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects credential-bearing source paths and content when a legacy Shields record exists", async () => {
     vi.restoreAllMocks();
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-shields-"));
