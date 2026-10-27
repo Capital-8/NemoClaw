@@ -1191,14 +1191,14 @@ describe("backupAll", () => {
     process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP = "1";
     process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
 
     await expect(backupAll()).rejects.toThrow("exit:1");
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errors = errorSpy.mock.calls.flat().join("\n");
+    expect(errors).toMatch(/cannot skip these sandboxes[\s\S]*applies only to a standalone/);
   });
 
   it.each([
