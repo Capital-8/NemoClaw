@@ -9,10 +9,6 @@
 //! Inject only 401, 403, 500 or a dropped connection: the kube client retries
 //! 429, 503 and 504 for minutes.
 
-#![allow(
-    dead_code,
-    reason = "each test binary that includes this module uses a different subset of it"
-)]
 use crate::kube_api::{Objects, status};
 use crate::kube_client::client;
 use crate::transport::Fixture;
@@ -103,6 +99,10 @@ pub async fn serve(
 
 impl FaultServer {
     /// The `http://127.0.0.1:PORT` address to pass as `Operations::server`.
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "only the Unix-only recovery tests call it")
+    )]
     pub fn endpoint(&self) -> &str {
         &self.fixture.endpoint
     }
