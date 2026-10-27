@@ -28,6 +28,7 @@ import {
 import {
   GATEWAY_PORT,
   listHostGatewayRegistryEntries,
+  readGatewayRegistryFile,
   registryEntryGatewayPort,
 } from "../../state/gateway-registry";
 import type {
@@ -185,9 +186,15 @@ export function resolveSandboxDestroyRegistryAuthority(
   };
 }
 
-/** Report whether the named sandbox is the only published sandbox in every gateway state root. */
+/** Report whether the named sandbox is the only published sandbox in its owning gateway state root. */
 export function isOnlyPublishedSandbox(sandboxName: string): boolean {
-  return listPublishedSandboxesAcrossGatewayRoots().every((entry) => entry.name === sandboxName);
+  const home = resolveDestroyHomeDir({});
+  const hit = findSandboxAcrossGatewayRoots(sandboxName, home);
+  const owningRegistry = hit ? readGatewayRegistryFile(home, hit.registryFile) : null;
+  if (!owningRegistry) return false;
+  return Object.values(owningRegistry.sandboxes).every(
+    (entry) => entry.pendingRouteReservation === true || entry.name === sandboxName,
+  );
 }
 
 export type SandboxDestroyDelegation =

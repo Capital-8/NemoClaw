@@ -164,8 +164,27 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
     expect(registeredNames(registryFile)).toEqual(["alpha"]);
   });
 
-  it("asks the final gateway question before the worker destroys the last sandbox", async () => {
+  it("asks the final gateway question before the worker destroys the last sandbox in its owning root", async () => {
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "0");
+    const defaultRegistryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(defaultRegistryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(defaultRegistryDir, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "default-box",
+        defaultSelectionRevision: 1,
+        sandboxes: {
+          "default-box": {
+            name: "default-box",
+            agent: "openclaw",
+            provider: "ollama-local",
+            model: "nvidia/nemotron",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+          },
+        },
+      }),
+    );
     writeSiblingRegistry(["alpha"]);
     const harness = createDestroyHarness({ promptResponses: ["yes", "yes"] });
 
