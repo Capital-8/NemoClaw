@@ -33,7 +33,14 @@
     },
     {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "liveSources": [
+        "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts",
+        "test/e2e/fixtures/portable-registry-readiness.ts"
+      ],
       "fast": [
+        "src/lib/actions/sandbox/doctor-flow.test.ts",
+        "src/lib/onboard/machine/finalization-deps.test.ts",
+        "src/lib/onboard/machine/handlers/finalization.test.ts",
         "src/lib/onboard/experimental/hermes-portable-container.test.ts",
         "src/lib/onboard/experimental/hermes-portable-lifecycle.test.ts",
         "src/lib/onboard/command.test.ts",
@@ -41,6 +48,7 @@
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
         "src/lib/onboard/sandbox-prebuild.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
+        "test/e2e/support/portable-registry-readiness.test.ts",
         "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
       ]
     },
@@ -83,7 +91,10 @@
     },
     {
       "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
-      "liveSources": ["test/e2e/live/managed-image-protected-runtime-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/managed-image-protected-runtime-helpers.ts",
+        "test/e2e/live/managed-image-protected-runtime-budget.ts"
+      ],
       "fast": [
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
@@ -91,7 +102,8 @@
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
         "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
         "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts"
+        "test/automation/pull-requests/pr-risk-plan.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-budget.test.ts"
       ]
     },
     {
@@ -298,6 +310,7 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/install/installer-hash-check.test.ts",
@@ -573,6 +586,7 @@
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
         "src/lib/actions/maintenance.test.ts",
+        "src/lib/actions/uninstall/all-gateway-ports.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -589,6 +603,7 @@
       "live": "test/e2e/live/double-onboard.test.ts",
       "fast": [
         "test/cli/sandbox-status-text.test.ts",
+        "src/lib/actions/uninstall/run-plan-agent-state-volume.test.ts",
         "src/lib/onboard/created-sandbox-finalization.test.ts",
         "src/lib/onboard/gateway-reuse.test.ts",
         "src/lib/onboard/machine/core-flow-phases.test.ts",
@@ -602,9 +617,11 @@
     },
     {
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
+      "liveSources": ["test/e2e/fixtures/native-local-chat.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
@@ -612,7 +629,8 @@
       "live": "test/e2e/live/gpu-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/gpu-e2e-helpers.ts",
-        "test/e2e/live/hermes-cli-adapter-live.ts"
+        "test/e2e/live/hermes-cli-adapter-live.ts",
+        "test/e2e/fixtures/native-local-chat.ts"
       ],
       "fast": [
         "src/lib/adapters/config/live-export-source-ollama.test.ts",
@@ -654,7 +672,8 @@
         "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/hermes-config-export-live.test.ts"
+        "test/e2e/support/hermes-config-export-live.test.ts",
+        "test/e2e/support/hermes-discord-rebuild-contract.test.ts"
       ]
     },
     {
@@ -689,6 +708,8 @@
         "test/e2e/live/public-nvidia-switch-provider.ts"
       ],
       "fast": [
+        "src/lib/onboard/hermes/initial-inference-route.test.ts",
+        "test/agents/hermes/hermes-nvidia-restore-validation.test.ts",
         "test/e2e/support/hermes-native-local-evidence.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/hermes-inference-switch-command-shape.test.ts",
@@ -697,7 +718,8 @@
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/host-container-discovery.test.ts"
+        "test/e2e/support/host-container-discovery.test.ts",
+        "test/e2e/support/hermes-discord-rebuild-contract.test.ts"
       ]
     },
     {
@@ -869,7 +891,8 @@
         "test/e2e/fixtures/admin-approval-connect.ts",
         "test/e2e/fixtures/admin-approval-connect.sh",
         "test/e2e/fixtures/issue-4462-admin-approval-evidence.ts",
-        "test/e2e/fixtures/managed-image-receipt.ts"
+        "test/e2e/fixtures/managed-image-receipt.ts",
+        "test/e2e/fixtures/native-local-ipv6-evidence.ts"
       ],
       "fast": [
         "src/lib/inference/native-local.test.ts",
@@ -890,7 +913,8 @@
         "test/e2e/support/openclaw-inference-switch-helpers.test.ts",
         "test/e2e/support/public-nvidia-switch-provider.test.ts",
         "test/security/admin-approval-helper.test.ts",
-        "test/e2e/support/hosted-inference.test.ts"
+        "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/native-local-ipv6-evidence.test.ts"
       ]
     },
     {

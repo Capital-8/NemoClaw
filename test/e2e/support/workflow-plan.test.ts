@@ -696,6 +696,19 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each<[string, string[]]>([
+    ["test/e2e/fixtures/native-local-chat.ts", ["gpu-double-onboard", "gpu-e2e"]],
+    [
+      "src/lib/actions/sandbox/inference-invocation-probe.ts",
+      ["inference-routing-openclaw-native"],
+    ],
+    ["src/lib/actions/sandbox/inference-route-health.ts", ["inference-routing-openclaw-native"]],
+  ])("selects the live owners of %s", (changedFile, targets) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual(
+      expect.arrayContaining(targets),
+    );
+  });
+
   it("selects Hermes GPU startup when its output proof changes", () => {
     const plan = buildE2eWorkflowPlan(
       {},
@@ -727,6 +740,14 @@ describe("E2E workflow plan", () => {
     );
     expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
       "rebuild-openclaw",
+    );
+    expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
+  });
+
+  it("selects MCP bridge when its compatible mock protocol changes", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/mcp-bridge-servers.ts"] },
     );
     expect(selectedWorkflowJobs(plan)).toContain("mcp-bridge");
   });

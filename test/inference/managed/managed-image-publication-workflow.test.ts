@@ -355,7 +355,7 @@ describe("complete managed-image publication workflow", () => {
     const setupNode = step(builder, "Set up Node.js", "base-image platform workflow");
     expect(setupNode).toMatchObject({
       uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-      with: { "node-version": "24.18.1" },
+      with: { "node-version": "24.22.1" },
     });
     const platformBuild = step(
       builder,
@@ -584,6 +584,7 @@ describe("complete managed-image publication workflow", () => {
     expect(contractUpload.with).toMatchObject({
       name: "managed-pr-contract-${{ matrix.arch == 'arm64' && 'arm64-' || '' }}${{ github.run_id }}-${{ matrix.agent }}",
       overwrite: true,
+      "retention-days": 7,
     });
     expect(
       step(managedPrActivation(workflow), "Download exact published all-agent contracts").with
