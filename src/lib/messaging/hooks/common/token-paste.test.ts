@@ -103,10 +103,14 @@ describe("common token-paste hook implementation", () => {
     ]);
 
     await expect(
-      runMessagingHook(discordManifest.hooks[1]!, registry, {
-        channelId: "discord",
-        isInteractive: false,
-      }),
+      runMessagingHook(
+        discordManifest.hooks.find((hook) => hook.handler === COMMON_TOKEN_PASTE_HOOK_HANDLER_ID)!,
+        registry,
+        {
+          channelId: "discord",
+          isInteractive: false,
+        },
+      ),
     ).rejects.toThrow("Invalid token format for DISCORD_BOT_TOKEN");
     expect(logs).toContain(
       "  ✗ Invalid format. Replace the documentation placeholder with your real Discord bot token.",

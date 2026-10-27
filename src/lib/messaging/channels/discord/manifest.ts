@@ -229,6 +229,20 @@ export const discordManifest = {
   ],
   hooks: [
     {
+      id: "discord-hermes-status-health",
+      phase: "status",
+      handler: "discord.statusHealth",
+      agents: ["hermes"],
+      outputs: [{ id: "channelHealth", kind: "status" }],
+    },
+    {
+      id: "discord-authentication",
+      phase: "reachability-check",
+      handler: "discord.authentication",
+      inputs: ["botToken"],
+      onFailure: "skip-channel",
+    },
+    {
       id: "discord-openclaw-bridge-health",
       phase: "health-check",
       handler: "discord.openclawBridgeHealth",

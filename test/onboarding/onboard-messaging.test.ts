@@ -1623,12 +1623,12 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it(
-    "non-interactive setupMessagingChannels excludes the Discord placeholder before channel setup (#10668)",
+  it.for(["<your-discord-bot-token>", "invalid-token-for-test"])(
+    "excludes rejected Discord input %s before non-interactive channel setup (#13809)",
     {
       timeout: 60_000,
     },
-    async (context) => {
+    async (token, context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-noninteractive-"),
       );
@@ -1651,18 +1651,18 @@ runner.run = (command) => {
   return { status: 0 };
 };
 runner.runCapture = () => "";
-global.fetch = async () => ({
+global.fetch = async (url) => String(url) === "https://discord.com/api/v10/users/@me"
+  ? new Response("Unauthorized", { status: 401 }) : ({
   ok: true,
   status: 200,
   json: async () => ({ ok: true, result: { id: 1, is_bot: true } }),
   text: async () => "",
 });
-
 const { setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
-  process.env.DISCORD_BOT_TOKEN = "<your-discord-bot-token>";
+  process.env.DISCORD_BOT_TOKEN = ${JSON.stringify(token)};
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";

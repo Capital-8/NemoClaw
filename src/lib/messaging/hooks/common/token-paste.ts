@@ -231,11 +231,7 @@ function logTokenStatus(
 ): void {
   const log = options.log ?? ((message: string) => console.log(message));
   if (source === "existing") {
-    log(
-      output.id === "botToken"
-        ? `  ✓ ${channelId} — already configured`
-        : `  ✓ ${channelId} ${tokenNoun(output)} — already configured`,
-    );
+    log(`  ✓ ${channelId} ${tokenNoun(output)} available from the environment or credential store`);
     return;
   }
   log(`  ✓ ${channelId} ${tokenNoun(output)} saved`);

@@ -44,7 +44,10 @@ export function createBuiltInMessagingHookRegistrations(
   return [
     ...createCommonHookRegistrations(options.common),
     ...createDiscordHookRegistrations(
-      withOpenClawBridgeHealthOptions(options.discord, options.openclawBridgeHealth),
+      withStatusHealthOptions(
+        withOpenClawBridgeHealthOptions(options.discord, options.openclawBridgeHealth),
+        options.statusHealth,
+      ),
     ),
     ...createGooglechatHookRegistrations(options.googlechat),
     ...createSlackHookRegistrations(
