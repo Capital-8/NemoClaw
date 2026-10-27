@@ -112,11 +112,24 @@ const REBUILD_ENV_NAMES = [
 ] as const;
 
 function parseCertificates(pem: Buffer, label: string): X509Certificate[] {
-  const blocks = pem
-    .toString("utf8")
-    .match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/gu);
-  if (!blocks?.length) throw new Error(`${label} has no PEM certificate`);
-  return blocks.map((block) => new X509Certificate(block));
+  const source = pem.toString("utf8");
+  const begins = [...source.matchAll(/-----BEGIN ([^\r\n]*?CERTIFICATE)-----/gu)];
+  const ends = [...source.matchAll(/-----END ([^\r\n]*?CERTIFICATE)-----/gu)];
+  if (begins.length === 0) throw new Error(`${label} has no PEM certificate`);
+  if (begins.length !== ends.length) throw new Error(`${label} has malformed PEM certificates`);
+  return begins.map((begin, index) => {
+    const end = ends[index];
+    const nextBegin = begins[index + 1];
+    if (
+      !["CERTIFICATE", "TRUSTED CERTIFICATE", "X509 CERTIFICATE"].includes(begin[1]) ||
+      end[1] !== begin[1] ||
+      end.index! < begin.index! ||
+      (nextBegin && end.index! > nextBegin.index!)
+    ) {
+      throw new Error(`${label} has malformed or unsupported PEM certificates`);
+    }
+    return new X509Certificate(source.slice(begin.index, end.index! + end[0].length));
+  });
 }
 
 function certificateValidityIssue(certificate: X509Certificate, label: string): string | null {

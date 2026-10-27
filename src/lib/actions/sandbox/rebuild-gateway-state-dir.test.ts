@@ -250,23 +250,58 @@ describe("rebuild gateway state directory preflight (#13330)", () => {
     }
   });
 
-  it("continues when the client certificate chains to a distinct gateway CA", async () => {
-    const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
-    const stateDir = sandboxGatewayStateDir();
-    replaceWithCaSignedClientPair(stateDir);
-    process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
-    try {
-      const harness = createRebuildFlowHarness();
+  it.each(["CERTIFICATE", "TRUSTED CERTIFICATE", "X509 CERTIFICATE"])(
+    "continues when the client certificate chains to a distinct gateway CA in %s PEM",
+    async (label) => {
+      const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+      const stateDir = sandboxGatewayStateDir();
+      replaceWithCaSignedClientPair(stateDir);
+      const caFile = path.join(stateDir, "tls", "ca.crt");
+      fs.writeFileSync(caFile, fs.readFileSync(caFile, "utf8").replaceAll("CERTIFICATE", label));
+      process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
+      try {
+        const harness = createRebuildFlowHarness();
 
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).resolves.toBeUndefined();
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).resolves.toBeUndefined();
 
-      expect(harness.onboardSpy).toHaveBeenCalledOnce();
-    } finally {
-      restoreEnv();
-    }
-  });
+        expect(harness.onboardSpy).toHaveBeenCalledOnce();
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
+
+  it.each(["unsupported", "mismatched"])(
+    "stops before delete when a valid CA bundle also has %s PEM material",
+    async (invalid) => {
+      const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
+      const stateDir = sandboxGatewayStateDir();
+      replaceWithCaSignedClientPair(stateDir);
+      const caFile = path.join(stateDir, "tls", "ca.crt");
+      const validPem = fs.readFileSync(caFile, "utf8");
+      const invalidPem =
+        invalid === "unsupported"
+          ? validPem.replaceAll("CERTIFICATE", "UNSUPPORTED CERTIFICATE")
+          : validPem.replace("BEGIN CERTIFICATE", "BEGIN TRUSTED CERTIFICATE");
+      fs.appendFileSync(caFile, invalidPem);
+      process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR = stateDir;
+      try {
+        const harness = createRebuildFlowHarness();
+
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).rejects.toThrow(/Configured OpenShell gateway state directory is unusable/u);
+
+        expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+        expectNoSandboxDelete(harness.runOpenshellSpy);
+        expect(harness.onboardSpy).not.toHaveBeenCalled();
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
 
   it("continues when the CA bundle includes an unrelated expired rollover certificate", async () => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR"]);
