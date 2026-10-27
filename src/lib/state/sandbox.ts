@@ -1875,6 +1875,46 @@ function readRawTarArchiveEntriesFromPath(
   }
 }
 
+const BSD_TAR_LISTING_ESCAPES = new Map<number, number>([
+  [0x5c, 0x5c], // \\
+  [0x61, 0x07], // alert
+  [0x62, 0x08], // backspace
+  [0x66, 0x0c], // form feed
+  [0x6e, 0x0a], // line feed
+  [0x72, 0x0d], // carriage return
+  [0x74, 0x09], // tab
+  [0x76, 0x0b], // vertical tab
+]);
+
+/** Decode only bsdtar's documented listing escapes; reject partial or unknown escapes. */
+function decodeBsdtarListingBytes(listedName: string): Buffer | null {
+  const source = Buffer.from(listedName, "utf8");
+  const decoded = Buffer.allocUnsafe(source.length);
+  let output = 0;
+  for (let index = 0; index < source.length; index++) {
+    let byte = source[index]!;
+    if (byte === 0x5c) {
+      index++;
+      if (index >= source.length) return null;
+      const escaped = source[index]!;
+      const simple = BSD_TAR_LISTING_ESCAPES.get(escaped);
+      if (simple !== undefined) {
+        byte = simple;
+      } else {
+        if (escaped < 0x30 || escaped > 0x37 || index + 2 >= source.length) return null;
+        const middle = source[index + 1]!;
+        const last = source[index + 2]!;
+        if (middle < 0x30 || middle > 0x37 || last < 0x30 || last > 0x37) return null;
+        byte = (escaped - 0x30) * 64 + (middle - 0x30) * 8 + last - 0x30;
+        if (byte > 0xff) return null;
+        index += 2;
+      }
+    }
+    decoded[output++] = byte;
+  }
+  return decoded.subarray(0, output);
+}
+
 function nativeTarInventoriesMatch(
   rawEntries: readonly string[] | null,
   listedEntries: readonly string[],
@@ -1883,10 +1923,12 @@ function nativeTarInventoriesMatch(
   if (rawEntries === null || nameFormat === null || rawEntries.length !== listedEntries.length) {
     return false;
   }
-  return rawEntries.every(
-    (entry, index) =>
-      listedEntries[index] === (nameFormat === "literal" ? entry : entry.replaceAll("\\", "\\\\")),
-  );
+  return rawEntries.every((entry, index) => {
+    const listed = listedEntries[index]!;
+    return nameFormat === "literal"
+      ? listed === entry
+      : (decodeBsdtarListingBytes(listed)?.equals(Buffer.from(entry, "utf8")) ?? false);
+  });
 }
 
 function stageDescriptorArchiveCopy(

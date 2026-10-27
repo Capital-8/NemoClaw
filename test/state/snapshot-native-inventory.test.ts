@@ -189,3 +189,81 @@ process.stdout.write("./\\n./payload.txt\\n");
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 });
+
+it.each(["tab", "utf8", "unknown-escape", "short-octal", "overflow-octal"] as const)(
+  "checks bsdtar fallback listing bytes for %s names",
+  (mode) => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bsdtar-inventory-"));
+    const oldPath = process.env.PATH;
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const binDir = path.join(fixture, "bin");
+      fs.mkdirSync(nativeRoot);
+      fs.mkdirSync(binDir);
+      const requestedName = mode === "utf8" ? "Résumé.md" : "notes\tdraft.txt";
+      fs.writeFileSync(path.join(nativeRoot, requestedName), "payload");
+      const actualName = fs.readdirSync(nativeRoot)[0]!;
+      const octalName = Array.from(Buffer.from(actualName, "utf8"), (byte) =>
+        byte >= 0x80 ? `\\${byte.toString(8).padStart(3, "0")}` : String.fromCharCode(byte),
+      ).join("");
+      const listedName =
+        mode === "utf8"
+          ? octalName
+          : mode === "unknown-escape"
+            ? "notes\\qdraft.txt"
+            : mode === "short-octal"
+              ? "notes\\12draft.txt"
+              : mode === "overflow-octal"
+                ? "notes\\400draft.txt"
+                : actualName.replaceAll("\t", "\\t");
+      const systemTar = spawnSync("sh", ["-c", "command -v tar"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(systemTar).not.toBe("");
+      writeExecutable(
+        path.join(binDir, "tar"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+const input = fs.readFileSync(0);
+if (args.includes("--quoting-style=literal")) {
+  process.stderr.write("tar: --quoting-style=literal unsupported\\n");
+  process.exit(1);
+}
+if (args.includes("-tf")) {
+  process.stdout.write(${JSON.stringify(`./\n./${listedName}\n`)});
+  process.exit(0);
+}
+const result = spawnSync(${JSON.stringify(systemTar)}, args, {
+  input, env: { ...process.env, COPYFILE_DISABLE: "1" },
+});
+process.stdout.write(result.stdout);
+process.stderr.write(result.stderr);
+process.exit(result.status ?? 1);
+`,
+      );
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      const key = `bsdtar-${mode}`;
+      writeSnapshotRegistry(testHome, key);
+      const backup = sandboxState.backupSandboxState(key, {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+      expect(backup.success, backup.error).toBe(mode === "tab" || mode === "utf8");
+      backup.success
+        ? sandboxState.inspectNativeSandboxState(backup.manifest!.backupPath, (root: string) => {
+            expect(fs.readFileSync(path.join(root, actualName), "utf8")).toBe("payload");
+          })
+        : expect(backup.error).toContain("tar raw header inventory did not match archive listing");
+    } finally {
+      oldPath === undefined
+        ? Reflect.deleteProperty(process.env, "PATH")
+        : Reflect.set(process.env, "PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  },
+);
