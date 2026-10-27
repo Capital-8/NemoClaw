@@ -360,6 +360,7 @@ describe("removed immutability migration boundary", () => {
       isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.openclaw/credentials/tokens.json"),
     ).toBe(false);
     expect(isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.hermes/.env")).toBe(false);
+    expect(isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.hermes/state.db")).toBe(false);
     expect(isRemovedImmutabilityRecoveryDownloadPath("/sandbox/.deepagents/.state/auth.json")).toBe(
       false,
     );
@@ -441,7 +442,7 @@ describe("removed immutability migration boundary", () => {
     );
   });
 
-  it("rejects a recovery directory whose combined file size exceeds the inspection limit", () => {
+  it("allows a recovery directory whose files each fit the per-file inspection limit", () => {
     const memory = path.join(stateDir(), "memory");
     fs.mkdirSync(memory);
     const noteA = path.join(memory, "a.md");
@@ -457,6 +458,6 @@ describe("removed immutability migration boundary", () => {
         "/sandbox/.openclaw/workspace/memory",
         "alpha",
       ),
-    ).toThrow(/credential-bearing or uninspectable material/u);
+    ).not.toThrow();
   });
 });

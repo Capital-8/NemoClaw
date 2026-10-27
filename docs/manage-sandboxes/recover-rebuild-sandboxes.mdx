@@ -56,7 +56,7 @@ To replace the sandbox, complete these steps:
 
 1. Download each file or directory that you want to keep with `$$nemoclaw <sandbox-name> download <sandbox-path> <host-dir>`.
    While the legacy state record exists, `download` accepts only the `/sandbox/...` paths that the [manual transfer workflow](../state-and-backups/transfer-state-manually) lists, and files under the listed directories.
-   While the record exists, `download` also rejects a file larger than 16 MiB, a directory whose files total more than 16 MiB, and any file whose name or content marks it as credential-bearing.
+   While the record exists, `download` rejects each file larger than 16 MiB and any file whose name or content marks it as credential-bearing. It does not allow the Hermes `state.db` database because its binary contents cannot be checked for credentials.
    This check does not prove that an accepted file is credential-free.
    You cannot download state that only root can read.
    Do not download credential files.

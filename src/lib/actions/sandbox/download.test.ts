@@ -29,7 +29,10 @@ vi.mock("./sessions/download-verify", async (importOriginal) => {
   };
 });
 
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { downloadFromSandbox, SandboxDownloadSourceMissingError } from "./download";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
@@ -106,7 +109,7 @@ describe("downloadFromSandbox", () => {
     });
 
     // The probe runs before and after the download, and its script reads the
-    // source as "$1", which is the final argv entry, so assert that position
+    // source as "$2", which is the final argv entry, so assert that position
     // rather than mere presence in the argument list.
     expect(captureMock).toHaveBeenCalledTimes(2);
     expect((captureMock.mock.calls[0]?.[0].command as string[]).at(-1)).toBe("./-payload");
@@ -571,6 +574,7 @@ describe("downloadFromSandbox", () => {
         target: { kind: "selected" },
         source: "/sandbox/.openclaw/workspace/SOUL.md",
         destination: stagedDestination,
+        signal: expect.any(AbortSignal),
       });
       expect(publishMock).toHaveBeenCalledWith(stagedDestination, hostDest, "file");
       expect(result).toEqual({
@@ -621,6 +625,72 @@ describe("downloadFromSandbox", () => {
     }
   });
 
+  it.each([
+    {
+      name: "deadline",
+      elapsedMs: OPENSHELL_DOWNLOAD_TIMEOUT_MS,
+      expected: /recovery transfer timed out/u,
+      prepare: (_destination: string) => undefined,
+    },
+    {
+      name: "staged file growth",
+      elapsedMs: 250,
+      expected: /wrote a file larger than 16 MiB/u,
+      prepare: (destination: string) => {
+        fs.writeFileSync(destination, "");
+        fs.truncateSync(destination, 16 * 1024 * 1024 + 1);
+      },
+    },
+  ])(
+    "stops a legacy recovery transfer on $name and removes staging",
+    async ({ elapsedMs, expected, prepare }) => {
+      vi.restoreAllMocks();
+      vi.useFakeTimers();
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-abort-"));
+      vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+      let started!: () => void;
+      const transferStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      try {
+        fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+        runMock.mockImplementation(
+          ({ destination, signal }: { destination: string; signal: AbortSignal }) => {
+            prepare(destination);
+            started();
+            return new Promise((resolve) => {
+              signal.addEventListener(
+                "abort",
+                () =>
+                  resolve({
+                    outcome: { kind: "failed", reason: "interrupted" },
+                    release: vi.fn(),
+                    wasInterrupted: () => true,
+                  }),
+                { once: true },
+              );
+            });
+          },
+        );
+        const hostDest = path.join(root, "out");
+        const pending = downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+          hostDest,
+        });
+        await transferStarted;
+        await vi.advanceTimersByTimeAsync(elapsedMs);
+        await expect(pending).rejects.toThrow(expected);
+        expect(fs.existsSync(hostDest)).toBe(false);
+        expect(publishMock).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.runIf(process.platform !== "win32")(
     "rejects an oversized allowlisted recovery file or directory before transfer when a legacy Shields record exists",
     async () => {
@@ -638,7 +708,7 @@ describe("downloadFromSandbox", () => {
         fs.writeFileSync(soul, "");
         fs.truncateSync(soul, 16 * 1024 * 1024 + 1);
         fs.writeFileSync(noteA, "");
-        fs.truncateSync(noteA, 9 * 1024 * 1024);
+        fs.truncateSync(noteA, 16 * 1024 * 1024 + 1);
         fs.writeFileSync(noteB, "");
         fs.truncateSync(noteB, 9 * 1024 * 1024);
 
@@ -662,7 +732,7 @@ describe("downloadFromSandbox", () => {
             hostDest: path.join(root, "out-file"),
           }),
         ).rejects.toThrow(
-          /Cannot download '\/sandbox\/\.openclaw\/workspace\/SOUL\.md'.*16 MiB size limit.*Do not destroy the sandbox/u,
+          /Cannot download '\/sandbox\/\.openclaw\/workspace\/SOUL\.md'.*file larger than 16 MiB.*Do not destroy the sandbox/u,
         );
         await expect(
           downloadFromSandbox({
@@ -671,7 +741,7 @@ describe("downloadFromSandbox", () => {
             hostDest: path.join(root, "out-dir"),
           }),
         ).rejects.toThrow(
-          /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*16 MiB size limit.*Do not destroy the sandbox/u,
+          /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*file larger than 16 MiB.*Do not destroy the sandbox/u,
         );
         expect(runMock).not.toHaveBeenCalled();
         expect(publishMock).not.toHaveBeenCalled();
