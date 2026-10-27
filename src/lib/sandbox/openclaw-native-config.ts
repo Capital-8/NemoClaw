@@ -15,7 +15,6 @@ const {
 const {
   OPENSHELL_OPERATION_TIMEOUT_MS,
 }: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
-const { shellQuote }: typeof import("../core/shell-quote") = require("../core/shell-quote");
 const {
   NVIDIA_INFERENCE_PLACEHOLDER,
 }: typeof import("../inference-credential") = require("../inference-credential");
@@ -217,7 +216,7 @@ export function buildOpenClawNativeConfigBatchInvocation(
 ) {
   const nativeHandleUpdate = nativeProviderHandleUpdate(updates);
   const materializeCommand = nativeHandleUpdate
-    ? `python3 -c ${shellQuote(materializeNativeProviderHandle)} "$file" ${shellQuote(nativeHandleUpdate.credentialEnv)} ${shellQuote(nativeHandleUpdate.endpoint)} ${shellQuote(nativeHandleUpdate.placeholder)} ${shellQuote(nativeHandleUpdate.providerPath)} || exit $?; `
+    ? 'python3 -c "$1" "$file" "$2" "$3" "$4" "$5" || exit $?; '
     : "";
   return {
     nativeHandleUpdate: Boolean(nativeHandleUpdate),
@@ -240,6 +239,15 @@ export function buildOpenClawNativeConfigBatchInvocation(
       "-c",
       `umask 077; file=$(mktemp /tmp/nemoclaw-openclaw-config.XXXXXX) || exit $?; trap 'rm -f "$file"' EXIT; cat >"$file" || exit $?; ${materializeCommand}openclaw config set --batch-file "$file"`,
       "nemoclaw-openclaw-config-set-batch",
+      ...(nativeHandleUpdate
+        ? [
+            materializeNativeProviderHandle,
+            nativeHandleUpdate.credentialEnv,
+            nativeHandleUpdate.endpoint,
+            nativeHandleUpdate.placeholder,
+            nativeHandleUpdate.providerPath,
+          ]
+        : []),
     ],
     input: JSON.stringify(updates.map(({ dotpath, value }) => ({ path: dotpath, value }))),
   };
