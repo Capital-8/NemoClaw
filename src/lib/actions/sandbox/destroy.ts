@@ -1533,7 +1533,7 @@ async function destroySandboxUnlocked(
   const cleanupDecision =
     deleteSucceededOrAlreadyGone &&
     registryEntryAbsent &&
-    listRegisteredSandboxes().sandboxes.length === 0
+    registryAuthority.listOwningSandboxes().sandboxes.length === 0
       ? resolveDestroyGatewayCleanupDecision(normalized, {
           nonInteractive: isDestroyNonInteractiveEnv(),
           platform: process.platform,
@@ -1552,7 +1552,7 @@ async function destroySandboxUnlocked(
         },
         {
           ...deps.finalGatewayCleanup,
-          listSandboxes: listRegisteredSandboxes,
+          listSandboxes: registryAuthority.listOwningSandboxes,
           ...(cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {}),
         },
       );

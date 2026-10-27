@@ -158,6 +158,7 @@ export type SandboxDestroyRegistryAuthority = {
   entry: SandboxEntry | null;
   gatewayPort: number;
   getSandbox: typeof registry.getSandbox;
+  listOwningSandboxes: typeof registry.listSandboxes;
   listSandboxes: typeof registry.listSandboxes;
   removeSandbox: typeof registry.removeSandbox;
 };
@@ -172,6 +173,7 @@ export function resolveSandboxDestroyRegistryAuthority(
       entry: registry.getSandbox(sandboxName),
       gatewayPort: GATEWAY_PORT,
       getSandbox: registry.getSandbox,
+      listOwningSandboxes: registry.listSandboxes,
       listSandboxes: registry.listSandboxes,
       removeSandbox: registry.removeSandbox,
     };
@@ -180,6 +182,15 @@ export function resolveSandboxDestroyRegistryAuthority(
     entry: hit.entry,
     gatewayPort: hit.registryGatewayPort ?? sandboxGatewayPort(hit.entry),
     getSandbox: getSandboxAcrossGatewayRoots,
+    listOwningSandboxes: () => {
+      const owningRegistry = readGatewayRegistryFile(resolveDestroyHomeDir({}), hit.registryFile);
+      return {
+        sandboxes: Object.values(owningRegistry?.sandboxes ?? {})
+          .filter((entry) => entry.pendingRouteReservation !== true)
+          .map((entry) => entry as SandboxEntry),
+        defaultSandbox: owningRegistry?.defaultSandbox ?? null,
+      };
+    },
     listSandboxes: () => ({
       sandboxes: listPublishedSandboxesAcrossGatewayRoots(),
       defaultSandbox: null,

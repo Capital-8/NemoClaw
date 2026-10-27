@@ -171,12 +171,13 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
     });
   });
 
-  it("asks the final gateway question before the worker destroys the last sandbox in its owning root", async () => {
+  it("asks the final gateway question and cleans up the owning gateway when the worker destroys the last sandbox in its owning root", async () => {
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "0");
     const defaultRegistryDir = path.join(home, ".nemoclaw");
+    const defaultRegistryFile = path.join(defaultRegistryDir, "sandboxes.json");
     fs.mkdirSync(defaultRegistryDir, { recursive: true });
     fs.writeFileSync(
-      path.join(defaultRegistryDir, "sandboxes.json"),
+      defaultRegistryFile,
       JSON.stringify({
         defaultSandbox: "default-box",
         defaultSelectionRevision: 1,
@@ -192,8 +193,14 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
         },
       }),
     );
-    writeSiblingRegistry(["alpha"]);
+    const siblingRegistryFile = writeSiblingRegistry(["alpha"]);
     const harness = createDestroyHarness({ promptResponses: ["yes", "yes"] });
+    harness.runOwningRegistryWorkerSpy.mockImplementationOnce(async (input) => {
+      await harness.destroySandboxInSelectedRoot(
+        input.sandboxName,
+        input.options as Parameters<typeof harness.destroySandboxInSelectedRoot>[1],
+      );
+    });
 
     await expect(harness.destroySandbox("alpha")).resolves.toBeUndefined();
 
@@ -205,6 +212,13 @@ describe("destroySandbox cross-root registry authority", testTimeoutOptions(30_0
         options: { yes: true, cleanupGatewayPromptAnswer: true },
       },
       SIBLING_PORT,
+    );
+    expect(registeredNames(siblingRegistryFile)).toEqual([]);
+    expect(registeredNames(defaultRegistryFile)).toEqual(["default-box"]);
+    expect(harness.stopAllSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledExactlyOnceWith(
+      `nemoclaw-${String(SIBLING_PORT)}`,
+      harness.runOpenshellSpy,
     );
   });
 
