@@ -528,7 +528,7 @@ print(json.dumps(result))
     expect(JSON.stringify(report)).not.toContain("shadow.example");
   });
 
-  it("reports a user-defined endpoint without its user info, query, or fragment", () => {
+  it("keeps URL credentials out of status, info, and model-visible context", () => {
     const report = reportHermesRoute({
       ...ONBOARDED_CONFIG,
       model: { ...ONBOARDED_CONFIG.model, provider: "my-lab" },
@@ -536,18 +536,45 @@ print(json.dumps(result))
         ...ONBOARDED_CONFIG.providers,
         "my-lab": {
           name: "my-lab",
-          api: "https://lab-user:lab-password@lab.example:8443/v1?api_key=lab-query-secret#lab-fragment",
+          api: "https://lab-user:lab-password@lab.example:8443/v1/lab-path-secret?api_key=lab-query-secret#lab-fragment",
         },
       },
     });
 
     expect(report.info).toMatchObject({
-      base_url: "https://lab.example:8443/v1",
+      base_url: "https://lab.example:8443/<REDACTED>",
       chat_uses_managed_route: false,
     });
+    expect(report.status).toContain("Endpoint: https://lab.example:8443/<REDACTED>");
+    expect(report.context).toContain("endpoint=https://lab.example:8443/<REDACTED>");
     expect(JSON.stringify(report)).not.toMatch(
-      /lab-user|lab-password|lab-query-secret|lab-fragment/,
+      /lab-user|lab-password|lab-path-secret|lab-query-secret|lab-fragment/,
     );
+  });
+
+  it("keeps distinct same-host routes separate when their display paths are redacted", () => {
+    const managedConfig = managedHermesConfig(
+      "gpt-5.4",
+      "my-managed",
+      "https://api.example/v1/managed-route-secret",
+      "openai-completions",
+    );
+    const report = reportHermesRoute({
+      ...managedConfig,
+      model: {
+        ...managedConfig.model,
+        default: "gpt-5.4-mini",
+        base_url: "https://api.example/v1/chat-route-secret",
+      },
+    });
+
+    expect(report.info).toMatchObject({
+      provider: "custom",
+      chat_uses_managed_route: false,
+      base_url: "https://api.example/<REDACTED>",
+      managed_route: { base_url: "https://api.example/<REDACTED>" },
+    });
+    expect(JSON.stringify(report)).not.toMatch(/managed-route-secret|chat-route-secret/);
   });
 
   it.each([

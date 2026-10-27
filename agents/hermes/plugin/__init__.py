@@ -1085,9 +1085,9 @@ def _named_provider_url(hermes_cfg, provider):
 
 
 def _display_endpoint(value):
-    """Return only the scheme, host, port, and path of a configured endpoint.
+    """Return a credential-safe endpoint label for status and model context.
 
-    User-defined endpoints can carry credentials in user info or query parameters.
+    User-defined endpoints can carry credentials in user info, path, or query.
     """
     try:
         parsed = urlparse(_config_text(value))
@@ -1099,7 +1099,8 @@ def _display_endpoint(value):
         return "unknown"
     netloc = f"[{host}]" if ":" in host else host
     netloc = netloc if port is None else f"{netloc}:{port}"
-    return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+    path = parsed.path if parsed.path in ("", "/", "/v1") else "/<REDACTED>"
+    return urlunparse((parsed.scheme, netloc, path, "", "", ""))
 
 
 def _get_sandbox_info():
@@ -1112,20 +1113,18 @@ def _get_sandbox_info():
     upstream = upstream if isinstance(upstream, dict) else {}
 
     provider = _config_text(model_cfg.get("provider")) or "custom"
-    base_url = _display_endpoint(
-        _named_provider_url(hermes_cfg, provider) or model_cfg.get("base_url")
-    )
+    chat_url = _named_provider_url(hermes_cfg, provider) or model_cfg.get("base_url")
+    base_url = _display_endpoint(chat_url)
     chat_uses_managed_route = urlparse(base_url).hostname == _MANAGED_INFERENCE_HOST
     managed_route = None
     if _config_text(upstream.get("provider")):
+        managed_url = _named_provider_url(
+            hermes_cfg, upstream.get("provider_key") or upstream.get("provider")
+        )
         managed_route = {
             "model": _config_text(upstream.get("model")) or "unknown",
             "provider": _config_text(upstream.get("provider")),
-            "base_url": _display_endpoint(
-                _named_provider_url(
-                    hermes_cfg, upstream.get("provider_key") or upstream.get("provider")
-                )
-            ),
+            "base_url": _display_endpoint(managed_url),
         }
         managed_aliases = {
             "custom",
@@ -1133,8 +1132,8 @@ def _get_sandbox_info():
             _provider_alias(upstream.get("provider")),
         }
         chat_uses_managed_route = chat_uses_managed_route or (
-            base_url != "unknown"
-            and base_url == managed_route["base_url"]
+            _config_text(chat_url) != ""
+            and _config_text(chat_url) == _config_text(managed_url)
             and _provider_alias(provider) in managed_aliases
         )
         if chat_uses_managed_route:
