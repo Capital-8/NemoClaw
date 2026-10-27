@@ -5,11 +5,11 @@
 //! that cleanup (`docs/provider.md`); the SDK must let apply and destroy finish
 //! it, and export must refuse until it is done.
 //!
-//! The canned plans and states have the shapes OpenTofu 1.12.9 and the Docker
-//! provider 4.6.0 report for a deposed container: a pending delete names the
-//! old ID, and a delete whose reply was lost refreshes to a no-op with neither
-//! a before nor an after value. A script stands in for OpenTofu, so this test
-//! does not establish what OpenTofu or the provider do with them.
+//! The canned plans and states have the shapes the pinned OpenTofu and Docker
+//! provider report for a deposed container: a pending delete names the old ID,
+//! and a delete whose reply was lost refreshes to a no-op with neither a before
+//! nor an after value. The `nemoclaw-provider` contract test
+//! `replacement_cleanup` pins those shapes; change both together.
 
 #![cfg(unix)]
 
