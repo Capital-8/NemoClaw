@@ -128,6 +128,19 @@ const MACOS_METHOD_END = "esac\n";
 export function installerReleaseTemplate(source: string, version: string): string {
   // Historical trust fixtures retain the installer bytes authorized before the
   // direct-install permission fix. The current candidate is checked separately.
+  const safetyHelper = "user_local_executable_directory_safe() {\n";
+  if (source.includes(safetyHelper)) {
+    const start = source.indexOf(safetyHelper);
+    const end = source.indexOf('if [ -w "$target_dir" ]; then', start);
+    assert.ok(end > start, "user-local directory guard fixture boundaries");
+    source = source.slice(0, start) + source.slice(end);
+    const safetyCheck = `  if ! user_local_executable_directory_safe "$target_dir"; then
+    fail "Unsafe user-local executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+`;
+    assert.equal(source.split(safetyCheck).length - 1, 2, "two user-local guard calls");
+    source = source.replaceAll(safetyCheck, "");
+  }
   const currentInstall = '  (umask g-w,o-w && mkdir -p "$target_dir")';
   const historicalInstall = '  mkdir -p "$target_dir"';
   if (source.includes(currentInstall)) source = source.replace(currentInstall, historicalInstall);
