@@ -15,7 +15,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { runTarListing } from "../../src/lib/state/tar-listing";
 
 const HOST_TAR_SUPPORTS_LITERAL_QUOTING =
   spawnSync("tar", ["--quoting-style=literal", "-tf", "-"], {
@@ -511,6 +513,69 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
         : Reflect.set(process.env, "PATH", oldPath);
       fs.rmSync(fixture, { recursive: true, force: true });
     }
+  });
+});
+
+describe("tar listing executable and timeout diagnostics", () => {
+  let fixture: string;
+  let originalPath: string | undefined;
+
+  beforeEach(() => {
+    fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tar-executable-"));
+    originalPath = process.env.PATH;
+    process.env.PATH = `${fixture}${path.delimiter}${originalPath ?? ""}`;
+  });
+
+  afterEach(() => {
+    originalPath === undefined
+      ? Reflect.deleteProperty(process.env, "PATH")
+      : Reflect.set(process.env, "PATH", originalPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  });
+
+  it("invokes a PATH tar symlink by its selected name", () => {
+    const tarPath = path.join(fixture, "tar");
+    const realTar = path.join(fixture, "real-tar");
+    fs.writeFileSync(
+      realTar,
+      `#!/usr/bin/env node\nif (process.argv[1] !== ${JSON.stringify(tarPath)}) process.exit(7);\nprocess.stdout.write("workspace/item.txt\\n");\n`,
+      { mode: 0o755 },
+    );
+    fs.symlinkSync(realTar, tarPath);
+    const entries: string[] = [];
+
+    expect(
+      runTarListing(buildTar([]), ["-tf", "-"], "tar listing", (line) => entries.push(line)),
+    ).toBeNull();
+    expect(entries).toEqual(["workspace/item.txt"]);
+  });
+
+  it("reports the initial tar spawn timeout as an archive-listing timeout", () => {
+    fs.writeFileSync(
+      path.join(fixture, "tar"),
+      "#!/usr/bin/env node\nsetTimeout(() => {}, 5000);\n",
+      {
+        mode: 0o755,
+      },
+    );
+
+    expect(runTarListing(buildTar([]), ["-tf", "-"], "tar listing", () => {}, 1000)).toBe(
+      "tar listing failed: archive listing timed out",
+    );
+  });
+
+  it("reports the fallback tar spawn timeout as an archive-listing timeout", () => {
+    const fallbackMarker = path.join(fixture, "fallback-entered");
+    fs.writeFileSync(
+      path.join(fixture, "tar"),
+      `#!/usr/bin/env node\nconst fs = require("node:fs");\nif (process.argv.includes("--quoting-style=literal")) { console.error("unsupported quoting-style"); process.exit(2); }\nfs.writeFileSync(${JSON.stringify(fallbackMarker)}, "entered");\nsetTimeout(() => {}, 5000);\n`,
+      { mode: 0o755 },
+    );
+
+    expect(runTarListing(buildTar([]), ["-tf", "-"], "tar listing", () => {}, 1000)).toBe(
+      "tar listing failed: archive listing timed out",
+    );
+    expect(fs.readFileSync(fallbackMarker, "utf8")).toBe("entered");
   });
 });
 

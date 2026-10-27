@@ -110,7 +110,7 @@ function resolveTarExecutable(): { command: string; identity: string | null } {
       if (!stat.isFile()) continue;
       const realPath = realpathSync(candidate);
       return {
-        command: realPath,
+        command: candidate,
         identity: `${realPath}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`,
       };
     } catch {
@@ -531,6 +531,9 @@ export function runTarListing(
       listingDeadlineMs,
       effectiveMaxOutputBytes,
     );
+    if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+      return `${failureLabel} failed: archive listing timed out`;
+    }
     if (tryLiteralQuoting && !existsSync(overflowPath) && isUnsupportedQuotingStyle(result)) {
       unsupportedLiteralQuotingExecutable = tarExecutable.identity;
       const fallbackTimeoutMs = remainingListingTimeoutMs(listingDeadlineMs, timeoutMs);
@@ -549,6 +552,9 @@ export function runTarListing(
         listingDeadlineMs,
         effectiveMaxOutputBytes,
       );
+      if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+        return `${failureLabel} failed: archive listing timed out`;
+      }
     }
 
     if (
