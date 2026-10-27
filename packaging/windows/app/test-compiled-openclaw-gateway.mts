@@ -839,15 +839,28 @@ try {
   const ui = receipt.files.filter((file) => file.role === "control-ui");
   assert.ok(ui.length > 100, "The canonical published frontend resources must be inventoried.");
   let resourceBytes = 0;
+  const resourceProgress = {
+    files: ui.length,
+    completed: 0,
+    resource: "",
+    expectedBytes: 0,
+    stage: "fetch",
+  };
+  result.uiResourceProgress = resourceProgress;
   for (const file of ui) {
     assert(file.path.startsWith("node_modules/openclaw/dist/control-ui/"));
     const relative = file.path.slice("node_modules/openclaw/dist/control-ui/".length);
+    resourceProgress.resource = relative;
+    resourceProgress.expectedBytes = file.bytes;
+    resourceProgress.stage = "fetch";
     const response = await fetch(
       `${origin}/${relative.split("/").map(encodeURIComponent).join("/")}`,
       { signal: AbortSignal.timeout(5_000) },
     );
     assert.equal(response.status, 200, `Published UI resource must be served: ${relative}`);
+    resourceProgress.stage = "body";
     const content = Buffer.from(await response.arrayBuffer());
+    resourceProgress.stage = "integrity";
     if (relative === "index.html") {
       const original = fs.readFileSync(path.join(app, file.path));
       assert.equal(hash(original), file.sha256);
@@ -884,6 +897,8 @@ try {
       assert.equal(hash(content), file.sha256, `UI resource content: ${relative}`);
     }
     resourceBytes += file.bytes;
+    resourceProgress.completed += 1;
+    resourceProgress.stage = "complete";
   }
   result.uiResources = {
     files: ui.length,

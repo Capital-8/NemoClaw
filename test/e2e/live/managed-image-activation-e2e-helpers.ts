@@ -552,32 +552,36 @@ async function proveHermesRestartSecretBoundary(
   );
   assertExitZero(poison, "prepare Hermes secret-boundary restart refusal");
 
-  const restart = await host.nemoclaw([sandboxName, "gateway", "restart", "--quiet"], {
-    artifactName: "hermes-native-restart-secret-boundary-refusal",
-    env,
-    redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
-    timeoutMs: 60_000,
-  });
-
-  const restore = await sandbox.execShell(
-    sandboxName,
-    trustedSandboxShellScript(
-      `set -eu; cp ${shellQuote(HERMES_BOUNDARY_BACKUP)} /sandbox/.hermes/.env; rm -f ${shellQuote(HERMES_BOUNDARY_BACKUP)}`,
-    ),
-    {
-      artifactName: "hermes-restore-env-after-native-restart-refusal",
+  let restart: Awaited<ReturnType<HostCliClient["nemoclaw"]>>;
+  try {
+    restart = await host.nemoclaw([sandboxName, "gateway", "restart", "--quiet"], {
+      artifactName: "hermes-native-restart-secret-boundary-refusal",
       env,
       redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
-      timeoutMs: 30_000,
-    },
-  );
-  assertExitZero(restore, "restore Hermes environment after restart refusal");
+      forbiddenOutputValues: [HERMES_BOUNDARY_SENTINEL],
+      timeoutMs: 60_000,
+    });
+  } finally {
+    const restore = await sandbox.execShell(
+      sandboxName,
+      trustedSandboxShellScript(
+        `set -eu; cp ${shellQuote(HERMES_BOUNDARY_BACKUP)} /sandbox/.hermes/.env; rm -f ${shellQuote(HERMES_BOUNDARY_BACKUP)}`,
+      ),
+      {
+        artifactName: "hermes-restore-env-after-native-restart-refusal",
+        env,
+        redactionValues: [API_KEY, HERMES_BOUNDARY_SENTINEL],
+        timeoutMs: 30_000,
+      },
+    );
+    assertExitZero(restore, "restore Hermes environment after restart refusal");
+  }
 
   const output = resultText(restart);
   expect(
     restart.exitCode !== 0 &&
       output.includes("secret-boundary") &&
-      !output.includes(HERMES_BOUNDARY_SENTINEL),
+      restart.forbiddenOutputDetected === false,
     output,
   ).toBe(true);
   await runManagedActivationAgentTurn(sandbox, "hermes", sandboxName, "boundary", env);
