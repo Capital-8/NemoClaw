@@ -46,6 +46,8 @@ const LEGACY_PROVIDER_RECORD_NAMES = new Set([
 const MAX_LEGACY_LEDGER_ENTRIES = 4096;
 const MAX_LEGACY_LEDGER_RECORD_BYTES = 128 * 1024;
 const MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH = 32;
+const MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES = 4096;
 const REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILES = new Set([
   "/sandbox/.openclaw/workspace/AGENTS.md",
   "/sandbox/.openclaw/workspace/HEARTBEAT.md",
@@ -144,7 +146,29 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
       `Cannot download '${sandboxPath}' from sandbox '${sandboxName}': downloaded content contains credential-bearing or uninspectable material. Do not destroy the sandbox if you need this file.`,
     );
   };
-  const inspectEntry = (entryPath: string, checkSegmentName: boolean): void => {
+  const rejectTraversalLimit = (): never => {
+    throw new Error(
+      `Cannot download '${sandboxPath}' from sandbox '${sandboxName}': recovery inspection exceeded its directory depth or entry limit. Do not destroy the sandbox if you need this file.`,
+    );
+  };
+  const readChild = (directory: fs.Dir): fs.Dirent | null => {
+    try {
+      return directory.readSync();
+    } catch {
+      reject();
+    }
+  };
+  const pending = [{ entryPath: stagedArtifact, depth: 0, checkSegmentName: false }];
+  let inspectedEntries = 0;
+  while (pending.length > 0) {
+    const { entryPath, depth, checkSegmentName } = pending.pop()!;
+    inspectedEntries += 1;
+    if (
+      depth > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH ||
+      inspectedEntries > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES
+    ) {
+      rejectTraversalLimit();
+    }
     let stat: fs.Stats;
     try {
       stat = fs.lstatSync(entryPath);
@@ -159,16 +183,30 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
       reject();
     }
     if (stat!.isDirectory()) {
-      let children: string[];
+      let directory: fs.Dir;
       try {
-        children = fs.readdirSync(entryPath).sort();
+        directory = fs.opendirSync(entryPath);
       } catch {
         reject();
       }
-      for (const child of children!) {
-        inspectEntry(path.join(entryPath, child), true);
+      try {
+        for (let child = readChild(directory!); child !== null; child = readChild(directory!)) {
+          if (
+            depth + 1 > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH ||
+            inspectedEntries + pending.length >= MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES
+          ) {
+            rejectTraversalLimit();
+          }
+          pending.push({
+            entryPath: path.join(entryPath, child.name),
+            depth: depth + 1,
+            checkSegmentName: true,
+          });
+        }
+      } finally {
+        directory!.closeSync();
       }
-      return;
+      continue;
     }
     if (!stat!.isFile() || stat!.size > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_FILE_BYTES) {
       reject();
@@ -197,8 +235,7 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
     } finally {
       opened!.close();
     }
-  };
-  inspectEntry(stagedArtifact, false);
+  }
 }
 
 interface LegacyProviderLedgerInspection {
