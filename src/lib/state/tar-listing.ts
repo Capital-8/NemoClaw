@@ -316,6 +316,7 @@ export function readArchiveRange(
 
 export type TarArchiveSource = Buffer | { filePath: string };
 export type TarListingSource = TarArchiveSource | { fileDescriptor: number };
+export type TarListingNameFormat = "literal" | "escaped-backslashes";
 
 /** Stage a caller-supplied file descriptor into a private temporary archive at offset 0. */
 function copyDescriptorToPrivateArchive(
@@ -449,6 +450,7 @@ export function runTarListing(
   timeoutMs = 60_000,
   deadlineMs?: number,
   maxOutputBytes = TAR_LISTING_MAX_OUTPUT_BYTES,
+  onNameFormat?: (format: TarListingNameFormat) => void,
 ): string | null {
   const effectiveMaxOutputBytes =
     Number.isSafeInteger(maxOutputBytes) && maxOutputBytes > 0
@@ -515,6 +517,7 @@ export function runTarListing(
     const tryLiteralQuoting =
       tarExecutable.identity === null ||
       unsupportedLiteralQuotingExecutable !== tarExecutable.identity;
+    let nameFormat: TarListingNameFormat = tryLiteralQuoting ? "literal" : "escaped-backslashes";
     const initialTimeoutMs = remainingListingTimeoutMs(listingDeadlineMs, timeoutMs);
     if (initialTimeoutMs === null) {
       return `${failureLabel} failed: archive listing timed out`;
@@ -536,6 +539,7 @@ export function runTarListing(
     }
     if (tryLiteralQuoting && !existsSync(overflowPath) && isUnsupportedQuotingStyle(result)) {
       unsupportedLiteralQuotingExecutable = tarExecutable.identity;
+      nameFormat = "escaped-backslashes";
       const fallbackTimeoutMs = remainingListingTimeoutMs(listingDeadlineMs, timeoutMs);
       if (fallbackTimeoutMs === null) {
         return `${failureLabel} failed: archive listing timed out`;
@@ -570,6 +574,7 @@ export function runTarListing(
       return `${failureLabel} failed (exit ${status}): ${(result.stderr || "").substring(0, 200)}`;
     }
 
+    onNameFormat?.(nameFormat);
     readTextLinesFromFile(listingPath, onLine, listingDeadlineMs);
     return null;
   } catch (error) {

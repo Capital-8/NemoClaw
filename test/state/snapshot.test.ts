@@ -1338,10 +1338,10 @@ process.stdout.write(String(uid) + "\\n");
         });
 
         expect(backup.success).toBe(false);
-        expect(backup.error).toContain(
+        expect(backup.error).toMatch(
           kind === "global-pax-credential"
-            ? "credential-bearing or uninspectable content at 'workspace/.env'"
-            : "native state sparse archive entry",
+            ? /credential-bearing or uninspectable content at 'workspace\/\.env'|tar raw header inventory did not match archive listing/u
+            : /native state sparse archive entry/u,
         );
         const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
         expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);

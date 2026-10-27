@@ -84,6 +84,7 @@ import {
   type TarArchiveSource,
   tarHeaderSize,
   tarHeaderString,
+  type TarListingNameFormat,
   type TarListingSource,
 } from "./tar-listing.js";
 
@@ -607,6 +608,7 @@ export function validateTarEntries(
   targetDir: string,
   deadlineMs?: number,
   maxOutputBytes?: number,
+  onNameFormat?: (format: TarListingNameFormat) => void,
 ): TarValidationResult {
   const entries: string[] = [];
   const listingFailure = runTarListing(
@@ -619,6 +621,7 @@ export function validateTarEntries(
     undefined,
     deadlineMs,
     maxOutputBytes,
+    onNameFormat,
   );
   if (listingFailure) {
     return {
@@ -1764,6 +1767,32 @@ function readRawTarArchiveEntries(descriptor: number): string[] | null {
   return walkNativeTarMembers(descriptor, entries) === null ? entries : null;
 }
 
+function readRawTarArchiveEntriesFromPath(archivePath: string): string[] | null {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    return readRawTarArchiveEntries(descriptor);
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
+function nativeTarInventoriesMatch(
+  rawEntries: readonly string[] | null,
+  listedEntries: readonly string[],
+  nameFormat: TarListingNameFormat | null,
+): boolean {
+  if (rawEntries === null || nameFormat === null || rawEntries.length !== listedEntries.length) {
+    return false;
+  }
+  return rawEntries.every(
+    (entry, index) =>
+      listedEntries[index] === (nameFormat === "literal" ? entry : entry.replaceAll("\\", "\\\\")),
+  );
+}
+
 function stageDescriptorArchiveCopy(sourceDescriptor: number, destinationPath: string): void {
   const size = fstatSync(sourceDescriptor).size;
   const targetDescriptor = openSync(
@@ -2062,18 +2091,29 @@ function copyNativeArchiveToPrivateDescriptor(
       }
       position += bytesRead;
     }
-    const validation = validateTarEntries({ filePath: privatePath }, nativeRoot);
+    let nameFormat: TarListingNameFormat | null = null;
+    const validation = validateTarEntries(
+      { filePath: privatePath },
+      nativeRoot,
+      undefined,
+      undefined,
+      (format) => {
+        nameFormat = format;
+      },
+    );
     const rawEntries = validation.safe ? readRawTarArchiveEntries(descriptor) : null;
     const rawInventoryViolations =
-      validation.safe && (!rawEntries || rawEntries.length !== validation.entries.length)
+      validation.safe && !nativeTarInventoriesMatch(rawEntries, validation.entries, nameFormat)
         ? ["tar raw header inventory did not match archive listing"]
         : [];
-    const symlinkViolations = validation.safe
-      ? rejectSymlinkExtractionTraversal({ filePath: privatePath }, validation.entries)
-      : [];
-    const hardLinkTraversalViolations = validation.safe
-      ? rejectHardLinkExtractionTraversal({ filePath: privatePath }, validation.entries)
-      : [];
+    const symlinkViolations =
+      validation.safe && rawInventoryViolations.length === 0
+        ? rejectSymlinkExtractionTraversal({ filePath: privatePath }, validation.entries)
+        : [];
+    const hardLinkTraversalViolations =
+      validation.safe && rawInventoryViolations.length === 0
+        ? rejectHardLinkExtractionTraversal({ filePath: privatePath }, validation.entries)
+        : [];
     const result = {
       descriptor,
       sha256: hash.digest("hex"),
@@ -2596,9 +2636,11 @@ function backupNativeSandboxState(
     // Reject sparse encodings with the bounded raw parser before invoking the
     // platform tar. GNU tar and bsdtar diagnose malformed or unsupported sparse
     // fixtures differently, but the security boundary must be deterministic.
+    const rawEntries: string[] = [];
     const rawArchiveViolation = nativeArchiveRawCredentialViolation(
       archivePath,
       options.deadlineMs,
+      rawEntries,
     );
     if (rawArchiveViolation && typeof rawArchiveViolation !== "string") {
       rmSync(backupPath, { recursive: true, force: true });
@@ -2610,15 +2652,30 @@ function backupNativeSandboxState(
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(`Native state archive validation failed: ${rawArchiveViolation}`);
     }
+    let nameFormat: TarListingNameFormat | null = null;
     const validation = validateTarEntries(
       { filePath: archivePath },
       rootResult.root,
       options.deadlineMs,
+      undefined,
+      (format) => {
+        nameFormat = format;
+      },
     );
-    if (!validation.safe) {
+    const verifiedRawEntries = validation.safe
+      ? rawArchiveViolation === null
+        ? rawEntries
+        : readRawTarArchiveEntriesFromPath(archivePath)
+      : null;
+    const rawInventoryViolation =
+      validation.safe &&
+      !nativeTarInventoriesMatch(verifiedRawEntries, validation.entries, nameFormat)
+        ? "tar raw header inventory did not match archive listing"
+        : null;
+    if (!validation.safe || rawInventoryViolation) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(
-        `Native state archive validation failed: ${validation.violations.join("; ")}`,
+        `Native state archive validation failed: ${rawInventoryViolation ?? validation.violations.join("; ")}`,
       );
     }
     const nativeArchiveCounts = { directories: 0, files: 0 };
