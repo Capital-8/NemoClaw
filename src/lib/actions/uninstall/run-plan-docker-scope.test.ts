@@ -379,6 +379,8 @@ describe("uninstall Docker resource scope", () => {
   it.each([
     { status: 42, stdout: "", stderr: "inventory unavailable" },
     { status: 0, stdout: "incomplete", stderr: "" },
+    { status: 0, stdout: "0123456789ab", stderr: "" },
+    { status: 0, stdout: "0123456789ab  ", stderr: "" },
   ])("preserves state and the CLI when Docker inventory is inconclusive: %j", async (inventory) => {
     const result = await runWithDockerInventory({ inventory });
     expect(result.result.exitCode).toBe(1);
@@ -395,7 +397,7 @@ describe("uninstall Docker resource scope", () => {
 
   it("completes uninstall when unrelated Docker containers omit image or name fields", async () => {
     const result = await runWithDockerInventory({
-      leftovers: ["0123456789ab  foreign-untagged-image", "fedcba987654 redis:7", "abcdef012345"],
+      leftovers: ["0123456789ab  foreign-untagged-image", "fedcba987654 redis:7 "],
     });
     expect(result.result.exitCode, result.errors.join("\n")).toBe(0);
     expect(result.errors).toEqual([]);
