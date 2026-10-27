@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { assert, describe, expect, it, vi } from "vitest";
+import { publishExportFile } from "../../adapters/fs/config-export-file";
 import { exportSnapshots } from "../../actions/config/export-test-fixture";
 import { formatConfigExportFailure } from "../../cli/config-export-diagnostics";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
@@ -126,6 +130,46 @@ describe("config export input modalities (#13731)", () => {
     async (inputs) => {
       const result = await exportSnapshots([await defaultNvidiaSnapshot(inputs)]);
       expectUnsupportedInputs(result);
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "preserves existing file bytes when forced export rejects image input",
+    async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-image-input-export-"));
+      try {
+        const outputPath = path.join(root, "existing.yaml");
+        const originalBytes = Buffer.from("# Keep this existing export.\r\nexisting: true\r\n");
+        fs.writeFileSync(outputPath, originalBytes);
+        const target = { kind: "file", outputPath, force: true } as const;
+
+        const rejected = await exportSnapshots(
+          [await defaultNvidiaSnapshot()],
+          target,
+          publishExportFile,
+        );
+        expectUnsupportedInputs(rejected);
+        expect(fs.readFileSync(outputPath)).toEqual(originalBytes);
+
+        const accepted = await exportSnapshots(
+          [await defaultNvidiaSnapshot("text")],
+          target,
+          publishExportFile,
+        );
+        expect(accepted.outcome).toMatchObject({
+          ok: true,
+          completion: { kind: "file", result: { outputPath } },
+        });
+        expect(accepted.publish).toHaveBeenCalledOnce();
+        expect(accepted.publish).toHaveBeenCalledWith(outputPath, expect.any(String), true);
+        expect(accepted.writeStdout).not.toHaveBeenCalled();
+        const replacement = fs.readFileSync(outputPath);
+        expect(replacement).not.toEqual(originalBytes);
+        expect(replacement.toString("utf8")).toContain("kind: NemoClawConfig");
+        expect(replacement.toString("utf8")).toContain(defaultModel);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   );
 
