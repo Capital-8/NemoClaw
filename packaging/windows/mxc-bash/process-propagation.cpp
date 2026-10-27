@@ -8,6 +8,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <stdint.h>
+#include <intrin.h>
 
 namespace {
 WCHAR moduleDirectory[MAX_PATH] = {};
@@ -21,6 +22,9 @@ decltype(&CreateProcessA) realCreateA = CreateProcessA;
 decltype(&CreateProcessAsUserW) realCreateAsUserW = CreateProcessAsUserW;
 decltype(&CreateProcessAsUserA) realCreateAsUserA = CreateProcessAsUserA;
 decltype(&SetInformationJobObject) realSetJobInformation = SetInformationJobObject;
+decltype(&VirtualAlloc) realAllocateHeap = VirtualAlloc;
+LONG heapAllocationRecords = 0;
+__declspec(thread) BOOL withinHeapDiagnostic = FALSE;
 
 // The canonical MSYS image does not opt into DYNAMIC_BASE and fork expects
 // its DLL data at identical addresses. This explicit prototype option changes
@@ -194,6 +198,35 @@ void logMsysHeapReservation(HANDLE child, const char* stage) {
     DWORD written = 0;
     if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     SetLastError(saved);
+}
+
+LPVOID WINAPI observeMsysHeapAllocation(LPVOID address, SIZE_T bytes, DWORD allocation, DWORD protection) {
+    LPVOID result = realAllocateHeap(address, bytes, allocation, protection);
+    const DWORD error = GetLastError();
+    if (reinterpret_cast<uintptr_t>(address) == 0x800000000ULL && !withinHeapDiagnostic &&
+        observeDerivedMsysLayout() && NemoClawMsysDiagnosticsEnabled() &&
+        InterlockedIncrement(&heapAllocationRecords) <= 8) {
+        withinHeapDiagnostic = TRUE;
+        const MsysMappedLayout module = mappedImageLayout(GetModuleHandleW(L"msys-2.0.dll"), true);
+        const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress());
+        const bool msysCaller = module.exactShape && caller >= module.base &&
+            caller - module.base < module.size;
+        char line[768];
+        const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "NEMOCLAW_MSYS_HEAP_ALLOCATION={\"schemaVersion\":1,\"pid\":%lu,\"tid\":%lu,\"address\":\"0x%llx\",\"bytes\":%llu,\"allocation\":%lu,\"protection\":%lu,\"result\":\"0x%llx\",\"win32Error\":%lu,\"msysCaller\":%s,\"callerRva\":\"0x%llx\",\"diagnosticOnly\":true}\n",
+            GetCurrentProcessId(), GetCurrentThreadId(),
+            static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(address)),
+            static_cast<unsigned long long>(bytes), allocation, protection,
+            static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(result)), error,
+            msysCaller ? "true" : "false",
+            static_cast<unsigned long long>(msysCaller ? caller - module.base : 0));
+        DWORD written = 0;
+        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+        if (!result) logMsysHeapReservation(GetCurrentProcess(), "allocation-failed");
+        withinHeapDiagnostic = FALSE;
+    }
+    SetLastError(error);
+    return result;
 }
 
 struct ProcessImageFile {
@@ -1164,6 +1197,8 @@ extern "C" LONG NemoClawStageProcessPropagation() {
     if (!error) error = DetourAttach(reinterpret_cast<PVOID*>(&realCreateAsUserW), reinterpret_cast<PVOID>(hookedAsUserW));
     if (!error) error = DetourAttach(reinterpret_cast<PVOID*>(&realCreateAsUserA), reinterpret_cast<PVOID>(hookedAsUserA));
     if (!error) error = DetourAttach(reinterpret_cast<PVOID*>(&realSetJobInformation), reinterpret_cast<PVOID>(hookedSetJobInformation));
+    if (!error && observeDerivedMsysLayout() && NemoClawMsysDiagnosticsEnabled())
+        error = DetourAttach(reinterpret_cast<PVOID*>(&realAllocateHeap), reinterpret_cast<PVOID>(observeMsysHeapAllocation));
     return error;
 }
 
