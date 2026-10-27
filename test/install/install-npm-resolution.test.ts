@@ -301,6 +301,30 @@ echo "${cliBin} v0.1.0"
     }).toEqual({ local: 0o755, bin: 0o755 });
   });
 
+  it("rejects an existing writable user-local ancestor before publishing a shim (#12496)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-unsafe-shim-"));
+    try {
+      const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+      const local = path.join(tmp, ".local");
+      const bin = path.join(local, "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      fs.chmodSync(local, 0o775);
+
+      const result = runInstallerFunction("_CLI_BIN=nemoclaw; ensure_nemoclaw_shim", fakeBin, {
+        ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+        HOME: tmp,
+        NO_COLOR: "1",
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(local);
+      expect(fs.readdirSync(bin)).toEqual([]);
+      expect(fs.statSync(local).mode & 0o777).toBe(0o775);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("leaves a foreign nemoclaw-acp executable untouched and stops before creating sibling shims (#10947)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-collision-"));
     const { fakeBin, prefixBin } = createPackagedCliTree(tmp);

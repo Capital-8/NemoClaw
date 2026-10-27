@@ -1011,6 +1011,68 @@ exit 1`,
     }
   });
 
+  it.each(["writable ancestor", "symlinked bin"])(
+    "rejects a %s before publishing a direct user-local binary (#12496)",
+    (unsafePath) => {
+      const { tmp, fakeBin } = createLinuxArm64DownloadFixture();
+      try {
+        fs.rmSync(path.join(fakeBin, "openshell"));
+        const local = path.join(tmp, ".local");
+        const bin = path.join(local, "bin");
+        const outside = path.join(tmp, "outside");
+        fs.mkdirSync(local);
+        const makeUnsafe: Record<string, () => void> = {
+          "writable ancestor": () => {
+            fs.mkdirSync(bin);
+            fs.chmodSync(local, 0o775);
+          },
+          "symlinked bin": () => {
+            fs.mkdirSync(outside);
+            fs.symlinkSync(outside, bin);
+          },
+        };
+        makeUnsafe[unsafePath]();
+        const bashEnv = path.join(tmp, "force-user-local-install.sh");
+        fs.writeFileSync(
+          bashEnv,
+          `function [ {
+  if [[ "$#" -eq 3 && "$1" = "-w" && "$2" = "/usr/local/bin" && "$3" = "]" ]]; then
+    return 1
+  fi
+  builtin [ "$@"
+}
+`,
+        );
+        const result = spawnSync("bash", [SCRIPT], {
+          env: {
+            ...process.env,
+            BASH_ENV: bashEnv,
+            HOME: tmp,
+            XDG_BIN_HOME: "",
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+            NEMOCLAW_TEST_USER_LOCAL_ONLY: "1",
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+          },
+          encoding: "utf8",
+        });
+
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+        expect(result.stderr).toContain(unsafePath === "writable ancestor" ? local : bin);
+        expect(
+          fs.existsSync(path.join(unsafePath === "writable ancestor" ? bin : outside, "openshell")),
+        ).toBe(false);
+        const assertUnchanged: Record<string, () => void> = {
+          "writable ancestor": () => expect(fs.statSync(local).mode & 0o777).toBe(0o775),
+          "symlinked bin": () => expect(fs.lstatSync(bin).isSymbolicLink()).toBe(true),
+        };
+        assertUnchanged[unsafePath]();
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("upgrades into the active writable openshell directory to avoid PATH shadowing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-active-dir-"));
     try {
