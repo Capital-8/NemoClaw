@@ -82,6 +82,9 @@ describe("source-backed MCP inventory", () => {
                 url: "https://api.githubcopilot.com/mcp/",
                 headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
               },
+              ...(kind === "native"
+                ? { "local-stdio": { command: "npx", args: ["-y", "server"] } }
+                : {}),
             },
           }),
         );
@@ -97,6 +100,10 @@ describe("source-backed MCP inventory", () => {
           url: "https://api.githubcopilot.com/mcp/",
           env: ["GITHUB_TOKEN"],
         });
+        expect(Object.keys(observed[kind])).toEqual(["github"]);
+        expect(observed.nativeServerNames).toEqual(
+          kind === "native" ? ["github", "local-stdio"] : undefined,
+        );
         expect(Object.keys(observed[kind === "native" ? "legacy" : "native"])).toEqual([]);
         expect(mocks.executeSandboxExecCommand).not.toHaveBeenCalled();
         expect(assertCurrent).toHaveBeenCalledTimes(2);
@@ -199,6 +206,9 @@ network_policies:
             url: "https://api.githubcopilot.com/mcp/",
             headers: { Authorization: `Bearer openshell:resolve:env:${generation}_${key}` },
           },
+          ...(agent === "langchain-deepagents-code" && source === "native"
+            ? { "local-stdio": { command: "npx", args: ["-y", "server"] } }
+            : {}),
         };
         const contents = JSON.stringify(
           agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers },
@@ -232,6 +242,12 @@ network_policies:
           url: "https://api.githubcopilot.com/mcp/",
           env: [key],
         });
+        expect(Object.keys(observed[source as "native" | "legacy"])).toEqual(["github"]);
+        expect(observed.nativeServerNames).toEqual(
+          agent === "langchain-deepagents-code" && source === "native"
+            ? ["github", "local-stdio"]
+            : undefined,
+        );
       } finally {
         mocks.configRoot = "/sandbox";
         fs.rmSync(root, { recursive: true, force: true });

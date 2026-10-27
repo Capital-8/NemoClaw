@@ -222,6 +222,8 @@ vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
 import { HermesMcpReloadRelayLossError } from "./mcp-bridge-adapters";
 import { addMcpBridge } from "./mcp-bridge-add-restart";
 import {
+  assertNoProviderCredentialCollisions,
+  assertSandboxProviderAttachmentCapacity,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   upsertMcpProvider,
@@ -315,6 +317,12 @@ describe("Hermes MCP add reload finality", () => {
             ]
           : [],
       }));
+    vi.mocked(assertNoProviderCredentialCollisions)
+      .mockReset()
+      .mockImplementation(async (sandboxName, entries, runtimeSelection) => {
+        const inspection = await inspectMcpProviderAttachments(sandboxName, runtimeSelection);
+        assertSandboxProviderAttachmentCapacity(sandboxName, entries, inspection.attachments ?? []);
+      });
     vi.mocked(policies.getPresetContentGatewayState)
       .mockReset()
       .mockImplementation(async (_sandbox: string, content: string) => {
@@ -770,7 +778,7 @@ describe("Hermes MCP add reload finality", () => {
   it("refuses a 65th Deep Agents native server before OpenShell policy or provider mutations", async () => {
     vi.mocked(getBridgeAdapter).mockReturnValueOnce("deepagents-config");
     const native = Object.fromEntries(
-      Array.from({ length: 64 }, (_, index) => [
+      Array.from({ length: 63 }, (_, index) => [
         `srv${String(index)}`,
         {
           adapter: "deepagents-config" as const,
@@ -784,7 +792,11 @@ describe("Hermes MCP add reload finality", () => {
     );
     vi.mocked(inspectSourceBridgeState).mockResolvedValueOnce({
       bridges: {},
-      sources: { legacy: {}, native },
+      sources: {
+        legacy: {},
+        native,
+        nativeServerNames: [...Object.keys(native), "local-stdio"],
+      },
     });
 
     await expect(runAdd()).rejects.toThrow(

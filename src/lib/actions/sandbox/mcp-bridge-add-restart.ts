@@ -47,7 +47,6 @@ import {
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
-  MAX_SANDBOX_PROVIDER_ATTACHMENTS,
   MCP_BRIDGE_PROVIDER_TYPE,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
@@ -55,7 +54,6 @@ import {
   providerShapeDetail,
   preflightMcpEntryTargets,
   refreshMcpProviderEnvironment,
-  sandboxProviderAttachmentLimitError,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
@@ -214,7 +212,6 @@ async function recoverCommittedPolicyTarget(
 type McpAddRecovery = {
   entry: McpSourceEntry;
   adapterRegistered: boolean;
-  attachmentCount: number;
   attachmentPresent: boolean;
   policyState: "absent" | "capability" | "bound";
   resuming: boolean;
@@ -477,7 +474,6 @@ async function inspectMcpAddRecovery(
   return {
     entry: recoveredEntry,
     adapterRegistered,
-    attachmentCount: attachmentInspection.attachments.length,
     attachmentPresent,
     policyState,
     resuming: adapterRegistered || attachmentPresent || providerPresent || policyState !== "absent",
@@ -774,9 +770,10 @@ async function addMcpBridgeUnlocked(
   }
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
+  const nativeServerNames =
+    observed.sources.nativeServerNames ?? Object.keys(observed.sources.native);
   const prospectiveNativeServerCount =
-    Object.keys(observed.sources.native).length +
-    (Object.hasOwn(observed.sources.native, options.server) ? 0 : 1);
+    nativeServerNames.length + (nativeServerNames.includes(options.server) ? 0 : 1);
   if (
     adapter === "deepagents-config" &&
     prospectiveNativeServerCount > DEEPAGENTS_MCP_MAX_SERVERS
@@ -887,12 +884,6 @@ async function addMcpBridgeUnlocked(
       providerRuntimeSelection,
     );
     entry = recovery.entry;
-    if (
-      !recovery.attachmentPresent &&
-      recovery.attachmentCount >= MAX_SANDBOX_PROVIDER_ATTACHMENTS
-    ) {
-      throw sandboxProviderAttachmentLimitError(sandboxName, recovery.attachmentCount);
-    }
     // Check live providers under the same cross-command lock used by
     // credentials add so neither command can race its collision check.
     await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
