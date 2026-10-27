@@ -146,11 +146,26 @@ export GITHUB_MCP_TOKEN='replacement-value'
 $$nemoclaw my-sandbox mcp remove github
 ```
 
-`remove` deletes the agent-native registration and detaches the managed provider, but preserves the provider object and prints its `openshell provider delete` command.
-Before you run that command, confirm that no sandbox lists the preserved provider in `openshell sandbox provider list <sandbox-name> -g <gateway-name>`, then delete the provider:
+`remove` deletes the agent-native registration and detaches the managed provider.
+When the provider exists, `remove` preserves it and prints its `openshell provider delete -g <gateway-name> <provider-name>` command.
+If `remove` reports no preserved provider, skip provider deletion and add the server again.
+If `remove` reports a preserved provider, use the gateway name from the printed command (`nemoclaw` for the default gateway, or `nemoclaw-<port>` on another port) to list every sandbox on that gateway:
 
 ```bash
-openshell provider delete my-sandbox-mcp-github -g nemoclaw
+openshell sandbox list -g nemoclaw
+```
+
+For each listed sandbox, inspect its attached providers:
+
+```bash
+openshell sandbox provider list -g nemoclaw <sandbox-name>
+```
+
+If any sandbox lists the preserved provider, do not delete it; resolve that sandbox's use of the provider before you add the server again.
+When no sandbox lists the preserved provider, delete it with the printed command:
+
+```bash
+openshell provider delete -g nemoclaw my-sandbox-mcp-github
 ```
 
 Add the server again so NemoClaw creates a new provider with the replacement credential and reconnects the native registration:
@@ -225,11 +240,15 @@ export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
 $$nemoclaw my-sandbox mcp remove local-tools
 ```
 
-Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider while preserving the provider object.
-Confirm that no sandbox uses the preserved provider, then delete it with the command that `mcp remove` prints:
+Removing the server deletes the agent-native entry, removes its generated policy key, and detaches the provider.
+If `mcp remove` reports no preserved provider, skip provider deletion and add the server again.
+If `mcp remove` reports a preserved provider, use the gateway name from the printed `openshell provider delete -g <gateway-name>` command (`nemoclaw` for the default gateway, or `nemoclaw-<port>` on another port).
+Run `openshell sandbox list -g <gateway-name>`, and run `openshell sandbox provider list -g <gateway-name> <sandbox-name>` for each listed sandbox.
+If any sandbox lists the preserved provider, do not delete it; resolve that sandbox's use of the provider first.
+When no sandbox lists the preserved provider, delete it with the printed command:
 
 ```bash
-openshell provider delete my-sandbox-mcp-local-tools -g nemoclaw
+openshell provider delete -g nemoclaw my-sandbox-mcp-local-tools
 ```
 
 Add the server again to perform a new DNS preflight and record the reviewed address set:
@@ -270,9 +289,12 @@ Policy removal targets the deterministic current MCP policy key. Force never cla
 
 NemoClaw removes the agent registration first, removes the policy key, and then detaches a provider only when the live policy binding, provider ID, type, and credential key agree.
 This ordering blocks new agent use before cleanup.
-The workspace provider is preserved because current OpenShell provider deletion is name-based.
-Before you add the same server name again, confirm that no sandbox uses the preserved provider.
-Then delete it with the `openshell provider delete` command that `mcp remove` prints.
+When the workspace provider exists, NemoClaw preserves it because current OpenShell provider deletion is name-based.
+If you plan to add the same server name again and `mcp remove` reports a preserved provider, use the gateway name from the printed command to run `openshell sandbox list -g <gateway-name>`.
+Run `openshell sandbox provider list -g <gateway-name> <sandbox-name>` for each listed sandbox.
+If any sandbox lists the preserved provider, do not delete it; resolve that sandbox's use of the provider first.
+When no sandbox lists the preserved provider, delete it with the `openshell provider delete` command that `mcp remove` prints.
+If `mcp remove` reports no preserved provider, skip provider deletion.
 
 If cleanup leaves a residual, the command reports the exact policy or attachment warning and the provider name to inspect. It never detaches the provider from another sandbox or silently reports that the provider was deleted.
 

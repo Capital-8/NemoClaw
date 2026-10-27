@@ -16,6 +16,8 @@ import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import { readCommittedLegacyRegistryEntries, sameMcpRegistration } from "./mcp-bridge-source";
 import {
   detachProvider,
+  formatDeleteMcpProviderCommand,
+  formatMcpGatewayAttachmentCheckCommands,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   providerMatchesManagedCredential,
@@ -241,11 +243,15 @@ export async function removeMcpBridge(
         );
       }
       if (provider.exists !== false) {
-        const deleteCommand = runtimeSelection.gatewayName
-          ? `openshell provider delete ${entry.providerName} -g ${runtimeSelection.gatewayName}`
-          : `openshell provider delete ${entry.providerName}`;
+        const deleteCommand = formatDeleteMcpProviderCommand(
+          entry.providerName,
+          runtimeSelection.gatewayName,
+        );
+        const attachmentChecks = formatMcpGatewayAttachmentCheckCommands(
+          runtimeSelection.gatewayName,
+        );
         console.warn(
-          `  Preserved OpenShell provider '${entry.providerName}'. Confirm that no sandbox uses it, then delete it with \`${deleteCommand}\` before you add '${server}' again.`,
+          `  Preserved OpenShell provider '${entry.providerName}'. Confirm that no sandbox on the gateway uses it (${attachmentChecks}), then delete it with \`${deleteCommand}\` before you add '${server}' again.`,
         );
       }
     }

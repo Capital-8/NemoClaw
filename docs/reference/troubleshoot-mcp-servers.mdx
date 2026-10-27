@@ -22,10 +22,14 @@ export <CREDENTIAL_ENV>='replacement-value'
 $$nemoclaw <sandbox> mcp remove <server>
 ```
 
-Confirm that no sandbox uses the preserved provider named by `mcp remove`, then delete it:
+If `mcp remove` reports no preserved provider, skip provider deletion and add the server again.
+If `mcp remove` reports a preserved provider, use the gateway name from the printed command to run `openshell sandbox list -g <GATEWAY_NAME>`.
+Run `openshell sandbox provider list -g <GATEWAY_NAME> <SANDBOX_NAME>` for each listed sandbox.
+If any sandbox lists the preserved provider, do not delete it; resolve that sandbox's use of the provider first.
+When no sandbox lists the preserved provider, delete it:
 
 ```bash
-openshell provider delete <PROVIDER_NAME> -g <GATEWAY_NAME>
+openshell provider delete -g <GATEWAY_NAME> <PROVIDER_NAME>
 ```
 
 Add the server again:
@@ -60,7 +64,11 @@ If restart reports a missing provider, remove the native registration and re-add
 ## Provider Uses the Legacy Generic Profile
 
 If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server.
-Confirm that no sandbox uses the preserved OpenShell provider, delete it with the `openshell provider delete` command that `mcp remove` prints, and add the server again with the recorded credential variable exported.
+If `mcp remove` reports a preserved OpenShell provider, run `openshell sandbox list -g <GATEWAY_NAME>` using the gateway name from the printed command.
+Run `openshell sandbox provider list -g <GATEWAY_NAME> <SANDBOX_NAME>` for each listed sandbox.
+Delete the provider with the printed `openshell provider delete` command only when no sandbox lists it.
+If `mcp remove` reports no preserved provider, skip provider deletion.
+Then add the server again with the recorded credential variable exported.
 OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
 
 ## Rebuild Cannot Prove a Credential Handle
@@ -83,10 +91,14 @@ export <CREDENTIAL_ENV>='replacement-value'
 $$nemoclaw <sandbox> mcp remove <server>
 ```
 
-Confirm that no sandbox uses the preserved provider named by `mcp remove`, then delete it:
+If `mcp remove` reports no preserved provider, skip provider deletion and add the server again.
+If `mcp remove` reports a preserved provider, use the gateway name from the printed command to run `openshell sandbox list -g <GATEWAY_NAME>`.
+Run `openshell sandbox provider list -g <GATEWAY_NAME> <SANDBOX_NAME>` for each listed sandbox.
+If any sandbox lists the preserved provider, do not delete it; resolve that sandbox's use of the provider first.
+When no sandbox lists the preserved provider, delete it:
 
 ```bash
-openshell provider delete <PROVIDER_NAME> -g <GATEWAY_NAME>
+openshell provider delete -g <GATEWAY_NAME> <PROVIDER_NAME>
 ```
 
 Add the server again so NemoClaw creates a fresh provider binding and agent placeholder:
@@ -123,20 +135,26 @@ Keep the registration unchanged while status remains unavailable, conflicting, o
 
 ## Add Reports an Existing Provider
 
-If `mcp add` reports that an OpenShell provider already exists with no active MCP registration, an earlier `mcp remove`, add rollback, or sandbox destroy preserved it.
-Confirm that no sandbox uses the provider, run the `openshell provider delete` command from the error, and rerun `mcp add`.
+If `mcp add` reports that an OpenShell provider already exists with no active MCP registration, an earlier `mcp remove`, `mcp add` rollback, or sandbox destroy usually preserved it.
+Use the gateway name from the error to run `openshell sandbox list -g <GATEWAY_NAME>`.
+Run `openshell sandbox provider list -g <GATEWAY_NAME> <SANDBOX_NAME>` for each listed sandbox.
+If any sandbox lists the provider, do not delete it; resolve that sandbox's use of the provider first.
+When no sandbox lists the provider, run the printed `openshell provider delete` command, then rerun `mcp add`.
 
 ## Add Transaction Is Incomplete
 
 For an interrupted `mcp add` that does not report an unknown outcome, inspect the native source and live status first.
 If no native registration exists, rerun the original command with the same URL, environment-variable name, and any `--deny-tool` options.
-If `mcp add` reports that the OpenShell provider already exists with no active registration, confirm that no sandbox uses that provider, run the `openshell provider delete` command from the error, and rerun `mcp add`.
-If the native registration exists, remove it, confirm that no sandbox uses the preserved OpenShell provider, delete that provider with the `openshell provider delete` command that `mcp remove` prints, and add the server again after re-exporting the credential.
+If `mcp add` reports an existing provider with no active registration, follow [Add Reports an Existing Provider](#add-reports-an-existing-provider).
+If the native registration exists, run `mcp remove <server>`.
+If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](#add-reports-an-existing-provider) to verify that no sandbox lists it and delete it.
+If `mcp remove` reports no preserved provider, skip provider deletion.
+Then re-export the credential and run `mcp add`.
 
 To abandon the transaction, run `mcp remove <server> --force`.
 NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove.
-It preserves the workspace provider and reports any residual policy or attachment cleanup.
-Before you add the same server name again, confirm that no sandbox uses that preserved provider and delete it with `openshell provider delete <PROVIDER_NAME> -g <GATEWAY_NAME>`.
+It preserves an existing workspace provider and reports any residual policy or attachment cleanup.
+If `mcp remove` reports a preserved provider and you later add the same server name again, follow [Add Reports an Existing Provider](#add-reports-an-existing-provider) to verify that no sandbox lists the provider and delete it first.
 
 ## Agent MCP Capability Is Missing
 
@@ -464,6 +482,20 @@ Remove and re-add the server with the same trusted host to perform a new preflig
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
 $$nemoclaw <sandbox> mcp remove <server>
+```
+
+If `mcp remove` reports a preserved provider, run `openshell sandbox list -g <GATEWAY_NAME>` using the gateway name from the printed command.
+Run `openshell sandbox provider list -g <GATEWAY_NAME> <SANDBOX_NAME>` for each listed sandbox.
+Delete the provider with the printed command only when no sandbox lists it:
+
+```bash
+openshell provider delete -g <GATEWAY_NAME> <PROVIDER_NAME>
+```
+
+If `mcp remove` reports no preserved provider, skip provider deletion.
+Then add the server again:
+
+```bash
 $$nemoclaw <sandbox> mcp add <server> \
   --url https://mcp-host.corp.example/mcp \
   --env LOCAL_MCP_TOKEN \

@@ -43,6 +43,8 @@ import {
   attachProvider,
   detachProvider,
   ensureMcpBridgeProviderProfile,
+  formatDeleteMcpProviderCommand,
+  formatMcpGatewayAttachmentCheckCommands,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
@@ -342,15 +344,6 @@ async function waitForHermesMcpAddSandboxIdentity(
   return readyIdentity;
 }
 
-function formatDeleteMcpProviderCommand(
-  providerName: string,
-  gatewayName: string | undefined,
-): string {
-  return gatewayName
-    ? `openshell provider delete ${providerName} -g ${gatewayName}`
-    : `openshell provider delete ${providerName}`;
-}
-
 async function inspectMcpAddRecovery(
   sandboxName: string,
   adapter: AgentMcpAdapter,
@@ -446,13 +439,28 @@ async function inspectMcpAddRecovery(
   const providerPresent = providerInspection.exists === true;
   const attachmentPresent = Boolean(attachment);
   const adapterRegistered = adapterInspection.state === "registered";
-  if (providerPresent && policyState === "absent" && !attachmentPresent && !adapterRegistered) {
+  const providerMatchesRetainedMcpShape =
+    providerPresent &&
+    Boolean(providerInspection.id) &&
+    (entry.providerId === undefined || providerInspection.id === entry.providerId) &&
+    providerInspection.resourceVersion !== null &&
+    providerInspection.type === MCP_BRIDGE_PROVIDER_TYPE &&
+    providerInspection.credentialKeys?.length === 1;
+  if (
+    providerMatchesRetainedMcpShape &&
+    policyState === "absent" &&
+    !attachmentPresent &&
+    !adapterRegistered
+  ) {
     const deleteCommand = formatDeleteMcpProviderCommand(
       entry.providerName ?? "",
       providerRuntimeSelection.gatewayName,
     );
+    const attachmentChecks = formatMcpGatewayAttachmentCheckCommands(
+      providerRuntimeSelection.gatewayName,
+    );
     throw new McpBridgeError(
-      `OpenShell provider '${entry.providerName}' already exists, but no MCP registration, policy, or attachment for '${entry.server}' is active on sandbox '${sandboxName}' (for example, after \`nemoclaw ${sandboxName} mcp remove ${entry.server}\` preserved the provider). Confirm no sandbox uses '${entry.providerName}', delete it with \`${deleteCommand}\`, and rerun \`mcp add\`. No source was changed.`,
+      `OpenShell provider '${entry.providerName}' already exists, but no MCP registration, policy, or attachment for '${entry.server}' is active on sandbox '${sandboxName}' (for example, after \`nemoclaw ${sandboxName} mcp remove ${entry.server}\` preserved the provider). Confirm that no sandbox on the gateway uses '${entry.providerName}' (${attachmentChecks}), delete it with \`${deleteCommand}\`, and rerun \`mcp add\`. No source was changed.`,
     );
   }
   if (
@@ -465,7 +473,7 @@ async function inspectMcpAddRecovery(
       providerInspection.credentialKeys[0] !== entry.env[0])
   ) {
     throw new McpBridgeError(
-      `MCP add recovery for '${entry.server}' found an incompatible provider '${entry.providerName}': ${providerShapeDetail(providerInspection, entry.env[0]) ?? "provider shape differs"}. No source was changed.`,
+      `MCP add recovery for '${entry.server}' found an incompatible provider '${entry.providerName}': ${providerShapeDetail(providerInspection, entry.env[0], entry.providerId) ?? "provider shape differs"}. No source was changed.`,
     );
   }
   if (
@@ -1155,8 +1163,11 @@ async function addMcpBridgeUnlocked(
         providerName ?? "",
         providerRuntimeSelection.gatewayName,
       );
+      const attachmentChecks = formatMcpGatewayAttachmentCheckCommands(
+        providerRuntimeSelection.gatewayName,
+      );
       console.warn(
-        `  Preserved detached OpenShell provider '${providerName}' after MCP add rollback. Confirm that no sandbox uses it, then delete it with \`${deleteCommand}\`.`,
+        `  Preserved detached OpenShell provider '${providerName}' after MCP add rollback. Confirm that no sandbox on the gateway uses it (${attachmentChecks}), then delete it with \`${deleteCommand}\`.`,
       );
     }
     // Exception rollback is best-effort and process death skips it entirely.

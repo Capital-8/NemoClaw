@@ -389,80 +389,83 @@ async function removeBridgeAndAssertEmpty(
     mcpUrl: string;
   },
 ): Promise<void> {
+  const { agent, adapter, sandboxName, artifactPrefix, providerName, mcpUrl } = options;
   const remove = await removeMcpBridgeWithOneConcurrencyRetry(
     host,
-    options.sandboxName,
+    sandboxName,
     SERVER_NAME,
-    options.adapter,
-    options.artifactPrefix,
+    adapter,
+    artifactPrefix,
   );
   await captureHermesMcpLifecycleFailure(host, remove, {
-    agent: options.agent,
-    sandboxName: options.sandboxName,
+    agent,
+    sandboxName,
     operation: "remove",
     redactionValues: [...Object.values(MCP_BRIDGE_TEST_CREDENTIALS), TOOL_CHALLENGE],
   });
-  expectExitZero(remove, `${options.artifactPrefix} mcp remove fake server`);
-  const list = await host.nemoclaw([options.sandboxName, "mcp", "list", "--json"], {
-    artifactName: `${options.artifactPrefix}-mcp-list-after-remove`,
-    env: buildAvailabilityProbeEnv(),
+  expectExitZero(remove, `${artifactPrefix} mcp remove fake server`);
+  const probeCommandOptions = (artifactName: string, secret?: string) => ({
+    artifactName: `${artifactPrefix}-${artifactName}`,
+    env: secret
+      ? { ...buildAvailabilityProbeEnv(), FAKE_MCP_SECRET: secret }
+      : buildAvailabilityProbeEnv(),
+    ...(secret ? { redactionValues: [secret] } : {}),
     timeoutMs: 60_000,
   });
+  const retainedAdd = await host.nemoclaw(
+    [sandboxName, "mcp", "add", SERVER_NAME, "--url", mcpUrl, "--env", "FAKE_MCP_SECRET"],
+    probeCommandOptions("mcp-add-rejected-while-provider-retained", HOST_SECRET),
+  );
+  expect(`${retainedAdd.exitCode}\n${resultText(retainedAdd)}`).toMatch(
+    new RegExp(
+      `^[1-9]\\d*\\n[\\s\\S]*OpenShell provider '${providerName}' already exists[\\s\\S]*openshell provider delete[\\s\\S]*No source was changed\\.`,
+    ),
+  );
+  const list = await host.nemoclaw(
+    [sandboxName, "mcp", "list", "--json"],
+    probeCommandOptions("mcp-list-after-remove"),
+  );
   expect(JSON.parse(list.stdout).bridges).toEqual([]);
   const attachments = await host.command(
     "openshell",
-    ["sandbox", "provider", "list", options.sandboxName],
-    {
-      artifactName: `${options.artifactPrefix}-provider-detached-after-mcp-remove`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
+    ["sandbox", "provider", "list", sandboxName],
+    probeCommandOptions("provider-detached-after-mcp-remove"),
   );
-  expectExitZero(attachments, `${options.artifactPrefix} provider list after remove`);
-  expect(resultText(attachments)).not.toContain(options.providerName);
-  const policy = await sandbox.openshell(["policy", "get", "--full", options.sandboxName], {
-    artifactName: `${options.artifactPrefix}-policy-absent-after-mcp-remove`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
-  });
-  expectExitZero(policy, `${options.artifactPrefix} policy after remove`);
-  expect(resultText(policy)).not.toMatch(/mcp[-_]bridge[-_]fake/);
-  expect(resultText(policy)).toContain("mcp_host_edit_e2e");
+  expectExitZero(attachments, `${artifactPrefix} provider list after remove`);
+  expect(resultText(attachments)).not.toContain(providerName);
+  const policy = await sandbox.openshell(
+    ["policy", "get", "--full", sandboxName],
+    probeCommandOptions("policy-absent-after-mcp-remove"),
+  );
+  expectExitZero(policy, `${artifactPrefix} policy after remove`);
+  expect(resultText(policy)).toMatch(/^(?![\s\S]*mcp[-_]bridge[-_]fake)[\s\S]*mcp_host_edit_e2e/u);
   const entry: McpSourceEntry = {
     server: SERVER_NAME,
-    agent: options.agent,
-    adapter: options.adapter,
-    url: options.mcpUrl,
+    agent,
+    adapter,
+    url: mcpUrl,
     env: ["FAKE_MCP_SECRET"],
-    providerName: options.providerName,
+    providerName,
     policyName: "mcp-bridge-fake",
   };
   const adapterStatusCommand =
-    options.adapter === "openclaw-config"
+    adapter === "openclaw-config"
       ? buildOpenClawMcpInspectCommand(entry, true)
-      : options.adapter === "hermes-config"
+      : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry)
         : buildDeepAgentsMcpStatusCommand(entry);
   const adapterStatus = await sandbox.execShell(
-    options.sandboxName,
+    sandboxName,
     trustedSandboxShellScript(["set -eu", adapterStatusCommand].join("\n")),
-    {
-      artifactName: `${options.artifactPrefix}-adapter-absent-after-mcp-remove`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
+    probeCommandOptions("adapter-absent-after-mcp-remove"),
   );
   expect(resultText(adapterStatus)).toMatch(/(?:^|\n)absent(?:\n|$)/);
   const deleteProvider = await host.command(
     "openshell",
-    ["provider", "delete", options.providerName],
-    {
-      artifactName: `${options.artifactPrefix}-delete-retained-provider-after-mcp-remove`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
+    ["provider", "delete", providerName],
+    probeCommandOptions("delete-retained-provider-after-mcp-remove"),
   );
-  expectExitZero(deleteProvider, `${options.artifactPrefix} explicitly deletes retained provider`);
+  expectExitZero(deleteProvider, `${artifactPrefix} explicitly deletes retained provider`);
 }
 async function assertAdapterRequestDeniedAfterRemove(
   sandbox: SandboxClient,
@@ -615,18 +618,12 @@ async function replaceBridgeCredentialConservatively(
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
-  const artifactPrefix =
+  const [artifactPrefix, agent]: [string, McpAgent] =
     adapter === "openclaw-config"
-      ? "openclaw"
+      ? ["openclaw", "openclaw"]
       : adapter === "hermes-config"
-        ? "hermes"
-        : "deepagents";
-  const agent: McpAgent =
-    adapter === "openclaw-config"
-      ? "openclaw"
-      : adapter === "hermes-config"
-        ? "hermes"
-        : "langchain-deepagents-code";
+        ? ["hermes", "hermes"]
+        : ["deepagents", "langchain-deepagents-code"];
   const providerName = `${sandboxName}-mcp-${SERVER_NAME}`;
   const bridge = { sandboxName, mcpUrl, artifactPrefix };
   const restart = await host.nemoclaw([sandboxName, "mcp", "restart", SERVER_NAME], {
