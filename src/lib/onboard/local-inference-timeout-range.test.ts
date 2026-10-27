@@ -44,7 +44,7 @@ describe("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT range (#13734)", () => {
     const mutator = createCliOpenShellInferenceRouteMutator(
       async (args) => {
         calls.push(args);
-        return { status: 0, stdout: "", stderr: "" };
+        return { status: 0, output: "", stdout: "", stderr: "" };
       },
       { environment: {} },
     );
