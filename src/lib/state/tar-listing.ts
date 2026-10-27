@@ -216,26 +216,36 @@ type TarHeaderLineBreakInspection =
   | "limit-exceeded"
   | "timeout";
 
-/** Detect a PAX path, linkpath, or GNU.sparse.name record that contains a line break; report malformed records as uninspectable. */
-function inspectPaxHeaderForLineBreaks(payload: Buffer): TarHeaderLineBreakInspection {
+/** Decode complete PAX records so header inspection and sanitation use the same framing rules. */
+export function decodePaxRecords(payload: Buffer): Array<{ key: string; value: string }> | null {
   let cursor = 0;
+  const records: Array<{ key: string; value: string }> = [];
   while (cursor < payload.byteLength) {
     const separator = payload.indexOf(0x20, cursor);
-    if (separator < 0) return "uninspectable";
+    if (separator < 0) return null;
     const length = Number.parseInt(payload.subarray(cursor, separator).toString("ascii"), 10);
     if (!Number.isSafeInteger(length) || length <= 0 || cursor + length > payload.byteLength) {
-      return "uninspectable";
+      return null;
     }
-    if (payload[cursor + length - 1] !== 0x0a) return "uninspectable";
+    if (payload[cursor + length - 1] !== 0x0a) return null;
     const record = payload.subarray(separator + 1, cursor + length - 1).toString("utf8");
     const equals = record.indexOf("=");
-    if (equals <= 0) return "uninspectable";
-    const key = record.slice(0, equals);
+    if (equals <= 0) return null;
+    records.push({ key: record.slice(0, equals), value: record.slice(equals + 1) });
+    cursor += length;
+  }
+  return records;
+}
+
+/** Detect a PAX path, linkpath, or GNU.sparse.name record that contains a line break; report malformed records as uninspectable. */
+function inspectPaxHeaderForLineBreaks(payload: Buffer): TarHeaderLineBreakInspection {
+  const records = decodePaxRecords(payload);
+  if (records === null) return "uninspectable";
+  for (const { key, value } of records) {
     if (key === "path" || key === "linkpath" || key === "GNU.sparse.name") {
-      const identifier = findHeaderLineBreakIdentifier(record.slice(equals + 1));
+      const identifier = findHeaderLineBreakIdentifier(value);
       if (identifier !== null) return { kind: "line-break", identifier };
     }
-    cursor += length;
   }
   return "clean";
 }

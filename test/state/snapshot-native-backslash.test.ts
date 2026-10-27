@@ -3,10 +3,11 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   writeExecutable,
   writeFakeOpenshell,
@@ -148,7 +149,96 @@ async function assertBackslashFallbackRoundTrip(
   }
 }
 
+function assertFailedFallbackCleans(
+  installFailure: (marker: string) => () => void,
+  expectedError: string,
+): void {
+  const { fixture, relativePath, backup } = createBackslashEnvFixture();
+  const binDir = path.join(fixture, "bin");
+  const marker = path.join(fixture, "first-extraction-failed");
+  const systemTar = spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).stdout.trim();
+  const oldPath = process.env.PATH;
+  try {
+    expect(backup.success, backup.error).toBe(true);
+    fs.mkdirSync(binDir);
+    writeExecutable(
+      path.join(binDir, "tar"),
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        'const { spawnSync } = require("node:child_process");',
+        "const args = process.argv.slice(2);",
+        `if (args.includes("-T")) { fs.writeFileSync(${JSON.stringify(marker)}, "1"); process.exit(1); }`,
+        `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" }).status ?? 90);`,
+      ].join("\n"),
+    );
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+    const restoreFailure = installFailure(marker);
+    try {
+      expect(() =>
+        sandboxState.inspectNativeSandboxState(
+          backup.manifest!.backupPath,
+          () => undefined,
+          relativePath,
+        ),
+      ).toThrow(expectedError);
+    } finally {
+      restoreFailure();
+    }
+    expect(
+      fs
+        .readdirSync(backup.manifest!.backupPath)
+        .some((name) => name.startsWith(".native-inspect-")),
+    ).toBe(false);
+  } finally {
+    restoreEnv("PATH", oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
+function throwDiskFull(): never {
+  throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+}
+
 describe("native backup of backslash paths across tar quoting modes", () => {
+  it("stops a backslash fallback copy at the extraction deadline and removes staging", () => {
+    const now = Date.now();
+    assertFailedFallbackCleans((marker) => {
+      const clock = vi
+        .spyOn(Date, "now")
+        .mockImplementation(() =>
+          fs.existsSync(marker) ? now + sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS + 1 : now,
+        );
+      return () => clock.mockRestore();
+    }, "Native archive fallback staging exceeded the extraction deadline");
+  });
+
+  it("removes a partial backslash fallback copy when local disk fills", () => {
+    assertFailedFallbackCleans((marker) => {
+      const originalWrite = fs.writeSync;
+      const originalRemove = fs.rmSync;
+      const removed: string[] = [];
+      const write = vi
+        .spyOn(fs, "writeSync")
+        .mockImplementation((...args) =>
+          fs.existsSync(marker) && Buffer.isBuffer(args[1]) && args[1].byteLength >= 512
+            ? throwDiskFull()
+            : (Reflect.apply(originalWrite, fs, args) as number),
+        );
+      const remove = vi.spyOn(fs, "rmSync").mockImplementation((...args) => {
+        removed.push(String(args[0]));
+        Reflect.apply(originalRemove, fs, args);
+      });
+      syncBuiltinESMExports();
+      return () => {
+        write.mockRestore();
+        remove.mockRestore();
+        syncBuiltinESMExports();
+        expect(removed.some((target) => target.endsWith("/archive-retry.tar"))).toBe(true);
+      };
+    }, "Native archive fallback staging has insufficient local disk space");
+  });
+
   it("preserves an .env under a backslash directory across host tar implementations", () => {
     const { fixture, relativePath, content, backup } = createBackslashEnvFixture();
     try {

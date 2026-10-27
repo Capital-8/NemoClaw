@@ -78,6 +78,7 @@ import { inspectExtractedDcodeSessionsDatabase } from "./snapshot/dcode-session-
 import { withoutOpenClawSqliteMachineAuthority } from "./snapshot/openclaw-sqlite-sanitizer.js";
 import { nemoclawStateRoot } from "./state-root.js";
 import {
+  decodePaxRecords,
   readArchiveRange,
   runTarListing,
   TAR_BLOCK_BYTES,
@@ -1265,28 +1266,16 @@ function dependencyLockfileContainsCredential(name: string, raw: string): boolea
 function paxMetadata(
   payload: Buffer,
 ): { readonly path: string | null; readonly sparse: boolean } | undefined {
-  let cursor = 0;
+  const records = decodePaxRecords(payload);
+  if (records === null) return undefined;
   let archivePath: string | null = null;
   let sparse = false;
-  while (cursor < payload.byteLength) {
-    const separator = payload.indexOf(0x20, cursor);
-    if (separator < 0) return undefined;
-    const length = Number.parseInt(payload.subarray(cursor, separator).toString("ascii"), 10);
-    if (!Number.isSafeInteger(length) || length <= 0 || cursor + length > payload.byteLength) {
-      return undefined;
-    }
-    if (payload[cursor + length - 1] !== 0x0a) return undefined;
-    const record = payload.subarray(separator + 1, cursor + length - 1).toString("utf8");
-    const equals = record.indexOf("=");
-    if (equals <= 0) return undefined;
-    const key = record.slice(0, equals);
+  for (const { key, value } of records) {
     if (key === "path") {
-      const value = record.slice(equals + 1);
       if (!value) return undefined;
       archivePath = value;
     }
     if (key.startsWith("GNU.sparse.")) sparse = true;
-    cursor += length;
   }
   return { path: archivePath, sparse };
 }
@@ -1793,28 +1782,63 @@ function nativeTarInventoriesMatch(
   );
 }
 
-function stageDescriptorArchiveCopy(sourceDescriptor: number, destinationPath: string): void {
+function stageDescriptorArchiveCopy(
+  sourceDescriptor: number,
+  destinationPath: string,
+  deadlineMs: number,
+): void {
   const size = fstatSync(sourceDescriptor).size;
-  const targetDescriptor = openSync(
-    destinationPath,
-    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-    0o600,
-  );
-  let position = 0;
+  if (!Number.isSafeInteger(size) || size < 0) {
+    throw new Error("Native archive fallback staging cannot inspect the archive size");
+  }
+  let capacity: { bavail: bigint; bsize: bigint };
   try {
-    while (position < size) {
-      const chunk = readArchiveRange(
-        sourceDescriptor,
-        position,
-        Math.min(64 * 1024, size - position),
-      );
-      if (!chunk || !writeArchiveRange(targetDescriptor, position, chunk)) {
-        throw new Error("could not stage private native archive");
+    capacity = statfsSync(path.dirname(destinationPath), { bigint: true });
+  } catch {
+    throw new Error("Native archive fallback staging cannot inspect local disk capacity");
+  }
+  if (capacity.bavail < 0n || capacity.bsize <= 0n) {
+    throw new Error("Native archive fallback staging cannot inspect local disk capacity");
+  }
+  if (BigInt(size) > capacity.bavail * capacity.bsize) {
+    throw new Error("Native archive fallback staging has insufficient local disk space");
+  }
+  try {
+    const targetDescriptor = openSync(
+      destinationPath,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      let position = 0;
+      while (position < size) {
+        if (backupDeadlineExpired(deadlineMs)) {
+          throw new Error("Native archive fallback staging exceeded the extraction deadline");
+        }
+        const chunk = readArchiveRange(
+          sourceDescriptor,
+          position,
+          Math.min(64 * 1024, size - position),
+        );
+        if (!chunk || !writeArchiveRange(targetDescriptor, position, chunk)) {
+          throw new Error("Native archive fallback staging could not copy the private archive");
+        }
+        position += chunk.byteLength;
       }
-      position += chunk.byteLength;
+      if (backupDeadlineExpired(deadlineMs)) {
+        throw new Error("Native archive fallback staging exceeded the extraction deadline");
+      }
+    } finally {
+      closeSync(targetDescriptor);
     }
-  } finally {
-    closeSync(targetDescriptor);
+  } catch (error) {
+    rmSync(destinationPath, { force: true });
+    if (error instanceof Error && "code" in error && error.code === "ENOSPC") {
+      throw new Error("Native archive fallback staging has insufficient local disk space", {
+        cause: error,
+      });
+    }
+    throw error;
   }
 }
 
@@ -1823,7 +1847,9 @@ function extractSelectedNativeArchiveMembers(
   temporaryDir: string,
   targetRoot: string,
   members: readonly string[],
+  deadlineMs = Date.now() + NATIVE_STATE_CAPTURE_TIMEOUT_MS,
 ): ReturnType<typeof spawnSync> {
+  const extractionDeadlineMs = Math.min(deadlineMs, Date.now() + NATIVE_STATE_CAPTURE_TIMEOUT_MS);
   const memberList = path.join(temporaryDir, "members");
   const runPass = (
     patterns: readonly string[],
@@ -1842,11 +1868,18 @@ function extractSelectedNativeArchiveMembers(
         shouldCloseDescriptor = true;
       } else if (useStagedDescriptorCopy) {
         const stagedPath = path.join(temporaryDir, "archive-retry.tar");
-        stageDescriptorArchiveCopy(archiveSource.descriptor, stagedPath);
+        stageDescriptorArchiveCopy(archiveSource.descriptor, stagedPath, extractionDeadlineMs);
         archiveDescriptor = openSync(stagedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
         shouldCloseDescriptor = true;
       } else {
         archiveDescriptor = archiveSource.descriptor;
+      }
+      const timeout = remainingBackupTimeoutMs(
+        extractionDeadlineMs,
+        NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+      );
+      if (timeout === null) {
+        throw new Error("Native archive extraction exceeded its deadline");
       }
       return spawnSync(
         "tar",
@@ -1863,7 +1896,7 @@ function extractSelectedNativeArchiveMembers(
         ],
         {
           stdio: [archiveDescriptor, "pipe", "pipe"],
-          timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+          timeout,
           maxBuffer: 1024 * 1024,
         },
       );
@@ -2002,6 +2035,7 @@ function nativeArchiveCredentialViolation(
       temporary,
       scanRoot,
       candidates.map(({ entry }) => entry),
+      deadlineMs,
     );
     if (extracted.status !== 0 || extracted.error || extracted.signal) {
       return candidates[0]?.entry ?? "native state credential scan";
