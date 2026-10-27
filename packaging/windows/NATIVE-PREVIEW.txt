@@ -31,8 +31,9 @@ are not part of this package.
 
 Setup and onboarding share one native WPF window. Choose an agent once, select
 inference and supported optional services, and follow the named install phases.
-The Personal profile enables outbound network access while keeping host settings
-outside the agent filesystem. Setup adds a NemoClaw Setup desktop shortcut and
+Configured sessions select supervised networking, not the Personal direct-network
+profile. Host settings remain outside the agent filesystem. Network-policy
+enforcement remains unqualified. Setup adds a NemoClaw Setup desktop shortcut and
 a shortcut with the selected agent's icon. OpenClaw and Hermes open their web
 interfaces in the default browser. Hermes also has an interactive console.
 A native control window stops each web session and cleans up its sandbox.

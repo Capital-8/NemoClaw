@@ -22,6 +22,21 @@ function step(job: WorkflowJob, name: string): WorkflowStep {
 }
 type Mutation = { name: string; mutate: (value: WindowsInstallerWorkflowSources) => void };
 const mutations: Mutation[] = [
+  ...[
+    "windows-finished-installer",
+    "windows-finished-installed-startup",
+    "windows-finished-runtime-qualification",
+    "windows-finished-reviewed-installer",
+    "windows-finished-candidate-migration",
+    "windows-finished-trusted-qualification",
+    "windows-compiled-application",
+  ].map((name) => ({
+    name: "cancelled run starts " + name,
+    mutate: (value: WindowsInstallerWorkflowSources) => {
+      const job = value.workflow.jobs[name];
+      job.if = job.if!.replace("!cancelled() && ", "");
+    },
+  })),
   {
     name: "Hermes bootstrap silently selects OpenClaw",
     mutate: (value) => {

@@ -1007,7 +1007,7 @@ jobs:
   windows-finished-installed-startup:
     name: Credential-free fresh installed OpenClaw startup and cleanup (ARM64)
     needs: [windows-finished-request, windows-finished-installer, windows-compiled-application]
-    if: ${{ always() && needs.windows-finished-request.result == 'success' && needs.windows-finished-request.outputs.request_kind == 'pull-request' && needs.windows-finished-request.outputs.agent == 'openclaw' && needs.windows-finished-request.outputs.validation_scope == 'startup-only' && needs.windows-finished-installer.result == 'success' && needs.windows-compiled-application.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.windows-finished-request.result == 'success' && needs.windows-finished-request.outputs.request_kind == 'pull-request' && needs.windows-finished-request.outputs.agent == 'openclaw' && needs.windows-finished-request.outputs.validation_scope == 'startup-only' && needs.windows-finished-installer.result == 'success' && needs.windows-compiled-application.result == 'success' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 60
     permissions:
@@ -1086,7 +1086,7 @@ jobs:
   windows-finished-runtime-qualification:
     name: Qualify and independently review the selected runtime before UI packaging
     needs: [windows-finished-request, windows-finished-installer, windows-compiled-application]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows-finished-request.result == 'success' && contains(fromJSON('["openclaw","hermes"]'), needs.windows-finished-request.outputs.agent) && needs.windows-finished-request.outputs.trusted_main == 'true' && needs.windows-finished-request.outputs.exact_workflow == 'true' && needs.windows-finished-request.outputs.exact_pr == 'true' && needs.windows-finished-request.outputs.credential_authorized == 'true' && needs.windows-finished-request.outputs.validation_scope == 'full-acceptance' && needs.windows-finished-installer.result == 'success' && needs.windows-compiled-application.result == 'success' }}
+    if: ${{ always() && !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows-finished-request.result == 'success' && contains(fromJSON('["openclaw","hermes"]'), needs.windows-finished-request.outputs.agent) && needs.windows-finished-request.outputs.trusted_main == 'true' && needs.windows-finished-request.outputs.exact_workflow == 'true' && needs.windows-finished-request.outputs.exact_pr == 'true' && needs.windows-finished-request.outputs.credential_authorized == 'true' && needs.windows-finished-request.outputs.validation_scope == 'full-acceptance' && needs.windows-finished-installer.result == 'success' && needs.windows-compiled-application.result == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -1109,7 +1109,7 @@ jobs:
     name: Rebuild setup UI around the independently reviewed selected runtime
     needs:
       [windows-finished-request, windows-finished-installer, windows-finished-runtime-qualification]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows-finished-request.result == 'success' && contains(fromJSON('["openclaw","hermes"]'), needs.windows-finished-request.outputs.agent) && needs.windows-finished-installer.result == 'success' && needs.windows-finished-runtime-qualification.result == 'success' }}
+    if: ${{ always() && !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows-finished-request.result == 'success' && contains(fromJSON('["openclaw","hermes"]'), needs.windows-finished-request.outputs.agent) && needs.windows-finished-installer.result == 'success' && needs.windows-finished-runtime-qualification.result == 'success' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 35
     permissions:
@@ -1397,7 +1397,7 @@ jobs:
         windows-finished-candidate-migration,
         windows-finished-reviewed-installer,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows-finished-request.result == 'success' && needs.windows-finished-request.outputs.trusted_main == 'true' && needs.windows-finished-request.outputs.exact_workflow == 'true' && needs.windows-finished-request.outputs.exact_pr == 'true' && needs.windows-finished-request.outputs.credential_authorized == 'true' && needs.windows-finished-request.outputs.validation_scope == 'full-acceptance' && needs.windows-finished-installer.result == 'success' && needs.windows-compiled-application.result == 'success' && needs.windows-finished-candidate-migration.result == 'success' }}
+    if: ${{ always() && !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows-finished-request.result == 'success' && needs.windows-finished-request.outputs.trusted_main == 'true' && needs.windows-finished-request.outputs.exact_workflow == 'true' && needs.windows-finished-request.outputs.exact_pr == 'true' && needs.windows-finished-request.outputs.credential_authorized == 'true' && needs.windows-finished-request.outputs.validation_scope == 'full-acceptance' && needs.windows-finished-installer.result == 'success' && needs.windows-compiled-application.result == 'success' && needs.windows-finished-candidate-migration.result == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -1577,7 +1577,7 @@ jobs:
     outputs:
       application_cache_key: ${{ steps.transfer_manifest.outputs.cache_key }}
       application_manifest_sha256: ${{ steps.transfer_manifest.outputs.manifest_sha256 }}
-    if: ${{ always() && needs.windows-finished-request.result == 'success' && needs.windows-runtime-preflight.result == 'success' && ((needs.windows-finished-request.outputs.build_allowed == 'true') || (github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application')) }}
+    if: ${{ always() && !cancelled() && needs.windows-finished-request.result == 'success' && needs.windows-runtime-preflight.result == 'success' && ((needs.windows-finished-request.outputs.build_allowed == 'true') || (github.event_name == 'workflow_dispatch' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application')) }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 30
     env:

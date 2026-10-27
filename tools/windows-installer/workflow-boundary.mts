@@ -288,6 +288,16 @@ export function assertWindowsInstallerWorkflow(input: WindowsInstallerWorkflowSo
       ),
     );
   })();
+  for (const name of [
+    "windows-finished-installer",
+    "windows-finished-installed-startup",
+    "windows-finished-runtime-qualification",
+    "windows-finished-reviewed-installer",
+    "windows-finished-candidate-migration",
+    "windows-finished-trusted-qualification",
+    "windows-compiled-application",
+  ])
+    assert.ok(requiredJob(workflow, name).if?.startsWith("${{ always() && !cancelled() && "));
   for (const scenario of [
     "windows-finished-request",
     "windows-compiled-application",
@@ -345,7 +355,6 @@ export function assertWindowsInstallerWorkflow(input: WindowsInstallerWorkflowSo
       assert.ok(prAdmission.run?.includes("validation_scope=startup-only"));
       assert.ok(prAdmission.run?.includes("credential_authorized=false"));
       assert.ok(jobNeeds(compiled)?.includes("windows-finished-request"));
-      assert.ok(installer.if?.startsWith("${{ always() && !cancelled() && "));
       assert.ok(
         containsItems(jobNeeds(installer), [
           "windows-finished-request",
@@ -887,7 +896,7 @@ export function assertWindowsInstallerWorkflow(input: WindowsInstallerWorkflowSo
     ]);
     assert.strictEqual(
       rebuilt.if,
-      "${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows-finished-request.result == 'success' && contains(fromJSON('[\"openclaw\",\"hermes\"]'), needs.windows-finished-request.outputs.agent) && needs.windows-finished-installer.result == 'success' && needs.windows-finished-runtime-qualification.result == 'success' }}",
+      "${{ always() && !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.windows-finished-request.result == 'success' && contains(fromJSON('[\"openclaw\",\"hermes\"]'), needs.windows-finished-request.outputs.agent) && needs.windows-finished-installer.result == 'success' && needs.windows-finished-runtime-qualification.result == 'success' }}",
     );
     assert.strictEqual(rebuilt.environment, undefined);
     assert.strictEqual(

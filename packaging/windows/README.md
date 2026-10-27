@@ -139,10 +139,15 @@ it does not reuse binaries from a previous MSI. The patch and its exact hash are
 product. Packaged Node workloads explicitly set `windows_ui=true` so the
 contained Node process can initialize. Other sandboxes retain MXC's disabled-UI
 default. The derivative also adds per-sandbox `host_loopback`, `host_console`, and
-`personal_network` options. Configured sessions use the Personal network profile:
-MXC's supported outbound-open policy and local-network access. Personal does not
-grant access to the Windows user-profile filesystem. Qualification probes the
-installed MXC tier: AppContainer retains its original network policy; BaseContainer
+`personal_network` options. Configured OpenClaw web sessions and the shared
+OpenClaw/Hermes console/dashboard path use the supervised profile.
+It sets `pc_allow_local_network=false` and omits direct-network
+options; these sessions do not select Personal networking or legacy host-console sharing.
+This configuration does not establish network-policy enforcement or grant access
+to the Windows user-profile filesystem.
+
+Qualification networking is separate. Probes check the installed MXC tier:
+AppContainer retains its original network policy; BaseContainer
 uses `loopback_ports` for the contained mock model and UI listeners. This emits
 MXC 0.8 TCP rules for only those `127.0.0.1` ports, with other egress and host
 loopback ingress denied. Unknown or inconsistent probes stop qualification.
@@ -153,16 +158,11 @@ The UI reports failed creation before waiting for relay readiness. It skips
 sandbox teardown only after definitive rejection and a confirmed empty registry;
 transport failures still require ordinary cleanup and reconciliation.
 
-Configured terminal sessions give the dedicated gateway a real Windows console.
-The gateway verifies all three standard handles before opting into MXC console
-sharing; the contained workload inherits input, output, resizing, and console
-lifetime. Startup errors appear in that same terminal. Deterministic one-shot
-qualification remains a separate regression surface.
-
 The tested ARM64 runner selects MXC's AppContainer fallback. The gateway template
-retains `pc_least_privilege=false` and `privateNetworkClientServer`. Personal sessions
-also add `internetClient` for public outbound connections; the qualification
-default does not add that capability. These are
+retains `pc_least_privilege=false` and `privateNetworkClientServer`. Personal
+compatibility probes add `internetClient` for public outbound connections;
+configured sessions do not select that profile. The qualification default does
+not add that capability. These are
 preview compatibility settings across the agent set; they do not establish LPAC
 qualification or governed egress-policy parity. The legacy `allowLocalNetwork`
 field has version-dependent ingress semantics. Retiring these exceptions needs
@@ -193,7 +193,7 @@ null-device preparation through Burn's elevated engine. Existing permission
 conflicts still stop preparation. Failed, unknown or inconsistent probes stop
 installation; they do not select a fallback. Uninstall does not require a probe.
 The null-device setting resets when Windows reboots. This prerequisite selection
-does not establish runtime qualification or change the Personal network policy.
+does not establish runtime qualification or change the selected session network profile.
 
 The self-contained ARM64 WPF setup presents one custom-framed window for agent
 selection, inference, optional services, installation progress, and completion.
@@ -254,7 +254,7 @@ the saved file or credentials. Remove the selection through Setup before launchi
 The plugin inputs remain pinned, but their presence does not establish support.
 Plugin trust checks, Hermes Discord behavior, and existing data remain unchanged.
 Messaging requires its selected bot/app keys;
-empty sender lists keep pairing behavior, and Personal network access does not
+empty sender lists keep pairing behavior, and network access does not
 authorize arbitrary senders. Hermes starts its actual messaging gateway with the
 interactive session, checks selected-channel connectivity, and uses the upstream
 planned-stop mechanism when that session closes.
