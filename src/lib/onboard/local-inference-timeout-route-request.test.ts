@@ -60,22 +60,4 @@ describe("accepted local inference timeout reaches the route request (#13734)", 
       MAX_TIMEOUT_REQUEST,
     );
   });
-
-  it("passes 3600 seconds for the OpenRouter Runtime adapter route", async () => {
-    const { OPENROUTER_PROVIDER_NAME } = await import("../inference/openrouter");
-    const { setupOpenRouterRuntimeInference } = await import("./openrouter-runtime");
-    const options = routeHarness();
-
-    await setupOpenRouterRuntimeInference({
-      ...options,
-      provider: OPENROUTER_PROVIDER_NAME,
-      model: "openai/gpt-5",
-      credentialEnv: "OPENROUTER_API_KEY",
-      credentialValue: "openrouter-token",
-    } as unknown as Parameters<typeof setupOpenRouterRuntimeInference>[0]);
-
-    expect(options.inferenceRouteMutator.setInferenceRoute).toHaveBeenCalledWith(
-      MAX_TIMEOUT_REQUEST,
-    );
-  });
 });

@@ -83,6 +83,53 @@ describe("setup inference local timeout range (#13734)", () => {
     },
   );
 
+  it("rejects 7200 for a Bedrock Runtime adapter route before any provider or route change", async () => {
+    // The Personal tier keeps a hosted custom endpoint off the native custom path.
+    vi.stubEnv("NEMOCLAW_POLICY_TIER", "personal");
+    vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "7200");
+    const { setupInference, upsertProvider, setInferenceRoute, error, step } = harness();
+
+    await expect(
+      setupInference(
+        "test-a",
+        "anthropic.claude",
+        "compatible-anthropic-endpoint",
+        "https://bedrock-runtime.us-east-1.amazonaws.com",
+        "COMPATIBLE_ANTHROPIC_API_KEY",
+        null,
+        [],
+        { preferredInferenceApi: "anthropic-messages" },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(error).toHaveBeenCalledWith(
+      '  Error: NEMOCLAW_LOCAL_INFERENCE_TIMEOUT must be from 1 to 3600 seconds; got "7200".',
+    );
+    expect(step).not.toHaveBeenCalled();
+    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(setInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("does not check the timeout for OpenRouter, which onboards as a native hosted provider", async () => {
+    vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "7200");
+    const { setupInference, error, step } = harness();
+
+    await expect(
+      setupInference(
+        "test-a",
+        "openai/gpt-5",
+        "openrouter-api",
+        null,
+        "OPENROUTER_API_KEY",
+        null,
+        [],
+        { preferredInferenceApi: "openai-completions" },
+      ),
+    ).rejects.toBeInstanceOf(StepReached);
+    expect(step).toHaveBeenCalledWith(4, 8, "Setting up inference provider");
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it("continues to provider setup with the largest supported timeout", async () => {
     vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "3600");
     const { setupInference, error, step } = harness();

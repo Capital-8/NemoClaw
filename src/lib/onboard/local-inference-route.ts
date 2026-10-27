@@ -3,7 +3,6 @@
 
 import type { getProbeRecovery } from "../validation-recovery";
 import type { OpenShellInferenceRouteMutator } from "../adapters/openshell/inference-route";
-import { OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
 import { LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS, localInferenceTimeoutRangeError } from "./env";
 
 /**
@@ -15,9 +14,7 @@ export function localInferenceRouteTimeoutError(
   provider: string,
   usesBedrockRuntimeAdapter: boolean,
 ): string | null {
-  return LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS.includes(provider) ||
-    usesBedrockRuntimeAdapter ||
-    provider === OPENROUTER_PROVIDER_NAME
+  return LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS.includes(provider) || usesBedrockRuntimeAdapter
     ? localInferenceTimeoutRangeError()
     : null;
 }

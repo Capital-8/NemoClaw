@@ -68,4 +68,22 @@ describe("connectSandbox local inference timeout (#13734)", () => {
     );
     expect(gatewayState.withConnectSandboxLifecycleLock).not.toHaveBeenCalled();
   });
+
+  it("finds a sandbox registered under another gateway root", async () => {
+    vi.stubEnv("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", "7200");
+    const harness = createConnectHarness({
+      registryEntry: { provider: "ollama-local", model: "test-model", gatewayPort: 18080 },
+    });
+    const registry = requireDist(
+      "../../src/lib/state/registry.js",
+    ) as typeof import("../../state/registry");
+    vi.mocked(registry.getSandbox).mockReturnValue(null);
+    const gatewayState = requireDist(
+      "../../src/lib/actions/sandbox/gateway-state.js",
+    ) as typeof import("./gateway-state");
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    expect(gatewayState.withConnectSandboxLifecycleLock).not.toHaveBeenCalled();
+  });
 });

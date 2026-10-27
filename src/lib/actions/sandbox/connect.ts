@@ -2552,7 +2552,7 @@ export async function connectSandbox(
   options: SandboxConnectOptions = {},
 ): Promise<void> {
   const timeoutRangeError = connectInferenceTimeoutRangeError(
-    registry.getSandbox(sandboxName)?.provider,
+    readConnectSandbox(sandboxName)?.provider,
   );
   if (timeoutRangeError) {
     console.error(`  ${timeoutRangeError}`);
