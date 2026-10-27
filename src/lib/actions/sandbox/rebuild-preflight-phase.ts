@@ -11,6 +11,7 @@ import {
 import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
+import { localInferenceTimeoutRangeError } from "../../onboard/env";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
 import {
   type HermesCronRestorePlan,
@@ -192,6 +193,18 @@ export async function runRebuildPreflightPhase(
     bail,
   );
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
+  // Rebuild runs onboard after it deletes the sandbox, so reject an inference
+  // timeout that onboard would refuse while the sandbox is still intact.
+  const timeoutRangeError = localInferenceTimeoutRangeError();
+  if (timeoutRangeError) {
+    printRebuildPreflightFailure(
+      timeoutRangeError,
+      "Set it to a supported value or unset it, then retry the rebuild.",
+      "Unsupported NEMOCLAW_LOCAL_INFERENCE_TIMEOUT",
+      bail,
+    );
+    return null;
+  }
 
   const rebuildAgent = sandboxEntry.agent || null;
   const dcodeAutoApprovalIssue = managedSandboxFeatureIssue(DCODE_AUTO_APPROVAL_FEATURE, {

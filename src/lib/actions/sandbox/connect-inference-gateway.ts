@@ -11,11 +11,12 @@ import {
   isAdvisoryGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
-import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
+import { LOCAL_INFERENCE_TIMEOUT_SECS, localInferenceTimeoutRangeError } from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
 import { listPublishedSandboxesAcrossGatewayRoots } from "../../state/registry/cross-port";
 
 const CONNECT_ROUTE_MUTATION_TIMEOUT_MS = 30_000;
+const LOCAL_TIMEOUT_ROUTE_PROVIDERS = ["compatible-endpoint", "ollama-local", "vllm-local"];
 
 export type ConnectInferenceRouteMutationResult = OpenShellInferenceRouteMutationResult;
 
@@ -29,10 +30,23 @@ export function connectInferenceRouteMutationRequest(
     route: { provider, model },
     verification: "skip",
     timeoutMs: CONNECT_ROUTE_MUTATION_TIMEOUT_MS,
-    ...(["compatible-endpoint", "ollama-local", "vllm-local"].includes(provider)
+    ...(LOCAL_TIMEOUT_ROUTE_PROVIDERS.includes(provider)
       ? { verificationTimeoutSeconds: LOCAL_INFERENCE_TIMEOUT_SECS }
       : {}),
   };
+}
+
+/**
+ * Connect can re-point the route of these providers with the local inference
+ * timeout. Report an unsupported value before connect changes anything.
+ */
+export function connectInferenceTimeoutRangeError(
+  provider: string | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  return provider && LOCAL_TIMEOUT_ROUTE_PROVIDERS.includes(provider)
+    ? localInferenceTimeoutRangeError(env)
+    : null;
 }
 
 /** Identify the legacy cluster gateway without branching on managed provider IDs. */

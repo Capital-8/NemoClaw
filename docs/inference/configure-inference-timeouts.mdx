@@ -29,6 +29,9 @@ The readiness timeout does not govern inference requests or provider validation.
 `NEMOCLAW_AGENT_TIMEOUT` requires a positive integer; onboarding rejects any other value.
 `NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` accepts positive finite seconds, rounds fractional values up, and caps higher values at `600` seconds. An unset or invalid value preserves the probe defaults. NemoClaw raises each connection or total deadline only when the value exceeds that deadline.
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` and `NEMOCLAW_SANDBOX_READY_TIMEOUT` accept finite, nonnegative seconds, round fractional values, and use their defaults for invalid or negative values.
+NemoClaw also passes `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` to OpenShell as the inference route request timeout, so the rounded value must be from `1` to `3600` seconds.
+Onboarding and rebuild stop with an error that names the variable before they change anything when the value is outside that range.
+`connect` stops the same way for a sandbox that uses a compatible endpoint, local Ollama, or local vLLM.
 `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds and preserves fractional values.
 A valid value overrides the internal budget for the current recovery phase.
 An unset, blank, invalid, or negative value uses 30 seconds for OpenClaw gateway health, 90 seconds for Hermes gateway health, and 120 seconds for post-recovery OpenShell readiness when the recovery path does not supply another budget.
@@ -119,6 +122,7 @@ This setting only raises applicable provider-validation connection and total dea
 ## Increase the Local Validation Timeout
 
 For validation paths that read `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`, raise it when the inference-server validation request needs more than 180 seconds.
+The maximum is `3600` seconds.
 Large prompts, cold local model loads, and slower hardware can require a larger budget.
 
 ```bash
