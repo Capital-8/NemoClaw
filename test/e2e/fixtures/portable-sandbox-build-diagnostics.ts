@@ -32,6 +32,8 @@ type BuildResult = {
   signal: NodeJS.Signals | null;
   diagnostic: string;
   error?: Error;
+  stdoutObserved?: boolean;
+  stderrObserved?: boolean;
 };
 
 type ImageCommandRunner = (
@@ -200,6 +202,8 @@ async function runPodmanBuild(
     };
   }
   let diagnostic = "";
+  let stdoutObserved = false;
+  let stderrObserved = false;
   const appendDiagnostic = (chunk: string) => {
     // Dockerfile steps can print credentials. Keep only a bounded in-memory tail.
     diagnostic = (diagnostic + chunk).slice(-DIAGNOSTIC_TAIL_CHARS);
@@ -208,15 +212,28 @@ async function runPodmanBuild(
     timeoutMs,
     killGraceMs: 0,
     postKillOutputDrainMs: POST_KILL_OUTPUT_DRAIN_MS,
-    onStdout: appendDiagnostic,
-    onStderr: appendDiagnostic,
+    onStdout: (chunk) => {
+      stdoutObserved ||= chunk.length > 0;
+      appendDiagnostic(chunk);
+    },
+    onStderr: (chunk) => {
+      stderrObserved ||= chunk.length > 0;
+      appendDiagnostic(chunk);
+    },
   });
   const error = result.cleanupError
     ? Object.assign(new Error("Podman build group was not reconciled"), { code: "EUNRECONCILED" })
     : result.timedOut
       ? Object.assign(new Error("Podman image command timed out"), { code: "ETIMEDOUT" })
       : result.spawnError;
-  return { status: result.exitCode, signal: result.signal, diagnostic, error };
+  return {
+    status: result.exitCode,
+    signal: result.signal,
+    diagnostic,
+    error,
+    stdoutObserved,
+    stderrObserved,
+  };
 }
 
 function failureCategory(output: string): string {
@@ -264,6 +281,35 @@ function fixedFailureEvidence(result: BuildResult) {
   };
 }
 
+function fixedBuildDiagnosticShape(result: BuildResult) {
+  const tail = result.diagnostic.slice(-DIAGNOSTIC_TAIL_CHARS);
+  const terminalErrors = tail
+    .split(/\r?\n/u)
+    .filter((line) => /^\s*(?:error|fatal):|\blevel=error\b/iu.test(line))
+    .slice(-4)
+    .join("\n")
+    .toLowerCase();
+  const patterns = [
+    ["runtime", /\b(?:oci runtime|crun|runc|runtime)\b/u],
+    ["container", /\b(?:build container|container create|creating container)\b/u],
+    ["commit", /\b(?:commit|committing|writing manifest)\b/u],
+    ["storage", /\b(?:overlay|storage|mount|graphroot)\b/u],
+    ["bus", /\b(?:dbus|d-bus|bus address|systemd)\b/u],
+    ["namespace", /\b(?:userns|user namespace|subuid|subgid)\b/u],
+    ["network", /\b(?:network|connection|dial tcp)\b/u],
+    ["registry", /\b(?:registry|manifest|pull)\b/u],
+    ["exec", /\b(?:exec|executable|process)\b/u],
+  ] as const;
+  return {
+    schemaVersion: 1,
+    stdoutObserved: result.stdoutObserved ?? null,
+    stderrObserved: result.stderrObserved ?? null,
+    terminalErrorObserved: terminalErrors.length > 0,
+    commitObserved: /^COMMIT\b/mu.test(tail),
+    signals: patterns.filter(([, pattern]) => pattern.test(terminalErrors)).map(([name]) => name),
+  };
+}
+
 /** Keep only fixed failure categories from the fixed live build. */
 export async function buildPortableSandboxImageWithEvidence(
   args: readonly string[],
@@ -278,6 +324,12 @@ export async function buildPortableSandboxImageWithEvidence(
       "portable-sandbox-image-build-failure.json",
       fixedFailureEvidence(result),
     );
+    if (failureCategory(result.diagnostic) === "unclassified") {
+      await artifacts.writeJson(
+        "portable-sandbox-image-build-diagnostic-shape.json",
+        fixedBuildDiagnosticShape(result),
+      );
+    }
   }
   return result.error ? null : result.status;
 }

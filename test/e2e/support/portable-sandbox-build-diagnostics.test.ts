@@ -237,6 +237,21 @@ it("records fixed Podman failure category and build step without output (#13482)
       observedBuildStep: "base-image",
     });
     expect(baseFailure).not.toContain("private-base-token");
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          artifacts.pathFor("portable-sandbox-image-build-diagnostic-shape.json"),
+          "utf8",
+        ),
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      stdoutObserved: null,
+      stderrObserved: null,
+      terminalErrorObserved: true,
+      commitObserved: false,
+      signals: [],
+    });
 
     await buildPortableSandboxImageWithEvidence(
       ["build", "-t", "localhost/test:fixed", "."],
@@ -313,6 +328,47 @@ it("rejects an errored image build even when Podman reports exit zero (#13482)",
     fetchRegistry.mockRestore();
     progress.stop();
     fs.rmSync(buildCtx, { recursive: true, force: true });
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("retains fixed build error signals without Dockerfile output or credentials (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-signals-"));
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const progress = startTestProgress("portable build diagnostics", ["prepare", "build"], {
+    logLine: () => undefined,
+  });
+  try {
+    await buildPortableSandboxImageWithEvidence(
+      ["build", "-t", "localhost/test:fixed", "."],
+      { env: {}, stdio: "inherit" },
+      artifacts,
+      progress,
+      vi.fn(async () => ({
+        status: 1,
+        signal: null,
+        diagnostic:
+          "STEP 1/2: FROM private-base\nSTEP 2/2: RUN credential=private-token\nError: building at STEP: while running runtime: crun: private-token",
+        stdoutObserved: true,
+        stderrObserved: true,
+      })),
+    );
+    const diagnostic = fs.readFileSync(
+      artifacts.pathFor("portable-sandbox-image-build-diagnostic-shape.json"),
+      "utf8",
+    );
+    expect(JSON.parse(diagnostic)).toEqual({
+      schemaVersion: 1,
+      stdoutObserved: true,
+      stderrObserved: true,
+      terminalErrorObserved: true,
+      commitObserved: false,
+      signals: ["runtime"],
+    });
+    expect(diagnostic).not.toContain("private-token");
+    expect(diagnostic).not.toContain("private-base");
+  } finally {
+    progress.stop();
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
