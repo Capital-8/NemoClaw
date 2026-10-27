@@ -33,7 +33,7 @@ export default class CredentialsAddCommand extends NemoClawCommand {
   static flags = {
     type: Flags.string({
       description:
-        "Provider profile (e.g. tavily, tavily-hermes-v1, nvidia, openai, anthropic, generic). NemoClaw imports bundled profiles. Custom profiles must already be installed in the selected gateway. Each registration inspects the custom profile without replacing it. With --type nvidia, only the nvidia-prod provider accepts NVIDIA_INFERENCE_API_KEY; other provider names must use a credential name that the gateway's nvidia profile declares, such as NVIDIA_API_KEY.",
+        "Provider profile (e.g. tavily, tavily-hermes-v1, nvidia, openai, anthropic, generic). NemoClaw imports bundled profiles. Custom profiles must already be installed in the selected gateway. Each registration inspects the custom profile without replacing it. With --type nvidia, the nvidia-prod provider requires NVIDIA_INFERENCE_API_KEY and is registered as the native NVIDIA provider; other provider names must use a credential name that the gateway's nvidia profile declares, such as NVIDIA_API_KEY.",
       required: true,
     }),
     agent: Flags.string({
