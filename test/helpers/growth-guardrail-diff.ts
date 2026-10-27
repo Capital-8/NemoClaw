@@ -52,9 +52,9 @@ function parseChangedFiles(source: string): PullRequestFile[] {
   return files;
 }
 
-function readGitFile(ref: string, file: string): string | null {
+function readGitFile(ref: string, file: string, repoRoot = REPO_ROOT): string | null {
   const result = spawnSync("git", ["show", `${ref}:${file}`], {
-    cwd: REPO_ROOT,
+    cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -168,13 +168,29 @@ function assertCommitSha(sha: string, label: string): void {
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`${label} must be a full commit SHA`);
 }
 
-function fetchPullHead(prNumber: string, expectedHeadSha: string): void {
-  execFileSync("git", ["fetch", "--no-tags", "--depth=1", "origin", `refs/pull/${prNumber}/head`], {
-    cwd: REPO_ROOT,
+function fetchPullHead(
+  prNumber: string,
+  expectedHeadSha: string,
+  baseSha: string,
+  repoRoot: string,
+): void {
+  const shallow = execFileSync("git", ["rev-parse", "--is-shallow-repository"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim();
+  // A full PR fetch does not complete the trusted base's shallow ancestry.
+  if (shallow === "true") {
+    execFileSync("git", ["fetch", "--no-tags", "--unshallow", "origin", baseSha], {
+      cwd: repoRoot,
+      stdio: "ignore",
+    });
+  }
+  execFileSync("git", ["fetch", "--no-tags", "origin", `refs/pull/${prNumber}/head`], {
+    cwd: repoRoot,
     stdio: "ignore",
   });
   const fetchedHead = execFileSync("git", ["rev-parse", "FETCH_HEAD"], {
-    cwd: REPO_ROOT,
+    cwd: repoRoot,
     encoding: "utf8",
   }).trim();
   if (fetchedHead !== expectedHeadSha) throw new Error("Fetched PR head does not match HEAD_SHA");
@@ -185,19 +201,26 @@ function pullRequestExceptionPolicySource(eventName: string | undefined): "base"
   return eventName === "pull_request" ? "head" : "base";
 }
 
-function loadPullRequestDiff(): GrowthGuardrailDiff {
+function loadPullRequestDiff(repoRoot = REPO_ROOT): GrowthGuardrailDiff {
   const prNumber = requiredEnvironment("PR_NUMBER");
   const baseSha = requiredEnvironment("BASE_SHA");
   const headSha = requiredEnvironment("HEAD_SHA");
   assertPullNumber(prNumber);
   assertCommitSha(baseSha, "BASE_SHA");
   assertCommitSha(headSha, "HEAD_SHA");
-  fetchPullHead(prNumber, headSha);
+  fetchPullHead(prNumber, headSha, baseSha, repoRoot);
+  // Merge candidate objects without checking out or executing candidate code.
+  const mergedTree = execFileSync(
+    "git",
+    ["merge-tree", "--write-tree", "--no-messages", baseSha, headSha],
+    { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  ).trim();
+  if (!/^[0-9a-f]{40}$/.test(mergedTree)) throw new Error("Invalid prospective merge tree SHA");
   const changed = execFileSync(
     "git",
-    ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"],
+    ["diff", "--name-status", "-z", "-M", baseSha, mergedTree, "--"],
     {
-      cwd: REPO_ROOT,
+      cwd: repoRoot,
       encoding: "utf8",
     },
   );
@@ -217,10 +240,10 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
         }
       : {}),
     async readBase(paths) {
-      return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
+      return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file, repoRoot));
     },
     async readHead(paths) {
-      return readFilesCached(paths, headCache, (file) => readGitFile(headSha, file));
+      return readFilesCached(paths, headCache, (file) => readGitFile(mergedTree, file, repoRoot));
     },
   };
 }
@@ -230,6 +253,7 @@ export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
 }
 
 export const testOnly = {
+  loadPullRequestDiff,
   pullRequestExceptionPolicySource,
   parseAncestorProbe,
   parseChangedFiles,

@@ -155,8 +155,10 @@ describe("Maintainer approval through the production diff loader", () => {
     const comments = [record("approve", digest)];
     const api = "gh api --hostname github.com --method GET repos/NVIDIA/NemoClaw";
     const responses = new Map<string, () => string>([
-      [`git fetch --no-tags --depth=1 origin refs/pull/${PR}/head`, () => ""],
+      ["git rev-parse --is-shallow-repository", () => "false"],
+      [`git fetch --no-tags origin refs/pull/${PR}/head`, () => ""],
       ["git rev-parse FETCH_HEAD", () => HEAD],
+      [`git merge-tree --write-tree --no-messages ${BASE} ${HEAD}`, () => HEAD],
       [`git diff --name-status -z -M ${BASE} ${HEAD} --`, () => `M\0${BUDGET}\0`],
       [`${api}/issues/${PR}/comments?per_page=100&page=1`, () => JSON.stringify(comments)],
       [
