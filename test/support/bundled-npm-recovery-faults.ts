@@ -4,6 +4,37 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export function alterBackupCopy(
+  copy: typeof fs.cpSync,
+  live: string,
+  mutate: (destination: string) => void,
+): typeof fs.cpSync {
+  return (source, destination, options) => {
+    copy(source, destination, options);
+    if (String(source) === live) mutate(String(destination));
+  };
+}
+
+export function racePackageFileOpen(
+  open: typeof fs.openSync,
+  target: string,
+  mutate: () => void,
+  afterOpen = false,
+): typeof fs.openSync {
+  let injected = false;
+  return (file, flags, mode) => {
+    if (String(file) !== target || injected) return open(file, flags, mode);
+    injected = true;
+    if (afterOpen) {
+      const descriptor = open(file, flags, mode);
+      mutate();
+      return descriptor;
+    }
+    mutate();
+    return open(file, flags, mode);
+  };
+}
+
 export function snapshotBackupFiles(directory: string): Record<string, Buffer> {
   return Object.fromEntries(
     fs

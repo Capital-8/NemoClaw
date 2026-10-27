@@ -260,41 +260,37 @@ function packageTreeDigest(root: string): string {
     if (!initial.isDirectory()) throw new Error("backup comparison requires real directories");
     for (const name of readdirSync(directory).sort()) {
       const file = join(directory, name);
-      const metadata = lstatSync(file);
-      hash.update(JSON.stringify([relative(root, file), metadata.mode & 0o777]));
-      if (metadata.isDirectory()) {
-        hash.update("directory");
-        visit(file);
-      } else {
-        const descriptor = openSync(
-          file,
-          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-        );
-        try {
-          const before = fstatSync(descriptor);
-          if (
-            !before.isFile() ||
-            before.nlink !== 1 ||
-            before.dev !== metadata.dev ||
-            before.ino !== metadata.ino
-          )
+      const descriptor = openSync(
+        file,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const before = fstatSync(descriptor);
+        hash.update(JSON.stringify([relative(root, file), before.mode & 0o777]));
+        if (before.isDirectory()) {
+          hash.update("directory");
+          visit(file);
+        } else {
+          if (!before.isFile() || before.nlink !== 1)
             throw new Error("backup comparison requires unlinked regular files");
           const bytes = readFileSync(descriptor);
           hash.update(JSON.stringify(["file", bytes.length]));
           hash.update(bytes);
-          const after = fstatSync(descriptor);
-          const current = lstatSync(file);
-          if (
-            current.dev !== before.dev ||
-            current.ino !== before.ino ||
-            after.size !== before.size ||
-            after.mtimeMs !== before.mtimeMs ||
-            after.ctimeMs !== before.ctimeMs
-          )
-            throw new Error("package changed during backup comparison");
-        } finally {
-          closeSync(descriptor);
         }
+        const after = fstatSync(descriptor);
+        const current = lstatSync(file);
+        if (
+          current.dev !== before.dev ||
+          current.ino !== before.ino ||
+          after.mode !== before.mode ||
+          after.nlink !== before.nlink ||
+          after.size !== before.size ||
+          after.mtimeMs !== before.mtimeMs ||
+          after.ctimeMs !== before.ctimeMs
+        )
+          throw new Error("package changed during backup comparison");
+      } finally {
+        closeSync(descriptor);
       }
     }
     const final = lstatSync(directory);

@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +15,9 @@ import {
 } from "../../scripts/lib/bundled-npm-package.mts";
 
 import {
+  alterBackupCopy,
   alterPublishedBackup,
+  racePackageFileOpen,
   snapshotBackupFiles,
 } from "../support/bundled-npm-recovery-faults.js";
 
@@ -198,6 +201,130 @@ describe.each(["undici", "ip-address"] as const)("%s staging recovery", (package
       /retained backup/,
     );
   });
+
+  it("retains a published backup when live file permissions change as comparison opens it", () => {
+    const f = fixture(packageName);
+    const payload = path.join(f.live, "payload");
+    fs.chmodSync(payload, 0o644);
+    const stage = f.interrupt("backup-publication");
+    const marker = JSON.parse(fs.readFileSync(path.join(stage, markerName), "utf8"));
+    const backup = path.join(f.parent, marker.backup.name);
+    const originalBackup = snapshotBackupFiles(backup);
+    const open = fs.openSync;
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    const intercepted = vi
+      .spyOn(fs, "openSync")
+      .mockImplementation(racePackageFileOpen(open, payload, () => fs.chmodSync(payload, 0o600)));
+    try {
+      syncBuiltinESMExports();
+      restoreMissingBundledPackage(f.options);
+    } finally {
+      intercepted.mockRestore();
+      syncBuiltinESMExports();
+    }
+    expect(fs.statSync(payload).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(payload, "utf8")).toBe("old");
+    expect(fs.existsSync(stage)).toBe(true);
+    expect(snapshotBackupFiles(backup)).toEqual(originalBackup);
+    expect(fs.statSync(path.join(backup, "payload")).mode & 0o777).toBe(0o644);
+    expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining("staging recovery incomplete"));
+    expect(() => reconcileBundledPackageBackup({ ...f.options, fixed: false })).toThrow(
+      /retained backup/,
+    );
+  });
+
+  it("recovers an identical nested package without changing executable permissions", () => {
+    const f = fixture(packageName);
+    const directory = path.join(f.live, "nested", "bin");
+    const executable = path.join(directory, "tool");
+    fs.mkdirSync(directory, { recursive: true, mode: 0o755 });
+    fs.writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    f.interrupt("backup-publication");
+    restoreMissingBundledPackage(f.options);
+    reconcileBundledPackageBackup({ ...f.options, fixed: false });
+    expect(fs.readdirSync(f.parent)).toEqual([packageName]);
+    expect(fs.readFileSync(executable, "utf8")).toBe("#!/bin/sh\nexit 0\n");
+    expect(fs.statSync(executable).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o755);
+  });
+
+  it("retains the original when a backup copy changes restrictive directory permissions", () => {
+    const f = fixture(packageName);
+    const directory = path.join(f.live, "private");
+    fs.mkdirSync(directory, { mode: 0o700 });
+    fs.writeFileSync(path.join(directory, "payload"), "private bytes");
+    const verify = vi.fn();
+    const copy = fs.cpSync;
+    const intercepted = vi.spyOn(fs, "cpSync").mockImplementation(
+      alterBackupCopy(copy, f.live, (destination) => {
+        fs.chmodSync(path.join(destination, "private"), 0o755);
+      }),
+    );
+    try {
+      syncBuiltinESMExports();
+      expect(() =>
+        replaceBundledPackage({
+          ...f.options,
+          replacementRoot: f.replacementRoot,
+          verify,
+        }),
+      ).toThrow(/original package changed while preparing its backup/);
+    } finally {
+      intercepted.mockRestore();
+      syncBuiltinESMExports();
+    }
+    expect(verify).not.toHaveBeenCalled();
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+    expect(fs.readFileSync(path.join(directory, "payload"), "utf8")).toBe("private bytes");
+    expect(fs.readFileSync(path.join(f.live, "payload"), "utf8")).toBe("old");
+    expect(fs.readdirSync(f.parent)).toEqual([packageName]);
+  });
+
+  it.each([false, true])(
+    "retains original backup bytes when a file becomes a symlink (after open: %s)",
+    (afterOpen) => {
+      const f = fixture(packageName);
+      const stage = f.interrupt("backup-publication");
+      const marker = JSON.parse(fs.readFileSync(path.join(stage, markerName), "utf8"));
+      const backup = path.join(f.parent, marker.backup.name);
+      const originalBackup = snapshotBackupFiles(backup);
+      const payload = path.join(f.live, "payload");
+      const retained = path.join(f.root, "original-payload");
+      const outside = path.join(f.root, "outside");
+      fs.writeFileSync(outside, "untouched");
+      const open = fs.openSync;
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+      const intercepted = vi.spyOn(fs, "openSync").mockImplementation(
+        racePackageFileOpen(
+          open,
+          payload,
+          () => {
+            fs.renameSync(payload, retained);
+            fs.symlinkSync(outside, payload);
+          },
+          afterOpen,
+        ),
+      );
+      try {
+        syncBuiltinESMExports();
+        restoreMissingBundledPackage(f.options);
+      } finally {
+        intercepted.mockRestore();
+        syncBuiltinESMExports();
+      }
+      expect(fs.readFileSync(retained, "utf8")).toBe("old");
+      expect(fs.readFileSync(outside, "utf8")).toBe("untouched");
+      expect(fs.lstatSync(payload).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(stage)).toBe(true);
+      expect(snapshotBackupFiles(backup)).toEqual(originalBackup);
+      expect(diagnostic).toHaveBeenCalledWith(
+        expect.stringContaining("staging recovery incomplete"),
+      );
+      expect(() => reconcileBundledPackageBackup({ ...f.options, fixed: false })).toThrow(
+        /retained backup/,
+      );
+    },
+  );
 
   it.each(["before-promotion", "after-promotion"])(
     "recovers a hard kill %s while preserving the recoverable package",
