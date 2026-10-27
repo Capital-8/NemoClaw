@@ -588,13 +588,16 @@ This fail-closed behavior also applies to `rebuild --force`; NemoClaw never publ
 NemoClaw removes failed native-state captures when cleanup succeeds instead of retaining them as incomplete recovery archives.
 If that cleanup also fails, NemoClaw reports and retains the incomplete backup path.
 Preserve that path while investigating the reported failure, or remove it only after the failure is resolved and you have confirmed that the original sandbox remains intact.
-Correct the reported failure, then rerun the rebuild while the original sandbox remains intact:
+While the original sandbox remains intact, correct the reported failure:
 
-- Repair source access.
-- Free backup-disk space.
-- If the error reports `archive header inspection exceeded the metadata-byte limit` or `archive header cannot be inspected for line breaks`, remove or shorten unneeded native-home files and directories that have long paths, long link targets, or large extended attributes.
-- Move credential-bearing content identified by the error into supported OpenShell credential storage.
-- If the host `tar` does not support `--quoting-style=literal`, such as the default macOS `tar`, NemoClaw cannot inspect a file such as `.env` under a directory whose name contains a backslash. Rebuild then reports `credential-bearing or uninspectable content` at that path, even when the file contains no credential. Rename the directory or remove the file, then rerun the rebuild.
+- If the error reports a source-access failure, repair source access.
+- If the error reports insufficient space, free backup-disk space.
+- If the error reports `archive entry contains a line break`, rename native-home files, directories, or symbolic-link targets whose names contain a line break.
+- If the error reports `archive header inspection exceeded the metadata-byte limit`, reduce the number of native-home paths longer than 100 bytes or remove large extended-attribute metadata. NemoClaw accepts up to 4 MiB of header metadata in total.
+- If the error reports `archive header cannot be inspected for line breaks`, remove or shorten any native-home path, link target, or extended-attribute metadata record larger than 1 MiB.
+- If the error identifies credential-bearing content, remove it from the native home. Store any credential you still need in supported OpenShell credential storage or bindings.
+
+Then rerun the rebuild.
 
 <Warning title="Forced Rebuild Scope">
   `rebuild --force` skips the confirmation prompt. When the sandbox has MCP

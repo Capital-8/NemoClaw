@@ -1686,91 +1686,207 @@ function scanNativeTarFilePayload(
 
 type NativeArchiveCredentialViolation = string | { entry: string; deadlineExpired: true } | null;
 
+function walkNativeTarMembers(
+  descriptor: number,
+  rawEntries?: string[],
+  onMember?: (
+    entry: string,
+    type: string,
+    dataOffset: number,
+    size: number,
+  ) => NativeArchiveCredentialViolation,
+): NativeArchiveCredentialViolation {
+  const archiveSize = fstatSync(descriptor).size;
+  let offset = 0;
+  let nextPath: string | null = null;
+  while (offset < archiveSize) {
+    const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
+    if (!header) return "native state credential scan";
+    if (header.every((byte) => byte === 0)) {
+      return nextPath === null ? null : "native state credential scan";
+    }
+    const size = tarHeaderSize(header);
+    if (size === null) return "native state credential scan";
+    const dataOffset = offset + TAR_BLOCK_BYTES;
+    const dataEnd = dataOffset + size;
+    const nextOffset = dataOffset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+    if (!Number.isSafeInteger(dataEnd) || nextOffset > archiveSize) {
+      return "native state credential scan";
+    }
+    const type = String.fromCharCode(header[156] ?? 0);
+    // Sparse formats can expand a small archive payload into an arbitrarily
+    // large logical file and bypass the bounded raw-byte credential scan.
+    if (type === "S") return "native state sparse archive entry";
+    const name = tarHeaderString(header, 0, 100);
+    const prefix = tarHeaderString(header, 345, 155);
+    const headerPath = prefix ? `${prefix}/${name}` : name;
+    if (type === "x" || type === "g" || type === "L" || type === "K") {
+      if (size > NATIVE_TAR_METADATA_MAX_BYTES) return "native state credential scan";
+      const metadata = readArchiveRange(descriptor, dataOffset, size);
+      if (!metadata) return "native state credential scan";
+      if (type === "x" || type === "g") {
+        const parsed = paxMetadata(metadata);
+        if (parsed === undefined) return "native state credential scan";
+        if (parsed.sparse) return "native state sparse archive entry";
+        if (type === "x" && parsed.path !== null) nextPath = parsed.path;
+      } else if (type === "L") {
+        nextPath = metadata.toString("utf8").replace(/\0.*$/su, "");
+        if (!nextPath) return "native state credential scan";
+      } else if (!metadata.toString("utf8").replace(/\0.*$/su, "")) {
+        return "native state credential scan";
+      }
+    } else {
+      const entry = nextPath ?? headerPath;
+      nextPath = null;
+      rawEntries?.push(type === "5" && !entry.endsWith("/") ? `${entry}/` : entry);
+      const violation = onMember?.(entry, type, dataOffset, size) ?? null;
+      if (violation) return violation;
+    }
+    offset = nextOffset;
+  }
+  return offset === archiveSize && nextPath === null ? null : "native state credential scan";
+}
+
+function readRawTarArchiveEntries(descriptor: number): string[] | null {
+  const entries: string[] = [];
+  return walkNativeTarMembers(descriptor, entries) === null ? entries : null;
+}
+
+function stageDescriptorArchiveCopy(sourceDescriptor: number, destinationPath: string): void {
+  const size = fstatSync(sourceDescriptor).size;
+  const targetDescriptor = openSync(
+    destinationPath,
+    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+    0o600,
+  );
+  let position = 0;
+  try {
+    while (position < size) {
+      const chunk = readArchiveRange(
+        sourceDescriptor,
+        position,
+        Math.min(64 * 1024, size - position),
+      );
+      if (!chunk || !writeArchiveRange(targetDescriptor, position, chunk)) {
+        throw new Error("could not stage private native archive");
+      }
+      position += chunk.byteLength;
+    }
+  } finally {
+    closeSync(targetDescriptor);
+  }
+}
+
+function extractSelectedNativeArchiveMembers(
+  archiveSource: { archivePath: string } | { descriptor: number },
+  temporaryDir: string,
+  targetRoot: string,
+  members: readonly string[],
+): ReturnType<typeof spawnSync> {
+  const memberList = path.join(temporaryDir, "members");
+  const runPass = (
+    patterns: readonly string[],
+    useStagedDescriptorCopy: boolean,
+  ): ReturnType<typeof spawnSync> => {
+    mkdirSync(targetRoot, { recursive: true, mode: 0o700 });
+    writeFileSync(memberList, Buffer.from(`${patterns.join("\0")}\0`), { mode: 0o600 });
+    let archiveDescriptor: number | null = null;
+    let shouldCloseDescriptor = false;
+    try {
+      if ("archivePath" in archiveSource) {
+        archiveDescriptor = openSync(
+          archiveSource.archivePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW,
+        );
+        shouldCloseDescriptor = true;
+      } else if (useStagedDescriptorCopy) {
+        const stagedPath = path.join(temporaryDir, "archive-retry.tar");
+        stageDescriptorArchiveCopy(archiveSource.descriptor, stagedPath);
+        archiveDescriptor = openSync(stagedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+        shouldCloseDescriptor = true;
+      } else {
+        archiveDescriptor = archiveSource.descriptor;
+      }
+      return spawnSync(
+        "tar",
+        [
+          "--no-same-owner",
+          "--no-recursion",
+          "--null",
+          "-xf",
+          "-",
+          "-C",
+          targetRoot,
+          "-T",
+          memberList,
+        ],
+        {
+          stdio: [archiveDescriptor, "pipe", "pipe"],
+          timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024,
+        },
+      );
+    } finally {
+      if (shouldCloseDescriptor && archiveDescriptor !== null) closeSync(archiveDescriptor);
+    }
+  };
+  const initial = runPass(members, false);
+  if (
+    (initial.status === 0 && !initial.error && !initial.signal) ||
+    !members.some((member) => member.includes("\\"))
+  ) {
+    return initial;
+  }
+  rmSync(targetRoot, { recursive: true, force: true });
+  return runPass(
+    members.map((member) => member.replaceAll("\\", "\\\\")),
+    true,
+  );
+}
+
 function nativeArchiveRawCredentialViolation(
   archivePath: string,
   deadlineMs: number | undefined,
+  rawEntries?: string[],
 ): NativeArchiveCredentialViolation {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const archiveSize = fstatSync(descriptor).size;
-    let offset = 0;
-    let nextPath: string | null = null;
-    while (offset < archiveSize) {
-      const header = readArchiveRange(descriptor, offset, TAR_BLOCK_BYTES);
-      if (!header) return "native state credential scan";
-      if (header.every((byte) => byte === 0)) return null;
-      const size = tarHeaderSize(header);
-      if (size === null) return "native state credential scan";
-      const dataOffset = offset + TAR_BLOCK_BYTES;
-      const dataEnd = dataOffset + size;
-      const nextOffset = dataOffset + Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
-      if (!Number.isSafeInteger(dataEnd) || nextOffset > archiveSize) {
-        return "native state credential scan";
+    return walkNativeTarMembers(descriptor, rawEntries, (entry, type, dataOffset, size) => {
+      if (type !== "0" && type !== "\0" && type !== "7") return null;
+      const fileName = path.posix.basename(entry).toLowerCase();
+      const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
+      // SQLite inspection of the main database does not cover unused sidecar bytes.
+      if (shouldSkipNativeRawCredentialScan(fileName) || dcodeSessionsDatabaseRole === "database") {
+        return null;
       }
-      const type = String.fromCharCode(header[156] ?? 0);
-      // Sparse formats can expand a small archive payload into an arbitrarily
-      // large logical file and bypass the bounded raw-byte credential scan.
-      if (type === "S") return "native state sparse archive entry";
-      const name = tarHeaderString(header, 0, 100);
-      const prefix = tarHeaderString(header, 345, 155);
-      const headerPath = prefix ? `${prefix}/${name}` : name;
-      if (type === "x" || type === "g" || type === "L") {
-        if (size > NATIVE_TAR_METADATA_MAX_BYTES) return "native state credential scan";
-        const metadata = readArchiveRange(descriptor, dataOffset, size);
-        if (!metadata) return "native state credential scan";
-        if (type === "x" || type === "g") {
-          const parsed = paxMetadata(metadata);
-          if (parsed === undefined) return "native state credential scan";
-          if (parsed.sparse) return "native state sparse archive entry";
-          if (type === "x" && parsed.path !== null) nextPath = parsed.path;
-        } else {
-          nextPath = metadata.toString("utf8").replace(/\0.*$/su, "");
-          if (!nextPath) return "native state credential scan";
-        }
-      } else {
-        const entry = nextPath ?? headerPath;
-        nextPath = null;
-        if (type === "0" || type === "\0" || type === "7") {
-          const fileName = path.posix.basename(entry).toLowerCase();
-          const dcodeSessionsDatabaseRole = dcodeSessionsDatabaseEntryRole(entry);
-          // SQLite inspection of the main database does not cover unused sidecar bytes.
-          if (
-            !shouldSkipNativeRawCredentialScan(fileName) &&
-            dcodeSessionsDatabaseRole !== "database"
-          ) {
-            // Dependency source is not a credential authority and generated
-            // bundles can contain accidental token-shaped bytes. Package
-            // manifests still receive a structure-aware scan below.
-            const providerProfileSchema = isBundledProviderProfileSchema(entry);
-            const dependencyTree = isNativeDependencyTreeEntry(entry);
-            const openclawConfig =
-              nativeStructuredAuthorityKind(
-                path.posix.normalize(entry.replace(/^\.\//u, "")),
-                fileName,
-              ) === "openclaw-config";
-            const violation = scanNativeTarFilePayload(
-              descriptor,
-              dataOffset,
-              size,
-              dcodeSessionsDatabaseRole === "sidecar" ||
-                shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
-              fileName === ".npmrc",
-              providerProfileSchema,
-              openclawConfig,
-              !dependencyTree,
-              dependencyTree,
-              deadlineMs,
-            );
-            if (violation === "deadline") return { entry, deadlineExpired: true };
-            if (violation === null) return "native state credential scan";
-            if (violation) return entry;
-          }
-        }
-      }
-      offset = nextOffset;
-    }
-    return offset === archiveSize ? null : "native state credential scan";
+      // Dependency source is not a credential authority and generated
+      // bundles can contain accidental token-shaped bytes. Package
+      // manifests still receive a structure-aware scan below.
+      const providerProfileSchema = isBundledProviderProfileSchema(entry);
+      const dependencyTree = isNativeDependencyTreeEntry(entry);
+      const openclawConfig =
+        nativeStructuredAuthorityKind(
+          path.posix.normalize(entry.replace(/^\.\//u, "")),
+          fileName,
+        ) === "openclaw-config";
+      const violation = scanNativeTarFilePayload(
+        descriptor!,
+        dataOffset,
+        size,
+        dcodeSessionsDatabaseRole === "sidecar" ||
+          shouldScanNativeOpaqueAssignments(entry, fileName, providerProfileSchema),
+        fileName === ".npmrc",
+        providerProfileSchema,
+        openclawConfig,
+        !dependencyTree,
+        dependencyTree,
+        deadlineMs,
+      );
+      if (violation === "deadline") return { entry, deadlineExpired: true };
+      if (violation === null) return "native state credential scan";
+      return violation ? entry : null;
+    });
   } catch {
     return "native state credential scan";
   } finally {
@@ -1783,8 +1899,10 @@ function nativeArchiveCredentialViolation(
   entries: readonly string[],
   deadlineMs: number | undefined,
 ): NativeArchiveCredentialViolation {
-  const rawViolation = nativeArchiveRawCredentialViolation(archivePath, deadlineMs);
+  const rawEntries: string[] = [];
+  const rawViolation = nativeArchiveRawCredentialViolation(archivePath, deadlineMs, rawEntries);
   if (rawViolation) return rawViolation;
+  if (rawEntries.length !== entries.length) return "native state credential scan";
   const candidates: Array<{
     entry: string;
     fileName: string;
@@ -1793,7 +1911,7 @@ function nativeArchiveCredentialViolation(
     isEnv: boolean;
     isLockfile: boolean;
   }> = [];
-  for (const entry of new Set(entries)) {
+  for (const entry of new Set(rawEntries)) {
     if (entry.endsWith("/")) continue;
     const fileName = path.posix.basename(entry).toLowerCase();
     const isLockfile = isDependencyLockfile(fileName);
@@ -1837,25 +1955,13 @@ function nativeArchiveCredentialViolation(
 
   const temporary = mkdtempSync(path.join(path.dirname(archivePath), ".native-scan-"));
   const scanRoot = path.join(temporary, "root");
-  const memberList = path.join(temporary, "members");
-  let archiveDescriptor: number | null = null;
   try {
-    mkdirSync(scanRoot, { mode: 0o700 });
-    writeFileSync(memberList, Buffer.from(`${candidates.map(({ entry }) => entry).join("\0")}\0`), {
-      mode: 0o600,
-    });
-    archiveDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const extracted = spawnSync(
-      "tar",
-      ["--no-same-owner", "--no-recursion", "--null", "-xf", "-", "-C", scanRoot, "-T", memberList],
-      {
-        stdio: [archiveDescriptor, "pipe", "pipe"],
-        timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-      },
+    const extracted = extractSelectedNativeArchiveMembers(
+      { archivePath },
+      temporary,
+      scanRoot,
+      candidates.map(({ entry }) => entry),
     );
-    closeSync(archiveDescriptor);
-    archiveDescriptor = null;
     if (extracted.status !== 0 || extracted.error || extracted.signal) {
       return candidates[0]?.entry ?? "native state credential scan";
     }
@@ -1893,7 +1999,6 @@ function nativeArchiveCredentialViolation(
     }
     return null;
   } finally {
-    if (archiveDescriptor !== null) closeSync(archiveDescriptor);
     rmSync(temporary, { recursive: true, force: true });
   }
 }
@@ -1946,6 +2051,11 @@ function copyNativeArchiveToPrivateDescriptor(
       position += bytesRead;
     }
     const validation = validateTarEntries({ filePath: privatePath }, nativeRoot);
+    const rawEntries = validation.safe ? readRawTarArchiveEntries(descriptor) : null;
+    const rawInventoryViolations =
+      validation.safe && (!rawEntries || rawEntries.length !== validation.entries.length)
+        ? ["tar raw header inventory did not match archive listing"]
+        : [];
     const symlinkViolations = validation.safe
       ? rejectSymlinkExtractionTraversal({ filePath: privatePath }, validation.entries)
       : [];
@@ -1955,8 +2065,13 @@ function copyNativeArchiveToPrivateDescriptor(
     const result = {
       descriptor,
       sha256: hash.digest("hex"),
-      entries: validation.entries,
-      violations: [...validation.violations, ...symlinkViolations, ...hardLinkTraversalViolations],
+      entries: rawEntries ?? validation.entries,
+      violations: [
+        ...validation.violations,
+        ...rawInventoryViolations,
+        ...symlinkViolations,
+        ...hardLinkTraversalViolations,
+      ],
     };
     descriptor = null;
     return result;
@@ -2056,7 +2171,7 @@ export function inspectNativeSandboxState<T>(
   const extractionRoot = path.join(temporary, "root");
   try {
     mkdirSync(extractionRoot, { mode: 0o700 });
-    let tarArguments = ["--no-same-owner", "-xf", "-", "-C", extractionRoot];
+    let result: ReturnType<typeof spawnSync>;
     if (member !== undefined) {
       const normalizedMember = path.posix.normalize(member.replace(/^\.\//u, ""));
       if (
@@ -2082,25 +2197,19 @@ export function inspectNativeSandboxState<T>(
         });
         return inspect(extractionRoot);
       }
-      const memberList = path.join(temporary, "members");
-      writeFileSync(memberList, Buffer.from(`${matchingEntries.join("\0")}\0`), { mode: 0o600 });
-      tarArguments = [
-        "--no-same-owner",
-        "--no-recursion",
-        "--null",
-        "-xf",
-        "-",
-        "-C",
+      result = extractSelectedNativeArchiveMembers(
+        { descriptor: openedArchive.descriptor },
+        temporary,
         extractionRoot,
-        "-T",
-        memberList,
-      ];
+        matchingEntries,
+      );
+    } else {
+      result = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", extractionRoot], {
+        stdio: [openedArchive.descriptor, "pipe", "pipe"],
+        timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
     }
-    const result = spawnSync("tar", tarArguments, {
-      stdio: [openedArchive.descriptor, "pipe", "pipe"],
-      timeout: NATIVE_STATE_CAPTURE_TIMEOUT_MS,
-      maxBuffer: 1024 * 1024,
-    });
     if (result.status !== 0 || result.error || result.signal) {
       const detail =
         result.error?.message ??

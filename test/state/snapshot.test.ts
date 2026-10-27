@@ -42,10 +42,6 @@ const PUBLIC_AWS_EXAMPLE_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
 const BOTO3_DOC = ".hermes/lazy-packages/boto3/examples/cloudfront.rst";
 const OPENCLAW_SQLITE_WAL = ".openclaw/state/cache.sqlite-wal";
 const SQLITE_CREDENTIAL_BYTES = `SQLite format 3\0ghp_${"02468ace13579bdf"}`;
-const HOST_TAR_SUPPORTS_LITERAL_QUOTING =
-  spawnSync("tar", ["--quoting-style=literal", "-tf", "-"], {
-    input: Buffer.alloc(1024),
-  }).status === 0;
 
 afterAll(() => {
   restoreEnv("HOME", ORIGINAL_HOME);
@@ -1076,11 +1072,7 @@ describe("complete native home persistence", () => {
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.error).toContain("credential-bearing or uninspectable content");
-      const listedPath =
-        relativePath.includes("\\") && !HOST_TAR_SUPPORTS_LITERAL_QUOTING
-          ? relativePath.replaceAll("\\", "\\\\")
-          : relativePath;
-      expect(backup.error).toContain(`./${listedPath}`);
+      expect(backup.error).toContain(`./${relativePath}`);
       const sandboxBackups = path.join(BACKUPS_ROOT, "alpha");
       expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
     } finally {

@@ -20,10 +20,6 @@ process.env.HOME = TMP_HOME;
 const sandboxState = await import(
   pathToFileURL(path.join(import.meta.dirname, "../..", "src", "lib", "state", "sandbox.ts")).href
 );
-const HOST_TAR_SUPPORTS_LITERAL_QUOTING =
-  spawnSync("tar", ["--quoting-style=literal", "-tf", "-"], {
-    input: Buffer.alloc(1024),
-  }).status === 0;
 
 function restoreEnv(name: string, value: string | undefined): void {
   value === undefined
@@ -62,38 +58,21 @@ function createBackslashEnvFixture() {
 }
 
 describe("native backup of backslash paths across tar quoting modes", () => {
-  it.skipIf(!HOST_TAR_SUPPORTS_LITERAL_QUOTING)(
-    "preserves an .env under a backslash directory when tar lists literal names",
-    () => {
-      const { fixture, relativePath, content, backup } = createBackslashEnvFixture();
-      try {
-        expect(backup.success, backup.error).toBe(true);
-        sandboxState.inspectNativeSandboxState(
-          backup.manifest!.backupPath,
-          (root: string) => {
-            expect(fs.readFileSync(path.join(root, relativePath), "utf8")).toBe(content);
-          },
-          relativePath,
-        );
-      } finally {
-        fs.rmSync(fixture, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it.skipIf(HOST_TAR_SUPPORTS_LITERAL_QUOTING)(
-    "fails closed for an .env under a backslash directory when tar doubles names",
-    () => {
-      const { fixture, backup } = createBackslashEnvFixture();
-      try {
-        expect(backup.success).toBe(false);
-        expect(backup.error).toContain("credential-bearing or uninspectable content");
-        expect(sandboxState.getLatestBackup("alpha")).toBeNull();
-      } finally {
-        fs.rmSync(fixture, { recursive: true, force: true });
-      }
-    },
-  );
+  it("preserves an .env under a backslash directory across host tar implementations", () => {
+    const { fixture, relativePath, content, backup } = createBackslashEnvFixture();
+    try {
+      expect(backup.success, backup.error).toBe(true);
+      sandboxState.inspectNativeSandboxState(
+        backup.manifest!.backupPath,
+        (root: string) => {
+          expect(fs.readFileSync(path.join(root, relativePath), "utf8")).toBe(content);
+        },
+        relativePath,
+      );
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 
   it("round-trips backslash paths and rejects credential-bearing backslash paths after tar rejects --quoting-style=literal", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-bsdtar-fallback-"));
@@ -114,6 +93,7 @@ describe("native backup of backslash paths across tar quoting modes", () => {
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(path.dirname(path.join(nativeRoot, relativeFile)), { recursive: true });
       fs.writeFileSync(path.join(nativeRoot, relativeFile), "fallback-backslash-notes");
+      fs.writeFileSync(path.join(nativeRoot, relativeEnv), "CUSTOM_MODE=enabled\n");
       writeFakeOpenshell(binDir);
       writeFakeSsh(binDir);
       writeExecutable(
@@ -152,11 +132,24 @@ describe("native backup of backslash paths across tar quoting modes", () => {
           entry.includes("\\\\ Systems\\\\ \\\\&\\\\ Templates/notes.md"),
         ),
       ).toBe(true);
+      sandboxState.inspectNativeSandboxState(
+        backup.manifest!.backupPath,
+        (root: string) => {
+          expect(fs.readFileSync(path.join(root, relativeEnv), "utf8")).toBe(
+            "CUSTOM_MODE=enabled\n",
+          );
+        },
+        relativeEnv,
+      );
       fs.writeFileSync(path.join(nativeRoot, relativeFile), "mutated");
+      fs.writeFileSync(path.join(nativeRoot, relativeEnv), "CUSTOM_MODE=disabled\n");
       const restore = await sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success, restore.error).toBe(true);
       expect(fs.readFileSync(path.join(nativeRoot, relativeFile), "utf8")).toBe(
         "fallback-backslash-notes",
+      );
+      expect(fs.readFileSync(path.join(nativeRoot, relativeEnv), "utf8")).toBe(
+        "CUSTOM_MODE=enabled\n",
       );
 
       fs.writeFileSync(

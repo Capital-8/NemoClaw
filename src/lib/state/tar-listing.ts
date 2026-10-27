@@ -357,9 +357,8 @@ function spawnTarListingPass(
  * List tar entries through a temporary file so large archives do not overflow
  * spawnSync buffers. Reject archives whose member paths or link targets contain
  * a line break before tar runs. With --quoting-style=literal, GNU tar lists names
- * without escapes. When tar rejects that option (for example, bsdtar), listing
- * keeps tar's default escaping; members that NemoClaw then extracts by name fail
- * closed.
+ * without escapes; when tar rejects that option (for example, bsdtar), runTarListing
+ * falls back to the caller-supplied arguments.
  */
 export function runTarListing(
   tarArchive: TarListingSource,
