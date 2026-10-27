@@ -346,6 +346,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
   let cliEnvironment: NodeJS.ProcessEnv | undefined;
   let passed = false;
   let sandboxAbsentFromRegistry = true;
+  let sandboxDeletionRequested = false;
   let primaryFailed = false;
   let receipt: Record<string, unknown> | undefined;
   try {
@@ -501,6 +502,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
     if (completion === "ExecFailed" || completion === "MainProcessFailed")
       fail("OpenShell reported failed MXC workload termination");
     console.log("AGENT> CHAT_OK");
+    sandboxDeletionRequested = true;
     await gatewaySession.deleteWorkload(
       sandboxName,
       cliEnvironment,
@@ -563,7 +565,8 @@ async function main(runtimeLease: NativeRuntimeSession) {
       [
         "sandbox removal",
         async () => {
-          if (!sandboxAbsentFromRegistry && create && cliEnvironment)
+          if (!sandboxAbsentFromRegistry && !sandboxDeletionRequested && create && cliEnvironment) {
+            sandboxDeletionRequested = true;
             await gatewaySession.deleteWorkload(
               sandboxName,
               cliEnvironment,
@@ -571,6 +574,7 @@ async function main(runtimeLease: NativeRuntimeSession) {
               30_000,
               undefined,
             );
+          }
         },
       ],
       [

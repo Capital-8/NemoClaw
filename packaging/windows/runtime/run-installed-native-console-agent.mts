@@ -734,6 +734,7 @@ async function runNativeConsoleAgentInternal(
   let sessionPassed = false;
   let sandboxName = "";
   let sandboxAbsentFromRegistry = true;
+  let sandboxDeletionRequested = false;
   let consoleSessionEnded = false;
   let dashboardRelayRoot;
   let statusRoot;
@@ -1337,6 +1338,7 @@ async function runNativeConsoleAgentInternal(
       }
       if (exitCode !== 0) fail(`${adapter.displayName} exited with status ${exitCode}`);
       diagnostics.stage("cleanup");
+      sandboxDeletionRequested = true;
       await gatewaySession.deleteWorkload(
         sandboxName,
         cliEnvironment,
@@ -1383,13 +1385,16 @@ async function runNativeConsoleAgentInternal(
         await cleanup("browser relay stop signal", async () => {
           if (browserRelay) await browserRelay.close();
         });
-        await cleanup("native sandbox deletion", () =>
-          gatewaySession.requestWorkloadDeletion(cliEnvironment, {
-            sandboxName,
-            gateway,
-            stateSession,
-          }),
-        );
+        await cleanup("native sandbox deletion", async () => {
+          if (!sandboxDeletionRequested) {
+            sandboxDeletionRequested = true;
+            await gatewaySession.requestWorkloadDeletion(cliEnvironment, {
+              sandboxName,
+              gateway,
+              stateSession,
+            });
+          }
+        });
         await cleanup("native sandbox registry", async () => {
           await gatewaySession.confirmRegistryEmpty(cliEnvironment, {
             sandboxName,

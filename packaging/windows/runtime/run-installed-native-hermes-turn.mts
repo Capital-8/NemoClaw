@@ -370,6 +370,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
   let createError = "";
   let passed = false;
   let sandboxAbsentFromRegistry = true;
+  let sandboxDeletionRequested = false;
   let primaryFailed = false;
   let receipt: Record<string, unknown> | undefined;
   try {
@@ -553,6 +554,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     );
     if (completion === "ExecFailed" || completion === "MainProcessFailed")
       fail(`The native ${agentLabel} execution failed`);
+    sandboxDeletionRequested = true;
     await gatewaySession.deleteWorkload(
       sandboxName,
       cliEnvironment,
@@ -621,7 +623,8 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       [
         "sandbox removal",
         async () => {
-          if (!sandboxAbsentFromRegistry && create && cliEnvironment)
+          if (!sandboxAbsentFromRegistry && !sandboxDeletionRequested && create && cliEnvironment) {
+            sandboxDeletionRequested = true;
             await gatewaySession.deleteWorkload(
               sandboxName,
               cliEnvironment,
@@ -629,6 +632,7 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
               30_000,
               undefined,
             );
+          }
         },
       ],
       [

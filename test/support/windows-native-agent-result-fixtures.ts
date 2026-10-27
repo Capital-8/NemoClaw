@@ -170,7 +170,7 @@ export function createNativeAgentCompletionFixture(_route: ResultRoute, deferAbs
   if (!fence || !fail) throw new Error("The native agent completion fence is missing.");
   const code = ts.transpileModule(
     fail.getText(source) +
-      "\n(async () => {\n" +
+      "\n(async () => { let sandboxDeletionRequested = false;\n" +
       fence.map((node) => node.getText(source)).join("\n") +
       "\n});",
     {

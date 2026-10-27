@@ -42,6 +42,7 @@ test("Hermes registration and cleanup use the selected provider session", async 
     gateway,
     runtimeLease: lease,
     sandboxAbsentFromRegistry: false,
+    sandboxDeletionRequested: false,
     create: { pid: 1 },
     fail: (message: string) => {
       throw new Error(message);
@@ -141,6 +142,7 @@ async function cleanup(scenario: string, primaryFailed = true) {
     },
     passed: false,
     sandboxAbsentFromRegistry: ["before-create", "already-absent"].includes(scenario),
+    sandboxDeletionRequested: scenario.startsWith("deletion-requested"),
     primaryFailed,
     cliEnvironment: environment,
     openshell: "owned-openshell",
@@ -167,7 +169,8 @@ async function cleanup(scenario: string, primaryFailed = true) {
           { sandboxName: "owned-sandbox", gateway, stateSession: lease },
         ]);
         operations.push("registry");
-        if (scenario === "registry") throw new Error("registry unavailable");
+        if (["registry", "deletion-requested-registry"].includes(scenario))
+          throw new Error("registry unavailable");
       },
 
       ownCommandProcess: owner,
@@ -244,27 +247,37 @@ for (const scenario of [
   "already-absent",
   "share-stop",
   "unconfirmed-share",
+  "deletion-requested",
+  "deletion-requested-registry",
 ]) {
   test(`Hermes cleanup preserves process custody and share ownership: ${scenario}`, async () => {
     const { removed, receipt, error, operations, ownedRoots } = await cleanup(scenario);
     assert.equal(error, undefined, "Cleanup must preserve the existing primary error");
     assert.equal(receipt.verdict, "fail");
     assert.equal(receipt.sandboxName, "owned-sandbox");
-    assert.equal(receipt.sandboxAbsentFromRegistry, scenario !== "registry");
+    assert.equal(
+      receipt.sandboxAbsentFromRegistry,
+      !["registry", "deletion-requested-registry"].includes(scenario),
+    );
     assert.deepEqual(operations, [
       "share-stop",
       ...(scenario === "before-create" ? [] : ["request-stop"]),
       ...(["before-create", "already-absent"].includes(scenario)
         ? []
-        : ["sandbox-delete", "registry"]),
+        : [...(scenario.startsWith("deletion-requested") ? [] : ["sandbox-delete"]), "registry"]),
       "gateway-stop",
       "gateway-dispose",
       "log-close",
     ]);
     if (
-      ["request-stop", "request-throws", "gateway-stop", "gateway-dispose", "registry"].includes(
-        scenario,
-      )
+      [
+        "request-stop",
+        "request-throws",
+        "gateway-stop",
+        "gateway-dispose",
+        "registry",
+        "deletion-requested-registry",
+      ].includes(scenario)
     ) {
       assert.deepEqual(removed, []);
       assert.deepEqual(receipt.retainedQualificationRoots, ownedRoots);
@@ -291,7 +304,7 @@ for (const scenario of [
     }
     assert.equal(
       receipt.cleanupFailures.includes("sandbox registry verification"),
-      scenario === "registry",
+      ["registry", "deletion-requested-registry"].includes(scenario),
     );
     assert.equal(
       receipt.unconfirmedShareRoot,

@@ -33,6 +33,7 @@ function openClawCleanupController() {
     "stopChild",
     "passed",
     "sandboxAbsentFromRegistry",
+    "sandboxDeletionRequested",
     "cliEnvironment",
     "sandboxName",
     "gateway",
@@ -69,6 +70,8 @@ for (const failure of [
   "registry",
   "before-create",
   "already-absent",
+  "deletion-requested",
+  "deletion-requested-registry",
 ] as const) {
   test(`OpenClaw turn retains temporary roots when cleanup is unconfirmed: ${failure}`, async () => {
     const removed: string[] = [];
@@ -80,6 +83,7 @@ for (const failure of [
       async () => failure !== "request-stop",
       false,
       ["before-create", "already-absent"].includes(failure),
+      failure.startsWith("deletion-requested"),
       {},
       "owned-sandbox",
       gateway,
@@ -87,10 +91,17 @@ for (const failure of [
       {
         async deleteWorkload() {
           assert.notEqual(failure, "already-absent", "Confirmed removal must not be repeated");
+          assert.notEqual(failure, "deletion-requested", "An uncertain mutation must not repeat");
+          assert.notEqual(
+            failure,
+            "deletion-requested-registry",
+            "An uncertain mutation must not repeat",
+          );
         },
         async confirmRegistryEmpty() {
           assert.notEqual(failure, "already-absent", "Confirmed absence survives gateway shutdown");
-          if (failure === "registry") throw new Error("unconfirmed registry");
+          if (["registry", "deletion-requested-registry"].includes(failure))
+            throw new Error("unconfirmed registry");
         },
         async stopGateway() {
           return failure !== "gateway-stop";
@@ -120,7 +131,15 @@ for (const failure of [
       },
       { error() {} },
     );
-    if (["request-stop", "gateway-stop", "gateway-dispose", "registry"].includes(failure)) {
+    if (
+      [
+        "request-stop",
+        "gateway-stop",
+        "gateway-dispose",
+        "registry",
+        "deletion-requested-registry",
+      ].includes(failure)
+    ) {
       assert.deepEqual(removed, [], "Unconfirmed process cleanup must not remove any owned root.");
       assert.equal(
         errors.filter((label: string) => label.startsWith("temporary root removal:")).length,
@@ -130,7 +149,10 @@ for (const failure of [
       assert.deepEqual(removed, roots);
       assert.deepEqual(errors, []);
     }
-    assert.equal(errors.includes("sandbox registry verification"), failure === "registry");
+    assert.equal(
+      errors.includes("sandbox registry verification"),
+      ["registry", "deletion-requested-registry"].includes(failure),
+    );
   });
 }
 
@@ -247,45 +269,102 @@ for (const failure of [
   });
 }
 
-for (const registryFails of [false, true]) {
-  test(`Hermes console failure cleanup records confirmed sandbox absence: ${registryFails}`, async () => {
-    const failures: string[] = [];
-    const absent = await runCleanupFragment(
-      "./run-installed-native-console-agent.mts",
-      "      if (!passed) {",
-      "      const gatewayStopped = await gatewaySession.stopGateway();",
-      {
-        passed: false,
+for (const registryFails of [false, true])
+  for (const deletionRequested of [false, true]) {
+    test(`Hermes console failure cleanup records confirmed sandbox absence: ${registryFails}, deletion requested: ${deletionRequested}`, async () => {
+      const failures: string[] = [];
+      const absent = await runCleanupFragment(
+        "./run-installed-native-console-agent.mts",
+        "      if (!passed) {",
+        "      const gatewayStopped = await gatewaySession.stopGateway();",
+        {
+          passed: false,
+          sandboxAbsentFromRegistry: false,
+          sandboxDeletionRequested: deletionRequested,
+          sandboxName: "owned-sandbox",
+          diagnostics: {
+            cleanupFailed(label: string) {
+              failures.push(label);
+            },
+            capture() {},
+          },
+          statusFiles: { async write() {} },
+          runId: "fixture",
+          relay: null,
+          brokerRelay: null,
+          browserRelay: null,
+          openshell: "fixture",
+          cliEnvironment: {},
+          gateway: {},
+          stateSession: {},
+          gatewaySession: {
+            async requestWorkloadDeletion() {
+              assert.equal(deletionRequested, false, "An uncertain mutation must not repeat");
+            },
+            async confirmRegistryEmpty() {
+              if (registryFails) throw new Error("registry unavailable");
+            },
+          },
+        },
+        "sandboxAbsentFromRegistry",
+      );
+      assert.equal(absent, !registryFails);
+      assert.deepEqual(failures, registryFails ? ["native sandbox registry"] : []);
+    });
+  }
+
+for (const file of [
+  "./run-installed-native-turn.mts",
+  "./run-installed-native-hermes-turn.mts",
+  "./run-installed-native-console-agent.mts",
+])
+  for (const failure of ["deletion", "registry"]) {
+    test(`${file} records deletion before an uncertain ${failure} result`, async () => {
+      const source = fs
+        .readFileSync(new URL(file, import.meta.url), "utf8")
+        .replaceAll("\r\n", "\n");
+      const deletion = source.indexOf("await gatewaySession.deleteWorkload(");
+      const requested = source.lastIndexOf("sandboxDeletionRequested = true;", deletion);
+      const start = requested < 0 ? deletion : requested;
+      const end = source.indexOf("sandboxAbsentFromRegistry = true;", deletion);
+      assert(deletion > 0 && start >= 0 && end > deletion);
+      const primary = new Error(`Uncertain ${failure} response`);
+      const context = {
+        sandboxDeletionRequested: false,
         sandboxAbsentFromRegistry: false,
         sandboxName: "owned-sandbox",
-        diagnostics: {
-          cleanupFailed(label: string) {
-            failures.push(label);
-          },
-          capture() {},
-        },
-        statusFiles: { async write() {} },
-        runId: "fixture",
-        relay: null,
-        brokerRelay: null,
-        browserRelay: null,
-        openshell: "fixture",
         cliEnvironment: {},
+        agentLabel: "Hermes",
         gateway: {},
+        runtimeLease: {},
         stateSession: {},
+        create: null,
+        passed: false,
         gatewaySession: {
-          async requestWorkloadDeletion() {},
+          async deleteWorkload() {
+            if (failure === "deletion") throw primary;
+          },
           async confirmRegistryEmpty() {
-            if (registryFails) throw new Error("registry unavailable");
+            throw primary;
           },
         },
-      },
-      "sandboxAbsentFromRegistry",
-    );
-    assert.equal(absent, !registryFails);
-    assert.deepEqual(failures, registryFails ? ["native sandbox registry"] : []);
-  });
-}
+      };
+      const code = stripTypeScriptTypes(
+        `(async () => {
+          let {${Object.keys(context).join(",")}} = context;
+          try { ${source.slice(start, end)} } catch (error) {
+            return { error, sandboxDeletionRequested, sandboxAbsentFromRegistry };
+          }
+          throw new Error("The uncertain operation must fail.");
+        })()`,
+        { mode: "strip" },
+      );
+      const result = await new Function("context", `return ${code}`)(context);
+      assert.equal(result.error, primary);
+      assert.equal(result.sandboxDeletionRequested, true);
+      assert.equal(result.sandboxAbsentFromRegistry, false);
+    });
+  }
 
 for (const failure of [
   "none",
