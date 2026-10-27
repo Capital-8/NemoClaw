@@ -253,6 +253,62 @@ function sameDirectory(left: fs.Stats, right: fs.Stats): boolean {
   return right.isDirectory() && left.dev === right.dev && left.ino === right.ino;
 }
 
+function packageTreeDigest(root: string): string {
+  const hash = createHash("sha256");
+  const visit = (directory: string): void => {
+    const initial = lstatSync(directory);
+    if (!initial.isDirectory()) throw new Error("backup comparison requires real directories");
+    for (const name of readdirSync(directory).sort()) {
+      const file = join(directory, name);
+      const metadata = lstatSync(file);
+      hash.update(JSON.stringify([relative(root, file), metadata.mode & 0o777]));
+      if (metadata.isDirectory()) {
+        hash.update("directory");
+        visit(file);
+      } else {
+        const descriptor = openSync(
+          file,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        try {
+          const before = fstatSync(descriptor);
+          if (
+            !before.isFile() ||
+            before.nlink !== 1 ||
+            before.dev !== metadata.dev ||
+            before.ino !== metadata.ino
+          )
+            throw new Error("backup comparison requires unlinked regular files");
+          const bytes = readFileSync(descriptor);
+          hash.update(JSON.stringify(["file", bytes.length]));
+          hash.update(bytes);
+          const after = fstatSync(descriptor);
+          const current = lstatSync(file);
+          if (
+            current.dev !== before.dev ||
+            current.ino !== before.ino ||
+            after.size !== before.size ||
+            after.mtimeMs !== before.mtimeMs ||
+            after.ctimeMs !== before.ctimeMs
+          )
+            throw new Error("package changed during backup comparison");
+        } finally {
+          closeSync(descriptor);
+        }
+      }
+    }
+    const final = lstatSync(directory);
+    if (
+      !sameDirectory(initial, final) ||
+      initial.mtimeMs !== final.mtimeMs ||
+      initial.ctimeMs !== final.ctimeMs
+    )
+      throw new Error("package directory changed during backup comparison");
+  };
+  visit(root);
+  return hash.digest("hex");
+}
+
 function markBundledPackageStage(stage: string, packageName: string): void {
   const parent = dirname(stage);
   const parentStat = lstatSync(parent);
@@ -362,6 +418,47 @@ function reconcileBundledPackageStages(parent: string, packageName: string): voi
       ) {
         throw new Error("stage directory changed during recovery");
       }
+      // Old stages have no backup receipt. Never infer ownership from a filename alone.
+      if (marker.backup !== undefined) {
+        const backup = jsonObject(marker.backup, "stage backup receipt");
+        const prefix = `${packageName}.nemoclaw-backup-`;
+        if (
+          typeof backup.name !== "string" ||
+          !backup.name.startsWith(prefix) ||
+          !/^[1-9][0-9]*-[a-f0-9]{16}$/.test(backup.name.slice(prefix.length))
+        )
+          throw new Error("stage backup name is invalid");
+        const backupPath = join(parent, backup.name);
+        const backupStat = lstatSync(backupPath, { throwIfNoEntry: false });
+        const livePath = join(parent, packageName);
+        const liveStat = lstatSync(livePath, { throwIfNoEntry: false });
+        if (
+          backupStat &&
+          liveStat &&
+          liveStat.dev === backup.liveDevice &&
+          liveStat.ino === backup.liveInode
+        ) {
+          if (
+            readdirSync(parent).filter((entry) => entry.startsWith(prefix)).length !== 1 ||
+            !backupStat.isDirectory() ||
+            backupStat.dev !== backup.device ||
+            backupStat.ino !== backup.inode ||
+            packageTreeDigest(livePath) !== backup.digest ||
+            packageTreeDigest(backupPath) !== backup.digest
+          )
+            throw new Error(
+              "owned backup and original package no longer match; inspect before retrying",
+            );
+          if (
+            !sameDirectory(parentStat, lstatSync(parent)) ||
+            !sameDirectory(liveStat, lstatSync(livePath)) ||
+            !sameDirectory(backupStat, lstatSync(backupPath))
+          )
+            throw new Error("backup directory changed during recovery");
+          removeBackup(backupPath);
+          syncMetadataDirectory(backupPath);
+        }
+      }
       rmSync(stage, { recursive: true });
       syncMetadataDirectory(stage);
     } catch (error) {
@@ -444,18 +541,43 @@ export function replaceBundledPackage<State>(options: {
   const transactionId = `${process.pid}-${randomBytes(8).toString("hex")}`;
   const stagingRoot = mkdtempSync(join(dirname(livePath), `.${packageName}.nemoclaw-stage-`));
   const stagedPath = join(stagingRoot, "replacement");
+  const stagedBackupPath = join(stagingRoot, "backup");
   const backupPath = `${livePath}.nemoclaw-backup-${transactionId}`;
   let rollbackRequired = false;
   try {
+    const liveStat = lstatSync(livePath);
+    const liveDigest = packageTreeDigest(livePath);
     markBundledPackageStage(stagingRoot, packageName);
     cpSync(replacementRoot, stagedPath, { dereference: false, recursive: true });
-    cpSync(livePath, backupPath, {
+    cpSync(livePath, stagedBackupPath, {
       dereference: false,
       errorOnExist: true,
       force: false,
       preserveTimestamps: true,
       recursive: true,
     });
+    const backupStat = lstatSync(stagedBackupPath);
+    if (
+      !sameDirectory(liveStat, lstatSync(livePath)) ||
+      packageTreeDigest(livePath) !== liveDigest ||
+      packageTreeDigest(stagedBackupPath) !== liveDigest
+    )
+      throw new Error("original package changed while preparing its backup");
+    rewriteRegularFile(join(stagingRoot, stagingMarker), "stage backup receipt", (original) =>
+      JSON.stringify({
+        ...jsonObject(JSON.parse(original), "stage marker"),
+        backup: {
+          name: basename(backupPath),
+          device: backupStat.dev,
+          inode: backupStat.ino,
+          liveDevice: liveStat.dev,
+          liveInode: liveStat.ino,
+          digest: liveDigest,
+        },
+      }),
+    );
+    // Rename only this newly copied directory, never a lower-layer overlayfs live directory.
+    renameSync(stagedBackupPath, backupPath);
     rollbackRequired = true;
     rmSync(livePath, { recursive: true });
     renameSync(stagedPath, livePath);

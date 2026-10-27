@@ -13,6 +13,11 @@ import {
   restoreMissingBundledPackage,
 } from "../../scripts/lib/bundled-npm-package.mts";
 
+import {
+  alterPublishedBackup,
+  snapshotBackupFiles,
+} from "../support/bundled-npm-recovery-faults.js";
+
 const roots: string[] = [];
 const helper = new URL("../../scripts/lib/bundled-npm-package.mts", import.meta.url).href;
 const markerName = "nemoclaw-owner.json";
@@ -63,13 +68,24 @@ function fixture(packageName: "undici" | "ip-address") {
       const rename = fs.renameSync;
       const kill = () => process.kill(process.pid, "SIGKILL");
       fs.cpSync = (source, destination, options) => {
+        if (point === "partial-backup" && String(source).endsWith("/node_modules/" + packageName)) {
+          fs.mkdirSync(destination, { recursive: true });
+          copy(String(source) + "/package.json", String(destination) + "/package.json");
+          kill();
+        }
         copy(source, destination, options);
         if (point === "staged-copy" && String(destination).endsWith("/replacement")) kill();
+        if (point === "backup-copy" && String(source).endsWith("/node_modules/" + packageName)) kill();
       };
       fs.renameSync = (source, destination) => {
-        if (point === "before-promotion") kill();
+        const promotion = String(source).endsWith("/replacement");
+        const receipt = String(destination).endsWith("/nemoclaw-owner.json");
+        if (point === "before-backup-receipt" && receipt) kill();
+        if (point === "before-promotion" && promotion) kill();
         rename(source, destination);
-        if (point === "after-promotion") kill();
+        if (point === "after-backup-receipt" && receipt) kill();
+        if (point === "after-promotion" && promotion) kill();
+        if (point === "backup-publication" && String(destination).includes(".nemoclaw-backup-")) kill();
       };
       syncBuiltinESMExports();
       replaceBundledPackage({ npmRoot, packageName, replacementRoot, verify: () => true });
@@ -96,6 +112,33 @@ function alterMarker(markerPath: string, changes: Record<string, unknown>): void
 }
 
 describe.each(["undici", "ip-address"] as const)("%s staging recovery", (packageName) => {
+  it.each([
+    "partial-backup",
+    "backup-copy",
+    "before-backup-receipt",
+    "after-backup-receipt",
+    "backup-publication",
+  ])(
+    "retries after a hard kill at %s without manual cleanup or changing original bytes",
+    (point) => {
+      const f = fixture(packageName);
+      f.interrupt(point);
+      expect(fs.readFileSync(path.join(f.live, "payload"), "utf8")).toBe("old");
+      restoreMissingBundledPackage(f.options);
+      reconcileBundledPackageBackup({ ...f.options, fixed: false });
+      expect(fs.readdirSync(f.parent)).toEqual([packageName]);
+      expect(fs.readFileSync(path.join(f.live, "payload"), "utf8")).toBe("old");
+      expect(
+        replaceBundledPackage({
+          ...f.options,
+          replacementRoot: f.replacementRoot,
+          verify: () => fs.readFileSync(path.join(f.live, "payload"), "utf8"),
+        }),
+      ).toBe("fixed");
+      expect(fs.readdirSync(f.parent)).toEqual([packageName]);
+    },
+  );
+
   it("reclaims interrupted copies on retry without touching unknown stages or original bytes", () => {
     const f = fixture(packageName);
     f.interrupt();
@@ -123,6 +166,36 @@ describe.each(["undici", "ip-address"] as const)("%s staging recovery", (package
     expect(f.stages()).toEqual([path.basename(unknown)]);
     expect(fs.readdirSync(f.parent).filter((name) => name.includes(".nemoclaw-backup-"))).toEqual(
       [],
+    );
+  });
+
+  it.each([
+    "changed-live",
+    "partial-backup",
+    "changed-backup",
+    "wrong-inode",
+    "wrong-digest",
+    "escaped-name",
+    "linked-backup",
+    "hardlinked-file",
+    "multiple-backups",
+    "missing-marker",
+  ])("retains the backup when published recovery has %s", (scenario) => {
+    const f = fixture(packageName);
+    const stage = f.interrupt("backup-publication");
+    const markerPath = path.join(stage, markerName);
+    const retainedBackup = alterPublishedBackup(f, markerPath, scenario);
+    const backupBeforeRecovery = snapshotBackupFiles(retainedBackup);
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    restoreMissingBundledPackage(f.options);
+    expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining("staging recovery incomplete"));
+    expect(fs.existsSync(stage)).toBe(true);
+    expect(fs.readFileSync(path.join(f.live, "payload"), "utf8")).toBe(
+      scenario === "changed-live" ? "new" : "old",
+    );
+    expect(snapshotBackupFiles(retainedBackup)).toEqual(backupBeforeRecovery);
+    expect(() => reconcileBundledPackageBackup({ ...f.options, fixed: false })).toThrow(
+      /retained backup/,
     );
   });
 

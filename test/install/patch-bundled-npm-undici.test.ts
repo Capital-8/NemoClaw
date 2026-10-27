@@ -17,6 +17,11 @@ import {
   verifyBundledNpmUndici,
 } from "../../scripts/lib/patch-bundled-npm-undici.mts";
 
+import {
+  failReplacementRename,
+  corruptAfterReplacementRename,
+} from "../support/bundled-npm-recovery-faults.js";
+
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(): string {
@@ -243,10 +248,7 @@ describe("npm bundled undici remediation", () => {
     const originalRenameSync = fs.renameSync.bind(fs);
     const renameSpy = vi
       .spyOn(fs, "renameSync")
-      .mockImplementationOnce(() => {
-        throw new Error("injected replacement rename failure");
-      })
-      .mockImplementation(originalRenameSync);
+      .mockImplementation(failReplacementRename(originalRenameSync));
     syncBuiltinESMExports();
 
     try {
@@ -266,16 +268,18 @@ describe("npm bundled undici remediation", () => {
     const target = fixture(AFFECTED_UNDICI_VERSION);
     const livePath = path.join(target.npmRoot, "node_modules", "undici");
     const originalRenameSync = fs.renameSync.bind(fs);
-    const renameSpy = vi
-      .spyOn(fs, "renameSync")
-      .mockImplementationOnce((oldPath, newPath) => {
-        originalRenameSync(oldPath, newPath);
-        writeJson(path.join(livePath, "package.json"), {
-          ...packageManifest(FIXED_UNDICI_VERSION),
-          main: "unexpected.js",
-        });
-      })
-      .mockImplementation(originalRenameSync);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(
+      corruptAfterReplacementRename(
+        originalRenameSync,
+        () => {
+          writeJson(path.join(livePath, "package.json"), {
+            ...packageManifest(FIXED_UNDICI_VERSION),
+            main: "unexpected.js",
+          });
+        },
+        false,
+      ),
+    );
     syncBuiltinESMExports();
 
     try {
@@ -420,19 +424,18 @@ describe("npm bundled undici remediation", () => {
     const target = fixture(AFFECTED_UNDICI_VERSION);
     const livePath = path.join(target.npmRoot, "node_modules", "undici");
     const originalRenameSync = fs.renameSync.bind(fs);
-    const renameSpy = vi
-      .spyOn(fs, "renameSync")
-      .mockImplementationOnce((oldPath, newPath) => {
-        originalRenameSync(oldPath, newPath);
-        writeJson(path.join(livePath, "package.json"), {
-          ...packageManifest(FIXED_UNDICI_VERSION),
-          main: "unexpected.js",
-        });
-      })
-      .mockImplementationOnce(() => {
-        throw new Error("injected rollback rename failure");
-      })
-      .mockImplementation(originalRenameSync);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(
+      corruptAfterReplacementRename(
+        originalRenameSync,
+        () => {
+          writeJson(path.join(livePath, "package.json"), {
+            ...packageManifest(FIXED_UNDICI_VERSION),
+            main: "unexpected.js",
+          });
+        },
+        true,
+      ),
+    );
     syncBuiltinESMExports();
 
     let failure: unknown;
