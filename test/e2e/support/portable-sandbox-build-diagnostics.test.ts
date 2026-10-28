@@ -975,3 +975,76 @@ it("keeps a failed registry push separate from build evidence (#13482)", async (
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+it("stops live Podman cleanup after an unreconciled registry publish (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-publish-unreconciled-"));
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const progress = startTestProgress("portable registry publish", ["build", "publish"], {
+    logLine: () => undefined,
+  });
+  const runCommand = vi.fn();
+  let unreconciled = false;
+  try {
+    const status = await publishPortableSandboxImage(
+      ["push", "localhost/test:fixed"],
+      { env: {}, stdio: "inherit" },
+      artifacts,
+      progress,
+      vi.fn(async () => ({
+        status: null,
+        signal: "SIGKILL" as const,
+        diagnostic: "credential=private-push-token",
+        error: Object.assign(new Error("private error text"), { code: "EUNRECONCILED" }),
+      })),
+      () => {
+        unreconciled = true;
+      },
+    );
+    expect(status).toBeNull();
+    expect(unreconciled).toBe(true);
+    const published = fs.readFileSync(
+      artifacts.pathFor("portable-sandbox-image-publish-failure.json"),
+      "utf8",
+    );
+    expect(JSON.parse(published)).toMatchObject({
+      errorCode: "EUNRECONCILED",
+      category: "process-isolation",
+    });
+    expect(published).not.toContain("private-push-token");
+    expect(published).not.toContain("private error text");
+    await cleanupPortablePodmanResources(
+      {
+        artifacts,
+        unreconciled,
+        disposableNetworkCreated: true,
+        disposableNetworkId: null,
+        disposableNetworkName: "exact-network",
+        runtimeDir: "/run/user/1001",
+        hermesImageRef: "localhost/hermes:fixed",
+        env: {},
+      },
+      runCommand,
+    );
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-state.json"), "utf8")),
+    ).toEqual({ schemaVersion: 1, status: "skipped-unreconciled-process" });
+    unreconciled = false;
+    await expect(
+      publishPortableSandboxImage(
+        ["push", "localhost/test:fixed"],
+        { env: {}, stdio: "inherit" },
+        artifacts,
+        progress,
+        vi.fn().mockRejectedValue(new Error("unknown child state")),
+        () => {
+          unreconciled = true;
+        },
+      ),
+    ).rejects.toThrow("unknown child state");
+    expect(unreconciled).toBe(true);
+  } finally {
+    progress.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

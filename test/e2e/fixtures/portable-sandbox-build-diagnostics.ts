@@ -568,8 +568,17 @@ export async function publishPortableSandboxImage(
   artifacts: ArtifactSink,
   progress: TestProgress,
   runPublish: ImageCommandRunner = runPodmanBuild,
+  onUnreconciled?: () => void,
 ): Promise<number | null> {
-  const result = await runPublish(args, options.env, PORTABLE_IMAGE_COMMAND_TIMEOUT_MS, progress);
+  let result: BuildResult;
+  try {
+    result = await runPublish(args, options.env, PORTABLE_IMAGE_COMMAND_TIMEOUT_MS, progress);
+  } catch (error) {
+    onUnreconciled?.();
+    throw error;
+  }
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "EUNRECONCILED")
+    onUnreconciled?.();
   if (result.status !== 0 || result.error) {
     await artifacts.writeJson(
       "portable-sandbox-image-publish-failure.json",

@@ -1038,15 +1038,16 @@ async function main(
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
+    const markUnreconciled = () => {
+      unreconciledPodmanGroup = true;
+    };
     const buildImage = buildImageFixture(
       artifacts,
       progress,
       verifiedPodmanUrl,
       BASE_IMAGE,
       undefined,
-      () => {
-        unreconciledPodmanGroup = true;
-      },
+      markUnreconciled,
     );
     await waitForRegistry(artifacts, shellProbe);
     process.env.E2E_TARGET_ID === "portable-hermes-finalization" &&
@@ -1123,7 +1124,8 @@ async function main(
       env: process.env,
       origin: "generated",
       buildImage: buildImage("sandbox"),
-      publishImage: (args, options) => publishImage(args, options, artifacts, progress),
+      publishImage: (args, options) =>
+        publishImage(args, options, artifacts, progress, undefined, markUnreconciled),
       log: console.log,
     });
     const imageRef = prebuild.imageRef;
@@ -1184,7 +1186,8 @@ async function main(
         dockerDriverGateway: true,
         env: process.env,
         buildImage: buildImage("hermes"),
-        publishImage: (args, options) => publishImage(args, options, artifacts, progress),
+        publishImage: (args, options) =>
+          publishImage(args, options, artifacts, progress, undefined, markUnreconciled),
         origin: "generated",
         log: console.log,
       });
