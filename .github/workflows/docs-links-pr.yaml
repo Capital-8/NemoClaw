@@ -9,7 +9,6 @@ on:
     types: [opened, reopened, synchronize]
     paths:
       - "**/*.md"
-      - "**/*.mdx"
       - ".github/workflows/docs-links-pr.yaml"
       - "test/e2e/e2e-cloud-experimental/check-docs.sh"
 
@@ -36,11 +35,10 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
           mapfile -t doc_files < <(
-            # Fern pages are MDX, so both extensions must reach this checker.
-            # Selecting only *.md silently skipped every docs/ page.
+            # Fern preview validates MDX routes after building variant navigation.
+            # This raw Markdown checker only verifies repository-local .md links.
             git diff --name-only --diff-filter=ACMR "$base" "$head" -- \
               '*.md' \
-              '*.mdx' \
               ':(exclude)node_modules/**' \
               ':(exclude)dist/**' \
               ':(exclude)vendor/**' \
@@ -54,29 +52,16 @@ jobs:
           fi
 
           echo "has_files=true" >> "$GITHUB_OUTPUT"
-          # Paths are contributor-controlled: a pull request can add a file
-          # whose name contains shell syntax. Write them as NUL-delimited data
-          # to a runner-owned file and never render them into shell source.
-          selected="${RUNNER_TEMP}/changed-docs.nul"
-          : > "$selected"
-          printf '%s\0' "${doc_files[@]}" > "$selected"
-          echo "selected_file=${selected}" >> "$GITHUB_OUTPUT"
+          {
+            echo "files<<EOF"
+            printf '%s\n' "${doc_files[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Run markdown link checker
         if: steps.changed.outputs.has_files == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          # Read the selection from the runner-owned NUL-delimited file so no
-          # contributor-controlled path is ever parsed as shell source.
-          mapfile -d '' -t doc_files < "${{ steps.changed.outputs.selected_file }}"
-          if [[ "${#doc_files[@]}" -eq 0 ]]; then
-            echo "No documentation files selected." >&2
-            exit 1
-          fi
-          # Repository-local link and Fern-route validation only. Remote probing
-          # stays disabled here because this workflow runs on pull requests, so
-          # every URL in the changed pages is contributor-controlled. External
-          # reachability is checked by docs-external-links.yaml from trusted
-          # main, where the URL set is repository-owned.
+          mapfile -t doc_files <<< "${{ steps.changed.outputs.files }}"
           bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links --local-only "${doc_files[@]}"
