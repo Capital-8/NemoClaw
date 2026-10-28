@@ -404,7 +404,8 @@ Windows-host Ollama does not receive this Linux recovery guidance.
 
 ## Release GPU Memory
 
-When you destroy a sandbox or stop host services, NemoClaw asks Ollama to unload only that sandbox's current model and any models recorded for cleanup retry. Other models resident on the shared host daemon are left alone.
+When you destroy a sandbox, NemoClaw asks Ollama to unload only that sandbox's current model and any models recorded for cleanup retry. Other models resident on the shared host daemon are left alone.
+The host-service commands `nemoclaw stop` and `nemoclaw tunnel stop` run host-wide Ollama cleanup, which may unload unrelated resident models.
 When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model.
 It leaves the model loaded only when OpenShell reports that another matching Ollama-backed sandbox is active.
 Stopped or incomplete sibling registry rows do not retain the model.
