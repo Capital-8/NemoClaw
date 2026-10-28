@@ -456,7 +456,6 @@ async fn an_agent_whose_earlier_request_was_abandoned_is_not_asked_again() {
             "http://127.0.0.1:9".parse().unwrap(),
         ))
         .unwrap(),
-        server: "http://127.0.0.1:9".into(),
         state: PathBuf::new(),
         openshift_wait: Duration::ZERO,
     };

@@ -52,7 +52,7 @@ The native bundle includes the pinned Helm provider; no Helm CLI is required.
 |---|---|
 | SDK | Compile the graph, validate saved plans against deployment intent and retained bindings, and order runtime and OpenShell work within one graph |
 | OpenTofu | Execute dependencies and retain each provider's resource state |
-| OpenShell provider | Create and retain the namespace and encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
+| OpenShell provider | Bind or create and retain the namespace, and create and retain the encryption key; prepare and remove the development issuer; verify object identities and gateway readiness |
 | Helm provider | Install, upgrade, and remove the pinned OpenShell chart release, using the prepared namespace and credentials |
 | Platform operator | Install and maintain Agent Sandbox, the default StorageClass, and OpenShift security prerequisites |
 

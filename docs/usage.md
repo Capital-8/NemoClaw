@@ -589,7 +589,9 @@ kubectl --context "$deployment_context" patch persistentvolume "$deployment_volu
 ```
 
 Remove a volume that no provisioner manages, and its storage, with your platform's tools.
-Then delete the namespace and wait for it to go:
+If the namespace existed before the first apply, keep it: it lacks the `nemoclaw.nvidia.com/uid` label that a namespace NemoClaw created carries.
+Delete only the Secret `GATEWAY-kek`, where `GATEWAY` is the gateway's release name, and the gateway's persistent volume claims, then skip to the volume list below.
+Otherwise, delete the namespace and wait for it to go:
 
 ```sh
 kubectl --context "$deployment_context" delete namespace "$deployment_namespace" --wait=true

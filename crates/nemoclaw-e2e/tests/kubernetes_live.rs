@@ -30,7 +30,7 @@ use nemoclaw_sdk::{
     config::{ComputeDriver, Document, ExternalGateway, FileRef, Gateway, SecretRef, TLS},
     kubernetes::{
         CA_ENV, CERT_ENV, ClusterTarget, GATEWAY_KIND, KEY_ENV, STATE_ENV, STORAGE_KIND, Spec,
-        TOKEN_ENV, connect, operations::Operations, server,
+        TOKEN_ENV, connect, operations::Operations,
     },
 };
 use openshell_provider::{OpenShell, Secrets};
@@ -583,7 +583,6 @@ async fn the_gateway_installs_authenticates_and_is_removed_keeping_storage() {
     )
     .unwrap();
     let operations = Operations {
-        server: server(&tofu.target).unwrap(),
         client: connect(&tofu.target).await.unwrap(),
         state: tofu.directory.join("kubernetes"),
         openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
@@ -1123,7 +1122,6 @@ async fn deploy_image_and_export(
     // The requests reach the gateway as the SDK's providers do, from the
     // deployment's Kubernetes state.
     let operations = Operations {
-        server: server(&target).unwrap(),
         client: cluster.clone(),
         state: state.path().join("kubernetes"),
         openshift_wait: nemoclaw_sdk::kubernetes::operations::OPENSHIFT_WAIT,
