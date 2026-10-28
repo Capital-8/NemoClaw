@@ -236,13 +236,6 @@ export const discordManifest = {
       outputs: [{ id: "channelHealth", kind: "status" }],
     },
     {
-      id: "discord-authentication",
-      phase: "reachability-check",
-      handler: "discord.authentication",
-      inputs: ["botToken"],
-      onFailure: "skip-channel",
-    },
-    {
       id: "discord-openclaw-bridge-health",
       phase: "health-check",
       handler: "discord.openclawBridgeHealth",
@@ -252,7 +245,7 @@ export const discordManifest = {
     {
       id: "discord-token-paste",
       phase: "enroll",
-      handler: "common.tokenPaste",
+      handler: "discord.tokenPaste",
       outputs: [
         {
           id: "botToken",

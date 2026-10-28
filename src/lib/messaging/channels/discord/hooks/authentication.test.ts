@@ -37,8 +37,8 @@ describe("Discord enrollment", () => {
 describe("Discord authentication", () => {
   const context = {
     channelId: "discord",
-    hookId: "discord-authentication",
-    phase: "reachability-check" as const,
+    hookId: "discord-token-paste",
+    phase: "enroll" as const,
     inputs: { botToken: "invalid-token-for-test" },
   };
 

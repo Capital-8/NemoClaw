@@ -37,7 +37,7 @@ describe("MessagingHookRegistry", () => {
       "common.staticOutputs",
       "common.tokenPaste",
       "common.configPrompt",
-      "discord.authentication",
+      "discord.tokenPaste",
       "discord.statusHealth",
       "discord.openclawBridgeHealth",
       "googlechat.tunnelAudienceGate",

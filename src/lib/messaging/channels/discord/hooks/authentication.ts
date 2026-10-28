@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
+import {
+  createTokenPasteHook,
+  type TokenPasteHookOptions,
+} from "../../../hooks/common/token-paste";
 import { getVersion } from "../../../../core/version";
 import { cliName } from "../../../../onboard/branding";
 
-export const DISCORD_AUTHENTICATION_HOOK_HANDLER_ID = "discord.authentication";
+export const DISCORD_TOKEN_PASTE_HOOK_HANDLER_ID = "discord.tokenPaste";
 const IDENTITY_URL = "https://discord.com/api/v10/users/@me";
 const DEFAULT_TIMEOUT_MS = 8_000;
 const MAX_IDENTITY_BYTES = 16_384;
@@ -42,12 +46,22 @@ export function createDiscordAuthenticationHook(
   };
 }
 
-export function createDiscordAuthenticationHookRegistration(
+export function createDiscordTokenPasteHookRegistration(
   options: DiscordAuthenticationHookOptions = {},
+  tokenPasteOptions: TokenPasteHookOptions = {},
 ): MessagingHookRegistration {
+  const verify = createDiscordAuthenticationHook(options);
   return {
-    id: DISCORD_AUTHENTICATION_HOOK_HANDLER_ID,
-    handler: createDiscordAuthenticationHook(options),
+    id: DISCORD_TOKEN_PASTE_HOOK_HANDLER_ID,
+    handler: createTokenPasteHook({
+      ...tokenPasteOptions,
+      beforePersist: async (context, outputs) => {
+        await verify({
+          ...context,
+          inputs: { ...context.inputs, botToken: outputs.botToken?.value ?? null },
+        });
+      },
+    }),
   };
 }
 

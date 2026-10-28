@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessagingHookRegistration } from "../../../hooks/types";
+import type { TokenPasteHookOptions } from "../../../hooks/common/token-paste";
 import type { OpenClawBridgeHealthHookOptions } from "../../openclaw-bridge-health";
 import { createDiscordOpenClawBridgeHealthHookRegistration } from "./openclaw-bridge-health";
 import {
-  createDiscordAuthenticationHookRegistration,
+  createDiscordTokenPasteHookRegistration,
   type DiscordAuthenticationHookOptions,
 } from "./authentication";
 import { createDiscordStatusHealthHookRegistration } from "./status-health";
@@ -21,9 +22,10 @@ export interface DiscordHookOptions {
 
 export function createDiscordHookRegistrations(
   options: DiscordHookOptions = {},
+  tokenPasteOptions: TokenPasteHookOptions = {},
 ): readonly MessagingHookRegistration[] {
   return [
-    createDiscordAuthenticationHookRegistration(options.authentication),
+    createDiscordTokenPasteHookRegistration(options.authentication, tokenPasteOptions),
     createDiscordStatusHealthHookRegistration(options.statusHealth),
     createDiscordOpenClawBridgeHealthHookRegistration(options.openclawBridgeHealth),
   ] as const;
