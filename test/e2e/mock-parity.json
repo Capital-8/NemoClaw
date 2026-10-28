@@ -269,7 +269,8 @@
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
-        "test/security/admin-approval-helper.test.ts"
+        "test/security/admin-approval-helper.test.ts",
+        "test/install/install-npm-private-prefix.test.ts"
       ]
     },
     {
@@ -674,8 +675,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/hermes-config-export-live.test.ts",
-        "test/e2e/support/hermes-discord-rebuild-contract.test.ts",
-        "test/install/install-npm-private-prefix.test.ts"
+        "test/e2e/support/hermes-discord-rebuild-contract.test.ts"
       ]
     },
     {
