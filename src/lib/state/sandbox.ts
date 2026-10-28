@@ -2032,10 +2032,14 @@ function extractedNativeMembersMatch(
   const pending = [targetRoot];
   try {
     while (pending.length > 0) {
-      if (backupDeadlineExpired(deadlineMs)) return false;
+      if (backupDeadlineExpired(deadlineMs)) {
+        throw new Error("Native archive extraction exceeded its deadline");
+      }
       const directory = pending.pop()!;
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
-        if (backupDeadlineExpired(deadlineMs)) return false;
+        if (backupDeadlineExpired(deadlineMs)) {
+          throw new Error("Native archive extraction exceeded its deadline");
+        }
         const full = path.join(directory, entry.name);
         const relative = path.relative(targetRoot, full).split(path.sep).join("/");
         if (!missing.delete(relative)) return false;
@@ -2043,7 +2047,13 @@ function extractedNativeMembersMatch(
       }
     }
     return missing.size === 0;
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Native archive extraction exceeded its deadline"
+    ) {
+      throw error;
+    }
     return false;
   }
 }

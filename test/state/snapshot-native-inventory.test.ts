@@ -159,6 +159,67 @@ process.stdout.write(result.stdout.split("\\n").${_mode === "omitted" ? "filter"
   },
 );
 
+function stoppedProviderCapture(archive: Buffer) {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+  const workload = {
+    schemaVersion: 1,
+    kind: "managed-image",
+    reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+    platform: "linux/amd64",
+    release: "v0.0.88",
+    sourceRevision: "b".repeat(40),
+    sourceCohort: "ghrun-123-1",
+    capabilityContractVersion: 1,
+    startupProfileContractVersion: 1,
+    encodedProfile,
+    startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+    credentialProxyReplayRequired: false,
+    shared: true,
+  } as const;
+  const entry = {
+    name: "alpha",
+    agent: "openclaw",
+    openshellDriver: "mxc",
+    imageTag: workload.reference,
+    fromDockerfile: null,
+    workload,
+  } satisfies SandboxEntry;
+  const provider = {
+    identity: { id: "mxc" },
+    workload: { acceptsReceipt: () => true },
+    snapshot: {
+      supported: true,
+      providerId: "mxc",
+      capabilities: { backup: true },
+      prepareStoppedStateCapture: () => ({
+        capture: (fd: number) => {
+          fs.writeSync(fd, archive);
+        },
+        assertCurrent: () => undefined,
+      }),
+    },
+  } as unknown as RuntimeProviderBundle;
+  const runtime = {
+    schemaVersion: 1,
+    providerId: "mxc",
+    providerHandle: "opaque-session-1",
+    lifecycleState: "stopped",
+    lifecycleGeneration: "generation-1",
+    runtime: {
+      schemaVersion: 1,
+      providerId: "mxc",
+      runtime: { kind: "session", handle: "session-1" },
+      acceleration: { kind: "none" },
+    },
+  } as const;
+  const overrides = {
+    getSandbox: () => entry,
+    requireProvider: () => provider,
+    captureRuntime: () => runtime,
+  };
+  return { overrides };
+}
+
 it("refuses a provider-owned stopped archive with a forged listing before extraction and cleans staging", async () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-caller-inventory-"));
   const oldPath = process.env.PATH;
@@ -192,67 +253,13 @@ process.stdout.write(args.includes("-tf")
     );
     process.env.PATH = `${binDir}:${oldPath ?? ""}`;
 
-    const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
-    const workload = {
-      schemaVersion: 1,
-      kind: "managed-image",
-      reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
-      platform: "linux/amd64",
-      release: "v0.0.88",
-      sourceRevision: "b".repeat(40),
-      sourceCohort: "ghrun-123-1",
-      capabilityContractVersion: 1,
-      startupProfileContractVersion: 1,
-      encodedProfile,
-      startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
-      credentialProxyReplayRequired: false,
-      shared: true,
-    } as const;
-    const entry = {
-      name: "alpha",
-      agent: "openclaw",
-      openshellDriver: "mxc",
-      imageTag: workload.reference,
-      fromDockerfile: null,
-      workload,
-    } satisfies SandboxEntry;
-    const provider = {
-      identity: { id: "mxc" },
-      workload: { acceptsReceipt: () => true },
-      snapshot: {
-        supported: true,
-        providerId: "mxc",
-        capabilities: { backup: true },
-        prepareStoppedStateCapture: () => ({
-          capture: (fd: number) => {
-            fs.writeSync(fd, archive.stdout);
-          },
-          assertCurrent: () => undefined,
-        }),
-      },
-    } as unknown as RuntimeProviderBundle;
-    const runtime = {
-      schemaVersion: 1,
-      providerId: "mxc",
-      providerHandle: "opaque-session-1",
-      lifecycleState: "stopped",
-      lifecycleGeneration: "generation-1",
-      runtime: {
-        schemaVersion: 1,
-        providerId: "mxc",
-        runtime: { kind: "session", handle: "session-1" },
-        acceleration: { kind: "none" },
-      },
-    } as const;
+    const { overrides } = stoppedProviderCapture(archive.stdout);
     let staging: string | undefined;
     const tempDir = vi.spyOn(fs, "mkdtempSync");
     syncBuiltinESMExports();
     try {
       await expect(
-        stoppedBackup.prepareStoppedAgentState("alpha", () => entry, {
-          requireProvider: () => provider,
-          captureRuntime: () => runtime,
-        }),
+        stoppedBackup.prepareStoppedAgentState("alpha", overrides.getSandbox, overrides),
       ).rejects.toThrow("Stopped state archive raw headers did not match its listing");
       expect(String(tempDir.mock.calls[0]?.[0])).toContain("nemoclaw-stopped-state-");
       staging = tempDir.mock.results[0]?.value as string | undefined;
@@ -268,6 +275,45 @@ process.stdout.write(args.includes("-tf")
       ? Reflect.deleteProperty(process.env, "PATH")
       : Reflect.set(process.env, "PATH", oldPath);
     fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+it("publishes a valid provider-owned stopped archive through the backup authority", async () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-caller-valid-"));
+  let prepared: Awaited<ReturnType<typeof stoppedBackup.prepareStoppedAgentState>> = null;
+  let backupPath = path.join(fixture, "no-backup");
+  try {
+    const source = path.join(fixture, "source");
+    fs.mkdirSync(path.join(source, ".openclaw"), { recursive: true });
+    fs.writeFileSync(path.join(source, ".openclaw", "state.txt"), "provider-owned-state");
+    const archive = spawnSync("tar", ["-C", source, "-cf", "-", "."], {
+      env: { ...process.env, COPYFILE_DISABLE: "1" },
+    });
+    expect(archive.status).toBe(0);
+    writeSnapshotRegistry(testHome, "alpha");
+    const { overrides } = stoppedProviderCapture(archive.stdout);
+    prepared = await stoppedBackup.prepareStoppedAgentState(
+      "alpha",
+      overrides.getSandbox,
+      overrides,
+    );
+    expect(prepared).not.toBeNull();
+    const backup = stoppedBackup.backupSandboxStateWithManagedAuthority(
+      "alpha",
+      overrides,
+      prepared!,
+    );
+    expect(backup.success, backup.error).toBe(true);
+    backupPath = backup.manifest!.backupPath;
+    const listing = spawnSync("tar", ["-tf", path.join(backupPath, "native-home.tar")], {
+      encoding: "utf8",
+    });
+    expect(listing.status).toBe(0);
+    expect(listing.stdout).toContain("./.openclaw/state.txt");
+  } finally {
+    prepared?.dispose();
+    fs.rmSync(fixture, { recursive: true, force: true });
+    fs.rmSync(backupPath, { recursive: true, force: true });
   }
 });
 

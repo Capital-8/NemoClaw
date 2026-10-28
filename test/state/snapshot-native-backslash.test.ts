@@ -254,6 +254,63 @@ describe("native backup of backslash paths across tar quoting modes", () => {
     }
   });
 
+  it("classifies a deadline reached after a successful fallback command as a backup timeout", () => {
+    const { fixture, relativePath } = createBackslashEnvFixture();
+    const binDir = path.join(fixture, "bin");
+    const firstPass = path.join(fixture, "first-extraction-failed");
+    const fallbackComplete = path.join(fixture, "fallback-complete");
+    const systemTar = spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).stdout.trim();
+    const oldPath = process.env.PATH;
+    const now = Date.now();
+    try {
+      fs.rmSync(path.join(TMP_HOME, ".nemoclaw", "rebuild-backups"), {
+        recursive: true,
+        force: true,
+      });
+      fs.mkdirSync(binDir);
+      writeExecutable(
+        path.join(binDir, "tar"),
+        [
+          "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
+          'const { spawnSync } = require("node:child_process");',
+          "const args = process.argv.slice(2);",
+          `if (args.includes("-xf") && args.includes("-T") && !fs.existsSync(${JSON.stringify(firstPass)})) { fs.writeFileSync(${JSON.stringify(firstPass)}, "1"); process.exit(1); }`,
+          `if (args.includes("-xf") && args.includes("-T")) { fs.writeFileSync(${JSON.stringify(fallbackComplete)}, "1"); process.exit(0); }`,
+          `process.exit(spawnSync(${JSON.stringify(systemTar)}, args, { stdio: "inherit" }).status ?? 90);`,
+        ].join("\n"),
+      );
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      const clock = vi
+        .spyOn(Date, "now")
+        .mockImplementation(() =>
+          fs.existsSync(fallbackComplete)
+            ? now + sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS + 1
+            : now,
+        );
+      try {
+        const backup = sandboxState.backupSandboxState("alpha", {
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: path.join(fixture, "native-home"),
+            assertCurrent: () => undefined,
+          },
+        });
+        expect(backup.success).toBe(false);
+        expect(backup.error).toContain(relativePath);
+        expect(backup.error).toContain("credential scan exceeded the backup deadline");
+      } finally {
+        clock.mockRestore();
+      }
+      expect(fs.existsSync(firstPass)).toBe(true);
+      expect(fs.existsSync(fallbackComplete)).toBe(true);
+      expect(sandboxState.getLatestBackup("alpha")).toBeNull();
+    } finally {
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("stops a backslash fallback copy at the extraction deadline and removes staging", () => {
     const now = Date.now();
     assertFailedFallbackCleans((marker) => {
