@@ -731,7 +731,7 @@ it("reconciles the exact supervised group before test-owned Podman cleanup (#134
         "--force",
         "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed",
       ],
-      ["--url", input.selectedPodmanUrl, "system", "reset", "--force"],
+      ["--remote=false", "system", "reset", "--force"],
     ]);
     expect(
       JSON.parse(
@@ -783,8 +783,14 @@ it("uses the selected Podman service and reports cleanup failures without output
         "--force",
         "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed",
       ],
-      ["--url", selectedPodmanUrl, "system", "reset", "--force"],
     ]);
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-state.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      status: "local-system-reset-skipped",
+      reason: "selected-socket-is-not-local-default",
+    });
     const evidence = fs.readFileSync(
       artifacts.pathFor("portable-podman-cleanup-failure.json"),
       "utf8",

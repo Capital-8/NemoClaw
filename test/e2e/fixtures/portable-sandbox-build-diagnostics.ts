@@ -645,9 +645,11 @@ export async function cleanupPortablePodmanResources(
     throw new Error("Portable Podman cleanup authority unproved");
   }
   const failedTargets: Array<{ target: string; category: string }> = [];
-  const attempt = (target: string, args: string[]) => {
+  const attempt = (target: string, args: string[], local = false) => {
     try {
-      const result = runCommand(["--url", selectedUrl, ...args]);
+      const result = runCommand(
+        local ? ["--remote=false", ...args] : ["--url", selectedUrl, ...args],
+      );
       const category =
         (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"
           ? "timeout"
@@ -670,7 +672,20 @@ export async function cleanupPortablePodmanResources(
   attempt("registry", ["rm", "--force", "nemoclaw-portable-registry"]);
   if (input.hermesImageRef)
     attempt("hermes-image", ["image", "rm", "--force", input.hermesImageRef]);
-  attempt("system-reset", ["system", "reset", "--force"]);
+  // Podman system reset is local-only. Limit it to the selected default socket;
+  // named resources above are removed through the selected service in every case.
+  if (
+    ROOTLESS_RUNTIME_DIR.test(input.runtimeDir) &&
+    selectedUrl === `unix://${input.runtimeDir}/podman/podman.sock`
+  ) {
+    attempt("system-reset", ["system", "reset", "--force"], true);
+  } else {
+    await input.artifacts.writeJson("portable-podman-cleanup-state.json", {
+      schemaVersion: 1,
+      status: "local-system-reset-skipped",
+      reason: "selected-socket-is-not-local-default",
+    });
+  }
   if (failedTargets.length > 0) {
     await input.artifacts.writeJson("portable-podman-cleanup-failure.json", {
       schemaVersion: 1,
