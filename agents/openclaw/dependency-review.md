@@ -127,9 +127,9 @@ The lock records the exact version, registry URL, and integrity for every transi
 
 ## OpenClaw 2026.10.5 runtime and restoration
 
-[PR #13697](https://github.com/NVIDIA/NemoClaw/pull/13697) supplies the trusted audit identities and target-specific Python setup needed by full PR E2E from main.
-It retains main's production runtime selection; this PR owns the cutover below.
-Candidate CI cannot authorize its own policy changes, and independent prerequisite review and landing remain necessary before full default qualification.
+[PR #13697](https://github.com/NVIDIA/NemoClaw/pull/13697) landed the trusted audit identities, and [PR #13787](https://github.com/NVIDIA/NemoClaw/pull/13787) landed the target-specific Python setup needed by full PR E2E from main.
+Those prerequisites retained main's production runtime selection; this PR owns the cutover below.
+Candidate CI cannot authorize its own policy changes. The runtime upgrade still requires qualification against its current candidate and independent review.
 
 The production runtime and eight official plugins select OpenClaw 2026.10.5.
 The runtime lock is the primary audit identity. The archive inventory contains the selected runtime and official plugins.
@@ -160,11 +160,19 @@ The runtime helper verifies the original or patched managed-workspace digest bef
 The shared `bundled-npm-package.mts` owns package replacement, rollback, archive-integrity checks, and backup cleanup for the ip-address and Undici repairs.
 Both entrypoints restore one verified affected backup when an interrupted replacement leaves the live package absent.
 They validate npm identity before restoration and preserve unverified staging trees.
+Replacement stages carry private ownership markers bound to the package, parent and stage directories, and creator's host boot and process scope.
+On retry, both entrypoints remove a marked stage only after verifying that identity and confirming that its creator has exited.
+Unknown, active, unsafe, or unverifiable stages remain intact with a recovery diagnostic; a directory-name prefix alone never authorizes deletion.
+Replacement copies the original package into the private stage and verifies its complete contents before publishing a backup.
+The ownership marker records the original and backup directory identities, backup name, and a digest of file contents and entry modes.
+If interruption leaves the original live package intact, recovery can remove its sole owned backup after both trees match that receipt.
+This recovery also requires a verified inactive stage owner; changed, ambiguous, or unsafe backups remain for inspection.
 Cleanup retries remove one recognized affected backup only after verifying the live replacement.
 Ambiguous, unverifiable, or unsafe backups fail with an actionable path and remain intact.
 The migration runtime uses the same fail-closed recovery rule for its retained Undici backup.
 `test/install/bundled-npm-package.test.ts` covers shared archive and recovery failures; the package-specific suites retain identity and rollback coverage.
 `test/install/remediate-openclaw-runtime-dependencies.test.ts` covers migration cleanup and metadata boundaries.
+`test/install/bundled-npm-staging-recovery.test.ts` interrupts real child processes during copying, receipt publication, backup publication, and promotion, then checks recovery and ownership-denial behavior for both packages.
 `test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts` executes npm, npx, and Discord SDK response parsing after remediating actual reviewed 2026.10.5 packages.
 It also verifies Google Chat account parsing through patched Zod and Slack Bolt HTTP body parsing through its patched local parser dependencies.
 Remove these recipes only when reviewed upstream artifacts contain the fixes and clean installation verifies every affected consumer.

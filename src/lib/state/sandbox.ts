@@ -1066,7 +1066,7 @@ function structuredContentIsCredentialFree(entry: string, raw: string): boolean 
       clonedInference.apiKey = "unused";
     }
   }
-  return isDeepStrictEqual(stripCredentials(value), value);
+  return isDeepStrictEqual(stripNativeStructuredCredentials(value, normalized), value);
 }
 
 function dependencyPackageManifestIsCredentialFree(raw: string): boolean {
@@ -1336,6 +1336,74 @@ function nativeStructuredAuthorityKind(
   return null;
 }
 
+const HERMES_OPENROUTER_CONFIG = ".hermes/config.yaml";
+const HERMES_OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1";
+const HERMES_OPENROUTER_TEMPLATE = "${OPENROUTER_API_KEY}";
+
+/** Preserve the non-secret template only for the route that generated it. */
+function stripNativeStructuredCredentials(config: unknown, normalized: string): unknown {
+  const sanitized = stripCredentials(config);
+  if (
+    normalized !== HERMES_OPENROUTER_CONFIG ||
+    !isObjectRecord(config) ||
+    !isObjectRecord(sanitized)
+  ) {
+    return sanitized;
+  }
+  const upstream = config._nemoclaw_upstream;
+  const model = config.model;
+  const providers = config.providers;
+  const custom = config.custom_providers;
+  const managed = isObjectRecord(providers) ? providers["openrouter-api"] : null;
+  const matches = Array.isArray(custom)
+    ? custom.filter((entry) => isObjectRecord(entry) && entry.name === "openrouter-api")
+    : [];
+  if (
+    !isObjectRecord(upstream) ||
+    !isObjectRecord(model) ||
+    !isObjectRecord(managed) ||
+    !Array.isArray(custom) ||
+    upstream.provider !== "openrouter-api" ||
+    upstream.provider_key !== "openrouter-api" ||
+    typeof upstream.model !== "string" ||
+    !upstream.model ||
+    upstream.model !== model.default ||
+    model.provider !== "custom" ||
+    model.base_url !== HERMES_OPENROUTER_ENDPOINT ||
+    model.api_key !== HERMES_OPENROUTER_TEMPLATE ||
+    managed.name !== "openrouter-api" ||
+    managed.api !== HERMES_OPENROUTER_ENDPOINT ||
+    managed.default_model !== model.default ||
+    managed.api_key !== HERMES_OPENROUTER_TEMPLATE ||
+    matches.length !== 1 ||
+    !isObjectRecord(matches[0]) ||
+    matches[0].base_url !== HERMES_OPENROUTER_ENDPOINT ||
+    matches[0].api_key !== HERMES_OPENROUTER_TEMPLATE
+  ) {
+    return sanitized;
+  }
+  // The generic scrub still removes every unrelated credential. Restore only
+  // the three NemoClaw-owned references that Hermes expands from fresh env.
+  const sanitizedModel = sanitized.model;
+  const sanitizedProviders = sanitized.providers;
+  const sanitizedCustom = sanitized.custom_providers;
+  const sanitizedManaged = isObjectRecord(sanitizedProviders)
+    ? sanitizedProviders["openrouter-api"]
+    : null;
+  const matchIndex = custom.indexOf(matches[0]);
+  if (
+    isObjectRecord(sanitizedModel) &&
+    isObjectRecord(sanitizedManaged) &&
+    Array.isArray(sanitizedCustom) &&
+    isObjectRecord(sanitizedCustom[matchIndex])
+  ) {
+    sanitizedModel.api_key = HERMES_OPENROUTER_TEMPLATE;
+    sanitizedManaged.api_key = HERMES_OPENROUTER_TEMPLATE;
+    sanitizedCustom[matchIndex].api_key = HERMES_OPENROUTER_TEMPLATE;
+  }
+  return sanitized;
+}
+
 function sanitizedStructuredAuthority(
   payload: Buffer,
   size: number,
@@ -1376,7 +1444,7 @@ function sanitizedStructuredAuthority(
     // correctly reject as corrupt legacy state.
     sanitized = { nemoclawSanitizedDeviceIdentity: 1 };
   } else {
-    sanitized = stripCredentials(config);
+    sanitized = stripNativeStructuredCredentials(config, normalized);
   }
   if (isDeepStrictEqual(sanitized, config)) return payload;
 
@@ -1637,6 +1705,7 @@ function scanNativeTarFilePayload(
   npmConfig: boolean,
   providerProfileSchema: boolean,
   openclawConfig: boolean,
+  hermesOpenRouterConfig: boolean,
   privateKeyHeader: boolean,
   dependencyBinary: boolean,
   deadlineMs: number | undefined,
@@ -1665,7 +1734,11 @@ function scanNativeTarFilePayload(
         )
       : openclawConfig
         ? raw.replace(/("apiKey"\s*:\s*")\$\{NVIDIA_INFERENCE_API_KEY\}(")/gu, "$1unused$2")
-        : raw;
+        : hermesOpenRouterConfig
+          ? // The structured scan admits this literal only in the three
+            // validated managed slots; raw scanning still catches other secrets.
+            raw.replaceAll(HERMES_OPENROUTER_TEMPLATE, "unused")
+          : raw;
     if (
       textContainsCredential(credentialScanInput, {
         opaqueAssignments,
@@ -1746,6 +1819,8 @@ function nativeArchiveRawCredentialViolation(
                 path.posix.normalize(entry.replace(/^\.\//u, "")),
                 fileName,
               ) === "openclaw-config";
+            const hermesOpenRouterConfig =
+              path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG;
             const violation = scanNativeTarFilePayload(
               descriptor,
               dataOffset,
@@ -1755,6 +1830,7 @@ function nativeArchiveRawCredentialViolation(
               fileName === ".npmrc",
               providerProfileSchema,
               openclawConfig,
+              hermesOpenRouterConfig,
               !dependencyTree,
               dependencyTree,
               deadlineMs,
@@ -1801,6 +1877,8 @@ function nativeArchiveCredentialViolation(
     const isOpenClawConfig =
       nativeStructuredAuthorityKind(path.posix.normalize(entry.replace(/^\.\//u, "")), fileName) ===
       "openclaw-config";
+    const isHermesOpenRouterConfig =
+      path.posix.normalize(entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG;
     const isEnv = fileName === ".env" || fileName.endsWith(".env");
     if (
       !isLockfile &&
@@ -1808,7 +1886,8 @@ function nativeArchiveCredentialViolation(
       dcodeSessionsDatabaseRole === null &&
       !isEnv &&
       !isSensitive &&
-      !isOpenClawConfig
+      !isOpenClawConfig &&
+      !isHermesOpenRouterConfig
     ) {
       continue;
     }
@@ -1872,7 +1951,12 @@ function nativeArchiveCredentialViolation(
         return candidate.entry;
       }
       if (extractedCandidate.kind === "oversize") {
-        if (candidate.isLockfile || candidate.isDependencyPackage) return candidate.entry;
+        if (
+          candidate.isLockfile ||
+          candidate.isDependencyPackage ||
+          path.posix.normalize(candidate.entry.replace(/^\.\//u, "")) === HERMES_OPENROUTER_CONFIG
+        )
+          return candidate.entry;
         continue;
       }
       const raw = extractedCandidate.content.toString("utf8");
