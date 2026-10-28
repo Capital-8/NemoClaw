@@ -155,8 +155,8 @@ $$nemoclaw inference set \
 ```
 
 NemoClaw validates the endpoint before it changes the route.
-For a native provider switch, NemoClaw reads the sandbox's base policy before creating or detaching a provider.
-An existing endpoint rule for the same host and port must have matching IP pins.
+For a custom compatible endpoint that uses a native provider, NemoClaw reads the sandbox's base policy before creating or detaching a provider.
+When the provider pins destination addresses, existing endpoint rules for the same host and port must have matching IP pins.
 If the pins are absent or differ, the command names the conflicting policy and leaves providers and the inference selection unchanged.
 Follow [Customize the Sandbox Network Policy](../../network-policy/customize-network-policy) to inspect the named rule before retrying.
 If NemoClaw cannot read the policy, resolve the reported OpenShell error before retrying.
