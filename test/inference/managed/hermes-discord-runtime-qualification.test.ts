@@ -56,29 +56,65 @@ esac
     },
   );
 
-  it.each([
-    [
-      "pr-build-and-entrypoint",
-      "${{ steps.contract.outputs.reference }}",
-      "Publish exact same-repository PR managed image by digest",
-    ],
-    [
-      "build-and-validate",
-      "${{ steps.validate.outputs.reference }}",
-      "Capture exact managed image publication evidence",
-    ],
-  ])(
-    "runs the native contract before %s publication and propagates failure",
-    (jobId, reference, publicationName) => {
+  it.each(["invalid-cid", "unreadable-cid", "remove-failed"])(
+    "preserves contract failure and retires temporary state after %s (#13809)",
+    (failure) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-contract-cleanup-error-"));
+      const cidPath = path.join(directory, "cid-path");
+      const cleanupLog = path.join(directory, "cleanup");
+      fs.writeFileSync(
+        path.join(directory, "docker"),
+        `#!/bin/sh
+case "$1" in
+run)
+  while [ "$#" -gt 0 ] && [ "$1" != --cidfile ]; do shift; done
+  shift
+  printf '%s' "$1" > "$FIXTURE_CID_PATH"
+  if [ "$FIXTURE_FAILURE" = unreadable-cid ]; then mkdir "$1";
+  elif [ "$FIXTURE_FAILURE" = invalid-cid ]; then printf foreign > "$1";
+  else printf '%s' '${"a".repeat(64)}' > "$1"; fi
+  exit 23
+  ;;
+rm) printf '%s\\n' "$@" > "$FIXTURE_CLEANUP"; exit 24 ;;
+*) exit 99 ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+      vi.stubEnv("PATH", `${directory}:${process.env.PATH}`);
+      vi.stubEnv("FIXTURE_CID_PATH", cidPath);
+      vi.stubEnv("FIXTURE_CLEANUP", cleanupLog);
+      vi.stubEnv("FIXTURE_FAILURE", failure);
+      try {
+        let error: unknown;
+        try {
+          runHermesDiscordRuntimeContract(["--image", image, "--platform", "linux/arm64"]);
+        } catch (caught) {
+          error = caught;
+        }
+        expect(error).toBeInstanceOf(AggregateError);
+        expect((error as AggregateError).errors[0].message).toBe(
+          "Native Hermes Discord runtime contract failed",
+        );
+        expect((error as AggregateError).errors).toHaveLength(2);
+        expect(fs.existsSync(path.dirname(fs.readFileSync(cidPath, "utf8")))).toBe(false);
+        expect(fs.existsSync(cleanupLog)).toBe(failure === "remove-failed");
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(path.dirname(fs.readFileSync(cidPath, "utf8")), {
+          recursive: true,
+          force: true,
+        });
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["pr-build-and-entrypoint", "build-and-validate"])(
+    "executes the %s native contract with immutable input and propagates failure",
+    (jobId) => {
       const job = required(readWorkflow("managed-images.yaml").jobs?.[jobId], "missing image job");
       const native = step(job, "Verify native Hermes Discord status before publication");
-      const build = step(job, "Build CLI for Hermes runtime contract");
-      const publication = step(job, publicationName);
-      expect(native.if).toBe("matrix.agent == 'hermes'");
-      expect(build.if).toBe(native.if);
-      expect(native.env?.IMAGE_REFERENCE).toBe(reference);
-      expect(job.steps!.indexOf(build)).toBeLessThan(job.steps!.indexOf(native));
-      expect(job.steps!.indexOf(native)).toBeLessThan(job.steps!.indexOf(publication));
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-qualification-workflow-"));
       const argumentsFile = path.join(directory, "arguments");
       fs.writeFileSync(

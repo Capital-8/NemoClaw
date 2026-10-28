@@ -80,6 +80,7 @@ export function runHermesDiscordRuntimeContract(argv: readonly string[]): void {
   mkdirSync(join(WORKSPACE, "node_modules/.vite-temp"), { recursive: true });
   const temporary = mkdtempSync(join(WORKSPACE, ".e2e/hermes-discord-runtime-"));
   const cidfile = join(temporary, "container.cid");
+  let contractFailure: unknown;
   try {
     const result = spawnSync(
       "docker",
@@ -92,7 +93,23 @@ export function runHermesDiscordRuntimeContract(argv: readonly string[]): void {
     );
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error("Native Hermes Discord runtime contract failed");
-  } finally {
+  } catch (error) {
+    contractFailure = error;
+  }
+  const cleanupFailure = cleanupHermesContract(temporary, cidfile);
+  if (contractFailure !== undefined && cleanupFailure !== undefined) {
+    throw new AggregateError(
+      [contractFailure, cleanupFailure],
+      "Native Hermes Discord runtime contract and cleanup failed",
+    );
+  }
+  if (contractFailure !== undefined) throw contractFailure;
+  if (cleanupFailure !== undefined) throw cleanupFailure;
+}
+
+function cleanupHermesContract(temporary: string, cidfile: string): unknown {
+  let failure: unknown;
+  try {
     // A timed-out Docker client can leave its container running. The read-only
     // workspace prevents the test from replacing the daemon-written identity.
     if (existsSync(cidfile)) {
@@ -106,8 +123,15 @@ export function runHermesDiscordRuntimeContract(argv: readonly string[]): void {
         throw new Error(`Could not remove Hermes contract container ${id}`);
       }
     }
-    rmSync(temporary, { recursive: true, force: true });
+  } catch (error) {
+    failure = error;
   }
+  try {
+    rmSync(temporary, { recursive: true, force: true });
+  } catch (error) {
+    failure ??= error;
+  }
+  return failure;
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
