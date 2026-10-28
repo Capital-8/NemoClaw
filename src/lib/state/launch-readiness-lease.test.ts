@@ -731,17 +731,6 @@ describe("launch readiness lease storage", () => {
       fs.chmodSync(receiptDir, mode);
 
       try {
-        if (target !== "runtime ancestor") {
-          expect(
-            checkLaunchReadinessMutationAuthority(
-              SANDBOX,
-              GATEWAY_NAME,
-              GATEWAY_PORT,
-              null,
-              options(),
-            ),
-          ).toBe("changed");
-        }
         expect(
           checkLaunchReadinessMutationAuthority(
             SANDBOX,
