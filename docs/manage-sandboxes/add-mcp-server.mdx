@@ -148,7 +148,9 @@ NemoClaw records the normalized host and every validated address as OpenShell po
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
 The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
-To replace it, remove and re-add the server with the replacement exported under the same host variable name. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
+To replace it, remove and re-add the server with the replacement exported under the same host variable name.
+Save the live policy with `$$nemoclaw <sandbox> policy get > <file>` before you remove the server; the replacement add drops edits that you applied directly to the generated policy.
+`mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
 
 Inspect the registration after the add returns:
 
@@ -187,6 +189,7 @@ One normalized endpoint URL can have only one credential-bound managed server de
 If two definitions need different credentials, retain one definition for that URL or configure distinct endpoint URLs so OpenShell can select one credential unambiguously.
 
 If this server uses the profile-less `generic` provider from an earlier NemoClaw build, remove it and add it again with the credential exported.
+Save the live policy with `$$nemoclaw <sandbox> policy get > <file>` before you remove the server; the replacement add drops edits that you applied directly to the generated policy.
 That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
 
 OpenShell allows at most 32 attached providers in one sandbox.
@@ -205,6 +208,7 @@ Rebuild checks the limit again before it reattaches MCP providers to the recreat
 If the recreated sandbox has no room, rebuild reports `MCP bridge restore incomplete` and leaves those MCP servers unavailable.
 Run `openshell sandbox provider list <sandbox>` to count attached providers.
 To recover each affected server, free a provider attachment.
+Save the live policy with `$$nemoclaw <sandbox> policy get > <file>` before you remove the server; the replacement add drops edits that you applied directly to the generated policy.
 Then follow [Rotate a Credential](manage-mcp-servers#rotate-a-credential) with the original URL, credential name, denied tools, and trusted-private host.
 `mcp restart` reloads an already attached registration and does not use another provider attachment.
 
