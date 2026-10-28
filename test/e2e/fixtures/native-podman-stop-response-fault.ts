@@ -81,6 +81,19 @@ const NATIVE_GATEWAY_UNIT = "nemoclaw-openshell-gateway.service";
 const JOURNAL_MAX_BYTES = 262_144;
 const JOURNAL_TIMEOUT_MS = 10_000;
 
+function runJournalCommand(
+  command: string,
+  args: string[],
+  _options: Parameters<JournalCommand>[2],
+): ReturnType<JournalCommand> {
+  return spawnSync(command, args, {
+    encoding: "utf8",
+    maxBuffer: JOURNAL_MAX_BYTES,
+    timeout: JOURNAL_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
+}
+
 function journalOutput(run: JournalCommand, command: string, args: string[]): string {
   const result = run(command, args, {
     encoding: "utf8",
@@ -115,7 +128,7 @@ function nativeGatewayInvocationId(run: JournalCommand): string {
 
 /** Pin the managed user service's journal position and invocation before the fault is armed. */
 export function captureNativeGatewayJournalCursor(
-  run: JournalCommand = spawnSync,
+  run: JournalCommand = runJournalCommand,
 ): NativeGatewayJournalCursor {
   const invocationId = nativeGatewayInvocationId(run);
   const output = journalOutput(run, "/usr/bin/journalctl", [
@@ -136,7 +149,7 @@ export function captureNativeGatewayJournalCursor(
 /** Read only entries appended to the same managed service invocation, with a hard output bound. */
 export function readNativeGatewayJournalWindow(
   cursor: NativeGatewayJournalCursor,
-  run: JournalCommand = spawnSync,
+  run: JournalCommand = runJournalCommand,
 ): NativeGatewayLogWindow {
   if (
     !/^[A-Za-z0-9=;:_-]{1,512}$/u.test(cursor.cursor) ||
