@@ -149,12 +149,9 @@ The raw bearer value passes transiently to the OpenShell provider and remains ab
 The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
 To replace it, run `mcp remove` first.
-If `mcp remove` reports a preserved provider, run `openshell sandbox list -g <gateway-name>` using the gateway name from the printed command.
-Run `openshell sandbox provider list -g <gateway-name> <sandbox-name>` for each listed sandbox.
-Delete the provider with the printed `openshell provider delete` command only when no sandbox lists it.
+If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) to confirm that no sandbox on the gateway lists it and to delete it with the printed command.
 If `mcp remove` reports no preserved provider, skip provider deletion.
 Then run `mcp add` with the replacement exported under the same host variable name.
-Refer to [Rotate a Credential](manage-mcp-servers#rotate-a-credential) for the complete procedure.
 `mcp remove` and `destroy` keep the provider until you delete it.
 
 Inspect the registration after the add returns:
@@ -194,7 +191,9 @@ One normalized endpoint URL can have only one credential-bound managed server de
 If two definitions need different credentials, retain one definition for that URL or configure distinct endpoint URLs so OpenShell can select one credential unambiguously.
 
 If this server uses the profile-less `generic` provider from an earlier NemoClaw build, run `mcp remove`.
-Delete the preserved provider as described in [Rotate a Credential](manage-mcp-servers#rotate-a-credential), then add the server again with the credential exported.
+If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) to confirm that no sandbox on the gateway lists it and to delete it.
+If `mcp remove` reports no preserved provider, skip provider deletion.
+Add the server again with the credential exported.
 That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
 
 ## Meet Endpoint Requirements
