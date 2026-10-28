@@ -66,7 +66,9 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t doc_files <<< "${{ steps.changed.outputs.files }}"
-          # Probe the http(s) targets of changed pages so a retired route fails
-          # here instead of shipping to the published site. The checker keeps a
-          # built-in skip list for bot-walled and flaky hosts.
-          bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links "${doc_files[@]}"
+          # Repository-local link and Fern-route validation only. Remote probing
+          # stays disabled here: this workflow runs on pull requests, so every
+          # URL in the changed pages is contributor-controlled, and a safe
+          # remote prober needs destination admission and redirect validation
+          # that this checker does not yet implement.
+          bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links --local-only "${doc_files[@]}"

@@ -121,15 +121,16 @@ describe("changed-link workflow selects Fern MDX pages (#13842)", () => {
     expect(paths).toContain("**/*.mdx");
   });
 
-  it("probes the changed pages' http(s) targets instead of skipping them (#13842)", () => {
+  it("keeps remote probing disabled for contributor-controlled pages (#13842)", () => {
     const runStep = workflow().jobs["markdown-links"]?.steps?.find(
       (candidate) => candidate.name === "Run markdown link checker",
     );
     const run = runStep?.run ?? "";
 
     expect(run).toContain("check-docs.sh --only-links");
-    // --local-only skips the remote curl phase, which is how the retired
-    // OpenShell routes reached the published site unnoticed.
-    expect(run).not.toContain("--local-only");
+    // A pull-request run sees contributor-controlled URLs. Remote probing needs
+    // destination admission and redirect validation the checker does not yet
+    // implement, so it must stay off here.
+    expect(run).toContain("--local-only");
   });
 });

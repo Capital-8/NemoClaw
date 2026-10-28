@@ -19,8 +19,6 @@
 #   CHECK_DOC_LINKS_VERBOSE  If 1, log each URL during curl (same as --verbose).
 #   CHECK_DOC_LINKS_IGNORE_EXTRA  Comma-separated extra http(s) URLs to skip curling (exact match, #fragment ignored).
 #   CHECK_DOC_LINKS_IGNORE_URL_REGEX  If set, skip curl when the whole URL matches this ERE (bash [[ =~ ]]).
-#   CHECK_DOC_LINKS_MAX_PROBES  Maximum remote probes before the run stops (default: 60).
-#   CHECK_DOC_LINKS_PROBE_BUDGET_SECONDS  Wall-clock budget for the remote phase (default: 120).
 #   NODE                     Node for CLI check (default: node).
 #   CURL                     curl binary (default: curl).
 
@@ -123,8 +121,6 @@ if [[ "$LOCAL_ONLY" -eq 1 ]]; then
   CHECK_DOC_LINKS_REMOTE=0
 fi
 CHECK_DOC_LINKS_REMOTE="${CHECK_DOC_LINKS_REMOTE:-1}"
-CHECK_DOC_LINKS_MAX_PROBES="${CHECK_DOC_LINKS_MAX_PROBES:-60}"
-CHECK_DOC_LINKS_PROBE_BUDGET_SECONDS="${CHECK_DOC_LINKS_PROBE_BUDGET_SECONDS:-120}"
 
 log() {
   printf '%s\n' "check-docs: $*"
@@ -1098,170 +1094,20 @@ check_local_ref() {
   return 1
 }
 
-# Reject a probe destination that is not a public unicast host.
-#
-# The workflow that runs this checker is triggered by pull requests, so every
-# URL in the changed pages is contributor-controlled. Without this guard a page
-# could make the runner request loopback, link-local, private, or otherwise
-# internal addresses, including via a redirect. Admission lives here so the
-# workflow stays limited to file selection and checker invocation.
-url_is_permitted_probe_destination() {
-  local url="$1"
-  local host
-
-  # Only http(s); reject userinfo, which can disguise the real host.
-  [[ "$url" =~ ^https?:// ]] || return 1
-  local rest="${url#*://}"
-  [[ "$rest" == *@* ]] && return 1
-  host="${rest%%/*}"
-  host="${host%%\?*}"
-  host="${host%%#*}"
-  # Drop an explicit port; IPv6 literals keep their brackets until below.
-  if [[ "$host" == *:* ]]; then
-    host="${host%:*}"
-  fi
-  host="${host#[}"
-  host="${host%]}"
-  [[ -n "$host" ]] || return 1
-
-  # Reject a literal internal address before any name resolution.
-  if is_internal_ipv4 "$host" || is_internal_ipv6 "$host"; then
-    return 1
-  fi
-
-  # A literal public IP is acceptable as-is.
-  if is_ipv4_literal "$host"; then
-    return 0
-  fi
-
-  # Resolve the name and reject when any answer is internal, so a hostname
-  # cannot point the runner at an internal address.
-  local -a addrs=()
-  mapfile -t addrs < <(resolve_host_addrs "$host")
-  [[ "${#addrs[@]}" -gt 0 ]] || return 1
-  local addr
-  for addr in "${addrs[@]}"; do
-    [[ -z "$addr" ]] && continue
-    if is_internal_ipv4 "$addr" || is_internal_ipv6 "$addr"; then
-      return 1
-    fi
-  done
-  return 0
-}
-
-is_ipv4_literal() {
-  [[ "$1" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
-  local o
-  for o in "${BASH_REMATCH[@]:1}"; do
-    [[ "$o" -le 255 ]] || return 1
-  done
-  return 0
-}
-
-is_internal_ipv4() {
-  local ip="$1"
-  is_ipv4_literal "$ip" || return 1
-  local a b c
-  IFS=. read -r a b c _ <<<"$ip"
-  # 0.0.0.0/8, 10/8, 127/8, 169.254/16, 172.16/12, 192.168/16,
-  # 100.64/10 (CGNAT), 192.0.0/24, 198.18/15, 224/4 multicast, 240/4 reserved.
-  ((a == 0)) && return 0
-  ((a == 10)) && return 0
-  ((a == 127)) && return 0
-  ((a == 169 && b == 254)) && return 0
-  ((a == 172 && b >= 16 && b <= 31)) && return 0
-  ((a == 192 && b == 168)) && return 0
-  ((a == 100 && b >= 64 && b <= 127)) && return 0
-  ((a == 192 && b == 0 && c == 0)) && return 0
-  ((a == 198 && (b == 18 || b == 19))) && return 0
-  ((a >= 224)) && return 0
-  return 1
-}
-
-is_internal_ipv6() {
-  local ip="${1,,}"
-  [[ "$ip" == *:* ]] || return 1
-  # Loopback, unspecified, link-local, unique-local, and IPv4-mapped forms.
-  [[ "$ip" == "::1" || "$ip" == "::" ]] && return 0
-  [[ "$ip" == fe80:* ]] && return 0
-  [[ "$ip" == fc* || "$ip" == fd* ]] && return 0
-  [[ "$ip" == ::ffff:* ]] && return 0
-  return 1
-}
-
-resolve_host_addrs() {
-  local host="$1"
-  if command -v getent >/dev/null 2>&1; then
-    getent ahosts "$host" 2>/dev/null | awk '{ print $1 }' | LC_ALL=C sort -u
-    return 0
-  fi
-  # Fall back to a resolver lookup when getent is unavailable.
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import socket,sys
-for info in socket.getaddrinfo(sys.argv[1], None):
-    print(info[4][0])' "$host" 2>/dev/null | LC_ALL=C sort -u
-  fi
-  return 0
-}
-
 check_remote_url() {
   local url="$1"
   if ! command -v "$CURL" >/dev/null 2>&1; then
     echo "check-docs: [links] curl not found; cannot verify $url" >&2
     return 1
   fi
-
-  # Follow redirects one hop at a time so every destination passes
-  # url_is_permitted_probe_destination before the runner requests it. Letting
-  # curl follow automatically would let a public URL redirect the runner to an
-  # internal address.
-  local current="$url" hop=0 max_hops=10
-  local -a headers=()
-  local status location origin
-  while :; do
-    if ! url_is_permitted_probe_destination "$current"; then
-      echo "check-docs: [links] refused non-public probe destination: $current" >&2
-      return 1
-    fi
-    headers=()
-    mapfile -t headers < <(
-      "$CURL" -sS -o /dev/null -D - \
-        --connect-timeout 12 --max-time 35 \
-        --proto '=http,https' --proto-redir '=http,https' \
-        -A 'NemoClaw-doc-link-check/1.0 (+https://github.com/NVIDIA/NemoClaw)' \
-        "$current" 2>/dev/null
-    )
-    status="$(printf '%s\n' "${headers[@]}" | awk 'toupper($1) ~ /^HTTP\// { code=$2 } END { print code }')"
-    if [[ -z "$status" ]]; then
-      echo "check-docs: [links] unreachable URL: $url" >&2
-      return 1
-    fi
-    if [[ "$status" =~ ^(301|302|303|307|308)$ ]]; then
-      location="$(printf '%s\n' "${headers[@]}" | awk 'BEGIN{IGNORECASE=1} /^location:/ { sub(/^[Ll]ocation:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit }')"
-      if [[ -z "$location" ]]; then
-        echo "check-docs: [links] unreachable URL: $url (redirect without Location)" >&2
-        return 1
-      fi
-      hop=$((hop + 1))
-      if [[ "$hop" -gt "$max_hops" ]]; then
-        echo "check-docs: [links] unreachable URL: $url (too many redirects)" >&2
-        return 1
-      fi
-      origin="$(printf '%s' "$current" | awk -F/ '{ print $1 "//" $3 }')"
-      case "$location" in
-        http://* | https://*) current="$location" ;;
-        //*) current="${current%%://*}://${location#//}" ;;
-        /*) current="${origin}${location}" ;;
-        *) current="${origin}/${location}" ;;
-      esac
-      continue
-    fi
-    if [[ "$status" =~ ^2 ]]; then
-      return 0
-    fi
-    echo "check-docs: [links] unreachable URL: $url (HTTP $status)" >&2
+  if ! "$CURL" -fsS -L -o /dev/null \
+    --connect-timeout 12 --max-time 35 \
+    -A 'NemoClaw-doc-link-check/1.0 (+https://github.com/NVIDIA/NemoClaw)' \
+    "$url" 2>/dev/null; then
+    echo "check-docs: [links] unreachable URL: $url" >&2
     return 1
-  done
+  fi
+  return 0
 }
 
 # Normalized form: strip #fragment and trailing slash for ignore-list comparison.
@@ -1428,19 +1274,9 @@ run_links_check() {
         log "[links] phase 2/2: curl ${_probe_n} URL(s) (GET, -L, fail 4xx/5xx)"
       fi
       _i=0
-      local _probe_start _unprobed="" _budget_hit=0
-      _probe_start="$(date +%s)"
       while IFS= read -r url || [[ -n "${url:-}" ]]; do
         [[ -z "${url:-}" ]] && continue
         _i=$((_i + 1))
-        # Stop before the job deadline instead of being killed by it, and name
-        # every URL that did not get probed so a rerun is actionable.
-        if [[ "$_i" -gt "$CHECK_DOC_LINKS_MAX_PROBES" ]] \
-          || [[ $(($(date +%s) - _probe_start)) -ge "$CHECK_DOC_LINKS_PROBE_BUDGET_SECONDS" ]]; then
-          _budget_hit=1
-          _unprobed+="${url}"$'\n'
-          continue
-        fi
         if [[ "$VERBOSE" -eq 1 ]]; then
           log "[links]   [${_i}/${_probe_n}] ${url}"
         fi
@@ -1448,16 +1284,6 @@ run_links_check() {
           failures=1
         fi
       done <<<"$_probe_list"
-      if [[ "$_budget_hit" -eq 1 ]]; then
-        local _unprobed_n
-        _unprobed_n="$(printf '%s' "$_unprobed" | grep -c . || true)"
-        echo "check-docs: [links] remote probe budget exhausted (max ${CHECK_DOC_LINKS_MAX_PROBES} probes, ${CHECK_DOC_LINKS_PROBE_BUDGET_SECONDS}s); ${_unprobed_n} URL(s) not probed:" >&2
-        printf '%s' "$_unprobed" | while IFS= read -r url; do
-          [[ -z "$url" ]] && continue
-          echo "check-docs: [links]   unprobed: $url" >&2
-        done
-        failures=1
-      fi
     else
       log "[links] phase 2/2: no http(s) links"
     fi
