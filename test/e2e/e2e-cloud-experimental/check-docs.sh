@@ -1273,8 +1273,12 @@ check_remote_url() {
     fi
     hop_host="${hop_host#[}"
     hop_host="${hop_host%]}"
-    [[ -n "$hop_port" ]] || hop_port=443
-    [[ "$hop_scheme" == "http" ]] && [[ -z "${hop_port}" ]] && hop_port=80
+    if [[ -z "$hop_port" ]]; then
+      case "$hop_scheme" in
+        http) hop_port=80 ;;
+        *) hop_port=443 ;;
+      esac
+    fi
     local -a pin_addrs=()
     mapfile -t pin_addrs < <(admitted_probe_addrs "$current")
     if [[ "${#pin_addrs[@]}" -eq 0 ]]; then
@@ -1300,6 +1304,7 @@ check_remote_url() {
       "$CURL" -sS -o /dev/null -D - \
         --connect-timeout 12 --max-time 35 \
         --proto '=http,https' --proto-redir '=http,https' \
+        --noproxy '*' \
         "${resolve_args[@]}" \
         -A 'NemoClaw-doc-link-check/1.0 (+https://github.com/NVIDIA/NemoClaw)' \
         "$current" 2>/dev/null

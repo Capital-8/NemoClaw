@@ -494,6 +494,28 @@ describe("check-docs remote probe admission (#13842)", () => {
     expect(shim.calls()).toHaveLength(1);
   });
 
+  it.each([
+    ["http", "http://example.com/page", ":80:"],
+    ["https", "https://example.com/page", ":443:"],
+  ])("pins an %s probe to its default port (#13842)", (_label, url, expectedPort) => {
+    const shim = curlShim("port", "HTTP/1.1 200 OK\\r\\n\\r\\n");
+    const result = runRemoteCheckDocs(writeDoc("port", `- [x](${url})\n`), { CURL: shim.path });
+    const resolveArgs = shim.calls().join(" ");
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(resolveArgs).toContain(expectedPort);
+  });
+
+  it("disables proxy routing so admission cannot be bypassed (#13842)", () => {
+    const shim = curlShim("proxy", "HTTP/1.1 200 OK\\r\\n\\r\\n");
+    const result = runRemoteCheckDocs(writeDoc("proxy", "- [x](https://example.com/page)\n"), {
+      CURL: shim.path,
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(shim.calls().join(" ")).toContain("--noproxy");
+  });
+
   it("stops before its probe budget and lists every unprobed URL (#13842)", () => {
     const shim = curlShim("budget", "HTTP/1.1 200 OK\\r\\n\\r\\n");
     const body = Array.from(

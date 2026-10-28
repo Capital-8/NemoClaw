@@ -17,8 +17,17 @@ name: Docs / Check External Link Reachability
 
 on:
   schedule:
-    # Weekly, Monday 13:37 UTC, matching the other pin-drift checks.
+    # Weekly, Monday 13:37 UTC, matching the other pin-drift checks. This also
+    # catches external destination drift, such as an upstream page moving.
     - cron: "37 13 * * 1"
+  push:
+    branches: [main]
+    # Probe right after documentation lands so a retired route is reported the
+    # same day instead of waiting for the weekly run.
+    paths:
+      - "docs/**"
+      - "test/e2e/e2e-cloud-experimental/check-docs.sh"
+      - ".github/workflows/docs-external-links.yaml"
   workflow_dispatch: {}
 
 permissions:
