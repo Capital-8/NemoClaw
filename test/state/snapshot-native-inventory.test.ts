@@ -290,29 +290,24 @@ it("publishes a valid provider-owned stopped archive through the backup authorit
       path.join(source, ".openclaw", "state.txt"),
       path.join(source, ".openclaw", "state-link.txt"),
     );
-    const archive = spawnSync("tar", ["-C", source, "-cf", "-", "."], {
+    const archive = spawnSync("tar", ["--format=ustar", "-C", source, "-cf", "-", "."], {
       env: { ...process.env, COPYFILE_DISABLE: "1" },
     });
     expect(archive.status).toBe(0);
     const providerArchive = Buffer.from(archive.stdout);
-    for (let offset = 0; offset + 512 <= providerArchive.length;) {
+    const rewriteDirectoryHeader = (offset: number, expected: string, rewritten: string) => {
       const header = providerArchive.subarray(offset, offset + 512);
-      if (header.every((byte) => byte === 0)) break;
       const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/su, "");
-      const type = String.fromCharCode(header[156]!);
-      const rewritten =
-        type === "5"
-          ? name.replace(/^\.\//u, "").replace(/\/$/u, "") || "."
-          : name.replace(/^\.\//u, "");
+      expect(name).toBe(expected);
+      expect(header[156]).toBe("5".charCodeAt(0));
       header.fill(0, 0, 100);
       header.write(rewritten, 0, "utf8");
       header.fill(0x20, 148, 156);
-      let checksum = 0;
-      for (const byte of header) checksum += byte;
+      const checksum = header.reduce((sum, byte) => sum + byte, 0);
       header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
-      const size = Number.parseInt(header.subarray(124, 136).toString("ascii"), 8);
-      offset += 512 + Math.ceil(size / 512) * 512;
-    }
+    };
+    rewriteDirectoryHeader(0, "./", ".");
+    rewriteDirectoryHeader(512, "./.openclaw/", ".openclaw");
     expect(sandboxState.rejectHardLinks(providerArchive)).not.toEqual([]);
     writeSnapshotRegistry(testHome, "alpha");
     const { overrides } = stoppedProviderCapture(providerArchive);
