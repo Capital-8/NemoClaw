@@ -112,6 +112,10 @@ describe("registerRuntimeContext", () => {
   });
 
   it.each([
+    "Search for NemoClaw documentation.",
+    "I need to search for NemoClaw documentation.",
+    "Read README.md, then search for NemoClaw documentation.",
+    "Search the web for local log formats.",
     "Google the official NemoClaw installation documentation.",
     "Could you Google the official installation instructions?",
     "Please Bing the official NemoClaw documentation.",
@@ -187,6 +191,7 @@ describe("registerRuntimeContext", () => {
     "What time is it?",
     "How do I start the web server?",
     "What does the online flag mean?",
+    "What does the search setting control?",
     "Which internet connection is active?",
     "Show the running processes.",
     "Get the installed Node.js version.",
@@ -228,6 +233,9 @@ describe("registerRuntimeContext", () => {
     "Browse the web using web_fetch at this URL:\nhttps://docs.nvidia.com/nemoclaw/",
     "Do not browse the internet. Read /sandbox/README.md.",
     "Search local files for the installation instructions.",
+    "Search the current directory for the config file.",
+    "Search the logs for startup errors.",
+    "Search memory for the previous conversation.",
     "Fetch https://www.wikidata.org/wiki/Q30 with web_fetch.",
     "Run curl https://wttr.in/:help.",
     "Edit the Tavily configuration file.",

@@ -143,6 +143,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.";
       for (const prompt of [
         searchPrompt,
+        "Search for NemoClaw documentation.",
         "Google the official NemoClaw installation documentation.",
         "Look up the official NemoClaw installation documentation.",
         "Find the official NemoClaw installation documentation.",
@@ -177,6 +178,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const prompt of [
         "Read /sandbox/README.md.",
         "What files are in the current directory?",
+        "Search the current directory for the config file.",
       ]) {
         const localTurn = await runner().runBeforePromptBuild(
           { prompt, messages: [] },

@@ -147,10 +147,11 @@ function requestsExternalResearch(prompt: string): boolean {
         source,
       );
     const localSource =
-      /\b(?:local|sandbox|(?:this|the|our)\s+(?:repository|repo|workspace|codebase|function|conversation|code)|(?:in|from|within)\s+(?:the\s+)?(?:repository|repo|workspace|codebase|memory))\b|(?:^|[\s`"'])(?:\.?\.?\/)[^\s]+|\b[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b/iu.test(
+      /\b(?:local|sandbox|(?:current|working)\s+directory|search\s+(?:the\s+)?(?:logs|memory)|(?:this|the|our)\s+(?:repository|repo|workspace|codebase|function|conversation|code)|(?:in|from|within)\s+(?:the\s+)?(?:repository|repo|workspace|codebase|memory))\b|(?:^|[\s`"'])(?:\.?\.?\/)[^\s]+|\b[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b/iu.test(
         source,
       );
     const externalResearch =
+      /^search\b|\bto\s+search\b/iu.test(source) ||
       /\bonline(?=\s*(?:[.!?]|$)|\s+(?:for|about|using|with|via|today|now|please)\b)/iu.test(
         source,
       ) ||
