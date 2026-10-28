@@ -208,8 +208,9 @@ Endpoint URLs cannot use port `0`.
 
 NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
 If another managed MCP server in the sandbox uses the same endpoint hostname and port, `mcp add` validates current DNS and reuses that server's recorded pins, so both policies have the same `allowed_ips`.
-If current public DNS differs from those pins, OpenShell denies new connections to both servers, and `mcp status` reports drift for both.
-Run `$$nemoclaw my-sandbox mcp update <server> --refresh-public-pins` to refresh both servers.
+`mcp status` reports `public address pins: drift` for each server on that hostname and port when current public DNS differs from those pins, and a subset of the pins also counts as drift.
+OpenShell's pin check rejects a connection when a current DNS answer falls outside the pinned `allowed_ips`, and a subset of the pins passes that check.
+Run `$$nemoclaw my-sandbox mcp update <server> --refresh-public-pins` to refresh every server on that hostname and port.
 `mcp add` fails without changes when:
 
 - Existing servers on that hostname and port have conflicting pins or conflicting live policy.

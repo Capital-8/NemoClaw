@@ -430,7 +430,10 @@ Retry status after DNS recovers.
 
 If status reports `private address pins: drift`, review the endpoint address change before updating access.
 Status, restart, rebuild, and restore do not add new trusted-private addresses.
-Remove and re-add the server with the same trusted host to perform a new preflight and record new pins:
+Remove and re-add the server with the same trusted host to run a new preflight and record new pins.
+NemoClaw rejects new pins that differ from a remaining server's recorded pins.
+If other trusted-private servers use the same hostname and port, remove them before you run the example below.
+After the example succeeds, add those servers again.
 
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
@@ -441,9 +444,6 @@ $$nemoclaw <sandbox> mcp add <server> \
   --trusted-private-host mcp-host.corp.example
 unset LOCAL_MCP_TOKEN
 ```
-
-If other trusted-private servers use the same hostname and port, remove all of them before you add any of them again.
-NemoClaw rejects new pins that differ from a remaining server's recorded pins.
 
 A `CONNECT 403` after an address change can mean that OpenShell rejected a current DNS answer outside `allowed_ips`.
 Do not add a provider's complete address range or broaden the policy to bypass the denial.

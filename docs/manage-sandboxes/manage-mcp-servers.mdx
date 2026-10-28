@@ -217,7 +217,10 @@ Successful tool discovery verifies that the endpoint is reachable through its ex
 
 For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.
 
-If the endpoint moves to another address, remove and re-add the server:
+If the endpoint moves to another address, remove and re-add the server.
+NemoClaw rejects new pins that differ from a remaining server's recorded pins.
+If other trusted-private servers use the same hostname and port, remove them before you run the example below.
+After the example succeeds, add those servers again.
 
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
@@ -229,7 +232,7 @@ $$nemoclaw my-sandbox mcp add local-tools \
 unset LOCAL_MCP_TOKEN
 ```
 
-Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set. If other trusted-private servers use the same hostname and port, remove all of them before you add any of them again. NemoClaw rejects new pins that differ from a remaining server's recorded pins.
+Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
 
 ## Remove a Server
 
