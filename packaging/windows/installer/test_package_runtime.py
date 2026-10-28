@@ -124,11 +124,11 @@ class PackageComposition(unittest.TestCase):
         )
         catalog = json.loads((self.output / "agent-support.json").read_text())
         self.assertEqual(
-            [row["id"] for row in catalog["agents"] if row["selectable"]], []
+            [row["id"] for row in catalog["agents"] if row["selectable"]], ["openclaw"]
         )
         self.assertEqual(
             catalog["agents"][0]["limitation"],
-            "Unavailable: runtime qualification is pending.",
+            "Preview: full runtime checks are pending.",
         )
         self.assertFalse((self.output / "runtime-current").exists())
 
@@ -236,7 +236,7 @@ class PackageComposition(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unavailable, duplicate or unbound"):
             package.availability(self.assembly, {**decision, "agents": [decision["agents"][1]]})
 
-    def test_only_reviewed_included_profiles_are_selectable_in_the_package_catalog(self):
+    def test_only_included_profiles_are_selectable_in_the_package_catalog(self):
         decision = self.fixture.root / "reviewed-availability.json"
         decision.write_text(json.dumps({
             "schemaVersion": 1,

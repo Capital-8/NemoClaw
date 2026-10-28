@@ -208,11 +208,11 @@ def update_support_catalog(support, document):
     if {row.get("id") for row in support.get("agents", [])} != set(LAYOUT):
         raise ValueError("The host agent catalog is incomplete.")
     for row in support["agents"]:
-        row["selectable"] = statuses[row["id"]] == "qualified"
+        row["selectable"] = statuses[row["id"]] in ("qualified", "unqualified")
         if statuses[row["id"]] == "not-included":
             row["limitation"] = "Unavailable in this preview"
         elif statuses[row["id"]] == "unqualified":
-            row["limitation"] = "Unavailable: runtime qualification is pending."
+            row["limitation"] = "Preview: full runtime checks are pending."
         else:
             row.pop("limitation", None)
         if row["id"] == "hermes":
