@@ -207,10 +207,16 @@ Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenS
 Endpoint URLs cannot use port `0`.
 
 NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
-If another managed MCP server in the sandbox uses the same host and port, `mcp add` validates current DNS and then reuses that server's recorded pins.
-The generated policies then agree on `allowed_ips`.
-If current public DNS differs from those pins, `mcp status` reports drift for both servers.
-`mcp add` fails without changes when existing pins conflict, when trusted-private DNS differs from the recorded pins, or when the servers mix public and trusted-private pins.
+If another managed MCP server in the sandbox uses the same endpoint hostname and port, `mcp add` validates current DNS and reuses that server's recorded pins, so both policies have the same `allowed_ips`.
+If current public DNS differs from those pins, OpenShell denies new connections to both servers, and `mcp status` reports drift for both.
+Run `$$nemoclaw my-sandbox mcp update <server> --refresh-public-pins` to refresh both servers.
+`mcp add` fails without changes when:
+
+- Existing servers on that hostname and port have conflicting pins or conflicting live policy.
+- Trusted-private DNS differs from the recorded pins.
+- One server uses public pins and the other uses trusted-private pins.
+
+The error names the server to refresh, or to remove and add again.
 Public endpoints need no trusted-private declaration.
 Private endpoints require a trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.
 Supply the declaration with `--trusted-private-host` or the generic `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` environment variable.
