@@ -24,7 +24,9 @@ describe("pre-redaction forbidden output detection", () => {
     { stream: "stderr", captureLimitBytes: undefined, expected: true, redacted: true },
     { stream: "stdout", captureLimitBytes: 16, expected: true, redacted: false },
     { stream: "stderr", captureLimitBytes: 16, expected: true, redacted: false },
-    { stream: "separate", captureLimitBytes: undefined, expected: false, redacted: false },
+    { stream: "separate", captureLimitBytes: undefined, expected: true, redacted: true },
+    { stream: "separate", captureLimitBytes: 16, expected: true, redacted: true },
+    { stream: "separate-reversed", captureLimitBytes: undefined, expected: true, redacted: true },
     { stream: "none", captureLimitBytes: undefined, expected: false, redacted: false },
   ])(
     "detects forbidden output before redaction and truncation ($stream, limit=$captureLimitBytes)",
@@ -49,6 +51,9 @@ const stream = process.env.OUTPUT_STREAM;
 if (stream === 'separate') {
   process.stdout.write(marker.slice(0, 12));
   process.stderr.write(marker.slice(12));
+} else if (stream === 'separate-reversed') {
+  process.stderr.write(marker.slice(0, 12));
+  process.stdout.write(marker.slice(12));
 } else if (stream !== 'none') {
   process[stream].write(marker.slice(0, 12));
   setTimeout(() => process[stream].write(marker.slice(12) + '\\n' + 'tail'.repeat(100)), 50);
@@ -72,6 +77,8 @@ if (stream === 'separate') {
           Object.values(result.artifacts).map((artifactPath) => fs.readFile(artifactPath, "utf8")),
         );
         expect(evidence.join("\n")).not.toContain(secret);
+        expect(evidence.join("")).not.toContain(secret);
+        expect(result.stdout + result.stderr).not.toContain(secret);
         expect((result.stdout + result.stderr).includes("[REDACTED]")).toBe(redacted);
       } finally {
         progress.stop();
