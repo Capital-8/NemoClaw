@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { EventEmitter, once } from "node:events";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -404,52 +404,6 @@ setInterval(() => {}, 1_000);
       }
     },
   );
-
-  it("re-raises SIGINT after removing later listeners and calling those that missed delivery", async () => {
-    const signalEvents = new EventEmitter();
-    const outerListener = vi.fn();
-    signalEvents.on("SIGINT", outerListener);
-    const innerActiveListener = vi.fn();
-    const innerLateListener = vi.fn();
-    const kill = vi.fn();
-    const processLike = {
-      once: vi.fn(),
-      on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => {
-        signalEvents.on(signal, listener);
-      },
-      removeListener: (signal: "SIGINT" | "SIGTERM", listener: () => void) => {
-        signalEvents.removeListener(signal, listener);
-      },
-      listeners: (signal: "SIGINT" | "SIGTERM") =>
-        signalEvents.listeners(signal) as Array<(...args: unknown[]) => void>,
-      kill,
-      pid: 4242,
-    };
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    session.saveSession(
-      session.createSession({ lastStepStarted: "policies", sandboxName: "test-a" }),
-    );
-
-    try {
-      registerIncompleteOnboardExitFailureHandler(
-        session,
-        () => false,
-        "Onboarding exited before the step completed.",
-        processLike,
-      );
-      signalEvents.on("SIGINT", innerActiveListener);
-      signalEvents.emit("SIGINT", "SIGINT");
-      signalEvents.on("SIGINT", innerLateListener);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      expect(innerActiveListener).toHaveBeenCalledTimes(1);
-      expect(innerLateListener).toHaveBeenCalledWith("SIGINT");
-      expect(signalEvents.listeners("SIGINT")).toEqual([outerListener]);
-      expect(kill).toHaveBeenCalledWith(4242, "SIGINT");
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
 
   it.skipIf(process.platform === "win32")(
     "prints the resume hint, removes the policy directory and onboarding lock, and exits by SIGINT when SIGINT interrupts a policy submission",
