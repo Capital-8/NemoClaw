@@ -12,7 +12,9 @@ const INSTALLER = path.join(import.meta.dirname, "../..", "scripts", "install.sh
 it.skipIf(process.platform === "win32")(
   "honors a private npm prefix over an unsafe source prefix (#12496)",
   () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-npm-prefix-"));
+    const root = fs.mkdtempSync(
+      path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-private-npm-prefix-"),
+    );
     try {
       const home = path.join(root, "home");
       const source = path.join(root, "source");
