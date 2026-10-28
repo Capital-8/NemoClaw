@@ -394,7 +394,9 @@ impl Operations {
         }
         let target = &self.target(spec)?.namespace;
         if let Some(bound) = self.receipt(spec)?.and_then(|receipt| receipt.namespace) {
-            return super::storage::same_namespace(&bound, target);
+            super::storage::same_namespace(&bound, target)?;
+            self.cluster(spec).verify_uid(&bound).await?;
+            return Ok(());
         }
         super::storage::bindable_namespace(&self.cluster(spec), target, &spec.owner)
             .await

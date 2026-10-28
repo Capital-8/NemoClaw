@@ -131,6 +131,49 @@ async fn planning_accepts_a_new_namespace_and_the_one_this_deployment_created() 
 }
 
 #[tokio::test]
+async fn planning_refuses_a_bound_namespace_that_is_missing_or_replaced() {
+    for replaced in [false, true] {
+        let objects = cluster();
+        let directory = tempfile::tempdir().unwrap();
+        let (_fixture, operations) = operations(&objects, directory.path()).await;
+        operations.ensure(&spec(STORAGE_KIND), None).await.unwrap();
+        let receipt = std::fs::read(operations.state.join("receipt.json")).unwrap();
+        let mut namespace = objects.get("v1", "Namespace", "", "agents").unwrap();
+        objects
+            .0
+            .lock()
+            .unwrap()
+            .retain(|_, object| object["kind"] != "Namespace");
+        if replaced {
+            namespace["metadata"]["uid"] = json!("replacement");
+            objects.insert(namespace);
+        }
+        let before = objects.0.lock().unwrap().clone();
+        let result = operations.plan(&spec(STORAGE_KIND)).await;
+        let expected = if replaced {
+            "was replaced"
+        } else {
+            "is missing"
+        };
+        assert!(
+            matches!(&result, Err(ObservationError::BindingChanged(detail))
+                if detail.contains(expected)),
+            "{result:?}"
+        );
+        assert_eq!(
+            *objects.0.lock().unwrap(),
+            before,
+            "planning changed the cluster"
+        );
+        assert_eq!(
+            std::fs::read(operations.state.join("receipt.json")).unwrap(),
+            receipt,
+            "planning changed the receipt"
+        );
+    }
+}
+
+#[tokio::test]
 async fn observing_an_installed_gateway_does_not_invoke_helm() {
     let objects = cluster();
     let directory = tempfile::tempdir().unwrap();
