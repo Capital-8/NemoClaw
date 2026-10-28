@@ -211,7 +211,7 @@ test(
         "the running proxy accepts the persisted token after re-onboard and rejects unauthenticated/wrong-token requests",
         "the sandbox-owned native provider reaches Ollama after first onboard and re-onboard",
         "Ollama reports the selected model as active before the provider switch",
-        "nemoclaw inference set switches the sandbox to a local compatible endpoint",
+        "nemoclaw onboard switches the sandbox to a local compatible endpoint",
         "sandbox inference succeeds through the new provider and host ollama ps no longer reports the superseded model",
       ],
     });
@@ -412,7 +412,7 @@ exit "$status"`,
       model: SWITCH_MODEL,
       port: 8000,
       progress,
-      publicHost: "localhost",
+      publicHost: "host.openshell.internal",
       requireAuth: true,
       requireAuthModels: true,
     });
@@ -423,31 +423,20 @@ exit "$status"`,
         await fake.close();
       }
     });
-    // Inference set accepts this explicit sandbox-to-host bridge, while a raw
-    // localhost URL is deliberately rejected at its SSRF boundary.
-    const switchEndpointUrl = fake.baseUrl.replace("localhost", "host.openshell.internal");
     progress.phase("switch inference to a non-Ollama provider");
     const providerSwitch = await nemoclaw(
       host,
-      [
-        "inference",
-        "set",
-        "--provider",
-        "compatible-endpoint",
-        "--model",
-        SWITCH_MODEL,
-        "--sandbox",
-        SANDBOX_NAME,
-        "--endpoint-url",
-        switchEndpointUrl,
-        "--credential-env",
-        "COMPATIBLE_API_KEY",
-        "--inference-api",
-        "openai-completions",
-      ],
-      "phase-8-inference-set-away-from-ollama",
-      { COMPATIBLE_API_KEY: SWITCH_API_KEY },
-      execTimeout(5 * 60_000),
+      ["onboard", "--non-interactive", "--yes"],
+      "phase-8-reonboard-away-from-ollama",
+      {
+        COMPATIBLE_API_KEY: SWITCH_API_KEY,
+        NEMOCLAW_COMPAT_MODEL: SWITCH_MODEL,
+        NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
+        NEMOCLAW_MODEL: SWITCH_MODEL,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      execTimeout(30 * 60_000),
       [SWITCH_API_KEY],
     );
     expect(providerSwitch.exitCode, resultText(providerSwitch)).toBe(0);
