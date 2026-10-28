@@ -138,6 +138,29 @@ describe("agent variant docs", () => {
     expect(render("hermes")).not.toContain(forwardPrerequisites);
   });
 
+  it("publishes recover for Deep Agents in the command reference and troubleshooting (#13893)", () => {
+    const renderDeepAgents = (sourcePath: string) =>
+      renderAgentVariantPage(
+        readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8"),
+        "deepagents",
+        {
+          sourcePath,
+        },
+      );
+    const commands = renderDeepAgents("reference/commands.mdx");
+    const troubleshooting = renderDeepAgents("reference/troubleshooting.mdx");
+
+    expect(commands).toContain("### `nemo-deepagents <name> recover`");
+    expect(commands).toContain(
+      "The inference check uses the sandbox's native provider attachment when it has one, and the managed `inference.local` route otherwise.",
+    );
+    expect(commands).toContain(
+      "If the inference check fails, run `nemo-deepagents <name> doctor` to find the failing hop.",
+    );
+    expect(troubleshooting).toContain("nemo-deepagents <name> recover");
+    expect(troubleshooting).not.toContain("does not provide the `recover` command");
+  });
+
   it("renders Pi placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "pi");
 

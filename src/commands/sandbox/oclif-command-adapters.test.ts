@@ -434,7 +434,13 @@ describe("sandbox oclif command adapters", () => {
     expect(DestroyCliCommand.id).toBe("sandbox:destroy");
     expect(usage(DestroyCliCommand)).toContain("[--yes|-y|--force]");
     expect(RecoverCliCommand.id).toBe("sandbox:recover");
-    expect(RecoverCliCommand.summary).toMatch(/Repair a stopped sandbox gateway/);
+    expect(RecoverCliCommand.summary).toBe(
+      "Recover a stopped sandbox and verify its agent runtime",
+    );
+    expect(RecoverCliCommand.summary).not.toMatch(/gateway|forward/);
+    expect(RecoverCliCommand.description).toContain(
+      "For Deep Agents Code, which has no gateway or host forward, verify the sandbox inference route and run the terminal smoke checks.",
+    );
     expect(RecoverCliCommand.description).toContain("A healthy gateway is not restarted");
     expect(RecoverCliCommand.description).toContain("gateway restart");
     expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);

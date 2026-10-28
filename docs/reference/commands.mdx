@@ -1663,9 +1663,11 @@ Use [`$$nemoclaw <name> gateway restart`](#$$nemoclaw-name-gateway-restart) when
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock.
 Deep Agents Code has no in-sandbox agent gateway or host-side forward.
-After the sandbox is ready, `recover` verifies the managed `inference.local` route and runs the terminal smoke checks.
+After the sandbox is ready, `recover` verifies the sandbox inference route and runs the terminal smoke checks.
+The inference check uses the sandbox's native provider attachment when it has one, and the managed `inference.local` route otherwise.
 It exits zero only when both checks pass.
-`recover` does not repair a degraded terminal runtime. If the checks fail, rebuild the sandbox.
+If the inference check fails, run `$$nemoclaw <name> doctor` to find the failing hop.
+If a terminal smoke check fails, the terminal runtime is degraded. `recover` does not repair it, so rebuild the sandbox.
 
 </AgentOnly>
 
@@ -1793,7 +1795,8 @@ Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemo
 <AgentOnly variant="deepagents">
 
 `start` then waits for launch readiness and runs one inference request from inside the sandbox.
-If inference is not usable, `start` exits nonzero and names the sandbox `doctor` command to find the failing hop.
+If inference is not usable, `start` exits nonzero.
+Run `$$nemoclaw <name> doctor` to find the failing hop.
 
 </AgentOnly>
 

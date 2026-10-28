@@ -178,7 +178,9 @@ If recovery cannot verify a sandbox that needs current credentials or native lif
 Deep Agents uses a terminal runtime without an in-sandbox agent gateway or host-side port forward.
 The OpenShell ownership and local endpoint reachability prerequisites for an active port forward do not apply.
 Use `nemo-deepagents <sandbox-name> status`, `recover`, `logs`, `connect`, and `rebuild` for recovery.
-`recover` asks OpenShell to start an existing stopped standard sandbox, then verifies the managed `inference.local` route and runs the terminal smoke checks.
+`recover` asks OpenShell to start an existing stopped standard sandbox, then verifies the sandbox inference route and runs the terminal smoke checks.
+The inference check uses the sandbox's native provider attachment when it has one, and the managed `inference.local` route otherwise.
+If the inference check fails, run `nemo-deepagents <sandbox-name> doctor` to find the failing hop.
 If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
 </AgentOnly>
 
