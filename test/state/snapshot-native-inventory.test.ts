@@ -294,9 +294,28 @@ it("publishes a valid provider-owned stopped archive through the backup authorit
       env: { ...process.env, COPYFILE_DISABLE: "1" },
     });
     expect(archive.status).toBe(0);
-    expect(sandboxState.rejectHardLinks(archive.stdout)).not.toEqual([]);
+    const providerArchive = Buffer.from(archive.stdout);
+    for (let offset = 0; offset + 512 <= providerArchive.length;) {
+      const header = providerArchive.subarray(offset, offset + 512);
+      if (header.every((byte) => byte === 0)) break;
+      const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/su, "");
+      const type = String.fromCharCode(header[156]!);
+      const rewritten =
+        type === "5"
+          ? name.replace(/^\.\//u, "").replace(/\/$/u, "") || "."
+          : name.replace(/^\.\//u, "");
+      header.fill(0, 0, 100);
+      header.write(rewritten, 0, "utf8");
+      header.fill(0x20, 148, 156);
+      let checksum = 0;
+      for (const byte of header) checksum += byte;
+      header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+      const size = Number.parseInt(header.subarray(124, 136).toString("ascii"), 8);
+      offset += 512 + Math.ceil(size / 512) * 512;
+    }
+    expect(sandboxState.rejectHardLinks(providerArchive)).not.toEqual([]);
     writeSnapshotRegistry(testHome, "alpha");
-    const { overrides } = stoppedProviderCapture(archive.stdout);
+    const { overrides } = stoppedProviderCapture(providerArchive);
     prepared = await stoppedBackup.prepareStoppedAgentState(
       "alpha",
       overrides.getSandbox,

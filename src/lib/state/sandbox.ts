@@ -1932,9 +1932,10 @@ export function nativeTarInventoryViolation(
       descriptor,
       undefined,
       (entry, type) => {
-        const normalized = type === "5" && !entry.endsWith("/") ? `${entry}/` : entry;
         const listed = listedEntries[index++];
-        return listed !== undefined && nativeTarEntryMatches(normalized, listed, nameFormat)
+        const rawName = type === "5" && !entry.endsWith("/") ? `${entry}/` : entry;
+        const listedName = type === "5" && listed && !listed.endsWith("/") ? `${listed}/` : listed;
+        return listedName !== undefined && nativeTarEntryMatches(rawName, listedName, nameFormat)
           ? null
           : mismatch;
       },
