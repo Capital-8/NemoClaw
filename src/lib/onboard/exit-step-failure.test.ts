@@ -405,7 +405,7 @@ setInterval(() => {}, 1_000);
     },
   );
 
-  it("removes SIGINT listeners added after registration and calls those that missed the signal before re-raising it", async () => {
+  it("re-raises SIGINT after removing later listeners and calling those that missed delivery", async () => {
     const signalEvents = new EventEmitter();
     const outerListener = vi.fn();
     signalEvents.on("SIGINT", outerListener);
@@ -452,7 +452,7 @@ setInterval(() => {}, 1_000);
   });
 
   it.skipIf(process.platform === "win32")(
-    "records the policies step as interrupted, removes the policy directory and lock, and exits by SIGINT when SIGINT interrupts a policy submission",
+    "prints the resume hint, removes the policy directory and onboarding lock, and exits by SIGINT when SIGINT interrupts a policy submission",
     async () => {
       const childDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-signal-"));
       const openshellBin = path.join(childDir, "openshell");
