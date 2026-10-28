@@ -30,6 +30,14 @@ export type RegisteredInferenceProviderAttachment = Readonly<{
 }>;
 
 export function registeredInferenceEndpoint(value: string): URL {
+  const endpoint = recordedInferenceEndpoint(value);
+  if (endpoint.protocol !== "https:")
+    throw new Error("Registered inference requires its explicit native HTTPS endpoint");
+  return endpoint;
+}
+
+// Retained HTTP records must remain readable for inspection and owned detachment.
+function recordedInferenceEndpoint(value: string): URL {
   if (unsafeEndpointUrlViolation(value))
     throw new Error("Registered inference endpoint is invalid");
   const endpoint = new URL(value);
@@ -75,7 +83,7 @@ export function normalizeRegisteredInferenceProviderAttachment(
   )
     return undefined;
   try {
-    registeredInferenceEndpoint(row.endpointUrl);
+    recordedInferenceEndpoint(row.endpointUrl);
   } catch {
     return undefined;
   }
@@ -123,7 +131,7 @@ function assertProjection(
   if (
     !projection ||
     projection.digest !== binding.profileDigest ||
-    !matchesDeclaredEndpoint(registeredInferenceEndpoint(binding.endpointUrl), projection)
+    !matchesDeclaredEndpoint(recordedInferenceEndpoint(binding.endpointUrl), projection)
   )
     throw new Error("Registered provider profile does not match the selected inference endpoint");
   const matches = projection.credentials.filter((credential) =>
@@ -176,6 +184,7 @@ export async function resolveRegisteredInferenceProvider(input: {
   credentialEnv: string;
   previous?: RegisteredInferenceProviderAttachment;
 }): Promise<RegisteredInferenceProviderAttachment> {
+  registeredInferenceEndpoint(input.endpointUrl);
   const target = { kind: "named", gatewayName: input.gatewayName } as const;
   const observed = await input.adapter.getProvider({ target, providerName: input.providerName });
   if (
@@ -222,6 +231,7 @@ export async function verifyRegisteredInferenceProviderAttachment(input: {
   expected: RegisteredInferenceProviderAttachment;
 }): Promise<void> {
   const expected = requireBinding(input.expected);
+  registeredInferenceEndpoint(expected.endpointUrl);
   await inspectBinding(input.adapter, expected);
   const attachments = await input.adapter.listProviderAttachments({
     target: { kind: "named", gatewayName: expected.gatewayName },
@@ -237,6 +247,7 @@ export async function attachRegisteredInferenceProvider(input: {
   revalidateSandboxIdentity?: (operation: string) => void;
 }): Promise<{ attachment: RegisteredInferenceProviderAttachment; changed: boolean }> {
   const expected = requireBinding(input.expected);
+  registeredInferenceEndpoint(expected.endpointUrl);
   const before = await inspectBinding(input.adapter, expected);
   const request = {
     target: { kind: "named", gatewayName: expected.gatewayName } as const,
@@ -330,7 +341,9 @@ export async function registeredInferenceProviderRevision(input: {
   adapter: OpenShellProviderAdapter;
   expected: RegisteredInferenceProviderAttachment;
 }): Promise<number> {
-  const metadata = await inspectBinding(input.adapter, requireBinding(input.expected));
+  const expected = requireBinding(input.expected);
+  registeredInferenceEndpoint(expected.endpointUrl);
+  const metadata = await inspectBinding(input.adapter, expected);
   const revision = metadata.revision?.resourceVersion;
   if (!Number.isSafeInteger(revision) || !revision || revision < 1)
     throw new Error("Registered provider revision is unavailable");

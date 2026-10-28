@@ -114,6 +114,8 @@ function nativeProbeDefinition(input: SandboxInferenceInvocationInput) {
       binding.inferenceApi !== input.preferredInferenceApi
     )
       throw new Error("Registered inference probe does not match its selected attachment");
+    if (new URL(binding.endpointUrl).protocol !== "https:")
+      throw new Error("Registered inference requires its explicit native HTTPS endpoint");
     return {
       logicalProvider: binding.providerName,
       endpoint: binding.endpointUrl,

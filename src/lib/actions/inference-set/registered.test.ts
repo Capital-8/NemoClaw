@@ -96,6 +96,29 @@ describe("registered provider native projection", () => {
 });
 
 describe("registered provider invocation shell", () => {
+  it("rejects retained HTTP before running a credential-bearing probe", async () => {
+    const f = registeredInferenceFixture(true);
+    const shell = recordingProbeShell("200", "{}", { VENDOR_API_KEY: f.handle });
+    await expect(
+      probeSandboxInferenceInvocation(
+        {
+          sandboxName: f.binding.sandboxName,
+          gatewayName: f.binding.gatewayName,
+          provider: f.binding.providerName,
+          model: "vendor/model",
+          preferredInferenceApi: f.binding.inferenceApi,
+          nativeProvider: true,
+          registeredInferenceProviderAttachment: {
+            ...f.binding,
+            endpointUrl: "http://native.example:443/v1",
+          },
+        },
+        { execute: shell.execute },
+      ),
+    ).rejects.toThrow("HTTPS endpoint");
+    expect(shell.requests).toEqual([]);
+  });
+
   it("sends the scoped handle only to the recorded endpoint", async () => {
     const f = registeredInferenceFixture(true);
     const shell = recordingProbeShell(

@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { readVerifiedRegisteredCredentialHandle } from "../../actions/inference-set/registered";
+import { inspectInferenceProviderProfile } from "../../adapters/openshell/provider-profile";
 import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
 import {
   attachRegisteredInferenceProvider,
   detachRegisteredInferenceProvider,
+  recordedRegisteredInferenceProviderAttachment,
   resolveRegisteredInferenceProvider,
   verifyRegisteredInferenceProviderAttachment,
 } from "./registered";
@@ -96,6 +99,90 @@ describe("operator inference provider attachments", () => {
 });
 
 describe("registered provider profile authentication", () => {
+  it.each([
+    ["openai-completions", "bearer", "authorization"],
+    ["openai-responses", "bearer", "authorization"],
+    ["anthropic-messages", "header", "x-api-key"],
+  ] as const)(
+    "rejects HTTP before attachment or credential handle access for %s",
+    async (inferenceApi, authStyle, headerName) => {
+      const f = registeredInferenceFixture();
+      f.profile.credentials[0]!.auth_style = authStyle;
+      f.profile.credentials[0]!.header_name = headerName;
+      const binding = {
+        ...f.binding,
+        endpointUrl: "http://native.example:443/v1",
+        inferenceApi,
+        profileDigest: inspectInferenceProviderProfile(JSON.stringify(f.profile))!.digest,
+      };
+      await expect(
+        resolveRegisteredInferenceProvider({ ...binding, adapter: f.adapter }),
+      ).rejects.toThrow("HTTPS endpoint");
+      await expect(
+        attachRegisteredInferenceProvider({ adapter: f.adapter, expected: binding }),
+      ).rejects.toThrow("HTTPS endpoint");
+      const read = vi.fn(async () => f.handle);
+      await expect(
+        readVerifiedRegisteredCredentialHandle({
+          adapter: f.adapter,
+          attachment: binding,
+          read,
+          sleep: async () => {},
+        }),
+      ).rejects.toThrow("HTTPS endpoint");
+      expect(read).not.toHaveBeenCalled();
+      expect(f.adapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
+      expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+      expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+      expect(f.state.attached).toBe(false);
+    },
+  );
+
+  it("preserves retained HTTP identity for inspection and owned detachment", async () => {
+    const f = registeredInferenceFixture(true);
+    const binding = {
+      ...f.binding,
+      endpointUrl: "http://native.example:443/v1",
+      attachedBySelection: true,
+    };
+    expect(
+      recordedRegisteredInferenceProviderAttachment({
+        name: binding.sandboxName,
+        gatewayName: binding.gatewayName,
+        provider: binding.providerName,
+        endpointUrl: binding.endpointUrl,
+        preferredInferenceApi: binding.inferenceApi,
+        credentialEnv: binding.credentialEnv,
+        registeredInferenceProviderAttachment: binding,
+      }),
+    ).toEqual(binding);
+    await expect(
+      verifyRegisteredInferenceProviderAttachment({ adapter: f.adapter, expected: binding }),
+    ).rejects.toThrow("HTTPS endpoint");
+    await expect(
+      detachRegisteredInferenceProvider({ adapter: f.adapter, expected: binding }),
+    ).resolves.toBe(true);
+    expect(f.state.attached).toBe(false);
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+  });
+
+  it.each(["10.0.0.8", "inference.corp.example"])(
+    "preserves operator HTTPS inference at %s",
+    async (host) => {
+      const f = registeredInferenceFixture();
+      f.profile.endpoints[0]!.host = host;
+      const binding = await resolveRegisteredInferenceProvider({
+        ...f.binding,
+        adapter: f.adapter,
+        endpointUrl: `https://${host}/v1`,
+      });
+      await expect(
+        attachRegisteredInferenceProvider({ adapter: f.adapter, expected: binding }),
+      ).resolves.toMatchObject({ changed: true });
+      expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    },
+  );
+
   it("accepts a declared Anthropic header credential without changing the provider", async () => {
     const f = registeredInferenceFixture();
     f.profile.credentials[0]!.auth_style = "header";
