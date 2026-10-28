@@ -1319,3 +1319,21 @@ async fn an_incomplete_release_list_cannot_establish_absence() {
         );
     }
 }
+
+#[tokio::test]
+async fn planning_refuses_a_namespace_that_is_being_deleted() {
+    let objects = cluster();
+    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "agents", "deletionTimestamp": "2026-10-28T00:00:00Z"}}));
+    let directory = tempfile::tempdir().unwrap();
+    let (_fixture, operations) = operations(&objects, directory.path()).await;
+    let result = operations.plan(&spec(STORAGE_KIND)).await;
+    assert!(
+        matches!(
+            &result,
+            Err(ObservationError::BindingChanged(detail)) if &**detail == "Namespace agents is being deleted"
+        ),
+        "{result:?}"
+    );
+    assert!(!directory.path().join("state").exists());
+}

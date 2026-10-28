@@ -4,7 +4,7 @@
 # Deploy to Kubernetes or OpenShift
 
 Run agent sandboxes on an existing Kubernetes or OpenShift cluster.
-NemoClaw either installs a development OpenShell gateway in a namespace it creates, or uses a gateway you already run.
+NemoClaw either installs a development OpenShell gateway in a namespace it binds or creates, or uses a gateway you already run.
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
 The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
@@ -315,6 +315,8 @@ kubectl --context "$deployment_context" delete clusterrolebinding,clusterrole \
 ```
 
 Then follow [Remove Retained Resources](usage.md#remove-retained-resources) on Kubernetes without its destroy check.
-Its pod list still shows this deployment's gateway, issuer and sandboxes; deleting the namespace stops them, so continue if nothing else uses the namespace. Keep a namespace that existed before the first apply, as that procedure describes.
-Keep the state directory until the namespace, the volumes and both cluster-wide objects are gone.
+Its pod list still shows this deployment's gateway, issuer and sandboxes; deleting the namespace stops them, so continue if nothing else uses the namespace.
+That procedure keeps a namespace that existed before the first apply, so delete the deployment's workloads in it first: the gateway's objects, labelled `app.kubernetes.io/instance` with the release name; its Helm release records, labelled `owner=helm` and `name` with the release name; the issuer's objects, labelled `nemoclaw.nvidia.com/uid` with the deployment's UID; and its Sandboxes.
+Wait until the pod list shows none of them.
+Keep the state directory until the namespace, or the deployment's objects in a kept namespace, the volumes and both cluster-wide objects are gone.
 This procedure has not been run on a cluster.

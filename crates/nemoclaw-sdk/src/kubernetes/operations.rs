@@ -385,25 +385,20 @@ impl Operations {
     }
 
     /// Check before any change that applying `spec` would not be refused:
-    /// storage binds the target namespace, or creates it, unless another
-    /// deployment created it.
+    /// storage binds the target namespace, or creates it, unless it is being
+    /// deleted or another deployment created it. A deployment that already
+    /// bound a namespace keeps that one.
     pub async fn plan(&self, spec: &Spec) -> Result<(), ObservationError> {
         if spec.kind != STORAGE_KIND {
             return Ok(());
         }
-        if self
-            .receipt(spec)?
-            .is_some_and(|receipt| receipt.namespace.is_some())
-        {
-            return Ok(());
+        let target = &self.target(spec)?.namespace;
+        if let Some(bound) = self.receipt(spec)?.and_then(|receipt| receipt.namespace) {
+            return super::storage::same_namespace(&bound, target);
         }
-        super::storage::bindable_namespace(
-            &self.cluster(spec),
-            &self.target(spec)?.namespace,
-            &spec.owner,
-        )
-        .await
-        .map(|_| ())
+        super::storage::bindable_namespace(&self.cluster(spec), target, &spec.owner)
+            .await
+            .map(|_| ())
     }
 
     /// Create or repair the resource, then observe it.

@@ -867,7 +867,7 @@ The deployment lock excludes other NemoClaw operations using the same state dire
 
 The runtime graph for a managed Kubernetes or OpenShift gateway declares four resources in this order:
 
-1. `openshell_kubernetes_storage.runtime` creates and retains the namespace and encryption key, with `prevent_destroy`.
+1. `openshell_kubernetes_storage.runtime` binds the namespace by UID, creating it if it doesn't exist, and creates the encryption key; it retains both, with `prevent_destroy`.
 2. `openshell_kubernetes_auth.runtime` prepares the development token issuer.
    For OpenShift, its computed `gateway_values` carries the namespace's UID and group ranges as chart overrides.
 3. `helm_release.gateway` installs the pinned OpenShell chart into the prepared namespace without creating the namespace or taking ownership of existing objects.

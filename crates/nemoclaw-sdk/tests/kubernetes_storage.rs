@@ -344,3 +344,56 @@ async fn a_namespace_another_deployment_owns_is_refused() {
     );
     assert_eq!(objects.len(), count);
 }
+
+#[tokio::test]
+async fn a_namespace_being_deleted_is_refused_and_nothing_is_recorded() {
+    let objects = Objects::default();
+    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "agents", "uid": "operator-ns",
+            "deletionTimestamp": "2026-10-28T00:00:00Z", "finalizers": ["kubernetes"]}}));
+    let fixture = objects.serve().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+    let count = objects.len();
+    let message = ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("Namespace agents is being deleted"),
+        "{message}"
+    );
+    assert_eq!(objects.len(), count);
+    assert_eq!(
+        Receipt::load(directory.path(), OWNER, "nc-0123456789abcdef-gateway").unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn storage_refuses_a_namespace_other_than_the_one_it_bound() {
+    let objects = Objects::default();
+    let fixture = objects.serve().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cluster = Cluster::new(client(&fixture), OWNER, "generation-1");
+    ensure_storage(&cluster, &storage(directory.path()))
+        .await
+        .unwrap();
+    // Another deployment's namespace, which this deployment must never write to.
+    objects.insert(json!({"apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "other-agents",
+            "labels": {"nemoclaw.nvidia.com/uid": "00000000-0000-4000-8000-000000000002"}}}));
+    let count = objects.len();
+    let mut other = storage(directory.path());
+    other.namespace = "other-agents".into();
+    let message = ensure_storage(&cluster, &other)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message
+            .contains("Namespace agents is bound; gateway.kubernetes.namespace names other-agents"),
+        "{message}"
+    );
+    assert_eq!(objects.len(), count, "nothing was created in other-agents");
+}

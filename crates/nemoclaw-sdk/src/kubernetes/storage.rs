@@ -36,6 +36,7 @@ pub async fn ensure_storage(
     let mut receipt = Receipt::load(&storage.directory, &storage.owner, &storage.name)?
         .unwrap_or_else(|| Receipt::new(&storage.owner, &storage.name));
     if let Some(namespace) = &receipt.namespace {
+        same_namespace(namespace, &storage.namespace)?;
         cluster.verify_uid(namespace).await?;
     } else {
         receipt.namespace =
@@ -66,8 +67,20 @@ pub(crate) fn namespace_address(name: &str) -> Owned {
     }
 }
 
-/// The namespace named `name`, if it exists, unless another deployment's
-/// owner label shows that deployment created it.
+/// Refuse a target other than the namespace the receipt bound, which would
+/// put objects outside the namespace this deployment verifies.
+pub(crate) fn same_namespace(bound: &Owned, target: &str) -> Result<(), ObservationError> {
+    if bound.name == target {
+        Ok(())
+    } else {
+        Err(bound.changed(&format!(
+            "is bound; gateway.kubernetes.namespace names {target}"
+        )))
+    }
+}
+
+/// The namespace named `name`, if it exists, unless it is being deleted or
+/// another deployment's owner label shows that deployment created it.
 pub(crate) async fn bindable_namespace(
     cluster: &Cluster,
     name: &str,
@@ -75,9 +88,18 @@ pub(crate) async fn bindable_namespace(
 ) -> Result<Option<DynamicObject>, ObservationError> {
     let address = namespace_address(name);
     let existing = cluster.get(&address).await?;
-    let other = existing
+    let Some(namespace) = &existing else {
+        return Ok(None);
+    };
+    // A namespace being deleted keeps its UID until it is gone, and then the
+    // binding could never be satisfied again.
+    if namespace.metadata.deletion_timestamp.is_some() {
+        return Err(address.changed("is being deleted"));
+    }
+    let other = namespace
+        .metadata
+        .labels
         .as_ref()
-        .and_then(|namespace| namespace.metadata.labels.as_ref())
         .and_then(|labels| labels.get(OWNER_LABEL))
         .is_some_and(|label| label != owner);
     if other {

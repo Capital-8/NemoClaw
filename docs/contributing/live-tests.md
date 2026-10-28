@@ -44,9 +44,9 @@ The OpenShift-profile test also supplies namespace UID-range annotations on kind
 Before deploying, it refuses a cluster that serves the `security.openshift.io` API group, where its annotations would replace the range that cluster assigns; on such a cluster, run the gateway test below with `NEMOCLAW_TEST_KUBE_RUNTIME=openshift`, which checks the gateway's pods and deploys no sandbox.
 Its three agents share one gateway to keep the `live-kind` suite within its 270-second budget.
 The registry test starts a pinned, authenticated registry on the run's kind network and uploads only the run's agent fixture there.
-It checks anonymous and wrong-credential rejection, then deploys an agent with a caller-managed image pull Secret provisioned after namespace creation.
+It checks anonymous and wrong-credential rejection. Then, as an operator would, it creates the deployment's namespace and a caller-managed image pull Secret before the first apply, and deploys an agent into that namespace, which NemoClaw binds by UID without labelling it.
 A new image-index digest prevents cached image metadata from bypassing the pull; the agent's layers and configuration remain unchanged.
-Export must preserve the authored image and Secret references; OpenTofu state must hold no registry values, and destroy must retain the caller-managed Secret.
+Export must preserve the authored image and Secret references; OpenTofu state must hold no registry values, and destroy must keep the namespace with its UID and labels unchanged and retain the caller-managed Secret.
 The fixture removes its registry afterward; HTTP configuration is confined to that registry on the disposable node.
 
 The OIDC test, `kubernetes_live::oidc`, runs the SDK's development issuer image in a fresh `nc-issuer-*` namespace as a stand-in for an existing identity provider, and deletes that namespace when the test passes or panics, but not when nextest stops it at its time limit.
@@ -108,11 +108,11 @@ Raw OpenTofu output is suppressed from the test log because it can contain deplo
 After success, images the cluster pulled remain on its nodes; remove the printed state directory when finished.
 
 If the test fails, its namespace, the volumes bound to its PVCs, and the chart's ClusterRole and ClusterRoleBinding, both named `<release>-node-reader-<namespace>`, can remain.
-In the state directory, `kubernetes/receipt.json` gives the release as `name` and the namespace in the `Namespace` entry of `objects`; without the directory, find the namespace as `nc-live-` followed by 16 hexadecimal digits.
+In the state directory, `kubernetes/receipt.json` gives the release as `name` and the namespace as `namespace.name`; without the directory, find the namespace as `nc-live-` followed by 16 hexadecimal digits.
 Inspect those resources, then delete the ClusterRole and ClusterRoleBinding:
 
 ```sh
-jq -r '.name, (.objects[] | select(.kind == "Namespace") | .name)' /absolute/path/to/state/kubernetes/receipt.json
+jq -r '.name, .namespace.name' /absolute/path/to/state/kubernetes/receipt.json
 kubectl --kubeconfig /absolute/path/to/owned-kubeconfig --context kind-owned-test \
   delete --ignore-not-found \
   clusterrolebinding/RELEASE-node-reader-NAMESPACE clusterrole/RELEASE-node-reader-NAMESPACE
