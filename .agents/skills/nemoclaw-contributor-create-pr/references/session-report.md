@@ -54,12 +54,16 @@ Publish only compact metadata and evidence descriptions. Exclude raw transcripts
 ## CI boundary
 
 `Governance / Lint PR Title` validates the opening comment alongside the title on opened, synchronize, reopened, and edited events.
-The workflow fetches every page of current PR comments and passes JSON to the validator as data.
+The workflow fetches every page of current PR comments and passes eligible opening comments to the validator as JSON data.
+A report must be posted by the PR author or a user with current maintain/admin permission.
+Other comments cannot supply or duplicate the required opening report. This checks submission authority, not the truth of its evidence.
 Description edits still rerun metadata validation; main's CI skips platform builds for description-only edits.
 The comment refresh workflow reruns only the latest metadata run for the current PR commit when an opening report is created, edited, or deleted.
+A read-only job first checks that the event actor is the PR author or has current maintain/admin permission.
+Only an authorized event can enter the rerun job or cancel an earlier refresh.
 It reads the current comment body and the prior body on edits, so removing the marker also triggers validation.
 It waits for an active metadata run before rerunning it; a failed refresh needs a metadata rerun after the interruption is resolved.
-The check validates presence, collapsed structure, and allowed statuses, not truth, author identity, or skill compliance.
+The report validator checks presence, collapsed structure, and allowed statuses, not truth or skill compliance.
 
 GitHub activates the comment refresh workflow only after it reaches the default branch.
 The introducing PR validates its fetched comments through its ordinary PR events. Before rollout, edit the description or rerun metadata after posting a report.

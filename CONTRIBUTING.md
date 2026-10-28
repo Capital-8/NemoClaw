@@ -185,7 +185,8 @@ owns the automated publication and review-follow-up workflow. The root
 [PR requirements](AGENTS.md#pr-requirements) own repository-specific exceptions.
 
 Every PR includes a collapsed opening [authoring-session report](.agents/skills/nemoclaw-contributor-create-pr/references/session-report.md) comment, including existing and automated PRs.
-The metadata job checks the template against the report validator. Follow the report's migration guidance when historical evidence is unavailable.
+Post the report when opening a PR, or on the next update to an existing PR.
+The metadata job checks the comment template against the report validator. Follow the report's migration guidance when historical evidence is unavailable.
 
 After each revision, follow CI and review to completion. Address valid findings with a change, or
 explain why they do not apply. Keep the PR description and validation evidence current.
