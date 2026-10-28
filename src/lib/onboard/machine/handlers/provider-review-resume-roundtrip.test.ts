@@ -11,9 +11,62 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { SetupInference, SetupInferenceDeps } from "../../setup-inference";
+
 const ENDPOINT = "http://host.openshell.internal:11435/v1";
 const originalHome = process.env.HOME;
 let tmpHome: string;
+
+async function interruptAtReview() {
+  const sessionStore = await import("../../../state/onboard-session");
+  const { OnboardRuntime } = await import("../runtime");
+  const { OnboardRuntimeBoundary } = await import("../../runtime-boundary");
+  const { toSessionUpdates } = await import("../../session-updates");
+  const { handleProviderInferenceState } = await import("./provider-inference");
+  const { baseOptions, baseSelection, createDeps } =
+    await import("./provider-inference.test-support");
+  sessionStore.saveSession(sessionStore.createSession());
+  const boundary = new OnboardRuntimeBoundary({
+    toSessionUpdates: (updates) =>
+      toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+    maybeForceE2eStepFailure: () => undefined,
+    createRuntime: () => new OnboardRuntime(),
+  });
+  const checkpointSandboxIdentity = async (sandboxName: string) => {
+    sessionStore.updateSession((current) => {
+      current.sandboxName = sandboxName;
+      current.sandboxPromptProgress.sandboxName = true;
+      return current;
+    });
+  };
+
+  const interrupted = createDeps({
+    isNonInteractive: () => false,
+    setupNim: vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model: "qwen2.5:1.5b",
+      endpointUrl: ENDPOINT,
+      credentialEnv: null,
+    })),
+    prompt: vi.fn(async () => {
+      throw new Error("SIGINT");
+    }),
+    startRecordedStep: boundary.startRecordedStep.bind(boundary),
+    checkpointSandboxIdentity,
+  });
+  await expect(
+    handleProviderInferenceState({
+      ...baseOptions(interrupted.deps, sessionStore.loadSession()),
+      sandboxName: "review-resume",
+    }),
+  ).rejects.toThrow("SIGINT");
+  await boundary.recordStepFailed(
+    "provider_selection",
+    "Onboarding exited before the step completed.",
+  );
+  return { sessionStore, handleProviderInferenceState, baseOptions, createDeps };
+}
 
 describe("review interruption resume round trip (#13802)", () => {
   beforeEach(() => {
@@ -28,53 +81,8 @@ describe("review interruption resume round trip (#13802)", () => {
   });
 
   it("resumes inference setup with the endpoint recorded at review", async () => {
-    const sessionStore = await import("../../../state/onboard-session");
-    const { OnboardRuntime } = await import("../runtime");
-    const { OnboardRuntimeBoundary } = await import("../../runtime-boundary");
-    const { toSessionUpdates } = await import("../../session-updates");
-    const { handleProviderInferenceState } = await import("./provider-inference");
-    const { baseOptions, baseSelection, createDeps } =
-      await import("./provider-inference.test-support");
-    sessionStore.saveSession(sessionStore.createSession());
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) =>
-        toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: () => new OnboardRuntime(),
-    });
-    const checkpointSandboxIdentity = async (sandboxName: string) => {
-      sessionStore.updateSession((current) => {
-        current.sandboxName = sandboxName;
-        current.sandboxPromptProgress.sandboxName = true;
-        return current;
-      });
-    };
-
-    const interrupted = createDeps({
-      isNonInteractive: () => false,
-      setupNim: vi.fn(async () => ({
-        ...baseSelection,
-        provider: "ollama-local",
-        model: "qwen2.5:1.5b",
-        endpointUrl: ENDPOINT,
-        credentialEnv: null,
-      })),
-      prompt: vi.fn(async () => {
-        throw new Error("SIGINT");
-      }),
-      startRecordedStep: boundary.startRecordedStep.bind(boundary),
-      checkpointSandboxIdentity,
-    });
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(interrupted.deps, sessionStore.loadSession()),
-        sandboxName: "review-resume",
-      }),
-    ).rejects.toThrow("SIGINT");
-    await boundary.recordStepFailed(
-      "provider_selection",
-      "Onboarding exited before the step completed.",
-    );
+    const { sessionStore, handleProviderInferenceState, baseOptions, createDeps } =
+      await interruptAtReview();
 
     const resumed = createDeps({
       isNonInteractive: () => true,
@@ -97,5 +105,82 @@ describe("review interruption resume round trip (#13802)", () => {
       [],
       expect.any(Object),
     );
+  });
+
+  it("attaches the recorded endpoint that deployment verification accepts", async () => {
+    const { sessionStore, handleProviderInferenceState, baseOptions, createDeps } =
+      await interruptAtReview();
+    const { default: onboard } = (await import("../../../onboard")) as unknown as {
+      default: {
+        createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
+      };
+    };
+    const { createDirectSetupInferenceHarnessFactory } =
+      await import("../../../../../test/support/setup-inference-test-harness");
+    const { onboardInferenceVerificationContext, probeOnboardInferenceInvocation } =
+      await import("../../../verify-deployment");
+    // Port 11435 is admitted only behind the NemoClaw-owned Ollama proxy.
+    const harness = createDirectSetupInferenceHarnessFactory(onboard.createSetupInference)({
+      overrides: {
+        shouldFrontOllamaWithProxy: () => true,
+        getOllamaProxyToken: () => "proxy-token-TEST-NOT-A-REAL-VALUE",
+      },
+    });
+
+    const resumed = createDeps({
+      isNonInteractive: () => true,
+      isInferenceRouteReady: vi.fn(() => false),
+      setupInference: harness.setupInference,
+    });
+    await handleProviderInferenceState({
+      ...baseOptions(resumed.deps, sessionStore.loadSession()),
+      resume: true,
+      sandboxName: "review-resume",
+      agent: { name: "openclaw" },
+    });
+
+    const route = harness.updateSandbox.mock.calls
+      .map((call) => (call as unknown[])[1] as Record<string, unknown>)
+      .find((update) => update.nativeLocalProviderAttachment);
+    expect(route?.nativeLocalProviderAttachment).toEqual(
+      expect.objectContaining({
+        provider: "ollama-local",
+        sandboxName: "review-resume",
+        gatewayName: "nemoclaw",
+        endpointUrl: ENDPOINT,
+      }),
+    );
+
+    const session = sessionStore.loadSession();
+    const verify = (attachment: unknown) =>
+      onboardInferenceVerificationContext(
+        "review-resume",
+        "nemoclaw",
+        "openclaw",
+        {
+          provider: session?.provider ?? null,
+          model: session?.model ?? null,
+          endpointUrl: session?.endpointUrl ?? null,
+          preferredInferenceApi: session?.preferredInferenceApi ?? null,
+        },
+        { nativeLocalProviderAttachment: attachment as never },
+      ).invocation;
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    await expect(
+      probeOnboardInferenceInvocation(verify(route?.nativeLocalProviderAttachment), probe),
+    ).resolves.toEqual({ ok: true });
+    // The oracle rejects an attachment whose endpoint differs from the review.
+    await expect(
+      probeOnboardInferenceInvocation(
+        verify({
+          ...(route?.nativeLocalProviderAttachment as object),
+          endpointUrl: "http://host.openshell.internal:11500/v1",
+        }),
+        probe,
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      detail: "native local provider attachment is missing or invalid",
+    });
   });
 });
