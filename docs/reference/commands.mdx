@@ -1882,12 +1882,12 @@ On a normal status read, the command probes the selected provider path from insi
 | `not probed`   | NemoClaw could not run the authoritative route probe from a reachable sandbox.                                                                                                                                        |
 | `not verified` | NemoClaw could not verify the sandbox or gateway state, so it skips inference probing.                                                                                                                                |
 
-When another lifecycle operation is in progress and NemoClaw confirms that no Portable authority exists, status returns a best-effort, read-only snapshot that can show transitional state.
+When another lifecycle operation is in progress and NemoClaw confirms that no conflicting lifecycle authority exists, status returns a best-effort, read-only snapshot that can show transitional state.
 It does not run inference health checks or send an inference request.
 It does not repair the gateway, host forward, stop-intent record, or Hermes tool gateway broker.
 JSON output sets `inferenceProbeSuppressed` to `true`.
-If NemoClaw finds or cannot rule out Portable authority, status fails fast.
-If Portable authority appears during the snapshot, status reports a lifecycle conflict after it finishes the snapshot.
+If NemoClaw finds or cannot rule out a conflicting lifecycle authority, status fails fast.
+If a conflicting authority appears during the snapshot, status reports a lifecycle conflict after it finishes the snapshot.
 
 An authentication response on a shared gateway route probe confirms that the route is reachable, not that provider credentials are valid. For those shared routes, `$$nemoclaw <name> doctor` sends no inference request, so it reports an HTTP `401` or `403` route response as reachable and exits `0` where `status` reports `unauthorized`. Native hosted and Deep Agents Code, Hermes, and OpenClaw native local doctor checks verify the recorded provider identity and sandbox attachment, then require a successful inference request through the selected native endpoint. The native NVIDIA doctor probe verifies the sandbox-attached provider directly and requires a 2xx response. The command can also print direct host-side provider checks such as `Inference (upstream)` and provider-specific subprobes. For supported remote providers, this diagnostic sends an authenticated request to the configured model and accepts only a recognized Chat Completions, streaming Chat Completions, or Anthropic Messages response. It uses a 3-second connection timeout, a 5-second total timeout, and an 8-token output limit. If that host-side request reaches the time limit, `Inference (upstream)` reports `not probed` and leaves model health unverified. A confirmed timeout of the authoritative native NVIDIA request instead reports `degraded` after bounded retries. Host-side checks are diagnostic only and do not override the authoritative selected-provider result or determine the command exit status.
 
