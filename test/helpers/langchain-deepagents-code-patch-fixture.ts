@@ -171,6 +171,110 @@ class ApprovalMenu:
 `,
 };
 
+export const nonInteractivePackageSource = `
+from __future__ import annotations
+
+import logging
+import sys
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_shell_allow_list():
+    return ["bash"]
+
+
+class _Console:
+    def __init__(self, stderr=False):
+        self.file = sys.stderr if stderr else sys.stdout
+
+    def print(self, message, **kwargs):
+        print(message, file=self.file)
+
+
+def escape_markup(value):
+    return value
+
+
+def generate_thread_id():
+    return "thread-1"
+
+
+def _workspace_conflict_text(exc: BaseException) -> str | None:
+    from langgraph_sdk.errors import ConflictError
+    if not isinstance(exc, ConflictError):
+        return None
+    from deepagents_code.client.headless_resume import WORKSPACE_CONFLICT_MESSAGE
+    from deepagents_code.client.remote_client import workspace_conflict_diagnostics
+    from deepagents_code.workspace_diagnostics import SAFE_SNAPSHOT_FIELDS
+    diagnostics = workspace_conflict_diagnostics(exc)
+    changed = sorted({change.name for change in diagnostics.changes} & SAFE_SNAPSHOT_FIELDS if diagnostics is not None else set())
+    if not changed:
+        return WORKSPACE_CONFLICT_MESSAGE
+    return f"{WORKSPACE_CONFLICT_MESSAGE} Changed: {', '.join(changed)}."
+
+
+def _write_text(text):
+    print(text, end="", flush=True)
+
+
+def _write_newline():
+    print()
+
+
+async def _run_non_interactive_impl(*args, **kwargs):
+    del args
+    from deepagents_code.hooks.manager import HooksManager
+
+    HooksManager.create().dispatch()
+    if kwargs.get("message") == "fixture-json-task":
+        return 0
+    return kwargs
+
+
+async def _run_agent_loop(*args, **kwargs):
+    return await _run_non_interactive_impl(*args, **kwargs)
+
+
+async def run_non_interactive(*args, **kwargs):
+    quiet = kwargs.get("quiet", False)
+    console = _Console(stderr=quiet)
+    thread_id = generate_thread_id()
+    if quiet:
+        # Printed despite \`-q\`: scripts parse it to resume the thread later.
+        console.print(
+            f"Thread: {thread_id}", markup=False, highlight=False, soft_wrap=True
+        )
+    resume = kwargs.get("resume")
+    try:
+        result = await _run_agent_loop(*args, **kwargs)
+        return result
+    except Exception as e:
+        logger.exception("Unexpected error during non-interactive execution")
+        if resume is not None and (conflict := _workspace_conflict_text(e)):
+            console.print(
+                f"\\n[red]Error: {escape_markup(conflict)}[/red]", soft_wrap=True
+            )
+            return 1
+        if e.args and isinstance(e.args[0], dict):
+            # The server raised it; show its type and message, not the dict.
+            from deepagents_code.client.remote_client import format_agent_exception
+
+            detail = format_agent_exception(e)
+            console.print(f"\\n[red]Agent error: {escape_markup(detail)}[/red]")
+        else:
+            console.print(
+                f"\\n[red]Unexpected error ({type(e).__name__}): "
+                f"{escape_markup(str(e))}[/red]"
+            )
+        return 1
+
+
+async def _run_startup_command(command, console, *, quiet):
+    del console, quiet
+    return command
+`;
+
 export function createPackageFixture(version = "0.1.87"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
   packageFixtureDirs.add(tempDir);
@@ -826,113 +930,7 @@ class HooksManager:
             Path(marker).touch()
 `,
   );
-  writeFixtureFile(
-    packageDir,
-    "client/non_interactive.py",
-    `
-from __future__ import annotations
-
-import logging
-import sys
-
-logger = logging.getLogger(__name__)
-
-
-def _resolve_shell_allow_list():
-    return ["bash"]
-
-
-class _Console:
-    def __init__(self, stderr=False):
-        self.file = sys.stderr if stderr else sys.stdout
-
-    def print(self, message, **kwargs):
-        print(message, file=self.file)
-
-
-def escape_markup(value):
-    return value
-
-
-def generate_thread_id():
-    return "thread-1"
-
-
-def _workspace_conflict_text(exc: BaseException) -> str | None:
-    from langgraph_sdk.errors import ConflictError
-    if not isinstance(exc, ConflictError):
-        return None
-    from deepagents_code.client.headless_resume import WORKSPACE_CONFLICT_MESSAGE
-    from deepagents_code.client.remote_client import workspace_conflict_diagnostics
-    from deepagents_code.workspace_diagnostics import SAFE_SNAPSHOT_FIELDS
-    diagnostics = workspace_conflict_diagnostics(exc)
-    changed = sorted({change.name for change in diagnostics.changes} & SAFE_SNAPSHOT_FIELDS if diagnostics is not None else set())
-    if not changed:
-        return WORKSPACE_CONFLICT_MESSAGE
-    return f"{WORKSPACE_CONFLICT_MESSAGE} Changed: {', '.join(changed)}."
-
-
-def _write_text(text):
-    print(text, end="", flush=True)
-
-
-def _write_newline():
-    print()
-
-
-async def _run_non_interactive_impl(*args, **kwargs):
-    del args
-    from deepagents_code.hooks.manager import HooksManager
-
-    HooksManager.create().dispatch()
-    if kwargs.get("message") == "fixture-json-task":
-        return 0
-    return kwargs
-
-
-async def _run_agent_loop(*args, **kwargs):
-    return await _run_non_interactive_impl(*args, **kwargs)
-
-
-async def run_non_interactive(*args, **kwargs):
-    quiet = kwargs.get("quiet", False)
-    console = _Console(stderr=quiet)
-    thread_id = generate_thread_id()
-    if quiet:
-        # Printed despite \`-q\`: scripts parse it to resume the thread later.
-        console.print(
-            f"Thread: {thread_id}", markup=False, highlight=False, soft_wrap=True
-        )
-    resume = kwargs.get("resume")
-    try:
-        result = await _run_agent_loop(*args, **kwargs)
-        return result
-    except Exception as e:
-        logger.exception("Unexpected error during non-interactive execution")
-        if resume is not None and (conflict := _workspace_conflict_text(e)):
-            console.print(
-                f"\\n[red]Error: {escape_markup(conflict)}[/red]", soft_wrap=True
-            )
-            return 1
-        if e.args and isinstance(e.args[0], dict):
-            # The server raised it; show its type and message, not the dict.
-            from deepagents_code.client.remote_client import format_agent_exception
-
-            detail = format_agent_exception(e)
-            console.print(f"\\n[red]Agent error: {escape_markup(detail)}[/red]")
-        else:
-            console.print(
-                f"\\n[red]Unexpected error ({type(e).__name__}): "
-                f"{escape_markup(str(e))}[/red]"
-            )
-        return 1
-
-
-async def _run_startup_command(command, console, *, quiet):
-    del console, quiet
-    return command
-`,
-  );
+  writeFixtureFile(packageDir, "client/non_interactive.py", nonInteractivePackageSource);
   // Pinned 0.1.87 classifier dependencies; omit unrelated rendering/serialization methods.
   writeFixtureFile(
     packageDir,

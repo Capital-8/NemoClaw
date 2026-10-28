@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { approvalPackageSources } from "../../helpers/langchain-deepagents-code-patch-fixture";
+import {
+  approvalPackageSources,
+  nonInteractivePackageSource,
+} from "../../helpers/langchain-deepagents-code-patch-fixture";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
@@ -316,35 +319,7 @@ class HooksManager:
     @classmethod
     def inert(cls): return cls()
 `,
-  "client/non_interactive.py": `from __future__ import annotations
-
-def _resolve_shell_allow_list(): return ["bash"]
-
-async def run_non_interactive(*args, **kwargs):
-    try:
-        return kwargs
-    except Exception as e:
-        logger.exception("Unexpected error during non-interactive execution")
-        if resume is not None and (conflict := _workspace_conflict_text(e)):
-            console.print(
-                f"\\n[red]Error: {escape_markup(conflict)}[/red]", soft_wrap=True
-            )
-            return 1
-        if e.args and isinstance(e.args[0], dict):
-            # The server raised it; show its type and message, not the dict.
-            from deepagents_code.client.remote_client import format_agent_exception
-
-            detail = format_agent_exception(e)
-            console.print(f"\\n[red]Agent error: {escape_markup(detail)}[/red]")
-        else:
-            console.print(
-                f"\\n[red]Unexpected error ({type(e).__name__}): "
-                f"{escape_markup(str(e))}[/red]"
-            )
-        return 1
-
-async def _run_startup_command(command, console, *, quiet): return command
-`,
+  "client/non_interactive.py": nonInteractivePackageSource,
 };
 
 interface PatchFixture {
