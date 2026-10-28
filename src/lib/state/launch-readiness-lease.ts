@@ -1694,11 +1694,15 @@ export function checkLaunchReadinessMutationAuthority(
     const inspection = inspectAuthority(base, sandboxName);
     if (expectedEpochId === null) {
       if (inspection.kind === "unsupported") return "current";
-      const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
       if (inspection.kind === "unsafe")
         return { kind: "unsafe", scope: "runtime-authority", evidence: inspection.evidence };
+      // A null epoch proves only that this producer observed no authority.
+      // Another producer may have rotated it before this locked recheck. Do
+      // not let an unsafe receipt mask that newer runtime authority.
+      if (inspection.kind === "present") return "changed";
+      const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
       if (persistent.kind === "unsafe") return { ...persistent, scope: "receipt-store" };
-      return inspection.kind === "missing" && persistent.kind === "missing" ? "current" : "changed";
+      return persistent.kind === "missing" ? "current" : "changed";
     }
     if (inspection.kind === "unsupported") return "changed";
     if (inspection.kind === "unsafe")

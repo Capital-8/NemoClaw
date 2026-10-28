@@ -181,7 +181,7 @@ describe("connectSandbox launch-readiness unsafe verdict scope", () => {
   const originalStdoutIsTty = process.stdout.isTTY;
 
   beforeEach(() => {
-    process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);

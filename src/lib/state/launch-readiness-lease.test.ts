@@ -551,13 +551,22 @@ describe("launch readiness lease storage", () => {
   );
 
   it("reports bounded persistent receipt permission evidence without authorizing mutation (#10638)", () => {
-    publish();
+    const lease = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
     const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
     const uid = process.getuid?.() ?? 0;
     fs.chmodSync(receiptPath, 0o640);
 
     expect(
       checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toBe("changed");
+    expect(
+      checkLaunchReadinessMutationAuthority(
+        SANDBOX,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        lease.epochId,
+        options(),
+      ),
     ).toEqual({
       kind: "unsafe",
       scope: "receipt-store",
@@ -573,6 +582,11 @@ describe("launch readiness lease storage", () => {
         repair: "chmod",
       },
     });
+
+    fs.unlinkSync(launchReadinessAuthorityPath(SANDBOX, runtimeRoot));
+    expect(
+      checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+    ).toMatchObject({ kind: "unsafe", scope: "receipt-store" });
 
     fs.chmodSync(receiptPath, 0o600);
   });
@@ -597,6 +611,20 @@ describe("launch readiness lease storage", () => {
       ).not.toBe(epochBefore);
       expect(
         checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+      ).toBe("changed");
+      const rotatedEpochId = (
+        JSON.parse(fs.readFileSync(authorityPath, "utf8")) as {
+          epochId: string;
+        }
+      ).epochId;
+      expect(
+        checkLaunchReadinessMutationAuthority(
+          SANDBOX,
+          GATEWAY_NAME,
+          GATEWAY_PORT,
+          rotatedEpochId,
+          options(),
+        ),
       ).toMatchObject({ kind: "unsafe", scope: "receipt-store" });
     } finally {
       fs.chmodSync(path.dirname(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home)), 0o700);
@@ -690,7 +718,7 @@ describe("launch readiness lease storage", () => {
   it.each(["receipt", "persistent ancestor", "runtime ancestor"] as const)(
     "identifies the unsafe %s directory without blaming its safe child (#10638)",
     (target) => {
-      publish();
+      const lease = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
       const receiptPath = launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home);
       const receiptDir =
         target === "receipt"
@@ -703,12 +731,23 @@ describe("launch readiness lease storage", () => {
       fs.chmodSync(receiptDir, mode);
 
       try {
+        if (target !== "runtime ancestor") {
+          expect(
+            checkLaunchReadinessMutationAuthority(
+              SANDBOX,
+              GATEWAY_NAME,
+              GATEWAY_PORT,
+              null,
+              options(),
+            ),
+          ).toBe("changed");
+        }
         expect(
           checkLaunchReadinessMutationAuthority(
             SANDBOX,
             GATEWAY_NAME,
             GATEWAY_PORT,
-            null,
+            lease.epochId,
             options(),
           ),
         ).toEqual({
