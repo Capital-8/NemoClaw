@@ -72,8 +72,8 @@ Check the Hermes Discord connection after enrollment:
 nemohermes <name> channels status --channel discord
 ```
 
-The command reports authentication rejection from Hermes' native runtime status.
-A connected result confirms the adapter connection; it does not prove message delivery.
-Missing, stale, or unreadable runtime evidence produces an unverified result with a warning.
+The command reports authentication rejection from Hermes' native runtime status as a `credential_rejected` verdict.
+A `healthy` verdict confirms the adapter connection; it does not prove message delivery.
+Missing, stale, or unreadable runtime evidence produces an `unknown` verdict with a warning.
 Registration and policy coverage alone do not prove authentication.
 </AgentOnly>
