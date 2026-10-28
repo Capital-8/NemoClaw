@@ -121,7 +121,7 @@ describe("managed-image staging QA workflow", () => {
     const packageBuilder = "scripts/security/build-native-security-packages.sh";
     const requirements = "agents/langchain-deepagents-code/requirements.lock";
     const runtimeIdentity = "src/lib/agent/deep-agents-code-runtime-identity.json";
-    const dependencyPatch = "agents/langchain-deepagents-code/patch-managed-deepagents-code.py";
+    const dependencyPatch = "agents/langchain-deepagents-code/patch-dependency-compatibility.py";
     const npmSupportFiles = [
       "ci/reviewed-npm-audit.json",
       "scripts/lib/bundled-npm-package.mts",

@@ -108,6 +108,11 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
+    [
+      "non-interactive",
+      "client/non_interactive.py",
+      "if quiet and _nemoclaw_json_run.get() is None:",
+    ],
     ["app", "app.py", "blocked_managed_command = root in {"],
     ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {

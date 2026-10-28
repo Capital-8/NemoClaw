@@ -349,7 +349,7 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 444 /etc/bash.bashrc
 
 COPY agents/langchain-deepagents-code/requirements.lock /tmp/deepagents-code-requirements.lock
-COPY agents/langchain-deepagents-code/patch-managed-deepagents-code.py /usr/local/lib/nemoclaw/patch-dcode-dependency-compatibility.py
+COPY agents/langchain-deepagents-code/patch-dependency-compatibility.py /usr/local/lib/nemoclaw/patch-dcode-dependency-compatibility.py
 COPY agents/langchain-deepagents-code/dependency-overrides.in /usr/local/lib/nemoclaw/dependency-overrides.in
 COPY agents/langchain-deepagents-code/validate-runtime-contract.py /usr/local/lib/nemoclaw/validate-dcode-runtime-contract.py
 

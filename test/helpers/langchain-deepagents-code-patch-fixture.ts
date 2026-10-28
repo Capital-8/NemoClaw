@@ -895,8 +895,14 @@ async def _run_agent_loop(*args, **kwargs):
 
 
 async def run_non_interactive(*args, **kwargs):
-    console = _Console(stderr=kwargs.get("quiet", False))
+    quiet = kwargs.get("quiet", False)
+    console = _Console(stderr=quiet)
     thread_id = generate_thread_id()
+    if quiet:
+        # Printed despite \`-q\`: scripts parse it to resume the thread later.
+        console.print(
+            f"Thread: {thread_id}", markup=False, highlight=False, soft_wrap=True
+        )
     resume = kwargs.get("resume")
     try:
         result = await _run_agent_loop(*args, **kwargs)

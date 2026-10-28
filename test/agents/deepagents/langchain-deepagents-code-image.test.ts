@@ -134,7 +134,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 agent = Path("agents/langchain-deepagents-code")
-spec = importlib.util.spec_from_file_location("managed_patch", agent / "patch-managed-deepagents-code.py")
+spec = importlib.util.spec_from_file_location("managed_patch", agent / "patch-dependency-compatibility.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 for name, version in module.dependency_overrides().items():
