@@ -598,8 +598,6 @@ While the original sandbox remains intact, correct the reported failure:
   NemoClaw allows each archive inspection up to 60 seconds, and the inspection must finish before the backup deadline.
 - If any tar listing error reports `exceeded 268435456 bytes`, reduce the native-home entry count or path lengths.
   NemoClaw limits each archive listing to 256 MiB.
-- If the error reports `archive header inspection exceeded the metadata-byte limit`, reduce the extended-header and long-name metadata in the native home.
-  NemoClaw accepts up to 4 MiB of PAX extended-header, GNU long-name, and GNU long-link metadata in total.
 - If the error reports `archive header cannot be inspected for line breaks`, the archive has a malformed or truncated tar header or an extended-header, long-name, or long-link block larger than 1 MiB.
   Preserve the error output and ask a NemoClaw maintainer to review it.
 - If the error identifies credential-bearing content, remove it from the native home.
