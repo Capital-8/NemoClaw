@@ -244,13 +244,8 @@ process.stdout.write(args.includes("-tf")
         acceleration: { kind: "none" },
       },
     } as const;
-    const originalTempDir = fs.mkdtempSync;
     let staging: string | undefined;
-    const tempDir = vi.spyOn(fs, "mkdtempSync").mockImplementation((...args) => {
-      const result = Reflect.apply(originalTempDir, fs, args) as string;
-      if (String(args[0]).includes("nemoclaw-stopped-state-")) staging = result;
-      return result;
-    });
+    const tempDir = vi.spyOn(fs, "mkdtempSync");
     syncBuiltinESMExports();
     try {
       await expect(
@@ -259,6 +254,8 @@ process.stdout.write(args.includes("-tf")
           captureRuntime: () => runtime,
         }),
       ).rejects.toThrow("Stopped state archive raw headers did not match its listing");
+      expect(String(tempDir.mock.calls[0]?.[0])).toContain("nemoclaw-stopped-state-");
+      staging = tempDir.mock.results[0]?.value as string | undefined;
     } finally {
       tempDir.mockRestore();
       syncBuiltinESMExports();
