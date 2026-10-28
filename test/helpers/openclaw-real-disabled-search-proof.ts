@@ -217,6 +217,11 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Search the project for TODO comments.",
         "Find and fix the bug in src/index.ts.",
         "Find and fix the bug in this function.",
+        "Find the largest files on disk",
+        "Investigate the disk usage",
+        "Find the process using port 8080.",
+        "Find which process is using port 8080",
+        "Find all files larger than 100 MB",
         "Investigate why the unit tests are failing",
         "Investigate why unit tests are failing",
         "Find and fix the failing unit tests.",
@@ -502,9 +507,28 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "an unrelated URL never reaches the real executor",
       );
       await runner().runAgentEnd({ success: true, messages: [] }, mixedContext);
-      for (const wrapped of [false, true]) {
+      for (const [prompt, wrapped] of [
+        ["Find and fix the bug in src/index.ts.", false],
+        ["Find and fix the bug in src/index.ts.", true],
+        ["Find the largest files on disk", false],
+        ["Find the largest files on disk", true],
+        ["Investigate the disk usage", false],
+        ["Investigate the disk usage", true],
+        ["Find the process using port 8080.", false],
+        ["Find the process using port 8080.", true],
+        ["Find which process is using port 8080", false],
+        ["Find which process is using port 8080", true],
+        ["Find all files larger than 100 MB", false],
+        ["Find all files larger than 100 MB", true],
+      ] as const) {
         const context = { runId: `local-discovery-${wrapped}` };
-        await admit(context, "Find and fix the bug in src/index.ts.");
+        await admit(context, prompt);
+        const policy = await runner().runBeforePromptBuild({ prompt, messages: [] }, context);
+        assert.deepEqual(
+          promptToolPolicy({ tools: availableTools }).apply(policy).tools,
+          availableTools,
+          "local inspection requests retain tools through the real prompt policy",
+        );
         const before: number = sideEffects;
         for (const [name, params] of [
           ["tool_search", { query: "search local project files" }],

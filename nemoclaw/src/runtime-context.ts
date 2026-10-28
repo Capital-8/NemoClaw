@@ -184,14 +184,22 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       /\b(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:browse|summarize|fetch|retrieve|read|get)\s+https?:\/\/\S+|\b(?:in|within|at|from)\s+https?:\/\/\S+/iu.test(
         request,
       );
+    // Local inspection does not require a supplied retrieval source. Keep it
+    // separate from source grants and from requests about an external topic.
+    const localWork =
+      /^(?:for\s+)?(?:(?:out\s+)?(?:which|what|why|how)(?:\s+many)?\s+)?(?:of\s+)?(?:(?:all|any|some|each|every|both|many)(?:\s+of)?\s+)?(?:(?:this|these|those|the|our|my|your|a|an)\s+)?(?:(?:top\s+)?\d+\s+)?(?:(?:(?:current|high|low|excessive)\s+)?(?:disk|storage|memory|cpu)\s+(?:usage|space|pressure)|(?:(?:running|active|stalled|zombie|background)\s+)?process(?:es)?|(?:(?:largest|biggest|smallest|oldest|newest|duplicate|empty|hidden|temporary|(?:recently\s+)?modified)\s+)?(?:files?|directories|folders?)|(?:file\s*system|file|directory)\s+permissions)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:is|are|was|were|has|have|owns?|uses?|using|listens?|listening|consumes?|consuming|holds?|holding|by|with|that|which|named|matching|larger|smaller|older|newer|for|to|and|then)\b|\s+(?:in|on|under|within)\s+(?:(?:this|the|our|my|your|local|current|working)\s+)*(?:disk|file\s*system|directory|folder|machine|sandbox|workspace|repo|repository|computer|host)\b)/iu.test(
+        subject,
+      );
     const externalResearch =
-      /^(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\b|\bto\s+search\b/iu.test(
-        source,
-      ) ||
+      (!localWork &&
+        /^(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\b|\bto\s+search\b/iu.test(
+          source,
+        )) ||
       /\bonline(?=\s*(?:[.!?]|$)|\s+(?:for|about|using|with|via|today|now|please)\b)/iu.test(
         source,
       ) ||
-      (/^(?:what|where|which|who|when|how)\b/iu.test(source) &&
+      (!localWork &&
+        /^(?:what|where|which|who|when|how)\b/iu.test(source) &&
         /\b(?:current|latest|recent|today(?:['’]s)?|now|live|up[ -]to[ -]date)\b/iu.test(source)) ||
       (/\b(?:official|latest|recent|alternative)\b/iu.test(source) &&
         /\b(?:documentation|docs|installation\s+(?:instructions|procedure|guides?)|release\s+notes|announcements|news|sources)\b/iu.test(
