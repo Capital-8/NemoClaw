@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../../src/lib/sandbox/build-context.ts";
 import { prebuildSandboxImageIfEligible } from "../../../src/lib/onboard/sandbox-prebuild.ts";
@@ -653,10 +654,10 @@ it("skips every live Podman cleanup command after an unreconciled group (#13482)
     artifacts,
     unreconciled: true,
     disposableNetworkCreated: true,
-    disposableNetworkId: "exact-network",
-    disposableNetworkName: "fallback-network",
+    disposableNetworkId: "a".repeat(64),
+    disposableNetworkName: "nemoclaw-portable-id-proof-123",
     runtimeDir: "/run/user/1001",
-    hermesImageRef: "localhost/hermes:fixed",
+    hermesImageRef: "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed",
     env: {},
   };
   try {
@@ -664,12 +665,28 @@ it("skips every live Podman cleanup command after an unreconciled group (#13482)
     expect(runCommand).not.toHaveBeenCalled();
     expect(
       JSON.parse(fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-state.json"), "utf8")),
-    ).toEqual({ schemaVersion: 1, status: "skipped-unreconciled-process" });
+    ).toEqual({
+      schemaVersion: 1,
+      status: "skipped-unreconciled-process",
+      resumeAfter: "supervised-process-group-exited",
+      selectedPodmanSocket: "/run/user/1001/podman/podman.sock",
+      skippedTargets: {
+        network: "a".repeat(64),
+        registryContainer: "nemoclaw-portable-registry",
+        hermesImage: "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed",
+        podmanSystemReset: true,
+      },
+    });
+    await cleanupPortablePodmanResources({ ...input, disposableNetworkId: null }, runCommand);
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-state.json"), "utf8")),
+    ).toMatchObject({ skippedTargets: { network: "nemoclaw-portable-id-proof-123" } });
+    expect(runCommand).not.toHaveBeenCalled();
     await cleanupPortablePodmanResources({ ...input, unreconciled: false }, runCommand);
     expect(runCommand.mock.calls.map(([args]) => args)).toEqual([
-      ["--url", "unix:///run/user/1001/podman/podman.sock", "network", "rm", "exact-network"],
+      ["--url", "unix:///run/user/1001/podman/podman.sock", "network", "rm", "a".repeat(64)],
       ["rm", "--force", "nemoclaw-portable-registry"],
-      ["image", "rm", "--force", "localhost/hermes:fixed"],
+      ["image", "rm", "--force", "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed"],
       ["system", "reset", "--force"],
     ]);
   } finally {
@@ -797,6 +814,7 @@ it("sequences authority, build evidence, and only safe sandbox OCI probes (#1348
   }
 });
 
+// source-shape-contract: compatibility -- The trusted rootless job deadline must contain its live E2E and setup and artifact-upload budgets
 it("reserves live-test time for bounded image, gateway, create, lifecycle, and cleanup work (#13482)", () => {
   expect(PORTABLE_GATEWAY_STARTUP_BUDGET_MS).toBeGreaterThanOrEqual(15_000);
   expect(PORTABLE_SANDBOX_CREATE_BUDGET_MS).toBeGreaterThanOrEqual(240_000);
@@ -813,8 +831,13 @@ it("reserves live-test time for bounded image, gateway, create, lifecycle, and c
       PORTABLE_SANDBOX_DELETE_BUDGET_MS +
       PORTABLE_ASSERTION_CLEANUP_RESERVE_MS,
   );
-  // Leave the 65-minute rootless job room for its 10-minute base build and artifact upload.
-  expect(PORTABLE_PROFILE_LIVE_TIMEOUT_MS).toBeLessThan(54 * 60_000);
+  const workflow = YAML.parse(
+    fs.readFileSync(".github/workflows/portable-profile-e2e.yaml", "utf8"),
+  ) as { jobs: { "rootless-linux": { "timeout-minutes": number } } };
+  const jobTimeoutMs = workflow.jobs["rootless-linux"]["timeout-minutes"] * 60_000;
+  expect(jobTimeoutMs).toBeGreaterThanOrEqual(
+    PORTABLE_PROFILE_LIVE_TIMEOUT_MS + 30 * 60_000 + 5 * 60_000,
+  );
 });
 
 it("retains a build signal and allowlisted error code without error text (#13482)", async () => {
@@ -1018,17 +1041,33 @@ it("stops live Podman cleanup after an unreconciled registry publish (#13482)", 
         unreconciled,
         disposableNetworkCreated: true,
         disposableNetworkId: null,
-        disposableNetworkName: "exact-network",
-        runtimeDir: "/run/user/1001",
-        hermesImageRef: "localhost/hermes:fixed",
+        disposableNetworkName: "credential=private-network-token",
+        runtimeDir: "/private/credential=private-socket-token",
+        hermesImageRef: "credential=private-image-token",
         env: {},
       },
       runCommand,
     );
     expect(runCommand).not.toHaveBeenCalled();
-    expect(
-      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-state.json"), "utf8")),
-    ).toEqual({ schemaVersion: 1, status: "skipped-unreconciled-process" });
+    const cleanupState = fs.readFileSync(
+      artifacts.pathFor("portable-podman-cleanup-state.json"),
+      "utf8",
+    );
+    expect(JSON.parse(cleanupState)).toEqual({
+      schemaVersion: 1,
+      status: "skipped-unreconciled-process",
+      resumeAfter: "supervised-process-group-exited",
+      selectedPodmanSocket: null,
+      skippedTargets: {
+        network: null,
+        registryContainer: "nemoclaw-portable-registry",
+        hermesImage: null,
+        podmanSystemReset: true,
+      },
+    });
+    expect(cleanupState).not.toContain("private-network-token");
+    expect(cleanupState).not.toContain("private-socket-token");
+    expect(cleanupState).not.toContain("private-image-token");
     unreconciled = false;
     await expect(
       publishPortableSandboxImage(

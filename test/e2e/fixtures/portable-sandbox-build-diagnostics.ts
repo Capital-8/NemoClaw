@@ -30,6 +30,11 @@ const POST_KILL_OUTPUT_DRAIN_MS = 1_000;
 const OCI_PROBE_TIMEOUT_MS = 30_000;
 const OCI_PROBE_CLEANUP_TIMEOUT_MS = 15_000;
 const SAFE_ERROR_CODES = new Set(["EACCES", "ENOENT", "EPERM", "ETIMEDOUT", "EUNRECONCILED"]);
+const ROOTLESS_RUNTIME_DIR = /^\/run\/user\/[0-9]{1,10}$/u;
+const PODMAN_NETWORK_ID = /^[a-f0-9]{64}$/u;
+const PODMAN_NETWORK_NAME = /^nemoclaw-portable-id-proof-[0-9]{1,10}$/u;
+const PORTABLE_HERMES_IMAGE_REF =
+  /^127\.0\.0\.1:5000\/nemoclaw-sandbox-local:[a-z0-9][a-z0-9_.-]{0,126}$/u;
 type BuildResult = {
   status: number | null;
   signal: NodeJS.Signals | null;
@@ -542,9 +547,29 @@ export async function cleanupPortablePodmanResources(
   },
 ): Promise<void> {
   if (input.unreconciled) {
+    const network = input.disposableNetworkCreated
+      ? input.disposableNetworkId && PODMAN_NETWORK_ID.test(input.disposableNetworkId)
+        ? input.disposableNetworkId
+        : PODMAN_NETWORK_NAME.test(input.disposableNetworkName)
+          ? input.disposableNetworkName
+          : null
+      : null;
     await input.artifacts.writeJson("portable-podman-cleanup-state.json", {
       schemaVersion: 1,
       status: "skipped-unreconciled-process",
+      resumeAfter: "supervised-process-group-exited",
+      selectedPodmanSocket: ROOTLESS_RUNTIME_DIR.test(input.runtimeDir)
+        ? `${input.runtimeDir}/podman/podman.sock`
+        : null,
+      skippedTargets: {
+        network,
+        registryContainer: "nemoclaw-portable-registry",
+        hermesImage:
+          input.hermesImageRef && PORTABLE_HERMES_IMAGE_REF.test(input.hermesImageRef)
+            ? input.hermesImageRef
+            : null,
+        podmanSystemReset: true,
+      },
     });
     return;
   }
