@@ -16,7 +16,7 @@ import { DeniedSearchState } from "./denied-search-state.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import { readNativeRoute } from "./onboard/native-route.js";
 import { getPluginConfig } from "./plugin-config.js";
-import { registerRuntimeContext } from "./runtime-context.js";
+import { registerRuntimeContext, researchScope } from "./runtime-context.js";
 import { configuredSearchEnabled } from "./search-config.js";
 import { safeResolvePath } from "./security/safe-resolve-path.js";
 import { isMemoryPath, scanForSecrets } from "./security/secret-scanner.js";
@@ -330,12 +330,7 @@ export default function register(api: OpenClawPluginApi): void {
   // 4. Register runtime context injection (sandbox-awareness hook)
   const pluginConfig = getPluginConfig(api);
   try {
-    registerRuntimeContext(api, pluginConfig, (supplied, args) => {
-      const identities = searchTurnKeys(args);
-      if (identities[0]) {
-        deniedSearchRuns.setSourceSupplied(identities[0], supplied, identities);
-      }
-    });
+    registerRuntimeContext(api, pluginConfig);
   } catch (err) {
     api.logger.warn(
       `Could not register runtime context hook: ${err instanceof Error ? err.message : String(err)}`,
@@ -369,7 +364,16 @@ export default function register(api: OpenClawPluginApi): void {
               "This turn cannot start safely because OpenClaw did not provide a run or session identity. Check the gateway logs before retrying.",
           };
         }
-        if (deniedSearchRuns.admit(identity, identities)) return undefined;
+        const prompt = readStringProperty(args[0], "prompt");
+        if (
+          deniedSearchRuns.admit(
+            identity,
+            identities,
+            prompt !== undefined && researchScope(prompt) === "supplied",
+          )
+        ) {
+          return undefined;
+        }
         return {
           outcome: "block",
           reason: "disabled-search turn admission unavailable",

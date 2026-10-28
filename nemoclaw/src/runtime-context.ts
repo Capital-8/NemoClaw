@@ -110,7 +110,7 @@ function buildRuntimeContextText(summary: RuntimeSummary, config: OpenClawConfig
   return lines.join("\n");
 }
 
-function researchScope(prompt: string): "external" | "supplied" | "ordinary" {
+export function researchScope(prompt: string): "external" | "supplied" | "ordinary" {
   // Generic questions need local tools without naming a source. Require external
   // research intent, and keep separate requests from exempting one another.
   // Normalize URLs before splitting so their path words cannot become requests.
@@ -150,7 +150,7 @@ function researchScope(prompt: string): "external" | "supplied" | "ordinary" {
     // Words in the requested research topic do not grant access to substitutes.
     const subject = source.slice(action[0].length).trimStart();
     const localSource =
-      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current|working)\s+directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?))?[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
+      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current|working)\s+directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
         subject,
       );
     const suppliedUrl =
@@ -175,11 +175,7 @@ function researchScope(prompt: string): "external" | "supplied" | "ordinary" {
 }
 
 /** Prepends runtime context and withholds tools for disabled-search research. */
-export function registerRuntimeContext(
-  api: OpenClawPluginApi,
-  pluginConfig: NemoClawConfig,
-  onSourceScope?: (supplied: boolean, args: readonly unknown[]) => void,
-): void {
+export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: NemoClawConfig): void {
   api.on("before_prompt_build", (...args) => {
     const event = args[0];
     const prompt =
@@ -189,7 +185,6 @@ export function registerRuntimeContext(
     // substitutes for research whose source the user has not supplied.
     const scope = typeof prompt === "string" ? researchScope(prompt) : "ordinary";
     const searchDisabled = configuredSearchEnabled(api.config) === false;
-    if (searchDisabled) onSourceScope?.(scope === "supplied", args);
     const unavailableSearch = searchDisabled && scope === "external";
     return {
       prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig), api.config),

@@ -13,7 +13,8 @@ import {
 } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
 
-vi.mock("./runtime-context.js", () => ({
+vi.mock("./runtime-context.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./runtime-context.js")>()),
   registerRuntimeContext: vi.fn((api: OpenClawPluginApi) => {
     api.on("before_prompt_build", () => undefined);
   }),
@@ -471,7 +472,7 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       void admission?.(...args);
       return handler!(...args);
     };
-    return { api, handler: admittedHandler!, admission: admission! };
+    return { api, handler: admittedHandler!, rawHandler: handler!, admission: admission! };
   }
 
   it.each([
@@ -482,6 +483,8 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       { file_path: "/sandbox/project/README.md" },
     ],
     ["Read the latest documentation in docs/README.md.", "read", { file_path: "docs/README.md" }],
+    ["Search the repository recursively for TODO comments.", "read", { file_path: "README.md" }],
+    ["Search the project code for TODO comments.", "read", { file_path: "src/index.ts" }],
     [
       "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
       "web_fetch",
@@ -496,9 +499,9 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       vi.mocked(mockedContext.registerRuntimeContext).mockImplementationOnce(
         realContext.registerRuntimeContext,
       );
-      const { api, handler, admission } = searchHook(false);
+      const { api, rawHandler: handler, admission } = searchHook(false);
       const context = { runId: "supplied-source" };
-      await admission({}, context);
+      await admission({ prompt }, context);
       const promptHook = vi
         .mocked(api.on)
         .mock.calls.find(([name]) => name === "before_prompt_build")?.[1];
@@ -516,12 +519,53 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       await handler({ toolName: "web_search", params: {} }, other);
       expect(handler({ toolName, params }, other)).toMatchObject({ block: true });
       // A mixed request still requires unavailable web research.
-      expect(
-        await promptHook?.({ prompt: `${prompt} Then search the web for alternatives.` }, context),
-      ).toHaveProperty("toolsAllow", []);
+      const mixedPrompt = `${prompt} Then search the web for alternatives.`;
+      await admission({ prompt: mixedPrompt }, context);
+      expect(await promptHook?.({ prompt: mixedPrompt }, context)).toHaveProperty("toolsAllow", []);
       expect(handler({ toolName, params }, context)).toMatchObject({ block: true });
     },
   );
+
+  it("keeps admission capacity after abandoned prompt builds and unadmitted tool calls", async () => {
+    const mockedContext = await import("./runtime-context.js");
+    const realContext =
+      await vi.importActual<typeof import("./runtime-context.js")>("./runtime-context.js");
+    vi.mocked(mockedContext.registerRuntimeContext).mockImplementationOnce(
+      realContext.registerRuntimeContext,
+    );
+    const { api, rawHandler, admission } = searchHook(false);
+    const promptHook = vi
+      .mocked(api.on)
+      .mock.calls.find(([name]) => name === "before_prompt_build")?.[1];
+    const supplied = { runId: "abandoned-supplied" };
+    const ordinary = { runId: "abandoned-ordinary" };
+    const prompt = "Fetch https://docs.nvidia.com/nemoclaw/.";
+    await promptHook?.({ prompt }, supplied);
+    await promptHook?.({ prompt: "Read README.md." }, ordinary);
+    expect(rawHandler({ toolName: "web_search", params: {} }, supplied)).toMatchObject({
+      block: true,
+    });
+    expect(
+      rawHandler(
+        { toolName: "web_fetch", params: { url: "https://docs.nvidia.com/nemoclaw/" } },
+        supplied,
+      ),
+    ).toMatchObject({ block: true });
+    expect(await admission({ prompt: "Read README.md." }, { runId: "unrelated" })).toBeUndefined();
+    expect(await admission({ prompt }, supplied)).toBeUndefined();
+    expect(rawHandler({ toolName: "web_search", params: {} }, supplied)).toMatchObject({
+      block: true,
+    });
+    expect(
+      rawHandler(
+        { toolName: "web_fetch", params: { url: "https://docs.nvidia.com/nemoclaw/" } },
+        supplied,
+      ),
+    ).toBeUndefined();
+    expect(await admission({ prompt: "Read README.md." }, ordinary)).toMatchObject({
+      outcome: "block",
+    });
+  });
 
   it.each([
     { toolName: "web_search", params: { query: "NemoClaw installation" } },

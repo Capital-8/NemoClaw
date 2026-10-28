@@ -18,6 +18,8 @@ describe("denied-search identity retention", () => {
   });
 
   it("caps denied identities and rejects excess turns", () => {
+    state.admit("run-first");
+    state.admit("run-second");
     state.deny("run-first");
     state.deny("run-second");
     expect(state.size).toBe(2);
@@ -34,15 +36,16 @@ describe("denied-search identity retention", () => {
   });
 
   it("keeps supplied-source scope with its admitted turn and clears it on completion", () => {
-    state.setSourceSupplied("runId:local", true, ["sessionKey:local"]);
+    state.admit("runId:local", ["sessionKey:local"], true);
     state.deny("runId:local");
     expect(state.blocks("runId:local")).toBe(false);
     expect(state.blocks("sessionKey:local")).toBe(false);
+    state.admit("runId:external");
     state.deny("runId:external");
     expect(state.blocks("runId:external")).toBe(true);
-    state.setSourceSupplied("runId:overflow", true);
+    expect(state.admit("runId:overflow", [], true)).toBe(false);
     expect(state.blocks("runId:overflow")).toBe(true);
-    state.setSourceSupplied("runId:local", false);
+    state.admit("runId:local");
     expect(state.blocks("runId:local")).toBe(true);
     state.delete("runId:local");
     expect(state.admit("runId:local")).toBe(true);
@@ -51,6 +54,8 @@ describe("denied-search identity retention", () => {
   });
 
   it("recovers admission after denied turns complete without admitting overflow substitutes", () => {
+    state.admit("retained-first");
+    state.admit("retained-second");
     state.deny("retained-first");
     state.deny("retained-second");
     state.deny("overflow-first");
@@ -69,6 +74,8 @@ describe("denied-search identity retention", () => {
   });
 
   it("expires abandoned denials without another tool call", () => {
+    state.admit("run-first");
+    state.admit("run-second");
     state.deny("run-first");
     state.deny("run-second");
     state.deny("run-overflow");
@@ -80,6 +87,7 @@ describe("denied-search identity retention", () => {
     expect(state.admit("ordinary-run")).toBe(true);
     expect(state.blocks("ordinary-run")).toBe(false);
     expect(state.blocks(undefined)).toBe(true);
+    state.admit("new-run");
     state.deny("new-run");
     expect(state.blocks("new-run")).toBe(true);
     expect(state.size).toBe(2);
@@ -89,11 +97,13 @@ describe("denied-search identity retention", () => {
     expect(state.admit("ordinary")).toBe(true);
     expect(state.blocks("ordinary")).toBe(false);
     state.delete("ordinary");
+    state.admit("denied");
     state.deny("denied");
     expect(state.canAdmit("denied")).toBe(true);
     expect(state.blocks("denied")).toBe(true);
     expect(state.blocks("ordinary")).toBe(true);
     expect(state.size).toBe(1);
+    state.admit("second-denied");
     state.deny("second-denied");
     expect(state.canAdmit("excess")).toBe(false);
     state.delete("second-denied");
@@ -103,6 +113,7 @@ describe("denied-search identity retention", () => {
   });
 
   it("learns missing aliases from a known turn without losing its denial", () => {
+    state.admit("runId:known");
     state.deny("runId:known");
     expect(state.blocks("runId:known", ["runId:known", "sessionKey:session", "sessionId:id"])).toBe(
       true,
@@ -115,9 +126,11 @@ describe("denied-search identity retention", () => {
   });
 
   it("cancels its last timer after matching cleanup or configuration recovery", () => {
+    state.admit("finished");
     state.deny("finished");
     state.delete("finished");
     expect(vi.getTimerCount()).toBe(0);
+    state.admit("next");
     state.deny("next");
     state.clear();
     expect(state.size).toBe(0);
@@ -143,6 +156,23 @@ describe("denied-search identity retention", () => {
     state.delete("runId:ordinary-next");
     expect(state.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not reserve capacity for a denial without admission", () => {
+    state.deny("unadmitted");
+    expect(state.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(state.blocks("unadmitted")).toBe(true);
+    expect(state.admit("unrelated")).toBe(true);
+  });
+
+  it("does not revive expired ownership through a tool denial", () => {
+    state.admit("expired", [], true);
+    vi.setSystemTime(Date.now() + SEARCH_DENIAL_RETENTION_MS);
+    state.deny("expired");
+    expect(state.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(state.blocks("expired")).toBe(true);
   });
 
   it("keeps shared-session denials owned through overflow and partial completion", () => {

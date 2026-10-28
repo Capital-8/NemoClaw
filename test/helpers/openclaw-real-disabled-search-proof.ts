@@ -185,6 +185,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Search the current directory for the config file.",
         "Search the project for TODO comments.",
         "Search through the project files for TODO comments.",
+        "Search the repository recursively for TODO comments.",
+        "Search the project code for TODO comments.",
         "Read the latest documentation in docs/README.md.",
         "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
       ]) {
@@ -252,11 +254,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         assert.equal(result.details?.status, "blocked");
         assert.match(result.content[0]!.text, /Web search is unavailable in this sandbox/u);
       }
-      async function admit(ctx: ToolContext): Promise<void> {
-        const result = await runner().runBeforeAgentRun(
-          { prompt: "Read README.md.", messages: [] },
-          ctx,
-        );
+      async function admit(ctx: ToolContext, prompt = "What time is it?"): Promise<void> {
+        const result = await runner().runBeforeAgentRun({ prompt, messages: [] }, ctx);
         assert.notEqual(
           result?.decision?.outcome,
           "block",
@@ -295,6 +294,13 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       await runner().runGatewayStop({}, {});
       config.tools.web.search.enabled = false;
       for (let index = 0; index < SEARCH_DENIAL_IDENTITY_LIMIT; index++) {
+        await runner().runBeforePromptBuild(
+          { prompt: "Read README.md.", messages: [] },
+          { runId: `abandoned-${index}` },
+        );
+      }
+      blocked(await call("web_search", { runId: "abandoned-0" }, "unadmitted-search"));
+      for (let index = 0; index < SEARCH_DENIAL_IDENTITY_LIMIT; index++) {
         const context = { runId: `capacity-${index}`, sessionKey: `capacity-session-${index}` };
         await admit(context);
         blocked(await call("web_search", context, `capacity-search-${index}`));
@@ -331,6 +337,12 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const [prompt, tool, params] of [
         ["Search the project for TODO comments.", "read", { file_path: "/sandbox/README.md" }],
         [
+          "Search the repository recursively for TODO comments.",
+          "read",
+          { file_path: "README.md" },
+        ],
+        ["Search the project code for TODO comments.", "read", { file_path: "src/index.ts" }],
+        [
           "Read the latest documentation in docs/README.md.",
           "read",
           { file_path: "docs/README.md" },
@@ -342,16 +354,15 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         ],
       ] as const) {
         const context = { runId: "supplied-source" };
-        await admit(context);
+        await admit(context, prompt);
         await runner().runBeforePromptBuild({ prompt, messages: [] }, context);
         const before: number = sideEffects;
         blocked(await call("web_search", context, "supplied-search"));
         await call(tool, context, "supplied-read", params);
         assert.equal(sideEffects, before + 1, "supplied sources remain usable after denied search");
-        await runner().runBeforePromptBuild(
-          { prompt: `${prompt} Then search the web for alternatives.`, messages: [] },
-          context,
-        );
+        const mixedPrompt = `${prompt} Then search the web for alternatives.`;
+        await admit(context, mixedPrompt);
+        await runner().runBeforePromptBuild({ prompt: mixedPrompt, messages: [] }, context);
         blocked(await call(tool, context, "mixed-read", params));
         assert.equal(sideEffects, before + 1, "mixed external research cannot use substitutes");
         await runner().runAgentEnd({ success: true, messages: [] }, context);

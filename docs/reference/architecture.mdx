@@ -241,6 +241,8 @@ It directs the agent to disclose unavailable search, report failed fetches, and 
 A press release or announcement must not be presented as installation documentation.
 When web search is disabled, the plugin classifies each request before inference.
 For external research, it supplies an empty per-turn tool allowlist, so the model cannot invoke tools.
+Admission reserves turn state and records whether the user supplied a source.
+Prompt construction only selects tools and adds context.
 Ordinary local work and retrieval from user-supplied sources retain their tools.
 After a denied search attempt, tool interception blocks substitute research within the same turn while preserving supplied-source work.
 The agent can use content successfully retrieved from a user-supplied URL when search is disabled.

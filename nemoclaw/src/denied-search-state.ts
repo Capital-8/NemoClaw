@@ -48,13 +48,16 @@ export class DeniedSearchState {
     return true;
   }
 
-  admit(identity: string, aliases: readonly string[] = []): boolean {
+  admit(identity: string, aliases: readonly string[] = [], sourceSupplied = false): boolean {
     if (!this.canAdmit(identity, aliases)) return false;
-    if (!this.owner(identity)) {
+    const existing = this.owner(identity);
+    if (existing) {
+      existing[1].sourceSupplied = sourceSupplied;
+    } else {
       const turn: DeniedSearchTurn = {
         expiresAt: Date.now() + SEARCH_DENIAL_RETENTION_MS,
         denied: false,
-        sourceSupplied: false,
+        sourceSupplied,
         aliases: new Set([identity]),
       };
       this.rememberAliases(turn, aliases);
@@ -65,18 +68,16 @@ export class DeniedSearchState {
   }
 
   deny(identity: string, aliases: readonly string[] = []): void {
-    if (!this.admit(identity, aliases)) return;
+    this.expire();
     const turn = this.owner(identity)?.[1];
-    if (!turn) return;
+    if (!turn) {
+      this.schedule();
+      return;
+    }
+    this.rememberAliases(turn, aliases);
     turn.denied = true;
     turn.expiresAt = Date.now() + SEARCH_DENIAL_RETENTION_MS;
     this.schedule();
-  }
-
-  setSourceSupplied(identity: string, supplied: boolean, aliases: readonly string[] = []): void {
-    if (!this.admit(identity, aliases)) return;
-    const turn = this.owner(identity)?.[1];
-    if (turn) turn.sourceSupplied = supplied;
   }
 
   blocks(identity: string | undefined, aliases: readonly string[] = []): boolean {
