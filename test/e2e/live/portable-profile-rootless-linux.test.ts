@@ -81,6 +81,7 @@ import {
 } from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
 import {
   PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
+  cleanupPortablePodmanResources,
   portableSandboxImageBuilder as buildImageFixture,
   publishPortableSandboxImage as publishImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
@@ -979,6 +980,7 @@ async function main(
   let hermesImageId: string | null = null;
   let hermesImageRef: string | null = null;
   let hermesContextRetired = false;
+  let unreconciledPodmanGroup = false;
   let hermesLifecycleEvidence: Record<string, unknown> | null = null;
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
     .split("\n")
@@ -1036,7 +1038,16 @@ async function main(
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
-    const buildImage = buildImageFixture(artifacts, progress, verifiedPodmanUrl, BASE_IMAGE);
+    const buildImage = buildImageFixture(
+      artifacts,
+      progress,
+      verifiedPodmanUrl,
+      BASE_IMAGE,
+      undefined,
+      () => {
+        unreconciledPodmanGroup = true;
+      },
+    );
     await waitForRegistry(artifacts, shellProbe);
     process.env.E2E_TARGET_ID === "portable-hermes-finalization" &&
       (await capturePortableRegistryProcessBoundary({
@@ -1441,50 +1452,28 @@ async function main(
 
     console.log("Portable profile rootless environment E2E passed.");
   } finally {
-    void (disposableNetworkCreated
-      ? spawnSync(
-          "podman",
-          [
-            "--url",
-            `unix://${runtimeDir}/podman/podman.sock`,
-            "network",
-            "rm",
-            disposableNetworkId ?? disposableNetworkName,
-          ],
-          {
-            env: process.env,
-            killSignal: "SIGKILL",
-            stdio: "ignore",
-            timeout: 15_000,
-          },
-        )
-      : undefined);
-    spawnSync("podman", ["rm", "--force", "nemoclaw-portable-registry"], {
-      env: process.env,
-      killSignal: "SIGKILL",
-      stdio: "ignore",
-      timeout: 15_000,
-    });
-    void (hermesImageRef
-      ? spawnSync("podman", ["image", "rm", "--force", hermesImageRef], {
-          env: process.env,
-          killSignal: "SIGKILL",
-          stdio: "ignore",
-          timeout: 15_000,
-        })
-      : undefined);
-    spawnSync("podman", ["system", "reset", "--force"], {
-      env: process.env,
-      killSignal: "SIGKILL",
-      stdio: "ignore",
-      timeout: 15_000,
-    });
-    cleanupPortableHostGatewayAlias(
-      PORTABLE_HOST_GATEWAY_IP,
-      gatewayAliasPresentBefore,
-      process.env,
-    );
-    await cleanupPortableProfileRootlessFixture(runtimeDir, root);
+    try {
+      await cleanupPortablePodmanResources({
+        artifacts,
+        unreconciled: unreconciledPodmanGroup,
+        disposableNetworkCreated,
+        disposableNetworkId,
+        disposableNetworkName,
+        runtimeDir,
+        hermesImageRef,
+        env: process.env,
+      });
+    } finally {
+      try {
+        cleanupPortableHostGatewayAlias(
+          PORTABLE_HOST_GATEWAY_IP,
+          gatewayAliasPresentBefore,
+          process.env,
+        );
+      } finally {
+        await cleanupPortableProfileRootlessFixture(runtimeDir, root);
+      }
+    }
   }
 }
 test(

@@ -19,6 +19,7 @@ import {
   PORTABLE_SANDBOX_CREATE_BUDGET_MS,
   PORTABLE_SANDBOX_DELETE_BUDGET_MS,
   buildPortableSandboxImageWithEvidence,
+  cleanupPortablePodmanResources,
   portableSandboxImageBuilder,
   probePortableSandboxOciAfterBuildFailure,
   probePodmanStore,
@@ -606,8 +607,8 @@ it("records a passing OCI probe and fails closed when exact cleanup is unproved 
     const runUnreconciled = vi
       .fn()
       .mockResolvedValueOnce(result(0))
-      .mockResolvedValueOnce(unreconciled)
-      .mockResolvedValueOnce(result(0));
+      .mockResolvedValueOnce(unreconciled);
+    const onUnreconciled = vi.fn();
     await expect(
       probePortableSandboxOciAfterBuildFailure(
         "pinned-base",
@@ -615,14 +616,63 @@ it("records a passing OCI probe and fails closed when exact cleanup is unproved 
         artifacts,
         progress,
         runUnreconciled,
+        onUnreconciled,
       ),
     ).rejects.toThrow("Portable sandbox OCI probe cleanup unproved");
-    expect(runUnreconciled).toHaveBeenCalledTimes(3);
+    expect(runUnreconciled).toHaveBeenCalledTimes(2);
+    expect(onUnreconciled).toHaveBeenCalledOnce();
     expect(
       JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
     ).toMatchObject({ category: "cleanup-unproved", cleanupSucceeded: false });
+
+    const queryThrows = vi.fn().mockRejectedValue(new Error("private child state"));
+    const onUnknown = vi.fn();
+    await expect(
+      probePortableSandboxOciAfterBuildFailure(
+        "pinned-base",
+        {},
+        artifacts,
+        progress,
+        queryThrows,
+        onUnknown,
+      ),
+    ).rejects.toThrow("Portable sandbox OCI probe cleanup unproved");
+    expect(queryThrows).toHaveBeenCalledOnce();
+    expect(onUnknown).toHaveBeenCalledOnce();
   } finally {
     progress.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("skips every live Podman cleanup command after an unreconciled group (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-state-"));
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const runCommand = vi.fn();
+  const input = {
+    artifacts,
+    unreconciled: true,
+    disposableNetworkCreated: true,
+    disposableNetworkId: "exact-network",
+    disposableNetworkName: "fallback-network",
+    runtimeDir: "/run/user/1001",
+    hermesImageRef: "localhost/hermes:fixed",
+    env: {},
+  };
+  try {
+    await cleanupPortablePodmanResources(input, runCommand);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-state.json"), "utf8")),
+    ).toEqual({ schemaVersion: 1, status: "skipped-unreconciled-process" });
+    await cleanupPortablePodmanResources({ ...input, unreconciled: false }, runCommand);
+    expect(runCommand.mock.calls.map(([args]) => args)).toEqual([
+      ["--url", "unix:///run/user/1001/podman/podman.sock", "network", "rm", "exact-network"],
+      ["rm", "--force", "nemoclaw-portable-registry"],
+      ["image", "rm", "--force", "localhost/hermes:fixed"],
+      ["system", "reset", "--force"],
+    ]);
+  } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -659,12 +709,20 @@ it("sequences authority, build evidence, and only safe sandbox OCI probes (#1348
   const probeOci = vi.fn(async () => {
     events.push("probe");
   });
+  const onUnreconciled = vi.fn();
   try {
-    const buildImage = portableSandboxImageBuilder(artifacts, progress, selectedUrl, baseImage, {
-      verifyAuthority,
-      buildWithEvidence,
-      probeOci,
-    });
+    const buildImage = portableSandboxImageBuilder(
+      artifacts,
+      progress,
+      selectedUrl,
+      baseImage,
+      {
+        verifyAuthority,
+        buildWithEvidence,
+        probeOci,
+      },
+      onUnreconciled,
+    );
     expect(await buildImage("sandbox")(args, options)).toBe(0);
     expect(await buildImage("sandbox")(args, options)).toBe(1);
     expect(await buildImage("sandbox")(args, options)).toBeNull();
@@ -714,8 +772,25 @@ it("sequences authority, build evidence, and only safe sandbox OCI probes (#1348
       expect.any(Function),
     );
     expect(probeOci).toHaveBeenCalledTimes(2);
-    expect(probeOci).toHaveBeenNthCalledWith(1, baseImage, options.env, artifacts, progress);
-    expect(probeOci).toHaveBeenNthCalledWith(2, baseImage, options.env, artifacts, progress);
+    expect(probeOci).toHaveBeenNthCalledWith(
+      1,
+      baseImage,
+      options.env,
+      artifacts,
+      progress,
+      undefined,
+      onUnreconciled,
+    );
+    expect(probeOci).toHaveBeenNthCalledWith(
+      2,
+      baseImage,
+      options.env,
+      artifacts,
+      progress,
+      undefined,
+      onUnreconciled,
+    );
+    expect(onUnreconciled).toHaveBeenCalledOnce();
   } finally {
     progress.stop();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -809,6 +884,18 @@ it("retains a build signal and allowlisted error code without error text (#13482
       category: "process-isolation",
     });
     expect(unreconciled).not.toContain("private-build-token");
+    const thrownSignal = vi.fn();
+    await expect(
+      buildPortableSandboxImageWithEvidence(
+        ["build"],
+        { env: {}, stdio: "inherit" },
+        artifacts,
+        progress,
+        vi.fn().mockRejectedValue(new Error("unknown child state")),
+        thrownSignal,
+      ),
+    ).rejects.toThrow("unknown child state");
+    expect(thrownSignal).toHaveBeenCalledWith(false);
   } finally {
     progress.stop();
     fs.rmSync(directory, { recursive: true, force: true });
