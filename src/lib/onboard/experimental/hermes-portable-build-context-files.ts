@@ -122,6 +122,10 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily-hermes-v1.yaml", mode: "100644" },
+  {
+    path: "nemoclaw-blueprint/provider-profiles/tavily-policy-binding-v1.yaml",
+    mode: "100644",
+  },
   { path: "nemoclaw-blueprint/provider-profiles/tavily.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/router/llm-router", mode: "160000" },
   { path: "nemoclaw-blueprint/router/pool-config.yaml", mode: "100644" },

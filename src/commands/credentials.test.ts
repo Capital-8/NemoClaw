@@ -79,8 +79,8 @@ describe("credentials oclif adapter source coverage", () => {
     ["TaViLy", "nemohermes", "tavily-hermes-v1"],
     ["tavily-hermes-v1", "hermes", "tavily-hermes-v1"],
     ["tavily-hermes-v1", undefined, "tavily-hermes-v1"],
-    ["tavily", "dcode", "tavily"],
-    ["tavily", "openclaw", "tavily"],
+    ["tavily", "dcode", "tavily-policy-binding-v1"],
+    ["tavily", "openclaw", "tavily-policy-binding-v1"],
   ] as const)(
     "registers %s for %s using the intended runtime profile",
     async (type, agent, profile) => {
@@ -150,7 +150,7 @@ describe("credentials oclif adapter source coverage", () => {
     const exportedProfile = JSON.stringify(
       parseYaml(
         fs.readFileSync(
-          path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily.yaml"),
+          path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily-policy-binding-v1.yaml"),
           "utf8",
         ),
       ),
@@ -176,7 +176,7 @@ describe("credentials oclif adapter source coverage", () => {
           "--name",
           "shared-search",
           "--type",
-          "tavily",
+          "tavily-policy-binding-v1",
           "--credential",
           "TAVILY_API_KEY",
         ],

@@ -61,6 +61,31 @@ export {
   UnsafeGatewayStateDirectoryError,
 } from "./gateway/state-dir";
 
+/**
+ * Providers the gateway reports as attached to one sandbox. A failed or
+ * unreadable observation returns null, so the caller adds no credential
+ * binding rather than submitting one the gateway would reject.
+ */
+export async function readSandboxProviderAttachments(
+  sandboxName: string,
+  sandbox: SandboxGatewayBinding | null,
+): Promise<readonly string[] | null> {
+  if (!sandbox) return null;
+  try {
+    const { createSandboxes } =
+      require("../adapters/openshell/sandboxes") as typeof import("../adapters/openshell/sandboxes");
+    const row = await createSandboxes().get({
+      target: { kind: "named", gatewayName: resolveSandboxGatewayName(sandbox) },
+      workspace: "default",
+      name: sandboxName,
+      signal: AbortSignal.timeout(5_000),
+    });
+    return row ? row.providers : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve one attempt-wide onboarding target without overriding an authoritative rebuild. */
 export function resolveCoreOnboardGatewayBinding(options: {
   authoritativeGateway?: { name: string; port: number } | null;

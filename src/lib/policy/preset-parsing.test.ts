@@ -20,6 +20,7 @@ import {
   applyWebSearchCredentialBinding,
   bindWebSearchPresetProviders,
   isWebSearchPolicyPreset,
+  parseWebSearchEndpointContract,
   resolveWebSearchCredentialProvider,
   webSearchCredentialProviderCandidates,
 } from "./preset-parsing";
@@ -30,6 +31,8 @@ const tavilyPreset = `preset:\n  name: tavily\n  description: Tavily Search API 
 function tavilyEndpoints(content: string): Array<Record<string, unknown>> {
   return YAML.parse(content).network_policies.tavily.endpoints;
 }
+
+const tavilyContract = parseWebSearchEndpointContract(tavilyPreset, "tavily");
 
 describe("web-search credential provider resolution", () => {
   it("recognizes the web-search presets", () => {
@@ -84,15 +87,38 @@ describe("web-search credential provider resolution", () => {
 });
 
 describe("web-search credential binding", () => {
-  it("binds every unbound endpoint of the preset policy", () => {
-    const bound = applyWebSearchCredentialBinding(tavilyPreset, "tavily", "tavily-search");
+  it("does not bind an endpoint that differs from the preset contract", () => {
+    const substituted = tavilyPreset.replace("host: api.tavily.com", "host: operator.example");
+    const bound = applyWebSearchCredentialBinding(
+      substituted,
+      "tavily",
+      "tavily-search",
+      tavilyContract,
+    );
+    expect(
+      YAML.parse(bound).network_policies.tavily.endpoints[0].credential_binding,
+    ).toBeUndefined();
+    expect(applyWebSearchCredentialBinding(tavilyPreset, "tavily", "tavily-search", null)).toBe(
+      tavilyPreset,
+    );
+  });
+
+  it("binds every unbound contract endpoint of the preset policy", () => {
+    const bound = applyWebSearchCredentialBinding(
+      tavilyPreset,
+      "tavily",
+      "tavily-search",
+      tavilyContract,
+    );
     expect(tavilyEndpoints(bound)).toEqual([
       expect.objectContaining({ credential_binding: { provider: "tavily-search" } }),
     ]);
   });
 
   it("leaves the preset unchanged when no provider is resolved", () => {
-    expect(applyWebSearchCredentialBinding(tavilyPreset, "tavily", null)).toBe(tavilyPreset);
+    expect(applyWebSearchCredentialBinding(tavilyPreset, "tavily", null, tavilyContract)).toBe(
+      tavilyPreset,
+    );
   });
 
   it("preserves an existing credential binding", () => {
@@ -100,16 +126,19 @@ describe("web-search credential binding", () => {
       "        request_body_credential_rewrite: true\n",
       "        request_body_credential_rewrite: true\n        credential_binding:\n          provider: operator-provider\n",
     );
-    expect(applyWebSearchCredentialBinding(existing, "tavily", "tavily-search")).toBe(existing);
+    expect(
+      applyWebSearchCredentialBinding(existing, "tavily", "tavily-search", tavilyContract),
+    ).toBe(existing);
   });
 
   it("binds each web-search policy present in a sandbox policy document", () => {
-    const document = `version: 1\nnetwork_policies:\n  tavily:\n    endpoints:\n      - host: api.tavily.com\n        port: 443\n  brave:\n    endpoints:\n      - host: api.search.brave.com\n        port: 443\n  weather:\n    endpoints:\n      - host: wttr.in\n        port: 443\n`;
+    const document = `version: 1\nnetwork_policies:\n  tavily:\n    endpoints:\n      - host: api.tavily.com\n        port: 443\n        protocol: rest\n        enforcement: enforce\n        request_body_credential_rewrite: true\n        rules:\n          - allow: { method: POST, path: "/search" }\n  brave:\n    endpoints:\n      - host: api.search.brave.com\n        port: 443\n  weather:\n    endpoints:\n      - host: wttr.in\n        port: 443\n`;
     const bound = bindWebSearchPresetProviders({
       content: document,
       sandboxName,
       agentName: "langchain-deepagents-code",
       availableProviders: new Set(["tavily-search"]),
+      contracts: { tavily: tavilyContract },
     });
     const parsed = YAML.parse(bound).network_policies;
     expect(parsed.tavily.endpoints[0].credential_binding).toEqual({ provider: "tavily-search" });
@@ -132,7 +161,9 @@ describe("loadPresetForSandbox web-search binding", () => {
     });
     mocks.listExtraProviders.mockReturnValue(["tavily-search"]);
 
-    const content = await loadPresetForSandbox(sandboxName, "tavily");
+    const content = await loadPresetForSandbox(sandboxName, "tavily", {
+      attachedProviders: ["tavily-search"],
+    });
 
     expect(content).not.toBeNull();
     expect(tavilyEndpoints(content!)).toEqual([
@@ -148,10 +179,27 @@ describe("loadPresetForSandbox web-search binding", () => {
     });
     mocks.listExtraProviders.mockReturnValue([`${sandboxName}-tavily-search`]);
 
-    const content = await loadPresetForSandbox(sandboxName, "tavily");
+    const content = await loadPresetForSandbox(sandboxName, "tavily", {
+      attachedProviders: [`${sandboxName}-tavily-search`],
+    });
 
     expect(tavilyEndpoints(content!)).toEqual([
       expect.objectContaining({ credential_binding: { provider: `${sandboxName}-tavily-search` } }),
+    ]);
+  });
+
+  it("omits the binding when the recorded provider is not attached", async () => {
+    mocks.getSandbox.mockReturnValue({
+      name: sandboxName,
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw",
+    });
+    mocks.listExtraProviders.mockReturnValue(["tavily-search"]);
+
+    const content = await loadPresetForSandbox(sandboxName, "tavily", { attachedProviders: [] });
+
+    expect(tavilyEndpoints(content!)).toEqual([
+      expect.not.objectContaining({ credential_binding: expect.anything() }),
     ]);
   });
 
@@ -163,7 +211,9 @@ describe("loadPresetForSandbox web-search binding", () => {
     });
     mocks.listExtraProviders.mockReturnValue([]);
 
-    const content = await loadPresetForSandbox(sandboxName, "tavily");
+    const content = await loadPresetForSandbox(sandboxName, "tavily", {
+      attachedProviders: ["tavily-search"],
+    });
 
     expect(tavilyEndpoints(content!)).toEqual([
       expect.not.objectContaining({ credential_binding: expect.anything() }),
@@ -174,7 +224,9 @@ describe("loadPresetForSandbox web-search binding", () => {
     mocks.getSandbox.mockReturnValue({ name: sandboxName, agent: "openclaw" });
     mocks.listExtraProviders.mockReturnValue(["tavily-search"]);
 
-    const content = await loadPresetForSandbox(sandboxName, "weather");
+    const content = await loadPresetForSandbox(sandboxName, "weather", {
+      attachedProviders: ["tavily-search"],
+    });
 
     expect(content).not.toBeNull();
     const endpoints = YAML.parse(content!).network_policies.weather.endpoints;

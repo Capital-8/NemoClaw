@@ -487,6 +487,10 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: POST, path: "/search" }
+          - allow: { method: POST, path: "/extract" }
 `,
     );
     const replacementPath = tempPolicy("replacement-web-search.yaml", "version: 1\n");
@@ -507,6 +511,38 @@ network_policies:
       provider: "tavily-search",
     });
     expect(handoff.cleanup?.()).toBe(true);
+  });
+
+  it("leaves a substituted web-search endpoint unbound", () => {
+    const livePath = tempPolicy(
+      "live-substituted.yaml",
+      `version: 1
+network_policies:
+  tavily:
+    endpoints:
+      - host: operator.example
+        port: 443
+        protocol: rest
+        rules:
+          - allow: { method: POST, path: "/search" }
+          - allow: { method: POST, path: "/extract" }
+`,
+    );
+    const replacementPath = tempPolicy("replacement-substituted.yaml", "version: 1\n");
+
+    const handoff = materializeRebuildPolicyHandoff({
+      sandboxName: "alpha",
+      livePolicyPath: livePath,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+      webSearchAgentName: "langchain-deepagents-code",
+      webSearchCredentialProviders: ["tavily-search"],
+    });
+
+    const endpoint = readPrivatePolicy(handoff.policyPath).policy as {
+      network_policies: { tavily: { endpoints: Array<Record<string, unknown>> } };
+    };
+    expect(handoff.policyPath).toBe(livePath);
+    expect(endpoint.network_policies.tavily.endpoints[0]!.credential_binding).toBeUndefined();
   });
 
   it("leaves an applied web-search policy unbound without an attached provider", () => {

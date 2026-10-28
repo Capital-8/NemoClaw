@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
@@ -11,12 +12,35 @@ import {
 } from "../../adapters/openshell/policy-boundary";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
-import { bindWebSearchPresetProviders } from "../../policy/preset-parsing";
+import {
+  bindWebSearchPresetProviders,
+  parseWebSearchEndpointContract,
+} from "../../policy/preset-parsing";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
 const REBUILD_POLICY_HANDOFF_PREFIX = "nemoclaw-rebuild-policy-handoff";
+
+function webSearchRebuildContracts(): Record<
+  string,
+  ReturnType<typeof parseWebSearchEndpointContract>
+> {
+  const contracts: Record<string, ReturnType<typeof parseWebSearchEndpointContract>> = {};
+  const presetsDir = path.join(
+    path.resolve(__dirname, "..", "..", "..", ".."),
+    "nemoclaw-blueprint",
+    "policies",
+    "presets",
+  );
+  for (const presetName of ["brave", "tavily"]) {
+    const file = path.join(presetsDir, `${presetName}.yaml`);
+    contracts[presetName] = fs.existsSync(file)
+      ? parseWebSearchEndpointContract(fs.readFileSync(file, "utf8"), presetName)
+      : null;
+  }
+  return contracts;
+}
 
 type PolicyMapping = Record<string, unknown>;
 
@@ -328,6 +352,7 @@ function bindRebuildWebSearchProviders(
     sandboxName: input.sandboxName,
     agentName: input.webSearchAgentName,
     availableProviders: new Set(providers),
+    contracts: webSearchRebuildContracts(),
   });
 }
 

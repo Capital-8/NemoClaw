@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
 import { isIP } from "node:net";
 import YAML from "yaml";
 
@@ -175,29 +176,121 @@ export function resolveWebSearchCredentialProvider(input: {
   readonly sandboxName: string;
   readonly agentName?: string | null;
   readonly availableProviders: ReadonlySet<string>;
+  /**
+   * Providers attached to the target sandbox. Omitted for the rebuild handoff,
+   * which binds before physical attachment. When present, a candidate the
+   * sandbox does not attach does not qualify: the gateway rejects a
+   * credential_binding that names an unattached provider.
+   */
+  readonly attachedProviders?: ReadonlySet<string>;
 }): string | null {
   for (const candidate of webSearchCredentialProviderCandidates(
     input.presetName,
     input.sandboxName,
     input.agentName,
   )) {
-    if (input.availableProviders.has(candidate)) return candidate;
+    if (!input.availableProviders.has(candidate)) continue;
+    if (input.attachedProviders && !input.attachedProviders.has(candidate)) continue;
+    return candidate;
   }
   return null;
+}
+
+/**
+ * Network contract an endpoint must match before it can receive a web-search
+ * credential binding. A binding hands the stored credential to every request
+ * the endpoint allows, so the binding is granted only to the destination the
+ * checked-in preset declares.
+ */
+export type WebSearchEndpointContract = Readonly<{
+  host: string;
+  port: number;
+  protocol: string;
+  enforcement: string;
+  rules: readonly Readonly<Record<string, JsonValue>>[];
+  requestBodyCredentialRewrite: boolean;
+}>;
+
+const WEB_SEARCH_CONTRACT_KEYS = ["host", "port", "protocol", "enforcement", "rules"] as const;
+
+function contractString(value: JsonValue): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function contractNumber(value: JsonValue): number | null {
+  return typeof value === "number" ? value : null;
+}
+
+function contractRules(value: JsonValue): WebSearchEndpointContract["rules"] | null {
+  if (!Array.isArray(value) || value.length === 0 || !value.every(isPolicyObject)) return null;
+  return value;
+}
+
+/**
+ * Derive the endpoint contract from the checked-in preset content. The preset
+ * is the only authority for the destination that may receive the credential, so
+ * a preset that does not declare exactly one complete endpoint has no contract
+ * and receives no binding.
+ */
+export function parseWebSearchEndpointContract(
+  presetContent: string,
+  presetName: string,
+): WebSearchEndpointContract | null {
+  let parsed: PolicyValue;
+  try {
+    parsed = YAML.parse(presetContent);
+  } catch {
+    return null;
+  }
+  if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) return null;
+  const policy = parsed.network_policies[presetName];
+  if (!isPolicyObject(policy) || !Array.isArray(policy.endpoints)) return null;
+  if (policy.endpoints.length !== 1 || !isPolicyObject(policy.endpoints[0])) return null;
+  const endpoint = policy.endpoints[0];
+  if (Object.hasOwn(endpoint, "credential_binding")) return null;
+  const host = contractString(endpoint.host);
+  const port = contractNumber(endpoint.port);
+  const protocol = contractString(endpoint.protocol);
+  const enforcement = contractString(endpoint.enforcement);
+  const rules = contractRules(endpoint.rules);
+  if (!host || port === null || !protocol || !enforcement || !rules) return null;
+  return {
+    host,
+    port,
+    protocol,
+    enforcement,
+    rules,
+    requestBodyCredentialRewrite: endpoint.request_body_credential_rewrite === true,
+  };
+}
+
+function matchesWebSearchEndpointContract(
+  endpoint: PolicyObject,
+  contract: WebSearchEndpointContract,
+): boolean {
+  return (
+    WEB_SEARCH_CONTRACT_KEYS.every((key) =>
+      isDeepStrictEqual(endpoint[key], contract[key as keyof WebSearchEndpointContract]),
+    ) &&
+    (endpoint.request_body_credential_rewrite === true) === contract.requestBodyCredentialRewrite
+  );
 }
 
 /**
  * Bind a web-search preset endpoint to the provider that holds its credential.
  * OpenShell resolves a static credential only at an endpoint that names its
  * provider, so an unbound endpoint denies the request after the network and L7
- * stages allow it.
+ * stages allow it. The binding is added only to an endpoint that matches the
+ * checked-in preset contract; a substituted or added endpoint keeps none of
+ * the credential.
  */
 export function applyWebSearchCredentialBinding(
   content: string,
   presetName: string,
   providerName: string | null,
+  contract: WebSearchEndpointContract | null,
 ): string {
-  if (!providerName) return content;
+  if (!providerName || !contract) return content;
   let parsed: PolicyValue;
   try {
     parsed = YAML.parse(content);
@@ -209,7 +302,15 @@ export function applyWebSearchCredentialBinding(
   if (!isPolicyObject(policy) || !Array.isArray(policy.endpoints)) return content;
   let changed = false;
   for (const endpoint of policy.endpoints) {
-    if (!isPolicyObject(endpoint) || Object.hasOwn(endpoint, "credential_binding")) continue;
+    // An existing binding is never replaced, and an endpoint that differs from
+    // the checked-in contract receives none of the stored credential.
+    if (
+      !isPolicyObject(endpoint) ||
+      Object.hasOwn(endpoint, "credential_binding") ||
+      !matchesWebSearchEndpointContract(endpoint, contract)
+    ) {
+      continue;
+    }
     endpoint.credential_binding = { provider: providerName };
     changed = true;
   }
@@ -226,16 +327,31 @@ export function bindWebSearchPresetProviders(input: {
   readonly sandboxName: string;
   readonly agentName?: string | null;
   readonly availableProviders: ReadonlySet<string>;
+  readonly contracts?: Readonly<Record<string, WebSearchEndpointContract | null>>;
 }): string {
   let content = input.content;
   for (const presetName of Object.keys(WEB_SEARCH_PRESET_PROVIDER_SUFFIXES)) {
+    // Hermes Tavily and every Brave provider use an endpoint-bearing profile.
+    // A policy binding that names that provider is rejected, and the profile
+    // attachment delivers the credential itself.
+    if (
+      presetName === "brave" ||
+      (presetName === "tavily" && input.agentName?.trim().toLowerCase() === "hermes")
+    ) {
+      continue;
+    }
     const providerName = resolveWebSearchCredentialProvider({
       presetName,
       sandboxName: input.sandboxName,
       agentName: input.agentName,
       availableProviders: input.availableProviders,
     });
-    content = applyWebSearchCredentialBinding(content, presetName, providerName);
+    content = applyWebSearchCredentialBinding(
+      content,
+      presetName,
+      providerName,
+      input.contracts?.[presetName] ?? null,
+    );
   }
   return content;
 }

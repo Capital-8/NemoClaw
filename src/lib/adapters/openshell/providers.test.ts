@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  endpointlessTavilyProfile,
   managedBraveProfile,
   managedTavilyProfile,
 } from "../../../../test/fixtures/openshell-provider-profile";
@@ -101,8 +102,10 @@ describe("OpenShell provider evidence", () => {
     "qualifies %s Tavily with allowUninspectedCredentials=%s without credential reads (#12138)",
     async (agent, allowUninspectedCredentials) => {
       const { raw, connect } = fixture();
-      const profile = managedTavilyProfile(agent);
-      const profileContract = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
+      const profile =
+        agent === "hermes" ? managedTavilyProfile(agent) : endpointlessTavilyProfile();
+      const profileContract =
+        agent === "hermes" ? ("tavily-hermes-v1" as const) : ("tavily-policy-binding-v1" as const);
       const readCredential = vi.fn(() => {
         throw new Error(canary);
       });
@@ -154,8 +157,9 @@ describe("OpenShell provider evidence", () => {
   );
 
   describe.each(["openclaw", "hermes"] as const)("%s Tavily profile contract", (agent) => {
-    const profileContract = agent === "hermes" ? "tavily-hermes-v1" : "tavily";
-    const profile = managedTavilyProfile(agent);
+    const profile = agent === "hermes" ? managedTavilyProfile(agent) : endpointlessTavilyProfile();
+    const profileContract =
+      agent === "hermes" ? ("tavily-hermes-v1" as const) : ("tavily-policy-binding-v1" as const);
     const credential = profile.credentials[0]!;
     const endpoint = profile.endpoints[0]!;
     it.each([
@@ -176,43 +180,47 @@ describe("OpenShell provider evidence", () => {
         { credentials: [{ ...credential, headerName: "x-unexpected" }] },
       ],
       ["credential refresh", { credentials: [{ ...credential, refresh: {} }] }],
-      ["a foreign endpoint", { endpoints: [{ ...endpoint, host: "foreign.example" }] }],
-      ["a read-write access preset", { endpoints: [{ ...endpoint, access: "read-write" }] }],
-      [
-        "uninspected credentials",
-        { endpoints: [{ ...endpoint, allowUninspectedCredentials: true }] },
-      ],
-      [
-        "disabled body rewriting",
-        { endpoints: [{ ...endpoint, requestBodyCredentialRewrite: false }] },
-      ],
-      ["missing request rules", { endpoints: [{ ...endpoint, rules: [] }] }],
-      [
-        "a wildcard request path",
-        {
-          endpoints: [
-            { ...endpoint, rules: [{ allow: { ...endpoint.rules[0]!.allow, path: "/*" } }] },
-          ],
-        },
-      ],
-      [
-        "unknown request rule fields",
-        {
-          endpoints: [
-            {
-              ...endpoint,
-              rules: [
-                { allow: { ...endpoint.rules[0]!.allow, $unknown: [{}] } },
-                endpoint.rules[1],
-              ],
-            },
-          ],
-        },
-      ],
-      [
-        "a different credential binding",
-        { endpoints: [{ ...endpoint, credentialBinding: { provider: "other" } }] },
-      ],
+      ...(agent === "hermes"
+        ? ([
+            ["a foreign endpoint", { endpoints: [{ ...endpoint, host: "foreign.example" }] }],
+            ["a read-write access preset", { endpoints: [{ ...endpoint, access: "read-write" }] }],
+            [
+              "uninspected credentials",
+              { endpoints: [{ ...endpoint, allowUninspectedCredentials: true }] },
+            ],
+            [
+              "disabled body rewriting",
+              { endpoints: [{ ...endpoint, requestBodyCredentialRewrite: false }] },
+            ],
+            ["missing request rules", { endpoints: [{ ...endpoint, rules: [] }] }],
+            [
+              "a wildcard request path",
+              {
+                endpoints: [
+                  { ...endpoint, rules: [{ allow: { ...endpoint.rules[0]!.allow, path: "/*" } }] },
+                ],
+              },
+            ],
+            [
+              "unknown request rule fields",
+              {
+                endpoints: [
+                  {
+                    ...endpoint,
+                    rules: [
+                      { allow: { ...endpoint.rules[0]!.allow, $unknown: [{}] } },
+                      endpoint.rules[1],
+                    ],
+                  },
+                ],
+              },
+            ],
+            [
+              "a different credential binding",
+              { endpoints: [{ ...endpoint, credentialBinding: { provider: "other" } }] },
+            ],
+          ] as const)
+        : []),
       ["a different executable", { binaries: [{ path: "/usr/bin/python" }] }],
     ] as const)("rejects %s (#12138)", async (_label, change) => {
       const { raw, connect } = fixture();

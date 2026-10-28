@@ -40,7 +40,10 @@ import {
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
 } from "../messaging/channels";
-import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import {
+  readSandboxProviderAttachments,
+  resolveSandboxGatewayName,
+} from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import { ROOT } from "../runner";
@@ -81,6 +84,7 @@ import {
   parseNetworkPolicies,
   applyWebSearchCredentialBinding,
   isWebSearchPolicyPreset,
+  parseWebSearchEndpointContract,
   resolveWebSearchCredentialProvider,
 } from "./preset-parsing";
 import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
@@ -131,6 +135,11 @@ type MergePresetNamesOptions = {
   sandboxName?: string;
   credentialBoundMessagingChannels?: readonly string[];
   messagingConfig?: MessagingPolicyConfig | null;
+  /**
+   * Providers the sandbox create plan attaches. A web-search preset binds only a
+   * provider named here, because the plan has not attached it yet.
+   */
+  plannedProviders?: readonly string[];
 };
 
 type SandboxPresetLoadOptions = {
@@ -138,6 +147,9 @@ type SandboxPresetLoadOptions = {
   messagingConfig?: MessagingPolicyConfig | null;
   sandbox?: registry.SandboxEntry | null;
   gatewayName?: string;
+  /** Providers attached to the sandbox. Null means the observation failed and no binding is added. */
+  attachedProviders?: readonly string[] | null;
+  recordedProviders?: readonly string[];
 };
 
 type SetupPolicyPresetSupportOptions = {
@@ -420,12 +432,48 @@ function loadAgentPresetContent(
  * any other provider fails the create-time provider check, so web-search
  * presets bind only a provider recorded here.
  */
-function recordedWebSearchProviders(): Set<string> {
+function recordedWebSearchProviders(sandboxName: string): Set<string> {
+  const providers = new Set<string>();
   try {
-    return new Set(registry.listExtraProviders());
+    for (const provider of registry.listExtraProviders()) providers.add(provider);
   } catch {
     // Preset loading must not fail on an unreadable extra-provider registry.
-    return new Set();
+  }
+  // Onboarding registers a sandbox-scoped web-search provider without recording
+  // it as an extra provider. The attachment observation decides whether it binds.
+  providers.add(`${sandboxName}-brave-search`);
+  providers.add(`${sandboxName}-tavily-search`);
+  return providers;
+}
+
+let webSearchContracts: Record<string, ReturnType<typeof parseWebSearchEndpointContract>> | null =
+  null;
+
+function webSearchPresetContracts(): Record<
+  string,
+  ReturnType<typeof parseWebSearchEndpointContract>
+> {
+  if (webSearchContracts) return webSearchContracts;
+  webSearchContracts = {};
+  for (const presetName of ["brave", "tavily"]) {
+    const content = loadCentralPreset(presetName, { reportMissing: false });
+    webSearchContracts[presetName] = content
+      ? parseWebSearchEndpointContract(content, presetName)
+      : null;
+  }
+  return webSearchContracts;
+}
+
+/**
+ * Providers the gateway reports as attached to one sandbox. A failed or
+ * unreadable observation returns null, so the caller adds no credential
+ * binding rather than submitting one the gateway would reject.
+ */
+async function observedSandboxAttachments(sandboxName: string): Promise<readonly string[] | null> {
+  try {
+    return await readSandboxProviderAttachments(sandboxName, registry.getSandbox(sandboxName));
+  } catch {
+    return null;
   }
 }
 
@@ -434,8 +482,19 @@ function bindWebSearchPreset(
   presetName: string,
   sandboxName: string,
   agentName: string | null,
+  attachedProviders: readonly string[] | null,
+  recordedProviders: readonly string[] | undefined,
 ): string {
-  if (!isWebSearchPolicyPreset(presetName)) return content;
+  // Hermes Tavily and every Brave provider use an endpoint-bearing profile.
+  // The pinned OpenShell release rejects a policy binding that names that
+  // provider, and the profile attachment delivers the credential itself.
+  if (
+    presetName === "brave" ||
+    (presetName === "tavily" && agentName?.trim().toLowerCase() === "hermes")
+  ) {
+    return content;
+  }
+  if (!isWebSearchPolicyPreset(presetName) || attachedProviders === null) return content;
   return applyWebSearchCredentialBinding(
     content,
     presetName,
@@ -443,8 +502,10 @@ function bindWebSearchPreset(
       presetName,
       sandboxName,
       agentName,
-      availableProviders: recordedWebSearchProviders(),
+      availableProviders: new Set(recordedProviders ?? recordedWebSearchProviders(sandboxName)),
+      attachedProviders: new Set(attachedProviders),
     }),
+    webSearchPresetContracts()[presetName] ?? null,
   );
 }
 
@@ -460,9 +521,9 @@ async function loadPresetForSandbox(
   let sandboxAgent: string | null = null;
   let configuredMessagingChannels: string[] = [];
   let messagingConfig = options.messagingConfig;
+  let sandbox: registry.SandboxEntry | null = null;
   try {
-    const sandbox =
-      options.sandbox === undefined ? registry.getSandbox(sandboxName) : options.sandbox;
+    sandbox = options.sandbox === undefined ? registry.getSandbox(sandboxName) : options.sandbox;
     sandboxAgent = sandbox?.agent ?? null;
     configuredMessagingChannels = getCredentialBoundMessagingChannelsFromEntry(sandbox);
     if (messagingConfig === undefined) {
@@ -501,11 +562,19 @@ async function loadPresetForSandbox(
   const resolvedPresetContent =
     loadAgentPresetContent(sandboxName, presetName, builtinPresetContent, options.sandbox) ||
     builtinPresetContent;
+  const attachedProviders =
+    options.attachedProviders !== undefined
+      ? options.attachedProviders
+      : isWebSearchPolicyPreset(presetName)
+        ? await readSandboxProviderAttachments(sandboxName, sandbox)
+        : null;
   const boundPresetContent = bindWebSearchPreset(
     resolvedPresetContent,
     presetName,
     sandboxName,
     sandboxAgent,
+    attachedProviders,
+    options.recordedProviders,
   );
   return presetName === "outlook" &&
     sandboxAgent !== "hermes" &&
@@ -1746,13 +1815,25 @@ function mergePresetNamesIntoPolicy(
   const appliedPresets: string[] = [];
   const missingPresets: string[] = [];
 
+  const planned = options.plannedProviders;
   for (const presetName of [...new Set(presetNames)]) {
-    const presetContent = loadPresetForAgent(presetName, {
+    const loaded = loadPresetForAgent(presetName, {
       agent: options.agent,
       sandboxName: options.sandboxName,
       credentialBoundMessagingChannels: options.credentialBoundMessagingChannels,
       messagingConfig: options.messagingConfig,
     });
+    const presetContent =
+      loaded && isWebSearchPolicyPreset(presetName)
+        ? bindWebSearchPreset(
+            loaded,
+            presetName,
+            options.sandboxName ?? "",
+            options.agent ?? null,
+            planned ?? null,
+            planned,
+          )
+        : loaded;
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
       const materializesWithSandboxName =
@@ -2589,6 +2670,9 @@ async function applyPreset(
   const presetContent = await loadPresetForSandbox(sandboxName, presetName, {
     includeMessagingCredentialBindings: options.includeMessagingCredentialBindings === true,
     messagingConfig: options.messagingConfig as MessagingPolicyConfig | null | undefined,
+    ...(isWebSearchPolicyPreset(presetName)
+      ? { attachedProviders: await observedSandboxAttachments(sandboxName) }
+      : {}),
   });
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
@@ -2620,8 +2704,13 @@ async function applyPresets(sandboxName: string, presetNames: string[]): Promise
     name: string;
   }> = [];
 
+  const attachedProviders = uniquePresetNames.some(isWebSearchPolicyPreset)
+    ? await observedSandboxAttachments(sandboxName)
+    : null;
   for (const presetName of uniquePresetNames) {
-    const presetContent = await loadPresetForSandbox(sandboxName, presetName);
+    const presetContent = await loadPresetForSandbox(sandboxName, presetName, {
+      ...(isWebSearchPolicyPreset(presetName) ? { attachedProviders } : {}),
+    });
     if (!presetContent) {
       console.error(`  Cannot load preset: ${presetName}`);
       return false;
