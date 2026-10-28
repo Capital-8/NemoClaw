@@ -206,7 +206,6 @@ test(
       contracts: [
         "GPU and runtime prerequisites are present",
         "install.sh onboards with the Ollama provider",
-        "sandbox inference.local reaches Ollama after first onboard",
         "nemoclaw onboard --non-interactive --yes recreates the sandbox",
         "the running proxy accepts the persisted token after re-onboard and rejects unauthenticated/wrong-token requests",
         "the sandbox-owned native provider reaches Ollama after first onboard and re-onboard",
