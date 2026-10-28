@@ -247,11 +247,12 @@ describe("installer npm resolution", () => {
     try {
       const fakeBin = createNpmPermissionFixture(tmp);
       const npmCallLog = path.join(tmp, "npm-calls.log");
-      const result = runInstallerFunction("umask 0002; fix_npm_permissions", fakeBin, {
+      const env = {
         ACTIVE_NPM_PREFIX: "/System/nemoclaw",
         HOME: tmp,
         NPM_CALL_LOG: npmCallLog,
-      });
+      };
+      const result = runInstallerFunction("umask 0002; fix_npm_permissions", fakeBin, env, tmp);
 
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(fs.statSync(path.join(tmp, ".npm-global")).mode & 0o022).toBe(0);
@@ -271,11 +272,12 @@ describe("installer npm resolution", () => {
         const npmCallLog = path.join(tmp, "npm-calls.log");
         fs.mkdirSync(npmPrefix);
         fs.chmodSync(npmPrefix, 0o775);
-        const result = runInstallerFunction("fix_npm_permissions", fakeBin, {
+        const env = {
           ACTIVE_NPM_PREFIX: "/System/nemoclaw",
           HOME: tmp,
           NPM_CALL_LOG: npmCallLog,
-        });
+        };
+        const result = runInstallerFunction("fix_npm_permissions", fakeBin, env, tmp);
 
         expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
         expect(`${result.stdout}${result.stderr}`).toContain(npmPrefix);
