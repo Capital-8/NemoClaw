@@ -20,6 +20,7 @@ import {
 } from "../bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../bedrock-runtime-adapter";
 import { PERSONAL_POLICY_TIER_NAME } from "../../policy/tiers";
+import { assertCustomNativePolicyPins } from "./custom-policy";
 
 export { isHostedCustomEndpoint };
 
@@ -77,6 +78,8 @@ export async function prepareCustomNativeProvider(input: {
   credentialEnv: string;
   credentialValue: string | null;
   adapter: OpenShellProviderAdapter;
+  /** Existing sandbox policy, observed before any provider mutation. */
+  sandboxPolicyDocument?: string;
   recordedAttachment?: NativeProviderAttachment;
   /** Registry sandbox that owns `recordedAttachment`. */
   recordedSandboxName?: string | null;
@@ -130,6 +133,9 @@ export async function prepareCustomNativeProvider(input: {
         : [],
     ...(bedrock ? { adapterEndpointUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } : {}),
   } satisfies Omit<CustomNativeBinding, "provider" | "api"> & { provider: string; api: string });
+  if (input.sandboxPolicyDocument !== undefined) {
+    assertCustomNativePolicyPins(input.sandboxPolicyDocument, definition);
+  }
   const lifecycle = nativeProviderLifecycle(definition);
   const gatewayAuthority = input.readAuthority(input.gatewayName, definition.providerName);
   const expected = lifecycle.resolveGatewayNativeProviderAuthority({
