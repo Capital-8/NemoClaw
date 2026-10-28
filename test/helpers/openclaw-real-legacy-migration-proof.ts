@@ -17,6 +17,11 @@ export interface LegacyMigrationProofOptions {
   migrationRunner?: string;
 }
 
+export const LEGACY_MIGRATION_PROOF_OUTER_TIMEOUT_MS = 1_500_000;
+// Leave time for the last child to exit and publish diagnostics before Docker
+// or the package test terminates the proof and removes its private fixture.
+export const LEGACY_MIGRATION_PROOF_TIMEOUT_MS = LEGACY_MIGRATION_PROOF_OUTER_TIMEOUT_MS - 60_000;
+
 function snapshotFiles(directory: string): Record<string, string> {
   const result: Record<string, string> = {};
   for (const entry of fs.readdirSync(directory, { recursive: true, withFileTypes: true })) {
@@ -30,16 +35,19 @@ function snapshotFiles(directory: string): Record<string, string> {
   return result;
 }
 
-function runNative(
+export function runLegacyMigrationProofCommand(
   options: LegacyMigrationProofOptions,
   args: string[],
   timeout: number,
+  deadline: number,
 ): number | null {
+  const remaining = Math.floor(deadline - performance.now());
+  assert.ok(remaining > 0, "native migration proof exhausted its shared deadline");
   const home = path.join(options.home, "restored");
   const state = path.join(home, ".openclaw");
   const result = spawnSync(options.nodeExecutable, args, {
     encoding: "utf8",
-    timeout,
+    timeout: Math.min(timeout, remaining),
     killSignal: "SIGKILL",
     ...(process.platform !== "win32" ? { detached: true } : {}),
     maxBuffer: 16 * 1024 * 1024,
@@ -69,26 +77,54 @@ function runNative(
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
   }
-  assert.equal(result.error, undefined, "native migration Doctor failed to finish");
-  assert.equal(result.signal, null, "native migration Doctor was killed");
   fs.writeFileSync(
     path.join(options.home, "last-native-command.log"),
     `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
     { mode: 0o600 },
   );
+  assert.equal(result.error, undefined, "native migration Doctor failed to finish");
+  assert.equal(result.signal, null, "native migration Doctor was killed");
   return result.status;
 }
 
-function runDoctor(options: LegacyMigrationProofOptions, runtime: string): number | null {
-  return runNative(
+function runDoctor(
+  options: LegacyMigrationProofOptions,
+  runtime: string,
+  deadline: number,
+): number | null {
+  return runLegacyMigrationProofCommand(
     options,
     [path.join(runtime, "openclaw.mjs"), "doctor", "--fix", "--yes", "--non-interactive"],
     180_000,
+    deadline,
   );
 }
 
 /** Exercise the intermediate CLI migrations on a copy of a JSON-only backup. */
 export function proveRealLegacyMigrationBridges(options: LegacyMigrationProofOptions): void {
+  const deadline = performance.now() + LEGACY_MIGRATION_PROOF_TIMEOUT_MS;
+  try {
+    proveLegacyMigrationWithinDeadline(options, deadline);
+  } catch (error) {
+    // These commands receive only the private synthetic home and fixed fixture
+    // credentials. Never use this diagnostic path for a real restored home.
+    const log = path.join(options.home, "last-native-command.log");
+    try {
+      if (fs.existsSync(log)) {
+        process.stderr.write("Last synthetic migration command output (bounded tail):\n");
+        process.stderr.write(fs.readFileSync(log).subarray(-16_384).toString("utf8") + "\n");
+      }
+    } catch {
+      process.stderr.write("Synthetic migration command diagnostics could not be read.\n");
+    }
+    throw error;
+  }
+}
+
+function proveLegacyMigrationWithinDeadline(
+  options: LegacyMigrationProofOptions,
+  deadline: number,
+): void {
   const runtimes = [
     { root: options.runtime95, version: "2026.9.5", schema: 17 },
     { root: options.runtime97, version: "2026.9.7", schema: 19 },
@@ -167,12 +203,16 @@ export function proveRealLegacyMigrationBridges(options: LegacyMigrationProofOpt
     options.targetRuntime,
     migrationRoot,
   ];
-  assert.equal(runNative(options, bridgeArgs, 1_320_000), 0, "production migration runner failed");
+  assert.equal(
+    runLegacyMigrationProofCommand(options, bridgeArgs, 1_320_000, deadline),
+    0,
+    "production migration runner failed",
+  );
   let migratedRows: unknown;
   for (const runtime of runtimes.slice(1)) {
     if (runtime.version === "2026.10.5") {
       for (let pass = 1; pass <= 2; pass++) {
-        const status = runDoctor(options, runtime.root);
+        const status = runDoctor(options, runtime.root, deadline);
         if (pass === 2)
           assert.equal(status, 0, `${runtime.version} Doctor did not finish migration`);
       }
@@ -235,7 +275,7 @@ export function proveRealLegacyMigrationBridges(options: LegacyMigrationProofOpt
   const configBefore = fs.readFileSync(path.join(state, "openclaw.json"));
   const databaseBefore = snapshotFiles(path.join(state, "state"));
   assert.equal(
-    runNative(options, bridgeArgs, 1_320_000),
+    runLegacyMigrationProofCommand(options, bridgeArgs, 1_320_000, deadline),
     0,
     "production runner rejected current state",
   );
@@ -243,7 +283,7 @@ export function proveRealLegacyMigrationBridges(options: LegacyMigrationProofOpt
   assert.deepEqual(fs.readFileSync(path.join(state, "openclaw.json")), configBefore);
   for (const runtime of runtimes.slice(0, 2)) {
     assert.notEqual(
-      runDoctor(options, runtime.root),
+      runDoctor(options, runtime.root, deadline),
       0,
       "intermediate Doctor accepted newer state",
     );
@@ -268,7 +308,7 @@ export function proveRealLegacyMigrationBridges(options: LegacyMigrationProofOpt
   const retainedBytes = '{"version":1,"bindings":[{"chatId":"123"}]}\n';
   fs.writeFileSync(retained, retainedBytes);
   assert.notEqual(
-    runNative(options, bridgeArgs, 1_320_000),
+    runLegacyMigrationProofCommand(options, bridgeArgs, 1_320_000, deadline),
     0,
     "production runner stranded retired Telegram data",
   );

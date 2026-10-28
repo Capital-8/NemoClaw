@@ -5,7 +5,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { it } from "vitest";
-import { proveRealLegacyMigrationBridges } from "../../helpers/openclaw-real-legacy-migration-proof";
+import {
+  LEGACY_MIGRATION_PROOF_OUTER_TIMEOUT_MS,
+  proveRealLegacyMigrationBridges,
+} from "../../helpers/openclaw-real-legacy-migration-proof";
 
 // The caller supplies separately installed, reviewed distributions. This proof
 // does not fetch packages or stand in for the managed image's installation test.
@@ -28,5 +31,5 @@ it.skipIf(!migrationRoot || !targetRuntime)(
       fs.rmSync(home, { recursive: true, force: true });
     }
   },
-  1_500_000,
+  LEGACY_MIGRATION_PROOF_OUTER_TIMEOUT_MS,
 );

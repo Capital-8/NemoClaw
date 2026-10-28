@@ -27,6 +27,7 @@ import {
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
 import type { ProtectedManagedImagePlatform } from "./protected-managed-image-contract.ts";
+import { LEGACY_MIGRATION_PROOF_OUTER_TIMEOUT_MS } from "../../test/helpers/openclaw-real-legacy-migration-proof.ts";
 
 const CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_RE = /^sha256:[a-f0-9]{64}$/u;
@@ -337,7 +338,7 @@ await runRealOpenClawAgentReloadProof({
         ),
         `${containerId}:${migrationProof}`,
       ]);
-      docker(
+      const migrationResult = docker(
         [
           "exec",
           "--user",
@@ -364,9 +365,15 @@ try {
   fs.rmSync(home, { recursive: true, force: true });
 }`,
         ],
-        false,
-        1_500_000,
+        true,
+        LEGACY_MIGRATION_PROOF_OUTER_TIMEOUT_MS,
       );
+      if (migrationResult.status !== 0) {
+        process.stderr.write(migrationResult.stderr);
+        throw new Error(
+          "Native legacy migration proof failed; inspect its synthetic command diagnostics",
+        );
+      }
       process.stdout.write(`Native legacy migration proof passed for ${input.platform}.\n`);
     }
     process.stdout.write(

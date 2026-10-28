@@ -963,7 +963,8 @@ async function promoteOpenClawBackupQuiesceToDoctor(
   }
 
   const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
-  const ready = await waitUntilAsync(
+  let stopped = false;
+  const settled = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
@@ -974,7 +975,19 @@ async function promoteOpenClawBackupQuiesceToDoctor(
         Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
         runtimeSelection,
       );
-      return result?.status === 0;
+      if (result?.status === 0) return true;
+      // Promotion starts from an already verified, running backup gate. A
+      // terminal sandbox after that transition cannot produce a fresh Doctor
+      // receipt. Report failure now; never release or restart refused state.
+      const lookupRemainingMs = reconciliationDeadlineMs - deps.now();
+      if (!Number.isFinite(lookupRemainingMs) || lookupRemainingMs <= 0) return false;
+      stopped = await isOpenClawDoctorSandboxStopped(
+        sandboxName,
+        runtimeSelection,
+        deps,
+        lookupRemainingMs,
+      );
+      return stopped;
     },
     {
       deadlineMs: reconciliationDeadlineMs,
@@ -985,11 +998,13 @@ async function promoteOpenClawBackupQuiesceToDoctor(
       sleep: async (milliseconds) => await deps.sleep(milliseconds / 1_000),
     },
   );
-  if (ready) return { ok: true };
+  if (settled && !stopped) return { ok: true };
   return {
     ok: false,
     stage: "doctor",
-    detail: "restored state did not complete post-upgrade doctor with the gateway held down",
+    detail: stopped
+      ? "the restored sandbox stopped before post-upgrade doctor completed; the gateway remains held down"
+      : "restored state did not complete post-upgrade doctor with the gateway held down",
   };
 }
 
