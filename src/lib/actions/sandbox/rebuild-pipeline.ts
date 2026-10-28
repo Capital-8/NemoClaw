@@ -740,9 +740,9 @@ async function rebuildSandboxUnlocked(
           }
         }
         if (retireRemovedImmutabilityState) {
-          if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
+          if (postRestoreVerification?.complete !== true) {
             return bail(
-              "Removed Shields state was retained because the rebuilt sandbox's mutable config posture was not verified.",
+              "Removed Shields state was retained because post-restore verification did not complete.",
             );
           }
           retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
@@ -1082,9 +1082,9 @@ async function rebuildSandboxUnlocked(
         bail,
       });
       if (retireRemovedImmutabilityState) {
-        if (!postRestoreVerification?.mutableConfigPermissionsVerified) {
+        if (postRestoreVerification?.complete !== true) {
           return bail(
-            "Removed Shields state was retained because the rebuilt sandbox's mutable config posture was not verified.",
+            "Removed Shields state was retained because post-restore verification did not complete.",
           );
         }
         retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");

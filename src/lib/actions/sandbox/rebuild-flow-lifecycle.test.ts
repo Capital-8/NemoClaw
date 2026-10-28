@@ -500,6 +500,28 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
   });
 
+  it("keeps the Shields record when OpenClaw MCP restore remains incomplete", async () => {
+    const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+    const harness = createRebuildFlowHarness({
+      mcpPreparation: { entries: [mcpEntry], detachedProviderEntries: [mcpEntry] },
+      restoreMcpBridgesAfterRebuild: async () => {
+        throw new Error("MCP restore failed");
+      },
+    });
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(
+      "Removed Shields state was retained because post-restore verification did not complete.",
+    );
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledOnce();
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+  });
+
   it("rebuilds and removes a legacy Shields record when inner onboarding enforces the record check", async () => {
     const recordPath = path.join(resolveNemoclawStateDir(), "shields-alpha.json");
     fs.mkdirSync(path.dirname(recordPath), { recursive: true });

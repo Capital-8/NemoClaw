@@ -55,7 +55,8 @@ Replace the sandbox only if you cannot restore read access to that state.
 While the legacy state record exists, `download` accepts only these paths instead of the full [manual transfer workflow](../state-and-backups/transfer-state-manually):
 
 <AgentOnly variant="openclaw">
-- The OpenClaw workspace Markdown files and the workspace `memory/` directory.
+- These files in `/sandbox/.openclaw/workspace/`: `AGENTS.md`, `HEARTBEAT.md`, `IDENTITY.md`, `MEMORY.md`, `POLICY.md`, `SOUL.md`, `TOOLS.md`, and `USER.md`.
+- The `/sandbox/.openclaw/workspace/memory/` directory.
 - `/sandbox/SOUL.md` from the OpenShell-provided native home.
 </AgentOnly>
 <AgentOnly variant="hermes">
