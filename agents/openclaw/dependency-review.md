@@ -75,6 +75,8 @@ The official-install path verifies OpenClaw's trusted provenance record before i
 Remove a recipe only when a newly reviewed upstream archive contains the replacements and real plugin consumers pass without the recipe.
 Retain historical recipes while supported installed sandboxes can still select their archives.
 
+The production image lifecycle allowlist contains only the current core pin, OpenClaw 2026.9.2. Historical recipes do not authorize older cores in current image builds. The final image still includes `openclaw-npm-remediation.mts` because the messaging build applier imports it for supported plugin remediation.
+
 ### Runtime and managed-plugin overrides
 
 The prerequisite audit invokes `scripts/lib/remediate-openclaw-runtime-dependencies.mts` after controlled installation and before the installed-lock check.
