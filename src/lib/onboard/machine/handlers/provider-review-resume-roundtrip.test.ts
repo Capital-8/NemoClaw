@@ -80,33 +80,6 @@ describe("review interruption resume round trip (#13802)", () => {
     process.env.HOME = originalHome;
   });
 
-  it("resumes inference setup with the endpoint recorded at review", async () => {
-    const { sessionStore, handleProviderInferenceState, baseOptions, createDeps } =
-      await interruptAtReview();
-
-    const resumed = createDeps({
-      isNonInteractive: () => true,
-      isInferenceRouteReady: vi.fn(() => false),
-    });
-    await handleProviderInferenceState({
-      ...baseOptions(resumed.deps, sessionStore.loadSession()),
-      resume: true,
-      sandboxName: "review-resume",
-    });
-
-    expect(resumed.calls.setupNim).not.toHaveBeenCalled();
-    expect(resumed.calls.setupInference).toHaveBeenCalledWith(
-      "review-resume",
-      "qwen2.5:1.5b",
-      "ollama-local",
-      ENDPOINT,
-      null,
-      null,
-      [],
-      expect.any(Object),
-    );
-  });
-
   it("attaches the recorded endpoint that deployment verification accepts", async () => {
     const { sessionStore, handleProviderInferenceState, baseOptions, createDeps } =
       await interruptAtReview();
@@ -139,6 +112,7 @@ describe("review interruption resume round trip (#13802)", () => {
       agent: { name: "openclaw" },
     });
 
+    expect(resumed.calls.setupNim).not.toHaveBeenCalled();
     const route = harness.updateSandbox.mock.calls
       .map((call) => (call as unknown[])[1] as Record<string, unknown>)
       .find((update) => update.nativeLocalProviderAttachment);

@@ -754,7 +754,33 @@ describe("provider inference review recovery", () => {
     expect(prompt).toHaveBeenCalledOnce();
   });
 
-  it("selects again when an earlier-release review checkpoint has no host-local endpoint", async () => {
+  it("stops a non-interactive resume of an earlier-release checkpoint with no host-local endpoint", async () => {
+    const session = failedReviewSession();
+    session.endpointUrl = null;
+    const setupNim = vi.fn(async () => ({ ...baseSelection }));
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => true,
+      setupNim,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "review-interrupted",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith(
+      expect.stringContaining("without the ollama-local endpoint"),
+    );
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("onboard --fresh"));
+    expect(setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  it("selects again on an interactive resume of an earlier-release checkpoint with no host-local endpoint", async () => {
     const session = failedReviewSession();
     session.endpointUrl = null;
     const setupNim = vi.fn(async () => ({
@@ -765,7 +791,8 @@ describe("provider inference review recovery", () => {
       credentialEnv: null,
     }));
     const { deps, calls } = createDeps({
-      isNonInteractive: () => true,
+      isNonInteractive: () => false,
+      prompt: vi.fn(async () => "1"),
       setupNim,
       isInferenceRouteReady: vi.fn(() => false),
     });
@@ -776,6 +803,7 @@ describe("provider inference review recovery", () => {
       sandboxName: "review-interrupted",
     });
 
+    expect(calls.exit).not.toHaveBeenCalled();
     expect(setupNim).toHaveBeenCalledOnce();
     expect(calls.setupInference).toHaveBeenCalledWith(
       "review-interrupted",

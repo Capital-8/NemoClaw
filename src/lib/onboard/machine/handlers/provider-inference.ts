@@ -1088,14 +1088,57 @@ function provenResumeSandboxName(
     : null;
 }
 
-function reviewRecoveryState(session: Session | null, sandboxName: string | null) {
+function isReviewCheckpoint(session: Session | null, sandboxName: string | null) {
   return (
     session?.steps?.provider_selection?.status === "failed" &&
     session.sandboxPromptProgress.sandboxName === true &&
-    session.sandboxName === sandboxName &&
-    // Review checkpoints from earlier releases omit the endpoint. A host-local
-    // route cannot be verified without it, so select it again.
-    (Boolean(session.endpointUrl) || !isHostLocalInferenceProvider(session.provider ?? ""))
+    session.sandboxName === sandboxName
+  );
+}
+
+// Review checkpoints from earlier releases omit the endpoint. A host-local
+// route cannot be verified without it, so the provider must be selected again.
+function isEndpointlessHostLocalReviewCheckpoint(
+  session: Session | null,
+  sandboxName: string | null,
+): boolean {
+  return (
+    isReviewCheckpoint(session, sandboxName) &&
+    !session?.endpointUrl &&
+    isHostLocalInferenceProvider(session?.provider ?? "")
+  );
+}
+
+// A non-interactive selection would fall back to environment input or the
+// default provider and silently replace the interrupted local selection.
+function refuseNonInteractiveEndpointlessReviewResume(
+  deps: Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "cliName" | "error" | "exitProcess" | "isNonInteractive"
+  >,
+  session: Session | null,
+  sandboxName: string | null,
+  effectiveResume: boolean,
+): void {
+  if (
+    !effectiveResume ||
+    !deps.isNonInteractive() ||
+    !isEndpointlessHostLocalReviewCheckpoint(session, sandboxName)
+  )
+    return;
+  deps.error(
+    `  The interrupted onboarding review for '${sandboxName}' was saved by an earlier release without the ${session?.provider} endpoint, so it cannot be resumed non-interactively.`,
+  );
+  deps.error(
+    `  Run \`${deps.cliName()} onboard --resume\` interactively to select the provider again, or \`${deps.cliName()} onboard --fresh\` to start over.`,
+  );
+  deps.exitProcess(1);
+}
+
+function reviewRecoveryState(session: Session | null, sandboxName: string | null) {
+  return (
+    isReviewCheckpoint(session, sandboxName) &&
+    !isEndpointlessHostLocalReviewCheckpoint(session, sandboxName)
   );
 }
 
@@ -1569,6 +1612,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       setupOptions,
     };
   };
+  refuseNonInteractiveEndpointlessReviewResume(deps, session, sandboxName, effectiveResume);
   const reusableResumeSandboxName = provenResumeSandboxName(
     session,
     sandboxName,
