@@ -478,6 +478,19 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
 
   it.each([
     ["Search the project for TODO comments.", "read", { file_path: "/sandbox/project/README.md" }],
+    ["Investigate why the unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
+    ["Investigate why unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
+    ["Find and fix the failing unit tests.", "read", { file_path: "test/unit.test.ts" }],
+    [
+      "Find and repair failed integration tests.",
+      "read",
+      { file_path: "test/integration.test.ts" },
+    ],
+    [
+      "Investigate why the integration tests fail.",
+      "read",
+      { file_path: "test/integration.test.ts" },
+    ],
     [
       "Search through the project files for TODO comments.",
       "read",
@@ -528,6 +541,133 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     },
   );
 
+  it.each([
+    ["web_fetch", { url: "https://docs.nvidia.com/other/" }],
+    ["web_fetch", { url: "https://docs.nvidia.com/nemoclaw/?other=1" }],
+    ["web_fetch", { url: "https://example.org/nemoclaw/" }],
+    ["web_fetch", { url: "https://docs.nvidia.com/nemoclaw.evil/" }],
+    ["web_fetch", {}],
+    ["read", { file_path: "/sandbox/project/README.md" }],
+    ["memory_search", { query: "installation documentation" }],
+    ["memory_get", { path: "memory/installation.md" }],
+    ["sessions_search", { query: "installation documentation" }],
+    ["sessions_history", { sessionKey: "previous" }],
+    ["process", { action: "poll", sessionId: "previous" }],
+    ["pdf", { pdf: "https://example.org/installation.pdf" }],
+    ["lookup_docs", { query: "installation documentation" }],
+    ["exec", { command: "curl https://example.org/" }],
+    ["browser", { url: "https://docs.nvidia.com/nemoclaw/" }],
+    ["tool_call", { id: "openclaw:core:web_fetch", args: { url: "https://example.org/" } }],
+    ["tool_call", { id: "openclaw:core:read", args: { file_path: "README.md" } }],
+    ["tool_call", { id: "openclaw:core:web_fetch", args: [] }],
+  ])(
+    "limits a denied supplied-URL turn to its retrieval targets: %s %j",
+    async (toolName, params) => {
+      const { rawHandler, admission } = searchHook(false);
+      const context = { runId: "supplied-url" };
+      await admission({ prompt: "Fetch https://docs.nvidia.com/nemoclaw/." }, context);
+      expect(rawHandler({ toolName: "web_search", params: {} }, context)).toMatchObject({
+        block: true,
+      });
+      expect(rawHandler({ toolName, params }, context)).toMatchObject({ block: true });
+      expect(
+        rawHandler(
+          { toolName: "web_fetch", params: { url: "https://DOCS.nvidia.com:443/nemoclaw/#intro" } },
+          context,
+        ),
+      ).toBeUndefined();
+      expect(
+        rawHandler(
+          {
+            toolName: "tool_call",
+            params: {
+              id: "openclaw:core:web_fetch",
+              args: { url: "https://docs.nvidia.com/nemoclaw/" },
+            },
+          },
+          context,
+        ),
+      ).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ["web_fetch", { url: "https://example.org/" }],
+    ["exec", { command: "curl https://example.org/" }],
+    ["tool_call", { id: "openclaw:core:web_fetch", args: { url: "https://example.org/" } }],
+  ])(
+    "keeps denied local-source turns from fetching substitutes: %s %j",
+    async (toolName, params) => {
+      const { rawHandler, admission } = searchHook(false);
+      const context = { runId: "local-source" };
+      await admission({ prompt: "Search the project for TODO comments." }, context);
+      expect(rawHandler({ toolName: "web_search", params: {} }, context)).toMatchObject({
+        block: true,
+      });
+      expect(rawHandler({ toolName, params }, context)).toMatchObject({ block: true });
+      expect(
+        rawHandler({ toolName: "read", params: { file_path: "README.md" } }, context),
+      ).toBeUndefined();
+    },
+  );
+
+  it.each([
+    "Read README.md and fetch https://example.com/docs.",
+    "Fetch https://example.com/docs and read README.md.",
+    "Read README.md; fetch https://example.com/docs.",
+    "Fetch https://example.com/docs. Read README.md.",
+    "Search src/ for TODO comments and fetch https://example.com/docs.",
+  ])("preserves both supplied source kinds after a search denial: %s", async (prompt) => {
+    const { rawHandler, admission } = searchHook(false);
+    const context = { runId: "mixed-sources" };
+    await admission({ prompt }, context);
+    expect(rawHandler({ toolName: "web_search", params: {} }, context)).toMatchObject({
+      block: true,
+    });
+    expect(
+      rawHandler({ toolName: "read", params: { file_path: "README.md" } }, context),
+    ).toBeUndefined();
+    expect(
+      rawHandler({ toolName: "web_fetch", params: { url: "https://example.com/docs" } }, context),
+    ).toBeUndefined();
+    expect(
+      rawHandler(
+        {
+          toolName: "tool_call",
+          params: { id: "openclaw:core:read", args: { file_path: "README.md" } },
+        },
+        context,
+      ),
+    ).toBeUndefined();
+    expect(
+      rawHandler(
+        {
+          toolName: "tool_call",
+          params: { id: "openclaw:core:web_fetch", args: { url: "https://example.com/docs" } },
+        },
+        context,
+      ),
+    ).toBeUndefined();
+    expect(
+      rawHandler({ toolName: "web_fetch", params: { url: "https://example.com/other" } }, context),
+    ).toMatchObject({ block: true });
+  });
+
+  it("does not grant a URL mentioned only in a negated request", async () => {
+    const { rawHandler, admission } = searchHook(false);
+    const context = { runId: "negated-source" };
+    await admission({ prompt: "Read README.md. Do not fetch https://example.com/docs." }, context);
+    expect(rawHandler({ toolName: "web_search", params: {} }, context)).toMatchObject({
+      block: true,
+    });
+    expect(
+      rawHandler({ toolName: "read", params: { file_path: "README.md" } }, context),
+    ).toBeUndefined();
+    expect(
+      rawHandler({ toolName: "web_fetch", params: { url: "https://example.com/docs" } }, context),
+    ).toMatchObject({ block: true });
+  });
+
   it("keeps admission capacity after abandoned prompt builds and unadmitted tool calls", async () => {
     const mockedContext = await import("./runtime-context.js");
     const realContext =
@@ -576,7 +716,13 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     { toolName: "TAVILY_SEARCH", params: { query: "installation" } },
     { toolName: "brave_search", params: {} },
     { toolName: "search", params: { query: "official installation documentation" } },
-    { toolName: "tool_search", params: { query: "search" } },
+    { toolName: "tool_search", params: { query: "web search" } },
+    { toolName: "tool_search", params: { query: "search the web" } },
+    { toolName: "tool_search", params: { query: "search online" } },
+    { toolName: "tool_search", params: { query: "internet search" } },
+    { toolName: "tool_search", params: { query: "tavily_search" } },
+    { toolName: "tool_search", params: { query: "web-search" } },
+    { toolName: "tool_describe", params: { id: "brave_search" } },
     {
       toolName: "tool_call",
       params: { id: "openclaw:core:tool_search", args: { query: "Tavily" } },
@@ -695,6 +841,45 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
         { runId: "enabled-provider-probe" },
       ),
     ).toBeUndefined();
+  });
+
+  describe.each([false, true])("local tool discovery with wrapping %s", (wrapped) => {
+    it.each([
+      ["tool_search", { query: "search local project files" }, "exec", { command: "rg TODO src/" }],
+      ["tool_search", { query: "search" }, "exec", { command: "rg TODO src/" }],
+      ["tool_search", { query: "search memory" }, "memory_search", { query: "TODO" }],
+      ["tool_search", { query: "search local filesystem" }, "read", { file_path: "src/index.ts" }],
+      ["tool_describe", { id: "openclaw:core:memory_search" }, "memory_search", { query: "TODO" }],
+      ["tool_describe", { id: "openclaw:core:exec" }, "exec", { command: "rg TODO src/" }],
+    ])(
+      "preserves local discovery through execution without denying the turn: %s %j",
+      async (toolName, params, executionName, executionParams) => {
+        const { rawHandler, admission } = searchHook(false);
+        const context = { runId: `local-discovery-${wrapped}` };
+        await admission({ prompt: "Search src/ for TODO comments." }, context);
+        const discovery = wrapped
+          ? { toolName: "tool_call", params: { id: `openclaw:core:${toolName}`, args: params } }
+          : { toolName, params };
+        const execution = wrapped
+          ? {
+              toolName: "tool_call",
+              params: { id: `openclaw:core:${executionName}`, args: executionParams },
+            }
+          : { toolName: executionName, params: executionParams };
+        expect(rawHandler(discovery, context)).toBeUndefined();
+        expect(rawHandler(execution, context)).toBeUndefined();
+        expect(rawHandler({ toolName: "web_search", params: {} }, context)).toMatchObject({
+          block: true,
+        });
+        // Actual web-search denial still forbids shell substitutes in this turn.
+        expect(
+          rawHandler({ toolName: "exec", params: { command: "rg TODO src/" } }, context),
+        ).toMatchObject({ block: true });
+        expect(
+          rawHandler({ toolName: "read", params: { file_path: "src/index.ts" } }, context),
+        ).toBeUndefined();
+      },
+    );
   });
 
   it.each([
@@ -993,13 +1178,16 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   it("still blocks secrets in memory when search is disabled", () => {
     const { handler } = searchHook(false);
     expect(
-      handler({
-        toolName: "write",
-        params: {
-          file_path: "/sandbox/.openclaw/memory/notes.md",
-          content: "nvapi-abcdefghijklmnopqrstuvwxyz",
+      handler(
+        {
+          toolName: "write",
+          params: {
+            file_path: "/sandbox/.openclaw/memory/notes.md",
+            content: "nvapi-abcdefghijklmnopqrstuvwxyz",
+          },
         },
-      }),
+        { runId: "memory-write" },
+      ),
     ).toMatchObject({ block: true, blockReason: expect.stringContaining("Memory write blocked") });
   });
 });

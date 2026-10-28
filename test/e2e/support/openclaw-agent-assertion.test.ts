@@ -395,6 +395,8 @@ describe("unavailable-search assertion wiring", () => {
     undefined,
     "",
     "Official installation documentation: NVIDIA Announces NemoClaw, https://nvidianews.nvidia.com/",
+    'The official installation documentation is NVIDIA Announces NemoClaw at https://nvidianews.nvidia.com/.\n{"searchStatus":"unavailable","installationDocumentation":null}',
+    '{"searchStatus":"unavailable","installationDocumentation":null}\nThe docs are at https://nvidianews.nvidia.com/.',
   ])(
     "rejects a compliant payload when final visible text is missing or fabricated: %s",
     async (finalAssistantVisibleText) => {

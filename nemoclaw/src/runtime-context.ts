@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadState } from "./blueprint/state.js";
+import type { SuppliedSearchSources } from "./denied-search-state.js";
 import type { NemoClawConfig, OpenClawConfig, OpenClawPluginApi } from "./index.js";
 import { configuredSearchEnabled } from "./search-config.js";
 import * as importedSandboxName from "./shared/sandbox-name.cjs";
@@ -110,37 +111,57 @@ function buildRuntimeContextText(summary: RuntimeSummary, config: OpenClawConfig
   return lines.join("\n");
 }
 
-export function researchScope(prompt: string): "external" | "supplied" | "ordinary" {
+type ResearchScope = "external" | "supplied" | "ordinary";
+
+interface ResearchRequestScope extends SuppliedSearchSources {
+  scope: ResearchScope;
+}
+
+function classifyResearchScope(prompt: string): ResearchRequestScope {
   // Generic questions need local tools without naming a source. Require external
   // research intent, and keep separate requests from exempting one another.
   // Normalize URLs before splitting so their path words cannot become requests.
+  const urls: string[] = [];
   const requests = prompt
-    .replace(/\bhttps?:\/\/\S+/giu, "https://supplied-url.invalid/")
+    .replace(/\bhttps?:\/\/\S+/giu, (raw) => {
+      const url = raw.replace(/[.,;!?)\]}]+$/u, "");
+      const index = urls.push(url) - 1;
+      return `https://supplied-url.invalid/${index}/${raw.slice(url.length)}`;
+    })
     .replace(/:\s*\n\s*(?=https?:\/\/)/giu, ": ")
+    // Coordinated verbs share the following target: "find and fix the bug".
+    // Keep the research verb so an external target still requires web search.
+    .replace(
+      /\b(search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query|read|summarize)\s+(?:(?:and|then)\s+(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query|provide|show|point|give|summarize|fetch|retrieve|read|get|inspect|fix|repair|replace|edit|update|debug|test)\s+)+/giu,
+      "$1 ",
+    )
     .split(
-      /(?<=[.!?])\s+|[\n;]+|,\s*(?=(?:google|bing|duckduckgo|search|research|look|find|locate|browse|investigate)\b)|\b(?:and|then|but|instead)\b(?!\s+(?:fetch|retrieve)\b)/iu,
+      /(?<=[.!?])\s+|[\n;]+|,\s*(?=(?:google|bing|duckduckgo|search|research|look|find|locate|browse|investigate)\b)|\b(?:and|then|but|instead)\b(?!\s+(?:fetch|retrieve)\s+https?:\/\/)(?=\s+(?:(?:please|could|can|would|you|I|we|do|not|don't|never)\s+)*(?:use|run|ask|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|summarize|fetch|retrieve|read|get|need|want|where|which|what|who|when|how)\b)/iu,
     );
-  const scopes = requests.map((request) => {
+  const scopes = requests.map((request): ResearchRequestScope => {
+    const requestUrls = Array.from(
+      request.matchAll(/https:\/\/supplied-url\.invalid\/(\d+)\//gu),
+      (match) => urls[Number(match[1])]!,
+    );
     // A supplied URL is a retrieval target; its path words are not user intent.
-    const hasUrl = /\bhttps?:\/\/\S+/iu.test(request);
+    const hasUrl = requestUrls.length > 0;
     const intent = request.replace(/\bhttps?:\/\/\S+/giu, "");
     const action =
       /\b(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look(?:\s+(?:up|for|on))?|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|summarize|fetch|retrieve|read|get|need|where|which|what|who|when|how)\b/iu.exec(
         intent,
       );
-    if (!action) return "ordinary";
-    const prefix = intent.slice(0, action.index);
+    const prefix = intent.slice(0, action?.index ?? 0);
     if (/\b(?:(?:do\s+not|don't|never)\s+(?:use\s+(?:web_fetch[,\s]*)?)?|not\s*)$/iu.test(prefix)) {
-      return "ordinary";
+      return { scope: "ordinary", local: false, urls: [] };
     }
 
-    const source = intent.slice(action.index);
+    // A requested external result does not require a particular action verb.
+    const source = intent.slice(action?.index ?? 0);
     const directFetch = /^(?:browse|summarize|fetch|retrieve|read|get)\b/iu.test(source);
     const searchAction =
       /\b(?:googl(?:e|ing)|bing|duckduckgo|web[_ -]?search|search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek)\b/iu.test(
         source,
       );
-    if (directFetch && !searchAction && hasUrl) return "supplied";
 
     const externalSource =
       /^(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search)\b|\b(?:on\s+(?:the\s+)?(?:web|internet)|(?:search|research|browse|look)\s+(?:(?:the|on\s+the)\s+)?(?:web|internet|online)|(?:using|with|via)\s+(?:tavily|brave|google|bing|duckduckgo))\b/iu.test(
@@ -149,18 +170,18 @@ export function researchScope(prompt: string): "external" | "supplied" | "ordina
     // A local source must be the action's target or an explicit source location.
     // Words in the requested research topic do not grant access to substitutes.
     const subject = source
-      .slice(action[0].length)
+      .slice(action?.[0].length ?? 0)
       .trimStart()
       .replace(/^(?:['’]s|is|are|was|were)\s+/iu, "");
     const localSource =
-      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
+      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)*\/|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
         subject,
       ) ||
-      /\b(?:(?:this|our|my|the)\s+(?:(?:unit|integration)\s+tests?|(?:build|test)\s+(?:error|failure|output|results?))|shell\s+history)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:failed|for|to|and|then)\b)/iu.test(
+      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:why|how)\s+|(?:the\s+)?(?:root\s+)?cause\s+of\s+)?(?:(?:(?:this|these|those|our|my|the|your|a|an)\s+)?(?:(?:(?:failing|failed|broken)\s+)?(?:(?:unit|integration)\s+)?tests?|(?:build|test)\s+(?:error|failure|output|results?))|shell\s+history)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:(?:(?:is|are|was|were|has|have|had|keeps?|kept)\s+)?fail(?:s|ed|ing)?|for|to|and|then)\b)/iu.test(
         subject,
       );
     const suppliedUrl =
-      /\b(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:in|within|at|from)\s+https?:\/\/\S+/iu.test(
+      /\b(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:browse|summarize|fetch|retrieve|read|get)\s+https?:\/\/\S+|\b(?:in|within|at|from)\s+https?:\/\/\S+/iu.test(
         request,
       );
     const externalResearch =
@@ -176,12 +197,33 @@ export function researchScope(prompt: string): "external" | "supplied" | "ordina
         /\b(?:documentation|docs|installation\s+(?:instructions|procedure|guides?)|release\s+notes|announcements|news|sources)\b/iu.test(
           source,
         ));
-    if (externalSource) return "external";
-    if (localSource || suppliedUrl) return "supplied";
-    return externalResearch ? "external" : "ordinary";
+    if (directFetch && !searchAction && hasUrl) {
+      return { scope: "supplied", local: localSource, urls: requestUrls };
+    }
+    if (externalSource) return { scope: "external", local: false, urls: [] };
+    if (localSource || suppliedUrl) {
+      return { scope: "supplied", local: localSource, urls: suppliedUrl ? requestUrls : [] };
+    }
+    return { scope: externalResearch ? "external" : "ordinary", local: false, urls: [] };
   });
-  if (scopes.includes("external")) return "external";
-  return scopes.includes("supplied") ? "supplied" : "ordinary";
+  if (scopes.some(({ scope }) => scope === "external")) {
+    return { scope: "external", local: false, urls: [] };
+  }
+  return {
+    scope: scopes.some(({ scope }) => scope === "supplied") ? "supplied" : "ordinary",
+    local: scopes.some(({ local }) => local),
+    urls: scopes.flatMap(({ urls: targets }) => targets),
+  };
+}
+
+export function researchScope(prompt: string): ResearchScope {
+  return classifyResearchScope(prompt).scope;
+}
+
+/** Retain retrieval targets only when the complete request supplies its sources. */
+export function suppliedSearchSources(prompt: string): SuppliedSearchSources | undefined {
+  const { scope, local, urls } = classifyResearchScope(prompt);
+  return scope === "supplied" ? { local, urls } : undefined;
 }
 
 /** Prepends runtime context and withholds tools for disabled-search research. */

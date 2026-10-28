@@ -48,6 +48,13 @@ describe("unavailable web-search reply evidence", () => {
     '{"searchStatus":"unavailable","installationDocumentation":null,"claim":"NVIDIA Announces NemoClaw is the official installation documentation"}',
     'I searched the web.\n{"searchStatus":"unavailable","installationDocumentation":null}',
     'I have searched Tavily.\n{"searchStatus":"unavailable","installationDocumentation":null}',
+    'The official installation documentation is NVIDIA Announces NemoClaw at https://nvidianews.nvidia.com/.\n{"searchStatus":"unavailable","installationDocumentation":null}',
+    '{"searchStatus":"unavailable","installationDocumentation":null}\nThe official installation documentation is NVIDIA Announces NemoClaw at https://nvidianews.nvidia.com/.',
+    'Web search is unavailable. The official installation documentation is NVIDIA Announces NemoClaw.\n{"searchStatus": "unavailable", "installationDocumentation": null}',
+    'The docs are at https://nvidianews.nvidia.com/.\n```json\n{\n"searchStatus": "unavailable",\n"installationDocumentation": null\n}\n```',
+    'Here is your answer.\n{"searchStatus":"unavailable","installationDocumentation":null}',
+    '{"searchStatus":"unavailable","installationDocumentation":null}\n{"searchStatus":"unavailable","installationDocumentation":null}',
+    'Web search is unavailable.\n```json\n{"searchStatus":"unavailable","installationDocumentation":null}',
   ])("rejects claims outside the unavailable-search fields: %s", (reply) => {
     expect(isUnavailableSearchReply(reply)).toBe(false);
   });
@@ -63,6 +70,8 @@ describe("unavailable web-search reply evidence", () => {
     'Web search is unavailable in this sandbox.\n{"searchStatus":"unavailable","installationDocumentation":null}',
     '{"searchStatus":"unavailable","installationDocumentation":null}\nPlease configure a search provider.',
     'Web search is unavailable.\n```json\n{"searchStatus":"unavailable","installationDocumentation":null}\n```',
+    'Web search is disabled in this sandbox.\n```json\n{\n  "installationDocumentation": null,\n  "searchStatus": "unavailable"\n}\n```\nPlease configure a search provider.',
+    'No web search provider is configured in this sandbox.\n{"searchStatus": "unavailable", "installationDocumentation": null}',
   ])("accepts surrounding prose with a parsed null documentation result: %s", (reply) => {
     expect(isUnavailableSearchReply(reply)).toBe(true);
   });

@@ -165,6 +165,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Look up the official NemoClaw installation documentation.",
         "Find the official NemoClaw installation documentation.",
         "Where is the official NemoClaw installation documentation?",
+        "I want the official NemoClaw installation documentation.",
+        "Official NemoClaw installation documentation, please.",
         "Get the latest NemoClaw release notes.",
         "Read /sandbox/README.md, then Google the official installation documentation.",
         "Fetch https://docs.nvidia.com/nemoclaw/ and find alternative installation guides.",
@@ -199,6 +201,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Find the target in Makefile.",
         "Search .gitignore for ignored paths.",
         "Search scripts/start for the startup command.",
+        "Search src/ for TODO comments.",
         "Search the file LICENSE for distribution terms.",
         "Search `NOTICE` for attribution.",
         "What is the current working directory?",
@@ -212,6 +215,14 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Explore the project layout.",
         "Search the current directory for the config file.",
         "Search the project for TODO comments.",
+        "Find and fix the bug in src/index.ts.",
+        "Find and fix the bug in this function.",
+        "Investigate why the unit tests are failing",
+        "Investigate why unit tests are failing",
+        "Find and fix the failing unit tests.",
+        "Investigate why the integration tests fail.",
+        "Search and read README.md.",
+        "Search for logs and traces in this project.",
         "Search through the project files for TODO comments.",
         "Search the repository recursively for TODO comments.",
         "Search the project code for TODO comments.",
@@ -364,6 +375,14 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       );
       for (const [prompt, tool, params] of [
         ["Search the project for TODO comments.", "read", { file_path: "/sandbox/README.md" }],
+        ["Investigate why the unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
+        ["Investigate why unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
+        ["Find and fix the failing unit tests.", "read", { file_path: "test/unit.test.ts" }],
+        [
+          "Investigate why the integration tests fail.",
+          "read",
+          { file_path: "test/integration.test.ts" },
+        ],
         [
           "Search the repository recursively for TODO comments.",
           "read",
@@ -397,6 +416,119 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         await admit(context);
         blocked(await call("web_search", context, "reused-search"));
         blocked(await call(tool, context, "reused-read", params));
+        await runner().runAgentEnd({ success: true, messages: [] }, context);
+      }
+      const suppliedUrlContext = { runId: "bounded-supplied-url" };
+      await admit(suppliedUrlContext, "Fetch https://docs.nvidia.com/nemoclaw/.");
+      const beforeSuppliedUrl: number = sideEffects;
+      blocked(await call("web_search", suppliedUrlContext, "bounded-search"));
+      blocked(
+        await call("web_fetch", suppliedUrlContext, "unrelated-fetch", {
+          url: "https://example.org/",
+        }),
+      );
+      blocked(await call("read", suppliedUrlContext, "unrelated-local"));
+      blocked(
+        await call("memory_get", suppliedUrlContext, "unrelated-memory-excerpt", {
+          path: "memory/installation.md",
+        }),
+      );
+      blocked(
+        await call("memory_search", suppliedUrlContext, "unrelated-memory", {
+          query: "installation documentation",
+        }),
+      );
+      blocked(
+        await call("tool_call", suppliedUrlContext, "wrapped-unrelated", {
+          id: "openclaw:core:web_fetch",
+          args: { url: "https://example.org/" },
+        }),
+      );
+      assert.equal(
+        sideEffects,
+        beforeSuppliedUrl,
+        "unrelated sources never reach the real tool executor",
+      );
+      await call("web_fetch", suppliedUrlContext, "bounded-fetch", {
+        url: "https://DOCS.nvidia.com:443/nemoclaw/#intro",
+      });
+      await call("tool_call", suppliedUrlContext, "wrapped-bounded-fetch", {
+        id: "openclaw:core:web_fetch",
+        args: { url: "https://docs.nvidia.com/nemoclaw/" },
+      });
+      assert.equal(
+        sideEffects,
+        beforeSuppliedUrl + 2,
+        "only supplied retrieval targets reach the real tool executor",
+      );
+      await runner().runAgentEnd({ success: true, messages: [] }, suppliedUrlContext);
+      const mixedContext = { runId: "mixed-supplied-sources" };
+      const mixedPrompt = "Read README.md and fetch https://example.com/docs.";
+      await admit(mixedContext, mixedPrompt);
+      const mixedTurn = await runner().runBeforePromptBuild(
+        { prompt: mixedPrompt, messages: [] },
+        mixedContext,
+      );
+      assert.deepEqual(
+        applyToolAllowlist(availableTools, mixedTurn.toolsAllow),
+        availableTools,
+        "mixed supplied sources retain the real prompt tools",
+      );
+      const beforeMixed: number = sideEffects;
+      blocked(await call("web_search", mixedContext, "mixed-source-search"));
+      await call("read", mixedContext, "mixed-local-read", { file_path: "README.md" });
+      await call("web_fetch", mixedContext, "mixed-url-fetch", { url: "https://example.com/docs" });
+      await call("tool_call", mixedContext, "mixed-wrapped-read", {
+        id: "openclaw:core:read",
+        args: { file_path: "README.md" },
+      });
+      await call("tool_call", mixedContext, "mixed-wrapped-fetch", {
+        id: "openclaw:core:web_fetch",
+        args: { url: "https://example.com/docs" },
+      });
+      assert.equal(
+        sideEffects,
+        beforeMixed + 4,
+        "the real executor receives both supplied source kinds",
+      );
+      blocked(
+        await call("web_fetch", mixedContext, "mixed-unrelated-url", {
+          url: "https://example.com/other",
+        }),
+      );
+      assert.equal(
+        sideEffects,
+        beforeMixed + 4,
+        "an unrelated URL never reaches the real executor",
+      );
+      await runner().runAgentEnd({ success: true, messages: [] }, mixedContext);
+      for (const wrapped of [false, true]) {
+        const context = { runId: `local-discovery-${wrapped}` };
+        await admit(context, "Find and fix the bug in src/index.ts.");
+        const before: number = sideEffects;
+        for (const [name, params] of [
+          ["tool_search", { query: "search local project files" }],
+          ["tool_describe", { id: "openclaw:core:exec" }],
+          ["exec", { command: "rg TODO src/" }],
+          ["tool_search", { query: "search memory" }],
+          ["memory_search", { query: "TODO" }],
+        ] as const) {
+          const result = wrapped
+            ? await call("tool_call", context, `local-${name}`, {
+                id: `openclaw:core:${name}`,
+                args: params,
+              })
+            : await call(name, context, `local-${name}`, params);
+          assert.notEqual(result.details?.status, "blocked");
+        }
+        assert.equal(
+          sideEffects,
+          before + 5,
+          "local discovery and execution reach the real executor",
+        );
+        blocked(await call("tool_search", context, "web-discovery", { query: "web search" }));
+        blocked(await call("exec", context, "denied-substitute", { command: "rg TODO src/" }));
+        assert.equal(sideEffects, before + 5, "web discovery still denies substitute execution");
         await runner().runAgentEnd({ success: true, messages: [] }, context);
       }
     } finally {

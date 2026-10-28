@@ -16,7 +16,7 @@ import { DeniedSearchState } from "./denied-search-state.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import { readNativeRoute } from "./onboard/native-route.js";
 import { getPluginConfig } from "./plugin-config.js";
-import { registerRuntimeContext, researchScope } from "./runtime-context.js";
+import { registerRuntimeContext, suppliedSearchSources } from "./runtime-context.js";
 import { configuredSearchEnabled } from "./search-config.js";
 import { safeResolvePath } from "./security/safe-resolve-path.js";
 import { isMemoryPath, scanForSecrets } from "./security/secret-scanner.js";
@@ -294,7 +294,9 @@ function blocksDisabledSearch(
   const probe = JSON.stringify(event.params);
   const searchDiscovery =
     /^(?:tool_search|tool_describe)$/u.test(effectiveTarget) &&
-    /\b(?:brave|tavily|search|web[_ -]?search)\b/iu.test(probe);
+    /\b(?:brave|tavily)(?=[_:-]|\b)|\b(?:web[_ -]?search|(?:search|searching)\s+(?:(?:the|on\s+the)\s+)?(?:web|internet|online)|(?:internet|online)\s+search)\b/iu.test(
+      probe,
+    );
   const providerProbe =
     /^(?:exec|execute|shell|web_fetch|browser)$/u.test(effectiveTarget) &&
     hasSearchProviderUrl(event.params);
@@ -305,9 +307,19 @@ function blocksDisabledSearch(
 
   // A denied search identifies the turn, not the subject of a local document.
   // Identity-less calls cannot safely correlate turns, so substitutes fail closed.
-  const substituteTool =
-    /^(?:tool_search|tool_describe|tool_call|web_fetch|memory_search|sessions_search|read|exec|execute|shell|browser)$/u;
-  return deniedSearchRuns.blocks(event.runId, aliases) && substituteTool.test(target);
+  const params = target === "tool_call" ? event.params["args"] : event.params;
+  const url = readStringProperty(params, "url");
+  // A URL grant permits only web_fetch of that document. Local-source grants
+  // permit reads and memory queries, never an unrestricted shell or browser.
+  const source =
+    effectiveTarget === "web_fetch" && url !== undefined
+      ? { kind: "url" as const, url }
+      : /^(?:read|memory_search|memory_get|sessions_search|sessions_history)$/u.test(
+            effectiveTarget,
+          )
+        ? { kind: "local" as const }
+        : undefined;
+  return deniedSearchRuns.blocks(event.runId, aliases, source);
 }
 
 export default function register(api: OpenClawPluginApi): void {
@@ -369,7 +381,7 @@ export default function register(api: OpenClawPluginApi): void {
           deniedSearchRuns.admit(
             identity,
             identities,
-            prompt !== undefined && researchScope(prompt) === "supplied",
+            prompt !== undefined ? suppliedSearchSources(prompt) : undefined,
           )
         ) {
           return undefined;
@@ -407,10 +419,10 @@ export default function register(api: OpenClawPluginApi): void {
         ) {
           return {
             block: true,
-            blockReason: deniedSearchRuns.blocks(runId, identities)
-              ? "Web search is unavailable in this sandbox. Do not discover search providers, retry search, or probe web pages, local files, memory, or shell output as substitutes. " +
-                "Tell the user search is unavailable. Do not claim to have searched or present unverified installation documentation; return installationDocumentation as null when requested."
-              : "Web search is unavailable in this sandbox. Continue only with the local sources or URLs supplied by the user. Do not retry web search or claim to have searched the web.",
+            blockReason:
+              "Web search is unavailable in this sandbox. Do not discover search providers, retry search, or probe web pages, local files, memory, or shell output as substitutes. " +
+              "Continue only with the local sources or URLs supplied by the user. Tell the user search is unavailable. " +
+              "Do not claim to have searched or present unverified installation documentation; return installationDocumentation as null when requested.",
           };
         }
 

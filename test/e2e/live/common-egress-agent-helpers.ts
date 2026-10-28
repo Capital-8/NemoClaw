@@ -1107,11 +1107,15 @@ export function projectUnavailableSearchToolEvidenceArtifact(evidence: OpenClawT
 
 /** Validate the complete research reply independently of the reply-key smoke check. */
 export function isUnavailableSearchReply(reply: string): boolean {
-  if (projectUnavailableSearchReplyArtifact(reply).unavailableSearchReply) return true;
   if (reply.length > 16_384) return false;
+  if (projectUnavailableSearchReplyArtifact(reply).unavailableSearchReply) return true;
+  const start = reply.indexOf("{");
+  const end = reply.lastIndexOf("}");
+  if (start < 0 || end < start) return false;
   try {
-    const answer = parseJsonFromText(reply);
-    // Preserve the field contract while allowing explanatory prose around the JSON.
+    // Parse the original span, including its whitespace. Extra objects cannot
+    // be hidden by selecting or reserializing only the first JSON result.
+    const answer: unknown = JSON.parse(reply.slice(start, end + 1));
     if (answer === null || typeof answer !== "object" || Array.isArray(answer)) return false;
     const record = answer as Record<string, unknown>;
     if (
@@ -1120,11 +1124,18 @@ export function isUnavailableSearchReply(reply: string): boolean {
       record.installationDocumentation !== null
     )
       return false;
-    const prose = reply.replace(JSON.stringify(answer), "");
-    // Prose may disclose limitations, but cannot add a research or documentation claim.
-    return !/official\s+installation\s+documentation\s*:|(?:based on|after)\s+(?:my\s+)?(?:research|investigation)|(?:I|we)\s+(?:have\s+)?(?:searched|found|verified)|"installationDocumentation"\s*:\s*\{/iu.test(
-      prose,
-    );
+    let before = reply.slice(0, start).trim();
+    let after = reply.slice(end + 1).trim();
+    const openingFence = /(?:^|\r?\n)```(?:json)?[ \t]*$/iu.exec(before);
+    const closingFence = /^```(?:\r?\n|$)/u.exec(after);
+    if (Boolean(openingFence) !== Boolean(closingFence)) return false;
+    if (openingFence) before = before.slice(0, openingFence.index).trim();
+    if (closingFence) after = after.slice(closingFence[0].length).trim();
+    // Only these limitation disclosures can surround the requested fields.
+    // Unknown prose must fail closed instead of relying on a claim blacklist.
+    const limitation =
+      /^(?:(?:web search is (?:unavailable|disabled)(?: in this sandbox)?|no web search provider is configured(?: in this sandbox)?|I cannot search the web(?: in this sandbox)?|(?:please )?configure a (?:web )?search provider)[.!:]?(?:\s+|$))*$/iu;
+    return limitation.test(before) && limitation.test(after);
   } catch {
     return false;
   }

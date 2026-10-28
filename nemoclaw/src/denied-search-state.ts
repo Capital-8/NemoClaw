@@ -6,10 +6,29 @@ const MAX_TURN_TIMEOUT_MS = 2_147_483_647;
 export const SEARCH_DENIAL_RETENTION_MS = MAX_TURN_TIMEOUT_MS + 60_000;
 export const SEARCH_DENIAL_IDENTITY_LIMIT = 1024;
 
+export interface SuppliedSearchSources {
+  local: boolean;
+  urls: readonly string[];
+}
+
+type RetrievalSource = { kind: "local" } | { kind: "url"; url: string };
+
+function canonicalRetrievalUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    if (!/^https?:$/u.test(url.protocol) || url.username || url.password) return undefined;
+    // A fragment selects a position within the same retrieved document.
+    url.hash = "";
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
 interface DeniedSearchTurn {
   expiresAt: number;
   denied: boolean;
-  sourceSupplied: boolean;
+  sources: SuppliedSearchSources | undefined;
   aliases: Set<string>;
 }
 
@@ -48,16 +67,26 @@ export class DeniedSearchState {
     return true;
   }
 
-  admit(identity: string, aliases: readonly string[] = [], sourceSupplied = false): boolean {
+  admit(
+    identity: string,
+    aliases: readonly string[] = [],
+    suppliedSources?: SuppliedSearchSources,
+  ): boolean {
     if (!this.canAdmit(identity, aliases)) return false;
+    const sources = suppliedSources && {
+      local: suppliedSources.local,
+      urls: suppliedSources.urls
+        .map(canonicalRetrievalUrl)
+        .filter((url): url is string => url !== undefined),
+    };
     const existing = this.owner(identity);
     if (existing) {
-      existing[1].sourceSupplied = sourceSupplied;
+      existing[1].sources = sources;
     } else {
       const turn: DeniedSearchTurn = {
         expiresAt: Date.now() + SEARCH_DENIAL_RETENTION_MS,
         denied: false,
-        sourceSupplied,
+        sources,
         aliases: new Set([identity]),
       };
       this.rememberAliases(turn, aliases);
@@ -80,14 +109,25 @@ export class DeniedSearchState {
     this.schedule();
   }
 
-  blocks(identity: string | undefined, aliases: readonly string[] = []): boolean {
+  blocks(
+    identity: string | undefined,
+    aliases: readonly string[] = [],
+    source?: RetrievalSource,
+  ): boolean {
     this.expire();
     this.schedule();
     if (!identity) return true;
     const found = this.owner(identity);
     if (found) {
       this.rememberAliases(found[1], aliases);
-      return found[1].denied && !found[1].sourceSupplied;
+      const turn = found[1];
+      if (!turn.denied) return false;
+      if (turn.sources?.local && source?.kind === "local") return false;
+      if (turn.sources && source?.kind === "url") {
+        const url = canonicalRetrievalUrl(source.url);
+        return url === undefined || !turn.sources.urls.includes(url);
+      }
+      return true;
     }
     // An over-capacity turn never acquired ownership. It cannot gain substitute
     // access when another turn completes; admission must reserve that ownership.

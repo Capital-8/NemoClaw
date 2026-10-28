@@ -36,21 +36,62 @@ describe("denied-search identity retention", () => {
   });
 
   it("keeps supplied-source scope with its admitted turn and clears it on completion", () => {
-    state.admit("runId:local", ["sessionKey:local"], true);
+    state.admit("runId:local", ["sessionKey:local"], { local: true, urls: [] });
     state.deny("runId:local");
-    expect(state.blocks("runId:local")).toBe(false);
-    expect(state.blocks("sessionKey:local")).toBe(false);
+    expect(state.blocks("runId:local", [], { kind: "local" })).toBe(false);
+    expect(state.blocks("sessionKey:local", [], { kind: "local" })).toBe(false);
+    expect(state.blocks("runId:local", [], { kind: "url", url: "https://example.org/" })).toBe(
+      true,
+    );
     state.admit("runId:external");
     state.deny("runId:external");
     expect(state.blocks("runId:external")).toBe(true);
-    expect(state.admit("runId:overflow", [], true)).toBe(false);
+    expect(state.admit("runId:overflow", [], { local: true, urls: [] })).toBe(false);
     expect(state.blocks("runId:overflow")).toBe(true);
     state.admit("runId:local");
-    expect(state.blocks("runId:local")).toBe(true);
+    expect(state.blocks("runId:local", [], { kind: "local" })).toBe(true);
     state.delete("runId:local");
     expect(state.admit("runId:local")).toBe(true);
     state.deny("runId:local");
-    expect(state.blocks("runId:local")).toBe(true);
+    expect(state.blocks("runId:local", [], { kind: "local" })).toBe(true);
+  });
+
+  it("binds supplied URLs to the admitted turn and replaces them on readmission", () => {
+    const urls = [
+      "https://DOCS.nvidia.com:443/nemoclaw/#intro",
+      "file:///sandbox/README.md",
+      "invalid",
+    ];
+    state.admit("runId:url", ["sessionKey:url"], { local: false, urls });
+    urls.push("https://example.org/");
+    state.deny("runId:url");
+    expect(
+      state.blocks("sessionKey:url", [], { kind: "url", url: "https://docs.nvidia.com/nemoclaw/" }),
+    ).toBe(false);
+    expect(state.blocks("runId:url", [], { kind: "url", url: "https://example.org/" })).toBe(true);
+    expect(state.blocks("runId:url", [], { kind: "url", url: "file:///sandbox/README.md" })).toBe(
+      true,
+    );
+    expect(
+      state.blocks("runId:url", [], {
+        kind: "url",
+        url: "https://user:password@docs.nvidia.com/nemoclaw/",
+      }),
+    ).toBe(true);
+    expect(state.blocks("runId:url", [], { kind: "local" })).toBe(true);
+    state.admit("runId:url", [], { local: false, urls: ["https://example.org/"] });
+    expect(
+      state.blocks("runId:url", [], { kind: "url", url: "https://docs.nvidia.com/nemoclaw/" }),
+    ).toBe(true);
+    expect(state.blocks("runId:url", [], { kind: "url", url: "https://example.org/" })).toBe(false);
+    state.admit("runId:url", [], { local: true, urls: ["https://example.org/"] });
+    expect(state.blocks("runId:url", [], { kind: "local" })).toBe(false);
+    expect(state.blocks("runId:url", [], { kind: "url", url: "https://example.org/" })).toBe(false);
+    state.admit("runId:url", [], { local: true, urls: [] });
+    expect(state.blocks("runId:url", [], { kind: "local" })).toBe(false);
+    expect(state.blocks("runId:url", [], { kind: "url", url: "https://example.org/" })).toBe(true);
+    state.delete("runId:url");
+    expect(state.blocks("runId:url", [], { kind: "url", url: "https://example.org/" })).toBe(true);
   });
 
   it("recovers admission after denied turns complete without admitting overflow substitutes", () => {
@@ -167,7 +208,7 @@ describe("denied-search identity retention", () => {
   });
 
   it("does not revive expired ownership through a tool denial", () => {
-    state.admit("expired", [], true);
+    state.admit("expired", [], { local: true, urls: [] });
     vi.setSystemTime(Date.now() + SEARCH_DENIAL_RETENTION_MS);
     state.deny("expired");
     expect(state.size).toBe(0);
