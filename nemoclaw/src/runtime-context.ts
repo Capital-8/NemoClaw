@@ -110,7 +110,7 @@ function buildRuntimeContextText(summary: RuntimeSummary, config: OpenClawConfig
   return lines.join("\n");
 }
 
-function requestsExternalResearch(prompt: string): boolean {
+function researchScope(prompt: string): "external" | "supplied" | "ordinary" {
   // Generic questions need local tools without naming a source. Require external
   // research intent, and keep separate requests from exempting one another.
   // Normalize URLs before splitting so their path words cannot become requests.
@@ -120,7 +120,7 @@ function requestsExternalResearch(prompt: string): boolean {
     .split(
       /(?<=[.!?])\s+|[\n;]+|,\s*(?=(?:google|bing|duckduckgo|search|research|look|find|locate|browse|investigate)\b)|\b(?:and|then|but|instead)\b(?!\s+(?:fetch|retrieve)\b)/iu,
     );
-  return requests.some((request) => {
+  const scopes = requests.map((request) => {
     // A supplied URL is a retrieval target; its path words are not user intent.
     const hasUrl = /\bhttps?:\/\/\S+/iu.test(request);
     const intent = request.replace(/\bhttps?:\/\/\S+/giu, "");
@@ -128,10 +128,10 @@ function requestsExternalResearch(prompt: string): boolean {
       /\b(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look(?:\s+(?:up|for|on))?|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|summarize|fetch|retrieve|read|get|need|where|which|what|who|when|how)\b/iu.exec(
         intent,
       );
-    if (!action) return false;
+    if (!action) return "ordinary";
     const prefix = intent.slice(0, action.index);
     if (/\b(?:(?:do\s+not|don't|never)\s+(?:use\s+(?:web_fetch[,\s]*)?)?|not\s*)$/iu.test(prefix)) {
-      return false;
+      return "ordinary";
     }
 
     const source = intent.slice(action.index);
@@ -140,15 +140,22 @@ function requestsExternalResearch(prompt: string): boolean {
       /\b(?:googl(?:e|ing)|bing|duckduckgo|web[_ -]?search|search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek)\b/iu.test(
         source,
       );
-    if (directFetch && !searchAction && hasUrl) return false;
+    if (directFetch && !searchAction && hasUrl) return "supplied";
 
     const externalSource =
       /^(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search)\b|\b(?:on\s+(?:the\s+)?(?:web|internet)|(?:search|research|browse|look)\s+(?:(?:the|on\s+the)\s+)?(?:web|internet|online)|(?:using|with|via)\s+(?:tavily|brave|google|bing|duckduckgo))\b/iu.test(
         source,
       );
+    // A local source must be the action's target or an explicit source location.
+    // Words in the requested research topic do not grant access to substitutes.
+    const subject = source.slice(action[0].length).trimStart();
     const localSource =
-      /\b(?:local|sandbox|(?:current|working)\s+directory|search\s+(?:the\s+)?(?:logs|memory)|(?:this|the|our)\s+(?:repository|repo|workspace|codebase|function|conversation|code)|(?:in|from|within)\s+(?:the\s+)?(?:repository|repo|workspace|codebase|memory))\b|(?:^|[\s`"'])(?:\.?\.?\/)[^\s]+|\b[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b/iu.test(
-        source,
+      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current|working)\s+directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)/iu.test(
+        subject,
+      );
+    const suppliedUrl =
+      /\b(?:search|research|find|locate|look\s+(?:up|for))\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:in|within|at|from)\s+https?:\/\/\S+/iu.test(
+        request,
       );
     const externalResearch =
       /^search\b|\bto\s+search\b/iu.test(source) ||
@@ -159,22 +166,31 @@ function requestsExternalResearch(prompt: string): boolean {
         /\b(?:documentation|docs|installation\s+(?:instructions|procedure|guides?)|release\s+notes|announcements|news|sources)\b/iu.test(
           source,
         ));
-    return externalSource || (!localSource && externalResearch);
+    if (externalSource) return "external";
+    if (localSource || suppliedUrl) return "supplied";
+    return externalResearch ? "external" : "ordinary";
   });
+  if (scopes.includes("external")) return "external";
+  return scopes.includes("supplied") ? "supplied" : "ordinary";
 }
 
 /** Prepends runtime context and withholds tools for disabled-search research. */
-export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: NemoClawConfig): void {
-  api.on("before_prompt_build", (event) => {
+export function registerRuntimeContext(
+  api: OpenClawPluginApi,
+  pluginConfig: NemoClawConfig,
+  onSourceScope?: (supplied: boolean, args: readonly unknown[]) => void,
+): void {
+  api.on("before_prompt_build", (...args) => {
+    const event = args[0];
     const prompt =
       event && typeof event === "object" && !Array.isArray(event) ? event.prompt : undefined;
     // A tool-call denial happens after the model has already attempted discovery.
     // Keep local work and direct URL retrieval available without using them as
     // substitutes for research whose source the user has not supplied.
-    const unavailableSearch =
-      configuredSearchEnabled(api.config) === false &&
-      typeof prompt === "string" &&
-      requestsExternalResearch(prompt);
+    const scope = typeof prompt === "string" ? researchScope(prompt) : "ordinary";
+    const searchDisabled = configuredSearchEnabled(api.config) === false;
+    if (searchDisabled) onSourceScope?.(scope === "supplied", args);
+    const unavailableSearch = searchDisabled && scope === "external";
     return {
       prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig), api.config),
       ...(unavailableSearch ? { toolsAllow: [] } : {}),

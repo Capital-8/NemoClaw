@@ -144,6 +144,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const prompt of [
         searchPrompt,
         "Search for NemoClaw documentation.",
+        "Search the latest Linux documentation for the current directory.",
+        "Search for official documentation about local files.",
         "Google the official NemoClaw installation documentation.",
         "Look up the official NemoClaw installation documentation.",
         "Find the official NemoClaw installation documentation.",
@@ -179,6 +181,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Read /sandbox/README.md.",
         "What files are in the current directory?",
         "Search the current directory for the config file.",
+        "Search the project for TODO comments.",
+        "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
       ]) {
         const localTurn = await runner().runBeforePromptBuild(
           { prompt, messages: [] },
@@ -320,6 +324,33 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         3,
         "completion restores capacity without waiting for retention expiry",
       );
+      for (const [prompt, tool, params] of [
+        ["Search the project for TODO comments.", "read", { file_path: "/sandbox/README.md" }],
+        [
+          "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
+          "web_fetch",
+          { url: "https://docs.nvidia.com/nemoclaw/" },
+        ],
+      ] as const) {
+        const context = { runId: "supplied-source" };
+        await admit(context);
+        await runner().runBeforePromptBuild({ prompt, messages: [] }, context);
+        const before: number = sideEffects;
+        blocked(await call("web_search", context, "supplied-search"));
+        await call(tool, context, "supplied-read", params);
+        assert.equal(sideEffects, before + 1, "supplied sources remain usable after denied search");
+        await runner().runBeforePromptBuild(
+          { prompt: `${prompt} Then search the web for alternatives.`, messages: [] },
+          context,
+        );
+        blocked(await call(tool, context, "mixed-read", params));
+        assert.equal(sideEffects, before + 1, "mixed external research cannot use substitutes");
+        await runner().runAgentEnd({ success: true, messages: [] }, context);
+        await admit(context);
+        blocked(await call("web_search", context, "reused-search"));
+        blocked(await call(tool, context, "reused-read", params));
+        await runner().runAgentEnd({ success: true, messages: [] }, context);
+      }
     } finally {
       try {
         await runner().runGatewayStop({}, {});

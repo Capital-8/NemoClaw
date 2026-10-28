@@ -33,6 +33,23 @@ describe("denied-search identity retention", () => {
     expect(state.canAdmit("run-overflow")).toBe(true);
   });
 
+  it("keeps supplied-source scope with its admitted turn and clears it on completion", () => {
+    state.setSourceSupplied("runId:local", true, ["sessionKey:local"]);
+    state.deny("runId:local");
+    expect(state.blocks("runId:local")).toBe(false);
+    expect(state.blocks("sessionKey:local")).toBe(false);
+    state.deny("runId:external");
+    expect(state.blocks("runId:external")).toBe(true);
+    state.setSourceSupplied("runId:overflow", true);
+    expect(state.blocks("runId:overflow")).toBe(true);
+    state.setSourceSupplied("runId:local", false);
+    expect(state.blocks("runId:local")).toBe(true);
+    state.delete("runId:local");
+    expect(state.admit("runId:local")).toBe(true);
+    state.deny("runId:local");
+    expect(state.blocks("runId:local")).toBe(true);
+  });
+
   it("recovers admission after denied turns complete without admitting overflow substitutes", () => {
     state.deny("retained-first");
     state.deny("retained-second");

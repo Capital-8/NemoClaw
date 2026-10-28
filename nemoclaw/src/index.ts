@@ -52,7 +52,7 @@ function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> |
 }
 
 /** Use the same host identity for tool denial and authoritative agent_end cleanup. */
-function searchTurnKeys(args: readonly PluginValue[]): string[] {
+function searchTurnKeys(args: readonly unknown[]): string[] {
   const identities: string[] = [];
   for (const key of ["runId", "sessionKey", "sessionId"]) {
     const value = readStringProperty(args[1], key) ?? readStringProperty(args[0], key);
@@ -330,7 +330,12 @@ export default function register(api: OpenClawPluginApi): void {
   // 4. Register runtime context injection (sandbox-awareness hook)
   const pluginConfig = getPluginConfig(api);
   try {
-    registerRuntimeContext(api, pluginConfig);
+    registerRuntimeContext(api, pluginConfig, (supplied, args) => {
+      const identities = searchTurnKeys(args);
+      if (identities[0]) {
+        deniedSearchRuns.setSourceSupplied(identities[0], supplied, identities);
+      }
+    });
   } catch (err) {
     api.logger.warn(
       `Could not register runtime context hook: ${err instanceof Error ? err.message : String(err)}`,
@@ -398,9 +403,10 @@ export default function register(api: OpenClawPluginApi): void {
         ) {
           return {
             block: true,
-            blockReason:
-              "Web search is unavailable in this sandbox. Do not discover search providers, retry search, or probe web pages, local files, memory, or shell output as substitutes. " +
-              "Tell the user search is unavailable. Do not claim to have searched or present unverified installation documentation; return installationDocumentation as null when requested.",
+            blockReason: deniedSearchRuns.blocks(runId, identities)
+              ? "Web search is unavailable in this sandbox. Do not discover search providers, retry search, or probe web pages, local files, memory, or shell output as substitutes. " +
+                "Tell the user search is unavailable. Do not claim to have searched or present unverified installation documentation; return installationDocumentation as null when requested."
+              : "Web search is unavailable in this sandbox. Continue only with the local sources or URLs supplied by the user. Do not retry web search or claim to have searched the web.",
           };
         }
 

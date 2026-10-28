@@ -475,6 +475,49 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   }
 
   it.each([
+    ["Search the project for TODO comments.", "read", { file_path: "/sandbox/project/README.md" }],
+    [
+      "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
+      "web_fetch",
+      { url: "https://docs.nvidia.com/nemoclaw/" },
+    ],
+  ])(
+    "preserves supplied-source work after a denied web search: %s",
+    async (prompt, toolName, params) => {
+      const mockedContext = await import("./runtime-context.js");
+      const realContext =
+        await vi.importActual<typeof import("./runtime-context.js")>("./runtime-context.js");
+      vi.mocked(mockedContext.registerRuntimeContext).mockImplementationOnce(
+        realContext.registerRuntimeContext,
+      );
+      const { api, handler, admission } = searchHook(false);
+      const context = { runId: "supplied-source" };
+      await admission({}, context);
+      const promptHook = vi
+        .mocked(api.on)
+        .mock.calls.find(([name]) => name === "before_prompt_build")?.[1];
+      expect(await promptHook?.({ prompt }, context)).not.toHaveProperty("toolsAllow");
+      expect(handler({ toolName: "web_search", params: {} }, context)).toMatchObject({
+        block: true,
+        blockReason: expect.stringContaining(
+          "Continue only with the local sources or URLs supplied",
+        ),
+      });
+      expect(handler({ toolName, params }, context)).toBeUndefined();
+
+      // Supplied-source scope does not grant another turn substitute access.
+      const other = { runId: "external-research" };
+      await handler({ toolName: "web_search", params: {} }, other);
+      expect(handler({ toolName, params }, other)).toMatchObject({ block: true });
+      // A mixed request still requires unavailable web research.
+      expect(
+        await promptHook?.({ prompt: `${prompt} Then search the web for alternatives.` }, context),
+      ).toHaveProperty("toolsAllow", []);
+      expect(handler({ toolName, params }, context)).toMatchObject({ block: true });
+    },
+  );
+
+  it.each([
     { toolName: "web_search", params: { query: "NemoClaw installation" } },
     { toolName: "openclaw:core:web_search", params: {} },
     { toolName: "TAVILY_SEARCH", params: { query: "installation" } },

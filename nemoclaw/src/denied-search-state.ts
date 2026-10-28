@@ -9,6 +9,7 @@ export const SEARCH_DENIAL_IDENTITY_LIMIT = 1024;
 interface DeniedSearchTurn {
   expiresAt: number;
   denied: boolean;
+  sourceSupplied: boolean;
   aliases: Set<string>;
 }
 
@@ -53,6 +54,7 @@ export class DeniedSearchState {
       const turn: DeniedSearchTurn = {
         expiresAt: Date.now() + SEARCH_DENIAL_RETENTION_MS,
         denied: false,
+        sourceSupplied: false,
         aliases: new Set([identity]),
       };
       this.rememberAliases(turn, aliases);
@@ -71,6 +73,12 @@ export class DeniedSearchState {
     this.schedule();
   }
 
+  setSourceSupplied(identity: string, supplied: boolean, aliases: readonly string[] = []): void {
+    if (!this.admit(identity, aliases)) return;
+    const turn = this.owner(identity)?.[1];
+    if (turn) turn.sourceSupplied = supplied;
+  }
+
   blocks(identity: string | undefined, aliases: readonly string[] = []): boolean {
     this.expire();
     this.schedule();
@@ -78,7 +86,7 @@ export class DeniedSearchState {
     const found = this.owner(identity);
     if (found) {
       this.rememberAliases(found[1], aliases);
-      return found[1].denied;
+      return found[1].denied && !found[1].sourceSupplied;
     }
     // An over-capacity turn never acquired ownership. It cannot gain substitute
     // access when another turn completes; admission must reserve that ownership.
