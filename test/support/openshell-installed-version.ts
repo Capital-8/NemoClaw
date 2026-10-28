@@ -64,6 +64,7 @@ export function runCommandWithInstalledVersion(
       | "fixed-system"
       | "system";
     legacyInventory?: unknown;
+    legacyMetadata?: string;
     retainedRegistry?: string;
     registryGatewayPort?: string;
     missingCli?: boolean;
@@ -138,7 +139,8 @@ export function runCommandWithInstalledVersion(
           ),
           options.legacyGateway === "corrupt"
             ? "invalid metadata"
-            : JSON.stringify({ name: "nemoclaw", gateway_endpoint: "https://127.0.0.1:8080" }),
+            : (options.legacyMetadata ??
+                JSON.stringify({ name: "nemoclaw", gateway_endpoint: "https://127.0.0.1:8080" })),
         );
       }
       retainedFiles.set(path.join(gatewayDir, "client.key"), "synthetic retained mTLS sentinel");

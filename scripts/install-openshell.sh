@@ -242,7 +242,7 @@ verify_legacy_openshell_state() {
   # shellcheck disable=SC2016 # JavaScript template literals are evaluated by Node.js.
   node --input-type=module -e '
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, fstatSync, openSync, readFileSync, readdirSync, lstatSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync, readdirSync, lstatSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 function deny(reason) {
@@ -266,6 +266,23 @@ function query(binary, args) {
 
 function missing(error) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function readRetainedJson(descriptor, label) {
+  const limit = 16 * 1024 * 1024;
+  const stat = fstatSync(descriptor);
+  if (!stat.isFile()) deny(`${label} is not a regular file`);
+  if (stat.size > limit) deny(`${label} exceeds the ${limit} byte limit`);
+  // Keep allocation bounded even if the opened file grows after fstat.
+  const bytes = Buffer.alloc(limit + 1);
+  let length = 0;
+  while (length < bytes.length) {
+    const count = readSync(descriptor, bytes, length, bytes.length - length, null);
+    if (count === 0) break;
+    length += count;
+  }
+  if (length > limit) deny(`${label} exceeds the ${limit} byte limit`);
+  return JSON.parse(bytes.toString("utf8", 0, length));
 }
 
 function gatewayNames() {
@@ -295,8 +312,7 @@ function gatewayNames() {
       );
       let metadata;
       try {
-        if (!fstatSync(descriptor).isFile()) deny("legacy gateway metadata is not a regular file");
-        metadata = JSON.parse(readFileSync(descriptor, "utf8"));
+        metadata = readRetainedJson(descriptor, "legacy gateway metadata");
       } finally {
         closeSync(descriptor);
       }
@@ -347,8 +363,7 @@ function verifyRetainedNemoClawRegistry() {
       throw error;
     }
     try {
-      if (!fstatSync(descriptor).isFile()) deny("the NemoClaw sandbox registry is not a regular file");
-      const registry = JSON.parse(readFileSync(descriptor, "utf8"));
+      const registry = readRetainedJson(descriptor, "the NemoClaw sandbox registry");
       if (!registry || typeof registry !== "object" || Array.isArray(registry) ||
           !registry.sandboxes || typeof registry.sandboxes !== "object" || Array.isArray(registry.sandboxes)) {
         deny("the NemoClaw sandbox registry is invalid");

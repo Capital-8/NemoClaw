@@ -45,6 +45,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern: /(?:^|\/)scripts\/install-openshell\.sh$/,
     testsToRun: runTests(
       "test/installer-integration/install-openshell-version-check.test.ts",
+      "test/installer-integration/install-openshell-retained-state-size.test.ts",
       "test/installer-integration/install-openshell-version-pin.test.ts",
     ),
   },
