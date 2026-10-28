@@ -1661,7 +1661,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     // auto-detected, never a user override or a legitimately resumed window
     // (#6177; resume/repair coverage per PR #6293 PRA-3).
     clearAutoDetectedCompatibleContextWindow(process.env);
-    let forceInferenceSetup = initialForceInferenceSetup;
+    // Re-selecting an endpointless review does not complete its inference
+    // step, even if the newly selected provider has a ready shared route.
+    let forceInferenceSetup =
+      initialForceInferenceSetup || isEndpointlessHostLocalReviewCheckpoint(session, sandboxName);
     let recoveredRecordedProvider = false;
     const providerRecovery = createRecovery(fresh, sandboxName, session, deps, {
       recoveryReceipt: providerRecoveryReceipt,

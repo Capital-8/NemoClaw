@@ -816,4 +816,34 @@ describe("provider inference review recovery", () => {
       expect.any(Object),
     );
   });
+
+  it("runs inference setup after an endpointless review is reselected to an already ready cloud route", async () => {
+    const session = failedReviewSession();
+    session.endpointUrl = null;
+    const setupNim = vi.fn(async () => ({ ...baseSelection }));
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      prompt: vi.fn(async () => "1"),
+      setupNim,
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "review-interrupted",
+    });
+
+    expect(setupNim).toHaveBeenCalledOnce();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "review-interrupted",
+      baseSelection.model,
+      baseSelection.provider,
+      baseSelection.endpointUrl,
+      baseSelection.credentialEnv,
+      null,
+      [],
+      expect.any(Object),
+    );
+  });
 });
