@@ -267,6 +267,10 @@ describe("connectSandbox launch-readiness unsafe verdict scope", () => {
     });
     harness.launchReadinessMutationGateSpy.mockImplementationOnce((async (...args: unknown[]) => {
       const operation = args[1] as () => unknown;
+      // Pin the caller-to-gate option transfer: dropping or reversing
+      // `!requireLaunchReadinessPublication` would leave the gate strict and
+      // this run would stop before recovery.
+      expect(args[2]).toMatchObject({ tolerateReceiptStoreUnsafe: true });
       return {
         kind: "entered",
         value: await operation(),
