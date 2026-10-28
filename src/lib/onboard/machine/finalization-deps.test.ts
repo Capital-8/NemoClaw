@@ -24,7 +24,6 @@ import {
   finalizationHandlerDeps,
   finalizationHandlerRuntime,
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
-  OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   ordinaryOpenClawPairingIncompleteMessage,
@@ -118,79 +117,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
     expect(scope.deps.observePairing).toHaveBeenCalledOnce();
     expect(scope.deps.sleep).not.toHaveBeenCalled();
-  });
-
-  it("carries a redacted incompatible field to rebuild diagnostics (#13709)", async () => {
-    const scope = ordinaryPairingDeps({
-      observePairing: vi.fn(() => {
-        throw new OpenClawPairingIncompatibleError("paired.clientMode");
-      }),
-    });
-    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
-      kind: "incomplete",
-      reason: "pairing-incompatible",
-      pairingField: "paired.clientMode",
-    });
-    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-    expect(scope.deps.sleep).not.toHaveBeenCalled();
-  });
-
-  it("waits for a canonical auth record published after its paired device (#13709)", async () => {
-    const observePairing = vi
-      .fn(() => SETTLED)
-      .mockImplementationOnce(() => {
-        throw new OpenClawPairingIncompatibleError("auth.tokens");
-      })
-      .mockImplementationOnce(() => {
-        throw new OpenClawPairingIncompatibleError("auth.tokens");
-      });
-    const scope = ordinaryPairingDeps({ observePairing });
-
-    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
-      kind: "settled",
-    });
-    expect(observePairing).toHaveBeenCalledTimes(3);
-    expect(scope.deps.sleep).toHaveBeenCalledExactlyOnceWith(OPENCLAW_ONBOARDING_PAIRING_POLL_MS);
-    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when the auth record remains incompatible through its bounded window (#13709)", async () => {
-    const observePairing = vi.fn(() => {
-      throw new OpenClawPairingIncompatibleError("auth.tokens");
-    });
-    const scope = ordinaryPairingDeps({ observePairing });
-
-    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
-      kind: "incomplete",
-      reason: "pairing-incompatible",
-      pairingField: "auth.tokens",
-    });
-    expect(observePairing.mock.calls.length).toBeGreaterThan(1);
-    expect(observePairing.mock.calls.length).toBeLessThanOrEqual(
-      1 + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS / OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
-    );
-    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-  });
-
-  it("rejects another incompatible field during auth publication without a mutation (#13709)", async () => {
-    const observePairing = vi
-      .fn(() => SETTLED)
-      .mockImplementationOnce(() => {
-        throw new OpenClawPairingIncompatibleError("auth.tokens");
-      })
-      .mockImplementationOnce(() => {
-        throw new OpenClawPairingIncompatibleError("paired.publicKey");
-      });
-    const scope = ordinaryPairingDeps({ observePairing });
-
-    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
-      kind: "incomplete",
-      reason: "pairing-incompatible",
-      pairingField: "paired.publicKey",
-    });
-    expect(observePairing).toHaveBeenCalledTimes(2);
-    expect(scope.deps.sleep).not.toHaveBeenCalled();
-    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
 
   it.each([1, 2])(
@@ -816,20 +742,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(ordinaryOpenClawPairingIncompleteMessage("alpha", "pairing-lock-unavailable")).toBe(
       "OpenClaw onboarding for 'alpha' is incomplete because NemoClaw could not acquire the pairing settlement locks. Resume or rerun onboarding.",
     );
-    expect(
-      ordinaryOpenClawPairingIncompleteMessage(
-        "alpha",
-        "pairing-incompatible",
-        "paired.clientMode",
-      ),
-    ).toContain("incompatible metadata, scopes, or credentials (paired.clientMode)");
-    expect(
-      ordinaryOpenClawPairingIncompleteMessage(
-        "alpha",
-        "pairing-incompatible",
-        "credential-value-must-not-leave-the-sandbox",
-      ),
-    ).not.toContain("credential-value-must-not-leave-the-sandbox");
   });
 });
 
