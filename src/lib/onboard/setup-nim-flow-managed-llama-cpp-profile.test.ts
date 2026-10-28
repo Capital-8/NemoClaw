@@ -594,6 +594,7 @@ describe("managed llama.cpp profile onboarding", () => {
       expect.any(Object),
       "qwen3.6-35b-a3b",
       null,
+      true,
     );
     expect(harness.checkpointManagedLlamaCppSelection).toHaveBeenCalledWith({
       model: "qwen3.6-35b-a3b",
@@ -747,6 +748,7 @@ describe("managed llama.cpp profile onboarding", () => {
       expect.any(Object),
       "qwen3.6-35b-a3b",
       null,
+      true,
     );
     expect(checkpointManagedLlamaCppSelection).toHaveBeenCalledWith({
       model: "qwen3.6-35b-a3b",
@@ -915,6 +917,7 @@ describe("managed llama.cpp profile onboarding", () => {
       expect.any(Object),
       "qwen3.6-35b-a3b",
       null,
+      true,
     );
     const expectedSelection = producedSelection!;
     expect(checkpointManagedLlamaCppSelection).toHaveBeenCalledWith({
