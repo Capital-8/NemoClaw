@@ -170,6 +170,52 @@ describe("custom native provider policy admission", () => {
   });
 
   it.each([
+    { host: "api.example.com", endpoint: { host: "*.example.com", port: 443 } },
+    {
+      host: "api.example.com",
+      endpoint: { host: "*.example.com", port: 443, allowed_ips: ["1.1.1.1"] },
+    },
+    { host: "api.example.com", endpoint: { host: "*.EXAMPLE.COM.", ports: [443] } },
+    { host: "api-us.example.com", endpoint: { host: "api-*.example.com", port: 443 } },
+    { host: "deep.api.example.com", endpoint: { host: "**.example.com", port: 443 } },
+    { host: "api.example.com", endpoint: { host: "api.*.com", port: 443 } },
+    { host: "api.example.com", endpoint: { host: "", port: 443, allowed_ips: ["1.1.1.1"] } },
+    { host: "api.example.com", endpoint: { port: 443, allowed_ips: ["1.1.1.1"] } },
+  ])("refuses overlapping $endpoint before changing providers", async ({ host, endpoint }) => {
+    const test = fixture(host, endpoint);
+    await expect(test.select()).rejects.toThrow(/existing_policy.*conflicting IP pins/);
+    expect(test.createProvider).not.toHaveBeenCalled();
+    expect(test.attachProvider).not.toHaveBeenCalled();
+    expect(test.beforeAttach).not.toHaveBeenCalled();
+    expect(test.writeAuthority).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      host: "api.example.com",
+      endpoint: { host: "*.example.com", port: 443, allowed_ips: ["8.8.8.8"] },
+    },
+    {
+      host: "api.example.com",
+      endpoint: { host: "*.example.com", port: 443, allowed_ips: ["8.8.8.8", "8.8.8.8"] },
+    },
+    { host: "deep.api.example.com", endpoint: { host: "*.example.com", port: 443 } },
+    { host: "example.com", endpoint: { host: "*.example.com", port: 443 } },
+    { host: "example.com", endpoint: { host: "**.example.com", port: 443 } },
+    { host: "api.example.com", endpoint: { host: "*.other.com", port: 443 } },
+    { host: "api.example.com", endpoint: { host: "api[ab].other.com", port: 443 } },
+    { host: "api.example.com", endpoint: { host: "*.example.com", port: 8443 } },
+    { host: "api.example.com", endpoint: { port: 443, allowed_ips: ["8.8.8.8"] } },
+  ])("preserves selection with non-conflicting $endpoint", async ({ host, endpoint }) => {
+    const test = fixture(host, endpoint);
+    await expect(test.select()).resolves.toMatchObject({ attachmentChanged: true });
+    expect(test.createProvider).toHaveBeenCalledOnce();
+    expect(test.attachProvider).toHaveBeenCalledOnce();
+    expect(test.beforeAttach).toHaveBeenCalledOnce();
+    expect(test.writeAuthority).toHaveBeenCalled();
+  });
+
+  it.each([
     {
       label: "matching pins",
       endpoint: { host: "openrouter.ai", port: 443, allowed_ips: ["8.8.8.8"] },
