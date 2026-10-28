@@ -153,7 +153,12 @@ test(
     const legacyDir = path.join(testHome, ".nemoclaw");
     const legacyFile = path.join(legacyDir, "credentials.json");
     const testEnv = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv =>
-      env({ HOME: testHome, NPM_CONFIG_PREFIX: path.join(testHome, ".npm-global"), ...extra });
+      env({
+        HOME: testHome,
+        XDG_BIN_HOME: path.join(os.homedir(), ".local", "bin"),
+        NPM_CONFIG_PREFIX: path.join(testHome, ".npm-global"),
+        ...extra,
+      });
     const hostedEnvWithoutCredentials = { ...hosted.env };
     delete hostedEnvWithoutCredentials[hosted.sourceSecretName];
     delete hostedEnvWithoutCredentials[hosted.credentialEnv];
