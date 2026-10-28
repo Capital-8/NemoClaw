@@ -230,7 +230,7 @@ function logTerminalReadyBlock(
   const onboard = `${CLI_NAME} onboard${agentFlag} --name ${sandboxName}`;
   const reonboard =
     terminalAgent.name === DCODE_AGENT_NAME
-      ? `${onboard} --fresh --recreate-sandbox  # the model is built into the image`
+      ? `${onboard} --fresh --recreate-sandbox  # recreate to apply the selected model`
       : null;
   const rotate = `${onboard}  # with the replacement key exported`;
   for (const line of manageLaterLines(CLI_NAME, sandboxName, reonboard, rotate)) log(line);

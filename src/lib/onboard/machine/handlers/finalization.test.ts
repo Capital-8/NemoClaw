@@ -619,7 +619,7 @@ describe("finalization handlers", () => {
         "",
         "    Status:      nemoclaw my-assistant status",
         "    Logs:        nemoclaw my-assistant logs --follow",
-        "    Model:       nemoclaw onboard --agent langchain-deepagents-code --name my-assistant --fresh --recreate-sandbox  # the model is built into the image",
+        "    Model:       nemoclaw onboard --agent langchain-deepagents-code --name my-assistant --fresh --recreate-sandbox  # recreate to apply the selected model",
         "    Policies:    nemoclaw my-assistant policy add",
         "    Credentials: nemoclaw onboard --agent langchain-deepagents-code --name my-assistant  # with the replacement key exported",
       ].join("\n"),
@@ -630,7 +630,7 @@ describe("finalization handlers", () => {
     expect(result.stateResult.type).toBe("complete");
   });
 
-  it("omits the built-in model command for terminal agents other than Deep Agents Code", async () => {
+  it("omits the model recreate command for terminal agents other than Deep Agents Code", async () => {
     const { deps, calls } = createDeps();
     const agent = {
       name: "pi",
@@ -649,7 +649,7 @@ describe("finalization handlers", () => {
       ].join("\n"),
     );
     expect(output).not.toContain("Model:       ");
-    expect(output).not.toContain("built into the image");
+    expect(output).not.toContain("--recreate-sandbox");
     expect(output).not.toContain("credentials reset");
     expect(result.stateResult.type).toBe("complete");
   });
