@@ -112,7 +112,7 @@ If the gateway has not been retired, rerun the automatic upgrade with the select
 
 ```bash
 selected_port=8080
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=0 NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_FORCE_FRESH_INSTALL=0 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=0 NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 bash
 ```
 
 For a non-default gateway, replace `8080` with its port.
@@ -122,6 +122,7 @@ If the backup reports a confirmed stranded sandbox, complete its reported cleanu
 Do not use `openshell gateway remove` to retire the gateway: it removes the registration without stopping the process.
 
 If the installer reports that gateway retirement succeeded but the pinned OpenShell installation failed, use the prepared retry it prints.
+Set `NEMOCLAW_FORCE_FRESH_INSTALL=0` on the `bash` side of that retry to prevent a destructive reset.
 Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after strict backup, forward retirement, and gateway retirement have succeeded.
 This flag skips those preparation steps and reuses the backups.
 Preserve the selected `NEMOCLAW_GATEWAY_PORT` on the `bash` side of the install pipeline.
