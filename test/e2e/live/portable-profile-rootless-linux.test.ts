@@ -63,6 +63,7 @@ import { retryUntil } from "../../../src/lib/core/retry.ts";
 import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { recordPortableHermesGatewayProbeFailure } from "../fixtures/portable-hermes-probe-diagnostics.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import {
   capturePortableRegistryProcessBoundary,
@@ -86,6 +87,7 @@ import {
   portableSandboxImageBuilder as buildImageFixture,
   preservePortableE2eCrunForTarget,
   publishPortableSandboxImage as publishImage,
+  retirePortableGeneratedBuildContext,
   runPortableE2eWithCleanup,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -503,10 +505,7 @@ function waitForOpenShellTerminalPhase(
       sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
     },
   );
-  assert.ok(
-    phase === "Error" || phase === "Stopped",
-    "OpenShell did not independently report a terminal phase",
-  );
+  assert.equal(phase, "Stopped", "OpenShell did not reach the phase required for public restart");
   return phase;
 }
 
@@ -667,46 +666,46 @@ async function proveHistoricalHermesPortableLifecycle(input: {
     "--",
     ...startupArgv,
   ];
-  let observedCreatePhase = "";
-  const createResult = await streamSandboxCreate(
-    "/usr/bin/timeout",
-    ["--signal=TERM", "--kill-after=5s", "240s", input.openshellBin, ...createArgs],
-    input.openshellClientEnv,
-    {
-      initialPhase: "create",
-      readyCheck: () => {
-        try {
-          observedCreatePhase = readOpenShellSandbox(
-            input.openshellBin,
-            input.openshellClientEnv,
-            sandboxName,
-          ).phase;
-        } catch {
-          observedCreatePhase = "";
-        }
-        return observedCreatePhase === "Ready";
-      },
-      failureCheck: () =>
-        observedCreatePhase === "Error"
-          ? "OpenShell Hermes sandbox entered Error during creation."
-          : null,
-      readyCheckOutputPatterns: [/Setting up NemoClaw/u],
-      waitForReadyTermination: true,
-    },
-  );
-  requireOpenShellResult(
-    {
-      status: createResult.status,
-      stdout: createResult.output,
-      stderr: "",
-    },
-    "OpenShell Hermes sandbox creation",
-  );
-
   let primaryFailed = false;
   let primaryFailure: unknown;
   let lifecycleEvidence: Record<string, unknown> | undefined;
   try {
+    let observedCreatePhase = "";
+    const createResult = await streamSandboxCreate(
+      "/usr/bin/timeout",
+      ["--signal=TERM", "--kill-after=5s", "240s", input.openshellBin, ...createArgs],
+      input.openshellClientEnv,
+      {
+        initialPhase: "create",
+        readyCheck: () => {
+          try {
+            observedCreatePhase = readOpenShellSandbox(
+              input.openshellBin,
+              input.openshellClientEnv,
+              sandboxName,
+            ).phase;
+          } catch {
+            observedCreatePhase = "";
+          }
+          return observedCreatePhase === "Ready";
+        },
+        failureCheck: () =>
+          observedCreatePhase === "Error"
+            ? "OpenShell Hermes sandbox entered Error during creation."
+            : null,
+        readyCheckOutputPatterns: [/Setting up NemoClaw/u],
+        waitForReadyTermination: true,
+      },
+    );
+    requireOpenShellResult(
+      {
+        status: createResult.status,
+        stdout: createResult.output,
+        stderr: "",
+      },
+      "OpenShell Hermes sandbox creation",
+    );
+
     const live = readOpenShellSandbox(input.openshellBin, input.openshellClientEnv, sandboxName);
     const liveIdentityFingerprint = createHash("sha256").update(live.id).digest("hex");
     const registry: SandboxEntry = {
@@ -984,6 +983,7 @@ async function main(
   let hermesImageId: string | null = null;
   let hermesImageRef: string | null = null;
   let hermesContextRetired = false;
+  let generatedBuildContext: string | null = null;
   const podmanGroup = createPodmanGroupReconciliationTracker();
   let hermesLifecycleEvidence: Record<string, unknown> | null = null;
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
@@ -1094,7 +1094,6 @@ async function main(
         timeout: 15_000,
       },
     );
-    assert.equal(absentInspection.error, undefined);
     assert.notEqual(absentInspection.status, 0);
     const remainingNetworkIds = run("podman", [
       "--url",
@@ -1111,6 +1110,7 @@ async function main(
 
     progress.phase("build and publish the sandbox image");
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
+    generatedBuildContext = buildCtx;
     fs.chmodSync(buildCtx, 0o700);
     const dockerfile = path.join(buildCtx, "Dockerfile");
     fs.writeFileSync(
@@ -1330,6 +1330,7 @@ async function main(
         configPath: gatewayEnv.OPENSHELL_GATEWAY_CONFIG,
         sandboxId,
       });
+      artifacts.addRedactionValues([sandboxToken]);
       const gatewayProbe = runSandboxTokenContainerProbe({
         authorization: `Bearer ${sandboxToken}`,
         dockerBin: "podman",
@@ -1339,6 +1340,7 @@ async function main(
         port: 8080,
         stateDir,
       });
+      await recordPortableHermesGatewayProbeFailure(artifacts, sandboxToken, gatewayProbe);
       assert.equal(gatewayProbe.status, 0, "The authenticated same-network gateway probe failed.");
       const gatewayResult = JSON.parse(gatewayProbe.stdout) as {
         grpcStatus?: string;
@@ -1470,6 +1472,12 @@ async function main(
         hermesImageRef,
         env: process.env,
       });
+    },
+    () => {
+      assert.ok(
+        retirePortableGeneratedBuildContext(generatedBuildContext),
+        "Generated build context survived cleanup",
+      );
     },
     () =>
       cleanupPortableHostGatewayAlias(

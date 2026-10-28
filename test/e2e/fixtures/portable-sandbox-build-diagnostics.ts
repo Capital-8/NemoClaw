@@ -301,6 +301,12 @@ export async function runPortableE2eWithCleanup(
   }
 }
 
+export function retirePortableGeneratedBuildContext(context: string | null): boolean {
+  if (!context) return true;
+  fs.rmSync(context, { force: true, recursive: true });
+  return !fs.existsSync(context);
+}
+
 async function runPodmanBuild(
   args: readonly string[],
   env: NodeJS.ProcessEnv,
