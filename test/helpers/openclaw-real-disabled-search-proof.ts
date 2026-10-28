@@ -143,6 +143,13 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.";
       for (const prompt of [
         searchPrompt,
+        "Google the official NemoClaw installation documentation.",
+        "Look up the official NemoClaw installation documentation.",
+        "Find the official NemoClaw installation documentation.",
+        "Where is the official NemoClaw installation documentation?",
+        "Get the latest NemoClaw release notes.",
+        "Read /sandbox/README.md, then Google the official installation documentation.",
+        "Fetch https://docs.nvidia.com/nemoclaw/ and find alternative installation guides.",
         "Find the official NemoClaw installation documentation online.",
         "Research online for the official NemoClaw installation documentation",
         "Browse the internet for the official NemoClaw installation documentation.",
@@ -175,6 +182,15 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         applyToolAllowlist(availableTools, localTurn.toolsAllow),
         availableTools,
         "the next local turn keeps its tools",
+      );
+      const fetchTurn = await runner().runBeforePromptBuild(
+        { prompt: "Fetch https://docs.nvidia.com/nemoclaw/ with web_fetch.", messages: [] },
+        { runId: "fetch-prompt" },
+      );
+      assert.deepEqual(
+        promptToolPolicy({ tools: availableTools }).apply(fetchTurn).tools,
+        availableTools,
+        "explicit URL retrieval keeps its tools in the real prompt policy",
       );
       config.tools.web.search.enabled = true;
       const enabledTurn = await runner().runBeforePromptBuild(

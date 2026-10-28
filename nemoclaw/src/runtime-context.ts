@@ -110,21 +110,57 @@ function buildRuntimeContextText(summary: RuntimeSummary, config: OpenClawConfig
   return lines.join("\n");
 }
 
-/**
- * Prepends runtime context and withholds tools for explicit disabled-search turns.
- */
+function requestsUnscopedResearch(prompt: string): boolean {
+  // An unspecified research source must not default to sandbox files. Check each
+  // request separately so a local task or URL cannot exempt another research task.
+  const requests = prompt
+    .replace(/:\s*\n\s*(?=https?:\/\/)/giu, ": ")
+    .split(
+      /(?<=[.!?])\s+|[\n;]+|,\s*(?=(?:google|bing|duckduckgo|search|research|look|find|locate|browse|investigate)\b)|\b(?:and|then|but|instead)\b(?!\s+(?:fetch|retrieve)\b)/iu,
+    );
+  return requests.some((request) => {
+    const action =
+      /\b(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look(?:\s+(?:up|for|on))?|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|summarize|fetch|retrieve|read|get|need|where|which|what|who|when|how)\b/iu.exec(
+        request,
+      );
+    if (!action) return false;
+    const prefix = request.slice(0, action.index);
+    if (/\b(?:(?:do\s+not|don't|never)\s+(?:use\s+(?:web_fetch[,\s]*)?)?|not\s*)$/iu.test(prefix)) {
+      return false;
+    }
+
+    const source = request.slice(action.index);
+    const directFetch = /^(?:browse|summarize|fetch|retrieve|read|get)\b/iu.test(source);
+    const searchAction =
+      /\b(?:googl(?:e|ing)|bing|duckduckgo|web[_ -]?search|search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek)\b/iu.test(
+        source,
+      );
+    if (directFetch && !searchAction && /https?:\/\/\S+/iu.test(source)) return false;
+
+    const externalSource =
+      /^(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search)\b|\b(?:on\s+(?:the\s+)?(?:web|internet)|(?:search|research|browse|look)\s+(?:(?:the|on\s+the)\s+)?(?:web|internet|online)|(?:using|with|via)\s+(?:tavily|brave|google|bing|duckduckgo))\b/iu.test(
+        source,
+      );
+    const localSource =
+      /\b(?:local|sandbox|(?:this|the|our)\s+(?:repository|repo|workspace|codebase|function|conversation|code)|(?:in|from|within)\s+(?:the\s+)?(?:repository|repo|workspace|codebase|memory))\b|(?:^|[\s`"'])(?:\.?\.?\/)[^\s]+|\b[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b/iu.test(
+        source,
+      );
+    return externalSource || !localSource;
+  });
+}
+
+/** Prepends runtime context and withholds tools for disabled-search research. */
 export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: NemoClawConfig): void {
   api.on("before_prompt_build", (event) => {
     const prompt =
       event && typeof event === "object" && !Array.isArray(event) ? event.prompt : undefined;
     // A tool-call denial happens after the model has already attempted discovery.
-    // Narrow only explicit search turns; ordinary local work and direct fetches keep their tools.
+    // Keep local work and direct URL retrieval available without using them as
+    // substitutes for research whose source the user has not supplied.
     const unavailableSearch =
       configuredSearchEnabled(api.config) === false &&
       typeof prompt === "string" &&
-      /(?:^|[.!?\n])\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:(?:search|research|find|locate|look(?:\s+(?:up|for))?|browse(?!\s+(?:(?:the\s+)?(?:web|internet)|online)\b\s+(?:(?:using|with)\s+`?web_fetch`?\b|(?:and\s+)?(?:fetch|retrieve)\b)[^.!?]*https?:\/\/))\s+(?:(?:the\s+)?(?:web|internet)|online)|(?:use|run)\s+(?:a\s+)?(?:web[_ -]?search|(?:tavily|brave)(?:\s+to)?\s+(?:search|find|look\s+(?:up|for)))|search\s+(?:using|with|via)\s+(?:tavily|brave)|(?:search|find|look(?:\s+(?:up|for))?|locate|research)\s+[^.!?\n]*?\b(?:online|on\s+(?:the\s+)?(?:web|internet)|(?:using|with|via)\s+(?:tavily|brave))(?=\s*(?:[.!?\n]|$|(?:and|for)\b)))\b/iu.test(
-        prompt,
-      );
+      requestsUnscopedResearch(prompt);
     return {
       prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig), api.config),
       ...(unavailableSearch ? { toolsAllow: [] } : {}),
