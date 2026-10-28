@@ -631,7 +631,11 @@ function describeHermesPortableForwardRecoveryFailure(
   context?: HermesPortableForwardRecoveryContext,
 ): string {
   if (failure === "restoration-unproved" && context) {
-    return `${describeHermesPortableForwardRecoveryFailure(failure)} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
+    const restorationDetail =
+      context.restorationPort === undefined
+        ? ""
+        : ` NemoClaw could not prove that the migrated API forward on host port ${String(context.restorationPort)} was retained.`;
+    return `${describeHermesPortableForwardRecoveryFailure(failure)}${restorationDetail} Initial recovery failure: ${describeHermesPortableForwardRecoveryFailure("recovery-failed", context)}`;
   }
   switch (context?.cause) {
     case "port-occupied":

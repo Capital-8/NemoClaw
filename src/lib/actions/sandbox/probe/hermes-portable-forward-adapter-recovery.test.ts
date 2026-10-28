@@ -172,7 +172,7 @@ describe("Hermes Portable typed forward recovery", () => {
   });
 
   it.each([8_642, 8_643])(
-    "migrates an owned wildcard registered API on port %i and rolls back the replacement",
+    "keeps the migrated API on port %i available on loopback after rollback",
     async (apiPort) => {
       const test = wildcardApiFixture(apiPort);
       const onComplete = vi.fn();
@@ -204,8 +204,11 @@ describe("Hermes Portable typed forward recovery", () => {
         }),
       );
       await prepared.rollback();
-      expect(test.states.get(apiPort)).toBe("absent");
+      expect(test.states.get(apiPort)).toBe("owned");
       expect(test.states.get(18_789)).toBe("owned");
+      expect(test.input.deps.adapter.observeForwards).toHaveBeenLastCalledWith(
+        expect.objectContaining({ forwards: [forward(apiPort)] }),
+      );
     },
   );
 
@@ -227,7 +230,146 @@ describe("Hermes Portable typed forward recovery", () => {
     ]);
     expect(test.states.get(8_642)).toBe("owned");
     await prepared.rollback();
-    expect(test.states.get(8_642)).toBe("absent");
+    expect(test.states.get(8_642)).toBe("owned");
+  });
+
+  it.each([
+    { retainedState: "owned", failure: "recovery-failed", context: { port: 18_790 } },
+    {
+      retainedState: "foreign",
+      failure: "restoration-unproved",
+      context: { port: 18_790, restorationPort: 8_642 },
+    },
+  ] as const)(
+    "rolls back a later start failure with the migrated API $retainedState",
+    async (expected) => {
+      const test = wildcardApiFixture();
+      test.states.set(18_789, "absent");
+      const start = test.startForward.getMockImplementation()!;
+      test.startForward
+        .mockImplementationOnce(start)
+        .mockImplementationOnce(start)
+        .mockImplementationOnce(async () => {
+          test.states.set(8_642, expected.retainedState);
+          return {
+            state: "failed",
+            effect: "none",
+            forward: forward(18_790),
+            error: { kind: "command", message: "The OpenShell forward command failed." },
+            failure: { stage: "startup", reason: "child_exited", exitStatus: 17 },
+          };
+        });
+      await expect(
+        prepareHermesPortableLaunchForwards({
+          ...test.input,
+          ports: [8_642, 18_789, 18_790],
+          forwards: [forward(8_642), forward(18_789), forward(18_790)],
+        }),
+      ).rejects.toMatchObject({
+        failure: expected.failure,
+        context: { ...expected.context, startupFailure: { exitStatus: 17 } },
+      });
+      expect(test.states.get(8_642)).toBe(expected.retainedState);
+      expect(test.states.get(18_789)).toBe("absent");
+      expect(test.startForward.mock.calls.map(([request]) => request.forward.localHost)).toEqual([
+        "127.0.0.1",
+        "127.0.0.1",
+        "127.0.0.1",
+      ]);
+    },
+  );
+
+  it("verifies a reused loopback replacement on rollback without stopping it", async () => {
+    const test = wildcardApiFixture();
+    test.startForward.mockImplementationOnce(async ({ forward: target }) => {
+      test.states.set(target.port, "owned");
+      return { state: "reused", forward: target };
+    });
+    const prepared = await prepareHermesPortableLaunchForwards(test.input);
+    await prepared.rollback();
+    expect(test.states.get(8_642)).toBe("owned");
+    expect(test.input.deps.adapter.observeForwards).toHaveBeenLastCalledWith(
+      expect.objectContaining({ forwards: [forward(8_642)] }),
+    );
+    expect(test.startForward).toHaveBeenCalledOnce();
+  });
+
+  it("reports restoration-unproved when the retained API cannot be observed on rollback", async () => {
+    const test = wildcardApiFixture();
+    const prepared = await prepareHermesPortableLaunchForwards(test.input);
+    vi.mocked(test.input.deps.adapter.observeForwards).mockRejectedValueOnce(new Error("offline"));
+    await expect(prepared.rollback()).rejects.toMatchObject({
+      failure: "restoration-unproved",
+      context: { cause: "forward-reachability-failed", port: 8_642 },
+    });
+    expect(test.states.get(8_642)).toBe("owned");
+    expect(test.startForward).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { retainedState: "owned", failure: "recovery-failed" },
+    { retainedState: "foreign", failure: "restoration-unproved" },
+  ] as const)(
+    "rolls back final verification failure with the migrated API $retainedState",
+    async (expected) => {
+      const test = wildcardApiFixture();
+      test.states.set(18_789, "absent");
+      const observe = vi.mocked(test.input.deps.adapter.observeForwards);
+      const inspect = observe.getMockImplementation()!;
+      observe
+        .mockImplementationOnce(inspect)
+        .mockImplementationOnce(inspect)
+        .mockImplementationOnce(async () => {
+          test.states.set(8_642, expected.retainedState);
+          throw new Error("Final observation failed");
+        });
+      await expect(prepareHermesPortableLaunchForwards(test.input)).rejects.toMatchObject({
+        failure: expected.failure,
+      });
+      expect(test.states.get(8_642)).toBe(expected.retainedState);
+      expect(test.states.get(18_789)).toBe("absent");
+      expect(observe).toHaveBeenLastCalledWith(
+        expect.objectContaining({ forwards: [forward(8_642)] }),
+      );
+      expect(test.startForward).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["absent", "foreign", "indeterminate"] as const)(
+    "reports restoration-unproved when the retained API becomes %s before rollback",
+    async (state) => {
+      const test = wildcardApiFixture();
+      const prepared = await prepareHermesPortableLaunchForwards(test.input);
+      test.states.set(8_642, state);
+      await expect(prepared.rollback()).rejects.toMatchObject({
+        failure: "restoration-unproved",
+        context: { cause: "forward-reachability-failed", port: 8_642 },
+      });
+      expect(test.states.get(8_642)).toBe(state);
+      expect(test.startForward).toHaveBeenCalledOnce();
+      expect(test.retireLegacyForward).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("fails rollback proof without mutating the migrated API after command authority drifts", async () => {
+    const test = wildcardApiFixture();
+    const prepared = await prepareHermesPortableLaunchForwards(test.input);
+    vi.mocked(test.input.deps.assertRollbackCurrent).mockRejectedValueOnce(new Error("drift"));
+    await expect(prepared.rollback()).rejects.toMatchObject({ failure: "restoration-unproved" });
+    expect(test.states.get(8_642)).toBe("owned");
+    expect(test.startForward).toHaveBeenCalledOnce();
+  });
+
+  it("does not claim restoration when the registered API changes before rollback", async () => {
+    const test = wildcardApiFixture();
+    const prepared = await prepareHermesPortableLaunchForwards(test.input);
+    test.sandbox.hermesApiPort = 8_643;
+    await expect(prepared.rollback()).rejects.toMatchObject({
+      failure: "restoration-unproved",
+      context: { cause: "forward-reachability-failed", port: 8_642 },
+    });
+    expect(test.states.get(8_642)).toBe("owned");
+    expect(test.startForward).toHaveBeenCalledOnce();
   });
 
   it.each([undefined, 23])(
