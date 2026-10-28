@@ -10,7 +10,7 @@
 // repository, so a pathspec that stops covering MDX fails here.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -70,13 +70,18 @@ function selectChangedDocs(files: readonly string[]): string[] {
     const result = spawnSync("bash", ["-c", script], {
       cwd: repo,
       encoding: "utf8",
-      env: { ...process.env, GITHUB_OUTPUT: outputFile },
+      env: { ...process.env, GITHUB_OUTPUT: outputFile, RUNNER_TEMP: repo },
     });
     expect(result.status, result.stderr).toBe(0);
 
+    // The step records a NUL-delimited selection file instead of rendering
+    // contributor-controlled paths into shell source.
     const output = spawnSync("cat", [outputFile], { encoding: "utf8" }).stdout;
-    const filesBlock = /^files<<EOF\n([^]*?)\nEOF$/m.exec(output)?.[1] ?? "";
-    return filesBlock === "" ? [] : filesBlock.split("\n");
+    // An empty selection exits before writing the file, so a missing
+    // selected_file entry means "no documentation files changed".
+    const selectedFile = /^selected_file=(.+)$/m.exec(output)?.[1];
+    const raw = selectedFile === undefined ? "" : readFileSync(selectedFile, "utf8");
+    return raw === "" ? [] : raw.split("\0").filter((entry) => entry !== "");
   } finally {
     rmSync(repo, { force: true, recursive: true });
   }
@@ -119,6 +124,31 @@ describe("changed-link workflow selects Fern MDX pages (#13842)", () => {
 
     expect(paths).toContain("**/*.md");
     expect(paths).toContain("**/*.mdx");
+  });
+
+  it("does not render contributor-controlled paths into shell source (#13842)", () => {
+    const selectionStep = workflow().jobs["markdown-links"]?.steps?.find(
+      (candidate) => candidate.id === "changed",
+    );
+    const checkerStep = workflow().jobs["markdown-links"]?.steps?.find(
+      (candidate) => candidate.name === "Run markdown link checker",
+    );
+    const selection = selectionStep?.run ?? "";
+    const checker = checkerStep?.run ?? "";
+
+    // A file name containing shell syntax must never be interpolated into a
+    // step's run script, where the runner would execute it.
+    expect(selection).toContain("printf '%s\\0'");
+    expect(selection).not.toContain("files<<EOF");
+    expect(checker).not.toContain("steps.changed.outputs.files");
+    expect(checker).toContain("mapfile -d '' -t doc_files");
+  });
+
+  it("keeps a filename with command substitution inert (#13842)", () => {
+    const hostile = "docs/$(touch PWNED).mdx";
+    const selected = selectChangedDocs([hostile]);
+
+    expect(selected).toEqual([hostile]);
   });
 
   it("keeps remote probing disabled for contributor-controlled pages (#13842)", () => {
