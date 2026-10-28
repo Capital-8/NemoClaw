@@ -9,9 +9,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  configureSiblingSandboxAfterDelete,
   createDestroyHarness,
   resetDestroyModuleCache,
-  sandboxListJson,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
 
@@ -35,25 +35,6 @@ function writeGatewayRegistry(home: string, port: number, name: string): void {
       },
     }),
   );
-}
-
-function keepSiblingVisibleAfterDelete(harness: ReturnType<typeof createDestroyHarness>): void {
-  const runOpenshell = harness.runOpenshellSpy.getMockImplementation();
-  let betaDeleted = false;
-  harness.runOpenshellSpy.mockImplementation((args: unknown, options: unknown) => {
-    const argv = Array.isArray(args) ? args.map(String) : [];
-    if (betaDeleted && argv[0] === "sandbox" && argv[1] === "list") {
-      return { status: 0, stdout: sandboxListJson(["alpha"]), stderr: "" };
-    }
-    if (betaDeleted && argv[0] === "sandbox" && argv[1] === "get" && argv.at(-1) === "beta") {
-      return { status: 1, stdout: "", stderr: "Error: sandbox beta not found" };
-    }
-    const result = runOpenshell?.(args, options) ?? { status: 0, stdout: "", stderr: "" };
-    if (argv[0] === "sandbox" && argv[1] === "delete" && argv.at(-1) === "beta") {
-      betaDeleted = true;
-    }
-    return result;
-  });
 }
 
 describe("destroySandbox cross-root registry authority", () => {
@@ -123,7 +104,7 @@ describe("destroySandbox cross-root registry authority", () => {
         stderr: "",
       },
     });
-    keepSiblingVisibleAfterDelete(harness);
+    configureSiblingSandboxAfterDelete(harness, "beta", ["alpha"]);
 
     await expect(
       harness.destroySandbox("beta", { yes: true, cleanupGateway: true }),
@@ -154,7 +135,7 @@ describe("destroySandbox cross-root registry authority", () => {
         stderr: "",
       },
     });
-    keepSiblingVisibleAfterDelete(harness);
+    configureSiblingSandboxAfterDelete(harness, "beta", ["alpha"]);
     harness.withGatewayRouteMutationLockSpy
       .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) =>
         (operation as () => Promise<unknown>)(),
