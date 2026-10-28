@@ -290,7 +290,7 @@ export async function createNativePodmanStopResponseFault(
     else response.writeHead(502).end();
   };
   const forwardHeaders = (upstream: IncomingMessage, response: ServerResponse): void => {
-    response.writeHead(upstream.statusCode ?? 502, upstream.headers);
+    response.writeHead(Number(upstream.statusCode ?? 502), upstream.headers);
   };
   const completeStop = async (
     upstream: IncomingMessage,
