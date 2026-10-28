@@ -829,15 +829,43 @@ That record requires the cleanup or recreation action printed by `$$nemoclaw bac
 selected_port=8080
 gateway_name=nemoclaw
 retire_legacy_forwards_flag=--retire-legacy-forwards
-NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all "$retire_legacy_forwards_flag" && \
-  openshell gateway destroy -g "$gateway_name"
+NEMOCLAW_GATEWAY_PORT="$selected_port" NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 $$nemoclaw backup-all "$retire_legacy_forwards_flag"
 ```
 
 For a non-default gateway, replace `8080` with its port and set `gateway_name` to `nemoclaw-<selected-port>`.
-If an older OpenShell release rejects the named destroy command for the default `nemoclaw` gateway, run `openshell gateway destroy` instead.
-Do not substitute `openshell gateway remove`: removal can unregister a gateway without stopping its process.
-Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the command pipeline exits successfully.
-Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before gateway destruction.
+The supported OpenShell 0.0.116 CLI has no `openshell gateway destroy` subcommand, so stop the gateway through the managed service that owns its process.
+For a Linux package install:
+
+```bash
+systemctl --user stop openshell-gateway
+```
+
+For a Linux tarball install:
+
+```bash
+systemctl --user stop nemoclaw-openshell-gateway
+```
+
+On Apple Silicon macOS with Homebrew, rerun the standard NemoClaw installer instead of stopping the formula service directly.
+A successful service stop does not prove that the port is free, because a standalone fallback gateway can keep running while the service is inactive.
+Confirm the port before you remove the registration:
+
+```bash
+ss -lntp | grep ":${selected_port}"
+```
+
+When no managed service owns the gateway process, do not match processes host-wide.
+Run the standard NemoClaw installer instead and let its verified service or PID-file retirement handle the gateway.
+
+After the gateway process is stopped, remove its stale registration so the replacement OpenShell installation does not reuse it:
+
+```bash
+openshell gateway remove "$gateway_name"
+```
+
+`openshell gateway remove` removes only local registration and stored authentication tokens, so it never substitutes for stopping the process.
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after the backup, the forward retirement, and the gateway stop succeed.
+Confirm that the strict backup summary reports `0 failed, 0 skipped` and that the `Legacy dashboard forwards:` summary appears before you stop the gateway.
 A confirmed stranded record has no backup to reuse; complete the reported cleanup or recreation action during recovery.
 If backup, forward retirement, or gateway retirement fails, resolve the failure while the completed backups remain intact.
 This environment variable asserts that strict backup, legacy-forward retirement, and gateway retirement are complete, so the installer skips that repeated preparation phase before it checks whether OpenShell is installed or whether its version is in range.
