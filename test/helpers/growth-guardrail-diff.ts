@@ -168,32 +168,62 @@ function assertCommitSha(sha: string, label: string): void {
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`${label} must be a full commit SHA`);
 }
 
-function fetchPullHead(
+function preparePullRequestTree(
   prNumber: string,
   expectedHeadSha: string,
   baseSha: string,
   repoRoot: string,
-): void {
-  const shallow = execFileSync("git", ["rev-parse", "--is-shallow-repository"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  }).trim();
-  // A full PR fetch does not complete the trusted base's shallow ancestry.
+): string {
+  const historyDepth = 1024;
+  const timeout = 30_000;
+  const git = (phase: string, args: string[]): string => {
+    try {
+      return execFileSync("git", args, {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout,
+      }).trim();
+    } catch (cause) {
+      throw new Error(
+        `PR #${prNumber}: growth comparison preparation failed during ${phase} ` +
+          `(history limit ${historyDepth} commits, command limit ${timeout}ms).`,
+        { cause },
+      );
+    }
+  };
+  const shallow = git("history inspection", ["rev-parse", "--is-shallow-repository"]);
+  // Both sides need ancestry, but preparation must fit the guardrail job's deadline.
   if (shallow === "true") {
-    execFileSync("git", ["fetch", "--no-tags", "--unshallow", "origin", baseSha], {
-      cwd: repoRoot,
-      stdio: "ignore",
-    });
+    git("trusted-base history fetch", [
+      "fetch",
+      "--no-tags",
+      `--depth=${historyDepth}`,
+      "origin",
+      baseSha,
+    ]);
   }
-  execFileSync("git", ["fetch", "--no-tags", "origin", `refs/pull/${prNumber}/head`], {
-    cwd: repoRoot,
-    stdio: "ignore",
-  });
-  const fetchedHead = execFileSync("git", ["rev-parse", "FETCH_HEAD"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  }).trim();
-  if (fetchedHead !== expectedHeadSha) throw new Error("Fetched PR head does not match HEAD_SHA");
+  git("PR commit fetch", [
+    "fetch",
+    "--no-tags",
+    `--depth=${historyDepth}`,
+    "origin",
+    `refs/pull/${prNumber}/head`,
+  ]);
+  const fetchedHead = git("PR commit verification", ["rev-parse", "FETCH_HEAD"]);
+  if (fetchedHead !== expectedHeadSha)
+    throw new Error(`PR #${prNumber}: Fetched PR head does not match HEAD_SHA`);
+  // Merge candidate objects without checking out or executing candidate code.
+  const mergedTree = git("merge tree construction", [
+    "merge-tree",
+    "--write-tree",
+    "--no-messages",
+    baseSha,
+    expectedHeadSha,
+  ]);
+  if (!/^[0-9a-f]{40}$/.test(mergedTree))
+    throw new Error(`PR #${prNumber}: Invalid prospective merge tree SHA`);
+  return mergedTree;
 }
 
 /** Independent pull_request_target enforcement must never consume candidate policy. */
@@ -208,14 +238,7 @@ function loadPullRequestDiff(repoRoot = REPO_ROOT): GrowthGuardrailDiff {
   assertPullNumber(prNumber);
   assertCommitSha(baseSha, "BASE_SHA");
   assertCommitSha(headSha, "HEAD_SHA");
-  fetchPullHead(prNumber, headSha, baseSha, repoRoot);
-  // Merge candidate objects without checking out or executing candidate code.
-  const mergedTree = execFileSync(
-    "git",
-    ["merge-tree", "--write-tree", "--no-messages", baseSha, headSha],
-    { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-  ).trim();
-  if (!/^[0-9a-f]{40}$/.test(mergedTree)) throw new Error("Invalid prospective merge tree SHA");
+  const mergedTree = preparePullRequestTree(prNumber, headSha, baseSha, repoRoot);
   const changed = execFileSync(
     "git",
     ["diff", "--name-status", "-z", "-M", baseSha, mergedTree, "--"],

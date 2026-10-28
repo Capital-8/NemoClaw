@@ -59,6 +59,27 @@ export class GrowthRepository {
     return this.git(this.origin, "rev-parse", "HEAD");
   }
 
+  appendHistory(count: number): string {
+    const parent = this.git(this.origin, "rev-parse", "HEAD");
+    const commits = Array.from({ length: count }, (_, index) =>
+      [
+        "commit refs/heads/main",
+        `mark :${index + 1}`,
+        "committer Growth Fixture <growth@example.invalid> 1700000000 +0000",
+        "data 7",
+        "history",
+        `from ${index === 0 ? parent : `:${index}`}`,
+        "",
+      ].join("\n"),
+    ).join("\n");
+    execFileSync("git", ["fast-import", "--quiet"], {
+      cwd: this.origin,
+      input: `${commits}\n`,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return this.git(this.origin, "rev-parse", "HEAD");
+  }
+
   reduceBase(): string {
     this.write(RETAINED_TEST, "// base removed a conditional\n");
     this.write(BUDGET, e2eAssertionBudget(1));

@@ -71,6 +71,65 @@ describe("growth checks against the proposed merge", () => {
     ]);
   });
 
+  it("preserves a nearby merge base without downloading the complete history", async () => {
+    repository.appendHistory(2048);
+    repository.git(repository.origin, "branch", "-f", "candidate", "main");
+    const base = repository.reduceBase();
+    repository.startCandidate();
+    repository.write("src/candidate.ts", "export const accepted = true;\n");
+    const candidate = repository.commit("candidate change");
+    repository.cloneBase("shallow");
+
+    const diff = load(base, candidate);
+
+    expect(diff.files).toEqual([{ filename: "src/candidate.ts", status: "added" }]);
+    expect(await diff.readHead([BUDGET])).toEqual(await diff.readBase([BUDGET]));
+    expect(repository.git(repository.checkout, "rev-parse", "--is-shallow-repository")).toBe(
+      "true",
+    );
+    expect(Number(repository.git(repository.checkout, "rev-list", "--count", "HEAD"))).toBeLessThan(
+      Number(repository.git(repository.origin, "rev-list", "--count", "main")),
+    );
+    expect(repository.git(repository.checkout, "rev-parse", "HEAD")).toBe(base);
+    expect(repository.git(repository.checkout, "status", "--porcelain=v1")).toBe("");
+  });
+
+  it("rejects a merge base outside the history bound without changing the checkout", () => {
+    repository.reduceBase();
+    const base = repository.appendHistory(2048);
+    repository.startCandidate();
+    repository.write("candidate.txt", "candidate\n");
+    const candidate = repository.commit("candidate change");
+    repository.cloneBase("shallow");
+
+    expect(() => load(base, candidate)).toThrow(/PR #1.*merge tree/);
+    expect(repository.git(repository.checkout, "rev-parse", "--is-shallow-repository")).toBe(
+      "true",
+    );
+    expect(repository.git(repository.checkout, "rev-parse", "HEAD")).toBe(base);
+    expect(repository.git(repository.checkout, "status", "--porcelain=v1")).toBe("");
+  });
+
+  it("identifies a failed trusted-base history fetch without changing the checkout", () => {
+    const base = repository.reduceBase();
+    repository.cloneBase("shallow");
+    repository.git(repository.checkout, "remote", "set-url", "origin", "./missing-origin");
+
+    expect(() => load(base, repository.ancestor)).toThrow(/PR #1.*trusted-base history fetch/);
+    expect(repository.git(repository.checkout, "rev-parse", "HEAD")).toBe(base);
+    expect(repository.git(repository.checkout, "status", "--porcelain=v1")).toBe("");
+  });
+
+  it("identifies a failed PR commit fetch without changing the checkout", () => {
+    const base = repository.reduceBase();
+    repository.cloneBase("shallow");
+    repository.git(repository.origin, "config", "uploadpack.hideRefs", "refs/pull");
+
+    expect(() => load(base, repository.ancestor)).toThrow(/PR #1.*PR commit fetch/);
+    expect(repository.git(repository.checkout, "rev-parse", "HEAD")).toBe(base);
+    expect(repository.git(repository.checkout, "status", "--porcelain=v1")).toBe("");
+  });
+
   it("rejects a candidate budget increase and its own approval policy", async () => {
     const base = repository.git(repository.origin, "rev-parse", "HEAD");
     repository.startCandidate();
