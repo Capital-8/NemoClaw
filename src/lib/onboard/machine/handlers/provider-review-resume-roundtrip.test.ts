@@ -65,7 +65,15 @@ async function interruptAtReview() {
     "provider_selection",
     "Onboarding exited before the step completed.",
   );
-  return { sessionStore, handleProviderInferenceState, baseOptions, createDeps };
+  return {
+    sessionStore,
+    handleProviderInferenceState,
+    baseOptions,
+    baseSelection,
+    createDeps,
+    boundary,
+    checkpointSandboxIdentity,
+  };
 }
 
 describe("review interruption resume round trip (#13802)", () => {
@@ -157,5 +165,64 @@ describe("review interruption resume round trip (#13802)", () => {
       detail: "native local provider attachment is missing or invalid",
     });
     // Loading the full onboard module takes several seconds on a busy runner.
+  }, 30_000);
+
+  it("keeps an earlier-release reselection incomplete across another review interruption", async () => {
+    const {
+      sessionStore,
+      handleProviderInferenceState,
+      baseOptions,
+      baseSelection,
+      createDeps,
+      boundary,
+      checkpointSandboxIdentity,
+    } = await interruptAtReview();
+    const { markLastStartedStepFailed } = await import("../../exit-step-failure");
+    sessionStore.updateSession((current) => {
+      current.endpointUrl = null;
+      return current;
+    });
+    const first = createDeps({
+      isNonInteractive: () => false,
+      isInferenceRouteReady: vi.fn(() => true),
+      setupNim: vi.fn(async () => ({ ...baseSelection })),
+      prompt: vi.fn(async (): Promise<string> => {
+        throw new Error("interrupted after reselection");
+      }),
+      startRecordedStep: boundary.startRecordedStep.bind(boundary),
+      recordStepComplete: boundary.recordStepComplete.bind(boundary),
+      checkpointSandboxIdentity,
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(first.deps, sessionStore.loadSession()),
+        resume: true,
+        sandboxName: "review-resume",
+      }),
+    ).rejects.toThrow("interrupted after reselection");
+    expect(first.calls.setupInference).not.toHaveBeenCalled();
+    expect(sessionStore.loadSession()?.steps.provider_selection.status).toBe("in_progress");
+    expect(sessionStore.loadSession()?.lastStepStarted).toBe("provider_selection");
+    markLastStartedStepFailed(sessionStore, "Onboarding exited before the step completed.");
+    expect(sessionStore.loadSession()?.steps.provider_selection.status).toBe("failed");
+
+    const prompt = vi.fn(async () => "1");
+    const second = createDeps({
+      isNonInteractive: () => false,
+      isInferenceRouteReady: vi.fn(() => true),
+      prompt,
+      startRecordedStep: boundary.startRecordedStep.bind(boundary),
+      recordStepComplete: boundary.recordStepComplete.bind(boundary),
+      checkpointSandboxIdentity,
+    });
+    await handleProviderInferenceState({
+      ...baseOptions(second.deps, sessionStore.loadSession()),
+      resume: true,
+      sandboxName: "review-resume",
+    });
+
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(second.calls.setupInference).toHaveBeenCalledOnce();
   }, 30_000);
 });

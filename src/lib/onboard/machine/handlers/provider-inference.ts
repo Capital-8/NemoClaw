@@ -1663,8 +1663,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     clearAutoDetectedCompatibleContextWindow(process.env);
     // Re-selecting an endpointless review does not complete its inference
     // step, even if the newly selected provider has a ready shared route.
-    let forceInferenceSetup =
-      initialForceInferenceSetup || isEndpointlessHostLocalReviewCheckpoint(session, sandboxName);
+    const reselectingEndpointlessReview = isEndpointlessHostLocalReviewCheckpoint(
+      session,
+      sandboxName,
+    );
+    let forceInferenceSetup = initialForceInferenceSetup || reselectingEndpointlessReview;
     let recoveredRecordedProvider = false;
     const providerRecovery = createRecovery(fresh, sandboxName, session, deps, {
       recoveryReceipt: providerRecoveryReceipt,
@@ -1675,7 +1678,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       session,
       sandboxName,
     );
-    let deferProviderSelectionUntilInference = completeRecoveredReviewSelectionAfterInference;
+    let deferProviderSelectionUntilInference =
+      completeRecoveredReviewSelectionAfterInference || reselectingEndpointlessReview;
     const reviewRecoveredInteractively =
       completeRecoveredReviewSelectionAfterInference && !deps.isNonInteractive();
     const resumeProviderSelection = canResumeProviderSelection(
@@ -1983,7 +1987,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     if (
       shouldRecordProviderSelection &&
       (authoritativeResumeConfig || effectiveResume) &&
-      !completeRecoveredReviewSelectionAfterInference
+      !deferProviderSelectionUntilInference
     ) {
       // Authoritative rebuild selections are already route-validated. Persist
       // them before inference setup so their reservation can retain the
@@ -2421,8 +2425,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const freshManagedOllama =
         activeHostLocalInferenceSetupOptions.hostLocalInference?.request.service === "ollama" &&
         "managed" in activeHostLocalInferenceSetupOptions.hostLocalInference.request;
-      deferProviderSelectionUntilInference =
-        completeRecoveredReviewSelectionAfterInference || freshManagedOllama;
+      deferProviderSelectionUntilInference ||= freshManagedOllama;
       // Ordinary selections retain the accepted provider/model before setup.
       // Fresh managed Ollama stays in progress until its runtime, route,
       // receipt, and registry reservation have committed together.
