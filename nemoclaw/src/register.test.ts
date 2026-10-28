@@ -467,9 +467,10 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     const admission = vi
       .mocked(api.on)
       .mock.calls.find(([name]) => name === "before_agent_run")?.[1];
+    expect(admission).toBeDefined();
     // Tool-hook cases enter through the same admission gate as a host turn.
     const admittedHandler: typeof handler = (...args) => {
-      void admission?.(...args);
+      void admission!(...args);
       return handler!(...args);
     };
     return { api, handler: admittedHandler!, rawHandler: handler!, admission: admission! };
@@ -505,7 +506,8 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       const promptHook = vi
         .mocked(api.on)
         .mock.calls.find(([name]) => name === "before_prompt_build")?.[1];
-      expect(await promptHook?.({ prompt }, context)).not.toHaveProperty("toolsAllow");
+      expect(promptHook).toBeDefined();
+      expect(await promptHook!({ prompt }, context)).not.toHaveProperty("toolsAllow");
       expect(handler({ toolName: "web_search", params: {} }, context)).toMatchObject({
         block: true,
         blockReason: expect.stringContaining(
@@ -521,7 +523,7 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       // A mixed request still requires unavailable web research.
       const mixedPrompt = `${prompt} Then search the web for alternatives.`;
       await admission({ prompt: mixedPrompt }, context);
-      expect(await promptHook?.({ prompt: mixedPrompt }, context)).toHaveProperty("toolsAllow", []);
+      expect(await promptHook!({ prompt: mixedPrompt }, context)).toHaveProperty("toolsAllow", []);
       expect(handler({ toolName, params }, context)).toMatchObject({ block: true });
     },
   );
@@ -537,11 +539,12 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     const promptHook = vi
       .mocked(api.on)
       .mock.calls.find(([name]) => name === "before_prompt_build")?.[1];
+    expect(promptHook).toBeDefined();
     const supplied = { runId: "abandoned-supplied" };
     const ordinary = { runId: "abandoned-ordinary" };
     const prompt = "Fetch https://docs.nvidia.com/nemoclaw/.";
-    await promptHook?.({ prompt }, supplied);
-    await promptHook?.({ prompt: "Read README.md." }, ordinary);
+    await promptHook!({ prompt }, supplied);
+    await promptHook!({ prompt: "Read README.md." }, ordinary);
     expect(rawHandler({ toolName: "web_search", params: {} }, supplied)).toMatchObject({
       block: true,
     });

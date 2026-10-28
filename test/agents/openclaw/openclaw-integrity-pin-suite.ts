@@ -1340,77 +1340,16 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).not.toContain("npm install");
       });
 
-      it("rejects npm pack filenames outside the fresh pack directories", () => {
-        const base = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE_BASE,
-            "# Install OpenClaw CLI + PyYAML.",
-            "# Baseline health check.",
-          ),
-          {
-            openclawVersion: LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION,
-            committedIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
-            registryIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
-            registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
-            packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
-            allowLegacyFixture: true,
-            packFilename: "../openclaw-2026.4.24.tgz",
-          },
-        );
-        const optionalPlugin = runOptionalOpenClawPluginBlock({
+      it("rejects optional plugin npm pack filenames outside the fresh pack directory", () => {
+        const { result, calls } = runOptionalOpenClawPluginBlock({
           pluginPackFilename: "../diagnostics-otel-2026.9.2.tgz",
         });
-
-        for (const item of [
-          {
-            label: "base Dockerfile",
-            outcome: base,
-            unsafeFilename: "../openclaw-2026.4.24.tgz",
-            blockedCommand: "npm install -g",
-          },
-          {
-            label: "optional OpenClaw plugin Dockerfile",
-            outcome: optionalPlugin,
-            unsafeFilename: "../diagnostics-otel-2026.9.2.tgz",
-            blockedCommand: "openclaw plugins install",
-          },
-        ]) {
-          expect(item.outcome.result.status, item.label).not.toBe(0);
-          expect(
-            `${item.outcome.result.stdout}${item.outcome.result.stderr}`,
-            item.label,
-          ).toContain(`reported unsafe archive filename: ${item.unsafeFilename}`);
-          expect(item.outcome.calls, item.label).toContain("npm pack");
-          expect(item.outcome.calls, item.label).not.toContain(item.blockedCommand);
-        }
-      });
-
-      it("reports missing base-image npm pack filenames on stderr", () => {
-        const { result, calls } = runInstallBlock(
-          extractRunBlock(
-            DOCKERFILE_BASE,
-            "# Install OpenClaw CLI + PyYAML.",
-            "# Baseline health check.",
-          ),
-          {
-            openclawVersion: LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION,
-            committedIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
-            registryIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
-            registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
-            packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
-            allowLegacyFixture: true,
-            packFilename: null,
-          },
-        );
-        const diagnostic = `npm pack openclaw@${LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION} did not report filename and integrity`;
-
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain(diagnostic);
-        expect(result.stdout).not.toContain(diagnostic);
-        expect(calls).toContain(
-          `npm pack openclaw@${LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION} --pack-destination`,
+        expect(`${result.stdout}${result.stderr}`).toContain(
+          "reported unsafe archive filename: ../diagnostics-otel-2026.9.2.tgz",
         );
-        expect(calls).not.toContain("npm install -g");
+        expect(calls).toContain("npm pack");
+        expect(calls).not.toContain("openclaw plugins install");
       });
     }
 
@@ -1459,7 +1398,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           ].map((options) => ({ image, ...options })),
         ),
       )(
-        "requires explicit legacy fixture mode with the shipped blueprint: $image $openclawVersion",
+        "rejects legacy fixture hosts below the shipped plugin minimum: $image $openclawVersion",
         ({ image, ...options }) => {
           const command =
             image === "final"
@@ -1473,31 +1412,14 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
                   "# Install OpenClaw CLI + PyYAML.",
                   "# Baseline health check.",
                 );
-          const production = runInstallBlock(command, options);
-          const fixture = runInstallBlock(command, { ...options, allowLegacyFixture: true });
-          expect(fixture.result.status, `${fixture.result.stdout}${fixture.result.stderr}`).toBe(0);
-          expect(production.result.status).not.toBe(0);
-          expect(`${production.result.stdout}${production.result.stderr}`).toContain(
-            `OpenClaw ${options.openclawVersion} is a legacy E2E fixture pin`,
-          );
-          expect(production.calls).not.toContain("npm view");
-          expect(production.calls).not.toContain("npm install");
-          expect(fixture.calls).toContain(
-            `npm view openclaw@${options.openclawVersion} dist.integrity`,
-          );
-          expect(fixture.calls).toContain(
-            `npm view openclaw@${options.openclawVersion} dist.tarball`,
-          );
-          expect(fixture.calls).toContain(
-            `npm pack openclaw@${options.openclawVersion} --pack-destination`,
-          );
-          expect(fixture.calls).toMatch(
-            /npm install -g (?:--no-audit --no-fund --no-progress )?--ignore-scripts --allow-git=root \S+\/openclaw-(?:remediated|2026\.4\.24)\.tgz/u,
-          );
-          expect(fixture.calls).not.toContain('"archivePath"');
-          expect(fixture.calls.includes("postinstall-bundled-plugins.mjs")).toBe(
-            options.openclawVersion === LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION,
-          );
+          for (const allowLegacyFixture of [false, true]) {
+            const { result, calls } = runInstallBlock(command, { ...options, allowLegacyFixture });
+            expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+            expect(`${result.stdout}${result.stderr}`).toMatch(/below.*minimum/u);
+            expect(calls).not.toContain("npm view");
+            expect(calls).not.toContain("npm pack");
+            expect(calls).not.toContain("npm install");
+          }
         },
       );
 
@@ -1518,9 +1440,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         ]) {
           const result = runProductionBuildArgGuard(args);
           expect(result.status, args.join(" ")).toBe(1);
-          expect(result.stderr).toContain(
-            "only allowed in explicit stale-upgrade E2E fixture builds",
-          );
+          expect(result.stderr).toContain("not allowed in production");
         }
 
         const envResult = runProductionBuildArgGuard([], {

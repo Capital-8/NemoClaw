@@ -837,11 +837,9 @@ ARG OPENCLAW_2026_9_2_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-202
 ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_9_2_INTEGRITY=sha512-yilG4G1Fd1yvW65Qy+qNPR+x6tBjwVmTWv+7BULoN70HY3BJqt9YVOL42PvWXHYpaTs/LwUlisqxjbJRfYyi9A==
 ARG OPENCLAW_BRAVE_PLUGIN_2026_9_2_INTEGRITY=sha512-6416aPlfnAKlu8IBrrjgfoiss/10xB32ywFwnIf/fkVMQE61qsmzA/qxUniQuDwOB6EBFNEkNs54DhIT7g3UVg==
 ARG OPENCLAW_TAVILY_PLUGIN_2026_9_2_INTEGRITY=sha512-FYK2e7aXagwcGiTRQfidS3PThIfJkAQoqYEtlkadiGxmgeChYY71YLeD6nQAHZKHmTAOw9U7njDxMBvYyXPf5w==
-# E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
-# intentionally build an older OpenClaw base image before proving upgrade
-# behavior. Production workflows reject the fixture flag, both legacy version
-# values, and these four pin overrides before docker build. Only explicit
-# fixture paths may select them; retirement is tracked in #5896 section 9.
+# Archived fixture pins remain subject to the blueprint minimum, even in fixture mode.
+# Current rebuild tests use the exact managed image; the flag cannot select a
+# runtime older than the plugin supports. Production workflows also reject it.
 ARG NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0
 ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==
 ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
@@ -931,12 +929,13 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
         || { echo "ERROR: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)" >&2; exit 1; }; \
     MIN_VER=$(grep -m 1 'min_openclaw_version' /opt/nemoclaw-blueprint/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
     [ -n "$MIN_VER" ] || { echo "ERROR: Could not parse min_openclaw_version from blueprint.yaml" >&2; exit 1; }; \
+    if [ "$(printf '%s\n%s' "$MIN_VER" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$MIN_VER" ]; then \
+        echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
+    fi; \
     if [ "$OPENCLAW_VERSION" = "2026.3.11" ] || [ "$OPENCLAW_VERSION" = "2026.4.24" ]; then \
         if [ "$NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW" != "1" ]; then \
             echo "ERROR: OpenClaw ${OPENCLAW_VERSION} is a legacy E2E fixture pin; set NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1 for stale-upgrade fixture builds" >&2; exit 1; \
         fi; \
-    elif [ "$(printf '%s\n%s' "$MIN_VER" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$MIN_VER" ]; then \
-        echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
     fi; \
     EXPECTED_INTEGRITY=""; \
     EXPECTED_TARBALL=""; \

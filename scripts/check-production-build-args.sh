@@ -24,7 +24,7 @@ readonly -a production_dockerfiles=(
 )
 
 fail_legacy_fixture() {
-  echo "ERROR: ${legacy_fixture_key}=1 is only allowed in explicit stale-upgrade E2E fixture builds." >&2
+  echo "ERROR: ${legacy_fixture_key}=1 does not bypass the shipped OpenClaw minimum and is not allowed in production builds." >&2
   echo "       Do not pass it to production Docker image build args." >&2
   exit 1
 }

@@ -144,6 +144,9 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const prompt of [
         searchPrompt,
         "Search for NemoClaw documentation.",
+        "Research the current Apple stock price.",
+        "Look up today’s weather.",
+        "Find the current population of Canada.",
         "Search the latest Linux documentation for the current directory.",
         "Search for official documentation about local files.",
         "Search for best practices in code review.",
@@ -182,6 +185,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const prompt of [
         "Read /sandbox/README.md.",
         "What files are in the current directory?",
+        "Research the cause of this build error.",
+        "Explore the project layout.",
         "Search the current directory for the config file.",
         "Search the project for TODO comments.",
         "Search through the project files for TODO comments.",

@@ -150,15 +150,20 @@ export function researchScope(prompt: string): "external" | "supplied" | "ordina
     // Words in the requested research topic do not grant access to substitutes.
     const subject = source.slice(action[0].length).trimStart();
     const localSource =
-      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current|working)\s+directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
+      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current|working)\s+directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
+        subject,
+      ) ||
+      /\b(?:(?:this|our|my|the)\s+(?:(?:unit|integration)\s+tests?|(?:build|test)\s+(?:error|failure|output|results?))|shell\s+history)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:failed|for|to|and|then)\b)/iu.test(
         subject,
       );
     const suppliedUrl =
-      /\b(?:search|research|find|locate|look\s+(?:up|for))\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:in|within|at|from)\s+https?:\/\/\S+/iu.test(
+      /\b(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:in|within|at|from)\s+https?:\/\/\S+/iu.test(
         request,
       );
     const externalResearch =
-      /^search\b|\bto\s+search\b/iu.test(source) ||
+      /^(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\b|\bto\s+search\b/iu.test(
+        source,
+      ) ||
       /\bonline(?=\s*(?:[.!?]|$)|\s+(?:for|about|using|with|via|today|now|please)\b)/iu.test(
         source,
       ) ||
