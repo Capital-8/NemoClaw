@@ -237,6 +237,46 @@ esac
   expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
+it("stops before cleanup when an unparseable row follows a managed container", () => {
+  const { root: tmp, binDir: fakeBin } = installerCheckout("nemoclaw-force-fresh-trailing-row-");
+  const cleanupMarker = path.join(tmp, "cleanup-started");
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+case "$*" in
+  info) exit 0 ;;
+  "ps -aq --filter label=io.nvidia.nemoclaw.managed-image.contract=1") exit 0 ;;
+  "ps -a --format {{.ID}}|{{.Image}}|{{.Names}}")
+    printf '0123456789ab|redis:7|openshell-orphan\nfedcba987654|nemoclaw-sandbox-local:build-1\n'
+    ;;
+  "volume ls --format {{.Name}}") exit 0 ;;
+  *) exit 1 ;;
+esac
+`,
+  );
+
+  const result = callPayloadFunction(
+    `
+      warn() { :; }
+      prepare_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_uninstaller() { touch "$CLEANUP_MARKER"; }
+      remove_macos_openshell_for_force_fresh_install() { touch "$CLEANUP_MARKER"; }
+      run_force_fresh_install_reset
+    `,
+    {
+      CLEANUP_MARKER: cleanupMarker,
+      HOME: tmp,
+      PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+
+  expect(result.status).not.toBe(0);
+  expect(`${result.stdout}${result.stderr}`).toContain(
+    "Could not inspect existing NemoClaw or OpenShell state",
+  );
+  expect(fs.existsSync(cleanupMarker)).toBe(false);
+});
+
 it.each([
   ["a row missing the final name separator", "fedcba987654|nemoclaw-sandbox-local:build-1"],
   ["a space-separated row", "fedcba987654 redis:7 openshell-orphan"],

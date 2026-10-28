@@ -387,6 +387,11 @@ describe("uninstall Docker resource scope", () => {
   ])("preserves state and the CLI when Docker inventory is inconclusive: %j", async (inventory) => {
     const result = await runWithDockerInventory({ inventory });
     expect(result.result.exitCode).toBe(1);
+    expect(result.errors.join("\n")).toContain(
+      inventory.status === 0
+        ? "rows that NemoClaw could not parse"
+        : "Could not inventory Docker containers",
+    );
     expect(result.errors.join("\n")).toContain("preserved for retry");
     expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
     expect(result.retainedRegistry).toBe(result.registry);
@@ -397,6 +402,46 @@ describe("uninstall Docker resource scope", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([
+    {
+      inventory: {
+        status: 0,
+        stdout: "0123456789ab||\nfedcba987654|redis:7|foreign-workload",
+        stderr: "",
+      },
+      named: "container 0123456789ab",
+    },
+    {
+      inventory: {
+        status: 0,
+        stdout: "0123456789ab redis:7 missing-separator\nfedcba987654|redis:7|foreign-workload",
+        stderr: "",
+      },
+      named: "row '0123456789ab redis:7 missing-separator'",
+    },
+    {
+      inventory: { status: 0, stdout: "x".repeat(100), stderr: "" },
+      named: `row '${"x".repeat(77)}...'`,
+    },
+  ])(
+    "names an unparseable inventory row and stops cleanup: $named",
+    async ({ inventory, named }) => {
+      const result = await runWithDockerInventory({ inventory });
+      expect(result.result.exitCode).toBe(1);
+      expect(result.errors.join("\n")).toContain(
+        `container inventory rows that NemoClaw could not parse (${named})`,
+      );
+      expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
+      expect(result.retainedRegistry).toBe(result.registry);
+      expect(result.metadataWrites).toEqual([]);
+      expect(
+        result.commands.some(
+          ([command, action]) => command === "npm" && ["unlink", "uninstall"].includes(action!),
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("completes uninstall when unrelated Docker containers omit image or name fields", async () => {
     const result = await runWithDockerInventory({
@@ -441,7 +486,7 @@ describe("uninstall Docker resource scope", () => {
       const result = await runWithDockerInventory({ leftovers: [leftover] });
       expect(result.result.exitCode).toBe(1);
       expect(result.errors.join("\n")).toContain(
-        `unverified ownership: ${expectedImage} (0123456789ab)`,
+        `unverified ownership: image ${expectedImage} (0123456789ab)`,
       );
       expect(result.calls.filter((args) => args[0] === "rm" || args[0] === "images")).toEqual([]);
       expect(result.metadataWrites).toEqual([]);

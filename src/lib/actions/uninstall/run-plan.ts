@@ -2737,7 +2737,7 @@ function hasDockerSandboxRegistrations(
   );
 }
 
-/** Container deletion belongs to the runtime owners. Inventory rows are ID|IMAGE|NAMES with no whitespace; IMAGE or NAMES may be empty, but not both. Any other row keeps uninstall state. */
+/** Container deletion belongs to the runtime owners. A row that is not whitespace-free ID|IMAGE|NAMES, or that has both IMAGE and NAMES empty, stops verification and preserves uninstall state. */
 function verifyDockerContainerCleanup(
   runtime: UninstallRuntime,
   gatewayName: string | null,
@@ -2760,17 +2760,17 @@ function verifyDockerContainerCleanup(
     .split(/\r?\n/u)
     .filter((line) => line.trim().length > 0)
     .map((line) => line.split("|"));
-  if (
-    rows.some(
-      (fields) =>
-        fields.length !== 3 ||
-        !fields[0] ||
-        (!fields[1] && !fields[2]) ||
-        fields.some((field) => /\s/u.test(field)),
-    )
-  ) {
+  const unparseable = rows.filter(
+    (fields) =>
+      fields.length !== 3 ||
+      !fields[0] ||
+      (!fields[1] && !fields[2]) ||
+      fields.some((field) => /\s/u.test(field)),
+  );
+  if (unparseable.length > 0) {
+    const named = unparseable.map(describeUnparseableContainerInventoryRow).join(", ");
     runtime.error(
-      "Docker returned an incomplete container inventory. Remaining uninstall state was preserved for retry.",
+      `Docker returned container inventory rows that NemoClaw could not parse (${named}). Remaining uninstall state was preserved for retry.`,
     );
     return false;
   }
@@ -2805,7 +2805,7 @@ function verifyDockerContainerCleanup(
   });
   if (remaining.length === 0) return true;
   runtime.error(
-    `Preserved Docker containers with unverified ownership: ${remaining.map((fields) => `${fields[2] || fields[1]} (${fields[0]})`).join(", ")}. Complete cleanup through the owning runtime, then retry; remaining uninstall state was preserved.`,
+    `Preserved Docker containers with unverified ownership: ${remaining.map((fields) => (fields[2] ? `${fields[2]} (${fields[0]})` : `image ${fields[1]} (${fields[0]})`)).join(", ")}. Complete cleanup through the owning runtime, then retry; remaining uninstall state was preserved.`,
   );
   return false;
 }
@@ -2839,6 +2839,16 @@ function removeDockerImages(runtime: UninstallRuntime): boolean {
     }
   }
   return removedAll;
+}
+
+function describeUnparseableContainerInventoryRow(fields: readonly string[]): string {
+  const id = fields[0];
+  if (fields.length === 3 && id && /^[0-9a-f]+$/iu.test(id)) {
+    return `container ${id}`;
+  }
+  const raw = fields.join("|").replace(/\s+/gu, " ").trim();
+  const bounded = raw.length > 80 ? `${raw.slice(0, 77)}...` : raw;
+  return `row '${bounded}'`;
 }
 
 function dockerInventoryFields(line: string, expectedFields: number): string[] {

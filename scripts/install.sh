@@ -3794,7 +3794,6 @@ force_fresh_install_has_existing_state() {
           _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$container_id"
           ;;
       esac
-      [[ -z "$_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER" ]] || break
     done <<<"$container_inventory"
     receipt_volume_inventory="$(
       docker volume ls --format '{{.Name}}' 2>/dev/null
