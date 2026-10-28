@@ -3,9 +3,10 @@
 
 # GTC DC Examples
 
-These nine templates cover Hermes, OpenClaw, and LangChain Deep Agents on the three GTC DC target environments.
+The nine local-inference templates cover Hermes, OpenClaw, and LangChain Deep Agents on the three ARM64 GTC DC target environments.
 Each declares one agent, a local managed Docker gateway, and one managed vLLM service.
 On DGX Spark, the Hermes and Deep Agents templates are verified; the other combinations are untested.
+The directory also links [AMD64 Kubernetes profiles](#amd64-kubernetes-with-nvidia-cloud-inference) that use NVIDIA cloud inference.
 
 | Template | DGX Spark result |
 |---|---|
@@ -25,7 +26,7 @@ DGX Station and Windows WSL2 RTX Spark remain untested.
 | OpenClaw | [Station](openclaw-dgx-station.yaml) | [Spark](openclaw-dgx-spark.yaml) | [WSL2 RTX Spark](openclaw-windows-wsl2-rtx-spark.yaml) |
 | LangChain Deep Agents | [Station](deepagents-dgx-station.yaml) | [Spark](deepagents-dgx-spark.yaml) | [WSL2 RTX Spark](deepagents-windows-wsl2-rtx-spark.yaml) |
 
-All files select [NVIDIA Nemotron 3 Super 120B-A12B NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4/tree/ff433f5493e25d631c9f12b5d55c674229923d02), pinned to commit `ff433f5493e25d631c9f12b5d55c674229923d02`.
+The local-inference files select [NVIDIA Nemotron 3 Super 120B-A12B NVFP4](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4/tree/ff433f5493e25d631c9f12b5d55c674229923d02), pinned to commit `ff433f5493e25d631c9f12b5d55c674229923d02`.
 The serving configuration uses a 65,536-token context, one sequence, an 8 GiB KV cache, and an 88 GiB total GPU budget.
 That budget covers the approximately 74.8 GiB pinned weights and declared cache; actual runtime headroom and context capacity still require verification.
 KV and SSM cache dtypes use runtime defaults; model output accuracy and tool calls also require live checks.
@@ -88,6 +89,27 @@ For a Windows target, copy its corresponding `*-windows-wsl2-rtx-spark.yaml` fil
 
 Plan observes the selected environment without creating deployment resources or requesting inference.
 Follow [the deployment workflow](../../docs/usage.md) for apply, recovery, and retained teardown, and verify [model and agent responses](../../docs/inference.md#verify-the-result) separately.
+
+## AMD64 Kubernetes with NVIDIA Cloud Inference
+
+These profiles target Linux AMD64 Kubernetes workers, an existing OpenShell gateway, and NVIDIA's hosted Super VL API.
+Inference runs on NVIDIA's cloud; the Kubernetes workers need no local GPU.
+The links below are symlinks to the owning files in `examples/kubernetes/`.
+Both combinations require live validation.
+
+| Harness | Profile | Sandboxes |
+|---|---|---|
+| OpenClaw | [AMD64 Kubernetes](openclaw-kubernetes-amd64.yaml) | Three independent OpenClaw agents sharing one provider |
+| Hermes | [AMD64 Kubernetes](hermes-kubernetes-amd64.yaml) | One Hermes agent |
+
+Both select `nvidia/nemotron-3.5-super-vl-120b-a12b` at `https://integrate.api.nvidia.com/v1` through the OpenAI completions API.
+Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../../docs/security.md#credentials-and-authentication) describes its storage and removal.
+Model requests can incur cloud inference charges.
+
+Follow the [Kubernetes prerequisites and image preparation](../../docs/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/kubernetes.md#use-an-existing-gateway).
+Select a Linux AMD64 image for the chosen harness, push it to a registry the cluster can pull from, and supply its matching metadata bundle.
+Assign a fresh deployment UID and replace the gateway endpoint, gateway credential and TLS references, and image digest before planning.
+Use the [deployment workflow](../../docs/usage.md) for apply and retained teardown, then verify an [agent response](../../docs/inference.md#verify-the-result) separately.
 
 ## Sources and Adaptation
 
