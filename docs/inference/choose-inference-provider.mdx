@@ -72,7 +72,7 @@ Local providers run on the host and keep inference traffic on infrastructure tha
 | Provider | When it appears | Setup guide |
 |---|---|---|
 | Local Ollama | Ollama is installed or running on the host. | [Use Ollama](../local-inference/set-up-ollama) |
-| Local vLLM already running | NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. Native N1x requires explicit standard-onboarding intent. | [Set Up vLLM](../local-inference/set-up-vllm) |
+| Local vLLM already running | NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` whose `/v1/models` reports `owned_by: "vllm"`. Native N1x requires explicit standard-onboarding intent. | [Set Up vLLM](../local-inference/set-up-vllm) |
 | Local vLLM managed install | Docker is available on `PATH`, the host matches a supported GPU profile, and any required opt-in is present. Attaching an already-running local vLLM server is separate. | [Set Up vLLM](../local-inference/set-up-vllm) |
 | Local llama.cpp already running | You explicitly select an authenticated server on loopback port `8081`. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
 | Local llama.cpp managed install | A qualified DGX Spark or Windows WSL N1x or Station GB300 host satisfies the declarative recipe requirements. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
@@ -82,7 +82,7 @@ Local providers run on the host and keep inference traffic on infrastructure tha
 <AgentOnly variant="deepagents">
 | Provider | When it appears | Setup guide |
 |---|---|---|
-| Local vLLM already running | NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. Native N1x requires explicit standard-onboarding intent. | [Set Up vLLM](../local-inference/set-up-vllm) |
+| Local vLLM already running | NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` whose `/v1/models` reports `owned_by: "vllm"`. Native N1x requires explicit standard-onboarding intent. | [Set Up vLLM](../local-inference/set-up-vllm) |
 | Local vLLM managed install | Docker is available on `PATH`, the host matches a supported GPU profile, and any required opt-in is present. Attaching an already-running local vLLM server is separate. | [Set Up vLLM](../local-inference/set-up-vllm) |
 | Local llama.cpp already running | You explicitly select an authenticated server on loopback port `8081`. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
 | Local llama.cpp managed install | A qualified DGX Spark or Windows WSL N1x or Station GB300 host satisfies the declarative recipe requirements. | [Set Up llama.cpp](../local-inference/set-up-llama-cpp) |
