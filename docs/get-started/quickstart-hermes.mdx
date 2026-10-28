@@ -273,16 +273,16 @@ Use these details when your first-run path needs more control.
 
     See the [environment-variable reference](../reference/commands#environment-variables) for the complete bind behavior.
     To keep the host forwards on loopback, leave the bind setting unset and use SSH port forwarding for remote access.
+    Replace `<api-port>` below with the port in the OpenAI-compatible API URL printed after onboarding.
 
     ```bash
     ssh -L 18789:127.0.0.1:18789 <user>@<host>
-    ssh -L 8642:127.0.0.1:8642 <user>@<host>
+    ssh -L '<api-port>:127.0.0.1:<api-port>' <user>@<host>
     ```
 
-    These commands forward the default ports.
+    The dashboard command forwards the default dashboard port.
     Replace the dashboard port with the port in `nemohermes my-hermes dashboard-url --quiet`.
-    Replace the API port with the port in the API URL printed after onboarding.
-    Use the same local API port in the client base URL, for example `http://127.0.0.1:8642/v1` for the default port.
+    Use the same local API port in the client base URL, `http://127.0.0.1:<api-port>/v1`.
     Run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
     Pass the token in the client's `Authorization` header.
     Do not append an OpenClaw `#token=` fragment to either URL.
@@ -405,9 +405,10 @@ Use these details when your first-run path needs more control.
     When Tavily is enabled, onboarding reads the generated Hermes configuration to confirm `web.backend: tavily` and sends a real search request through OpenShell's request-body credential rewrite path.
     This verification reports a warning instead of aborting onboarding when the configuration or egress path needs attention.
 
-    Hermes exposes its browser dashboard on port `18789` and forwards its OpenAI-compatible API on port `8642` for local clients.
+    By default, Hermes exposes its browser dashboard on port `18789` and forwards its OpenAI-compatible API on port `8642` for local clients.
     When another sandbox or a host listener already holds either port, NemoClaw allocates the next free port in that port's range.
-    The ready summary names the port this sandbox uses, and the examples below use the default ports.
+    The ready summary names the ports this sandbox uses.
+    The summary below shows the default ports.
     The dashboard assets are built into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
     Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
     To recover the dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned installation paths.
@@ -441,10 +442,11 @@ Use these details when your first-run path needs more control.
     If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
     The Hermes dashboard URL does not include an OpenClaw `#token=` fragment.
     `nemohermes my-hermes dashboard-url --quiet` returns `http://127.0.0.1:18789/` when the default local forward is active.
+    Replace `<api-port>` below with the port in your sandbox's printed OpenAI-compatible API URL.
     Check the API health endpoint from the host.
 
     ```bash
-    curl -sf http://127.0.0.1:8642/health
+    curl -sf "http://127.0.0.1:<api-port>/health"
     ```
 
     If that command cannot connect after a reboot or terminal restart, restore the managed forward.
@@ -453,7 +455,7 @@ Use these details when your first-run path needs more control.
     nemohermes my-hermes recover
     ```
 
-    Configure OpenAI-compatible clients with `http://127.0.0.1:8642/v1`.
+    Configure OpenAI-compatible clients with `http://127.0.0.1:<api-port>/v1`.
     Hermes uses API header authentication for client requests.
     Do not append an OpenClaw `#token=` fragment to the endpoint.
   </Accordion>

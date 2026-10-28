@@ -2216,12 +2216,16 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Print the Hermes API bearer token for a running sandbox to stdout. NemoClaw retrieves the sandbox's `API_SERVER_KEY`, which authenticates OpenAI-compatible clients on the forwarded API port. During a normal sandbox lifecycle, the token is generated once for each sandbox home. Different sandbox homes receive different tokens. NemoClaw preserves it across a gateway restart, sandbox stop and start, and host OpenShell gateway restart. When you rebuild or replace the sandbox, the replacement home receives a new token. At gateway startup, NemoClaw also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters. If an ordinary restart changes the token while the existing `API_SERVER_KEY` was present and valid, collect the before and after sandbox identity plus redacted mint logs and report it as a bug. Capture the token and pass it in the `Authorization` header:
+Print the Hermes API bearer token for a running sandbox to stdout. NemoClaw retrieves the sandbox's `API_SERVER_KEY`, which authenticates OpenAI-compatible clients on the forwarded API port. During a normal sandbox lifecycle, the token is generated once for each sandbox home. Different sandbox homes receive different tokens. NemoClaw preserves it across a gateway restart, sandbox stop and start, and host OpenShell gateway restart. When you rebuild or replace the sandbox, the replacement home receives a new token. At gateway startup, NemoClaw also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters. If an ordinary restart changes the token while the existing `API_SERVER_KEY` was present and valid, collect the before and after sandbox identity plus redacted mint logs and report it as a bug.
+Read the API port from the OpenAI-compatible API URL printed after onboarding.
+Replace `<api-port>` below with that port.
+Capture the token and pass it in the `Authorization` header:
 
 ```bash
 TOKEN=$(nemohermes my-assistant gateway-token --quiet)
 curl -fsS -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:8642/v1/models
+  "http://127.0.0.1:<api-port>/v1/models"
+unset TOKEN
 ```
 
 <Warning>

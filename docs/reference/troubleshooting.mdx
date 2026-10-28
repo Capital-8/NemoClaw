@@ -3196,12 +3196,15 @@ After recovery, verify that Hermes starts and the gateway health check passes.
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
-`nemohermes onboard` forwards the sandbox's API port, which is `8642` when no other sandbox or host listener already holds it. Hermes serves an OpenAI-compatible API at that port, not a chat dashboard. A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothing renderable.
+`nemohermes onboard` forwards the sandbox's API port, which is `8642` when no other sandbox or host listener already holds it.
+Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
+Replace `<api-port>` below with the port in the OpenAI-compatible API URL printed after onboarding.
+A browser visit to `http://127.0.0.1:<api-port>/` (or any non-API path) returns nothing renderable.
 
 Confirm the agent is healthy with the API health endpoint instead:
 
 ```bash
-curl -sf http://127.0.0.1:8642/health
+curl -sf "http://127.0.0.1:<api-port>/health"
 ```
 
 Expected output:
@@ -3210,7 +3213,8 @@ Expected output:
 { "status": "ok", "platform": "hermes-agent" }
 ```
 
-Point an OpenAI-compatible client at `http://127.0.0.1:8642/v1` for chat completions. For terminal use, run `nemohermes launch <name>`.
+Point an OpenAI-compatible client at `http://127.0.0.1:<api-port>/v1` for chat completions.
+For terminal use, run `nemohermes launch <name>`.
 
 ### Onboarding Reports Hermes Is Not Ready With an Unreachable API Port
 
@@ -3246,7 +3250,7 @@ Replace `<api-port>` below with that port, then check readiness and host reachab
 
 ```bash
 nemohermes <name> status
-curl -sS -o /dev/null -w '%{http_code}\n' --max-time 3 http://127.0.0.1:<api-port>/health
+curl -sS -o /dev/null -w '%{http_code}\n' --max-time 3 "http://127.0.0.1:<api-port>/health"
 ```
 
 An HTTP status of `200` or `401` means the API endpoint is reachable; it does not validate the inference credential.
