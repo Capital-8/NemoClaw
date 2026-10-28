@@ -1210,19 +1210,58 @@ check_remote_url() {
     echo "check-docs: [links] curl not found; cannot verify $url" >&2
     return 1
   fi
-  if ! url_is_permitted_probe_destination "$url"; then
-    echo "check-docs: [links] refused non-public probe destination: $url" >&2
+
+  # Follow redirects one hop at a time so every destination passes
+  # url_is_permitted_probe_destination before the runner requests it. Letting
+  # curl follow automatically would let a public URL redirect the runner to an
+  # internal address.
+  local current="$url" hop=0 max_hops=10
+  local -a headers=()
+  local status location origin
+  while :; do
+    if ! url_is_permitted_probe_destination "$current"; then
+      echo "check-docs: [links] refused non-public probe destination: $current" >&2
+      return 1
+    fi
+    headers=()
+    mapfile -t headers < <(
+      "$CURL" -sS -o /dev/null -D - \
+        --connect-timeout 12 --max-time 35 \
+        --proto '=http,https' --proto-redir '=http,https' \
+        -A 'NemoClaw-doc-link-check/1.0 (+https://github.com/NVIDIA/NemoClaw)' \
+        "$current" 2>/dev/null
+    )
+    status="$(printf '%s\n' "${headers[@]}" | awk 'toupper($1) ~ /^HTTP\// { code=$2 } END { print code }')"
+    if [[ -z "$status" ]]; then
+      echo "check-docs: [links] unreachable URL: $url" >&2
+      return 1
+    fi
+    if [[ "$status" =~ ^(301|302|303|307|308)$ ]]; then
+      location="$(printf '%s\n' "${headers[@]}" | awk 'BEGIN{IGNORECASE=1} /^location:/ { sub(/^[Ll]ocation:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit }')"
+      if [[ -z "$location" ]]; then
+        echo "check-docs: [links] unreachable URL: $url (redirect without Location)" >&2
+        return 1
+      fi
+      hop=$((hop + 1))
+      if [[ "$hop" -gt "$max_hops" ]]; then
+        echo "check-docs: [links] unreachable URL: $url (too many redirects)" >&2
+        return 1
+      fi
+      origin="$(printf '%s' "$current" | awk -F/ '{ print $1 "//" $3 }')"
+      case "$location" in
+        http://* | https://*) current="$location" ;;
+        //*) current="${current%%://*}://${location#//}" ;;
+        /*) current="${origin}${location}" ;;
+        *) current="${origin}/${location}" ;;
+      esac
+      continue
+    fi
+    if [[ "$status" =~ ^2 ]]; then
+      return 0
+    fi
+    echo "check-docs: [links] unreachable URL: $url (HTTP $status)" >&2
     return 1
-  fi
-  if ! "$CURL" -fsS -L -o /dev/null \
-    --connect-timeout 12 --max-time 35 \
-    --proto '=http,https' --proto-redir '=http,https' \
-    -A 'NemoClaw-doc-link-check/1.0 (+https://github.com/NVIDIA/NemoClaw)' \
-    "$url" 2>/dev/null; then
-    echo "check-docs: [links] unreachable URL: $url" >&2
-    return 1
-  fi
-  return 0
+  done
 }
 
 # Normalized form: strip #fragment and trailing slash for ignore-list comparison.

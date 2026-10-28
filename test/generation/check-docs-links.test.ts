@@ -463,15 +463,80 @@ describe("check-docs remote probe admission (#13842)", () => {
       "invocations.log",
     );
     const curlShim = path.join(path.dirname(invocationLog), "curl");
-    fs.writeFileSync(curlShim, `#!/usr/bin/env bash\necho "$*" >> ${invocationLog}\nexit 0\n`, {
-      mode: 0o755,
-    });
+    fs.writeFileSync(
+      curlShim,
+      `#!/usr/bin/env bash\necho "$*" >> ${invocationLog}\nprintf 'HTTP/1.1 200 OK\\r\\n\\r\\n'\nexit 0\n`,
+      { mode: 0o755 },
+    );
     const docPath = writeDoc("public", "- [schema](https://docs.nvidia.com/openshell/latest/)\n");
 
     const result = runRemoteCheckDocs(docPath, { CURL: curlShim });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(fs.readFileSync(invocationLog, "utf8")).toContain("docs.nvidia.com");
+  });
+
+  it.each([
+    ["link-local metadata", "http://169.254.169.254/latest/meta-data/"],
+    ["loopback", "http://127.0.0.1:8080/admin"],
+    ["private 10/8", "http://10.0.0.5/admin"],
+  ])("refuses a redirect to a %s destination (#13842)", (_label, target) => {
+    const callLog = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-curl-redir-")),
+      "calls.log",
+    );
+    const curlShim = path.join(path.dirname(callLog), "curl");
+    // The first hop is public and returns a redirect to an internal address.
+    fs.writeFileSync(
+      curlShim,
+      [
+        "#!/usr/bin/env bash",
+        `echo "$*" >> ${callLog}`,
+        `case "$*" in`,
+        `  *example.com/redir*) printf 'HTTP/1.1 302 Found\\r\\nLocation: ${target}\\r\\n\\r\\n' ;;`,
+        `  *) printf 'HTTP/1.1 200 OK\\r\\n\\r\\n' ;;`,
+        "esac",
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const docPath = writeDoc("redir", "- [x](https://example.com/redir)\n");
+
+    const result = runRemoteCheckDocs(docPath, { CURL: curlShim });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain("refused non-public probe destination");
+    // Only the public first hop may be requested; the internal hop must not be.
+    expect(fs.readFileSync(callLog, "utf8").split("\n").filter(Boolean)).toHaveLength(1);
+  });
+
+  it("follows a redirect to another public destination (#13842)", () => {
+    const callLog = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-curl-redir-ok-")),
+      "calls.log",
+    );
+    const curlShim = path.join(path.dirname(callLog), "curl");
+    fs.writeFileSync(
+      curlShim,
+      [
+        "#!/usr/bin/env bash",
+        `echo "$*" >> ${callLog}`,
+        'case "$*" in',
+        "  *example.com/redir*) printf 'HTTP/1.1 302 Found\\r\\nLocation: https://docs.nvidia.com/openshell/latest/\\r\\n\\r\\n' ;;",
+        "  *) printf 'HTTP/1.1 200 OK\\r\\n\\r\\n' ;;",
+        "esac",
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const docPath = writeDoc("redir-ok", "- [x](https://example.com/redir)\n");
+
+    const result = runRemoteCheckDocs(docPath, { CURL: curlShim });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(fs.readFileSync(callLog, "utf8").split("\n").filter(Boolean)).toHaveLength(2);
   });
 
   it("stops before the probe budget and lists every unprobed URL (#13842)", () => {
