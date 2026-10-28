@@ -2295,6 +2295,12 @@ function nativeArchiveCredentialViolation(
       }
       throw error;
     }
+    if ((extracted.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+      return {
+        entry: candidates[0]?.entry ?? "native state credential scan",
+        deadlineExpired: true,
+      };
+    }
     if (extracted.status !== 0 || extracted.error || extracted.signal) {
       return candidates[0]?.entry ?? "native state credential scan";
     }
