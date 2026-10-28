@@ -110,32 +110,37 @@ function buildRuntimeContextText(summary: RuntimeSummary, config: OpenClawConfig
   return lines.join("\n");
 }
 
-function requestsUnscopedResearch(prompt: string): boolean {
-  // An unspecified research source must not default to sandbox files. Check each
-  // request separately so a local task or URL cannot exempt another research task.
+function requestsExternalResearch(prompt: string): boolean {
+  // Generic questions need local tools without naming a source. Require external
+  // research intent, and keep separate requests from exempting one another.
+  // Normalize URLs before splitting so their path words cannot become requests.
   const requests = prompt
+    .replace(/\bhttps?:\/\/\S+/giu, "https://supplied-url.invalid/")
     .replace(/:\s*\n\s*(?=https?:\/\/)/giu, ": ")
     .split(
       /(?<=[.!?])\s+|[\n;]+|,\s*(?=(?:google|bing|duckduckgo|search|research|look|find|locate|browse|investigate)\b)|\b(?:and|then|but|instead)\b(?!\s+(?:fetch|retrieve)\b)/iu,
     );
   return requests.some((request) => {
+    // A supplied URL is a retrieval target; its path words are not user intent.
+    const hasUrl = /\bhttps?:\/\/\S+/iu.test(request);
+    const intent = request.replace(/\bhttps?:\/\/\S+/giu, "");
     const action =
       /\b(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look(?:\s+(?:up|for|on))?|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|summarize|fetch|retrieve|read|get|need|where|which|what|who|when|how)\b/iu.exec(
-        request,
+        intent,
       );
     if (!action) return false;
-    const prefix = request.slice(0, action.index);
+    const prefix = intent.slice(0, action.index);
     if (/\b(?:(?:do\s+not|don't|never)\s+(?:use\s+(?:web_fetch[,\s]*)?)?|not\s*)$/iu.test(prefix)) {
       return false;
     }
 
-    const source = request.slice(action.index);
+    const source = intent.slice(action.index);
     const directFetch = /^(?:browse|summarize|fetch|retrieve|read|get)\b/iu.test(source);
     const searchAction =
       /\b(?:googl(?:e|ing)|bing|duckduckgo|web[_ -]?search|search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek)\b/iu.test(
         source,
       );
-    if (directFetch && !searchAction && /https?:\/\/\S+/iu.test(source)) return false;
+    if (directFetch && !searchAction && hasUrl) return false;
 
     const externalSource =
       /^(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search)\b|\b(?:on\s+(?:the\s+)?(?:web|internet)|(?:search|research|browse|look)\s+(?:(?:the|on\s+the)\s+)?(?:web|internet|online)|(?:using|with|via)\s+(?:tavily|brave|google|bing|duckduckgo))\b/iu.test(
@@ -145,7 +150,15 @@ function requestsUnscopedResearch(prompt: string): boolean {
       /\b(?:local|sandbox|(?:this|the|our)\s+(?:repository|repo|workspace|codebase|function|conversation|code)|(?:in|from|within)\s+(?:the\s+)?(?:repository|repo|workspace|codebase|memory))\b|(?:^|[\s`"'])(?:\.?\.?\/)[^\s]+|\b[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b/iu.test(
         source,
       );
-    return externalSource || !localSource;
+    const externalResearch =
+      /\bonline(?=\s*(?:[.!?]|$)|\s+(?:for|about|using|with|via|today|now|please)\b)/iu.test(
+        source,
+      ) ||
+      (/\b(?:official|latest|recent|alternative)\b/iu.test(source) &&
+        /\b(?:documentation|docs|installation\s+(?:instructions|procedure|guides?)|release\s+notes|announcements|news|sources)\b/iu.test(
+          source,
+        ));
+    return externalSource || (!localSource && externalResearch);
   });
 }
 
@@ -160,7 +173,7 @@ export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: Nem
     const unavailableSearch =
       configuredSearchEnabled(api.config) === false &&
       typeof prompt === "string" &&
-      requestsUnscopedResearch(prompt);
+      requestsExternalResearch(prompt);
     return {
       prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig), api.config),
       ...(unavailableSearch ? { toolsAllow: [] } : {}),

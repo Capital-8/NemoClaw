@@ -174,15 +174,25 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
           "real runtime submits no discovery or substitute tools",
         );
       }
-      const localTurn = await runner().runBeforePromptBuild(
-        { prompt: "Read /sandbox/README.md.", messages: [] },
-        { runId: "local-prompt" },
-      );
-      assert.deepEqual(
-        applyToolAllowlist(availableTools, localTurn.toolsAllow),
-        availableTools,
-        "the next local turn keeps its tools",
-      );
+      for (const prompt of [
+        "Read /sandbox/README.md.",
+        "What files are in the current directory?",
+      ]) {
+        const localTurn = await runner().runBeforePromptBuild(
+          { prompt, messages: [] },
+          { runId: "local-prompt" },
+        );
+        assert.deepEqual(
+          promptToolPolicy({ tools: availableTools }).apply(localTurn).tools,
+          availableTools,
+          "local requests keep tools in the real prompt policy",
+        );
+        assert.deepEqual(
+          applyToolAllowlist(availableTools, localTurn.toolsAllow),
+          availableTools,
+          "the next local turn keeps its tools",
+        );
+      }
       const fetchTurn = await runner().runBeforePromptBuild(
         { prompt: "Fetch https://docs.nvidia.com/nemoclaw/ with web_fetch.", messages: [] },
         { runId: "fetch-prompt" },
