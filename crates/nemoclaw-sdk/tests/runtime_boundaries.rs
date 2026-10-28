@@ -64,17 +64,18 @@ fn a_recipe_for_a_dedicated_memory_gpu_is_budgeted_against_gpu_memory() {
     let recipe = service.recipe.as_mut().unwrap();
     recipe.compatibility.architecture = "amd64".into();
     recipe.compatibility.gpu = "NVIDIA H100 80GB HBM3".into();
-    recipe.compatibility.min_host_memory_gi_b = 64;
+    recipe.compatibility.min_host_memory_gi_b = 48;
     recipe.resources.gpu_memory_bytes = 60 * GIB;
     recipe.resources.preparation_memory_gi_b = 8;
     recipe.resources.startup_headroom_gi_b = 10;
-    // Host RAM is below the 60 GiB budget but covers the 32 GiB reserve and 10 GiB headroom.
+    // Host total and available memory are below the 60 GiB budget but cover the 32 GiB reserve
+    // and 10 GiB headroom.
     let capacity = Capacity {
         architecture: "amd64".into(),
         gpu: "NVIDIA H100 80GB HBM3".into(),
         driver_major: 580,
         compute_capability: 90,
-        total: 64 * GIB,
+        total: 48 * GIB,
         available: 45 * GIB,
         disk_free: 200 * GIB,
         gpu_memory: Some(GpuMemory {
