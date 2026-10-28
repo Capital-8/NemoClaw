@@ -115,7 +115,7 @@ The runtime's resident host-memory monitor reads `/proc`, not cgroup memory pres
 Docker defaults to a 104 GiB memory limit and no CPU cap when these limits are omitted.
 
 On a host with several GPUs, `container.gpu` names the one GPU the container gets, as `docker run --gpus device=` does.
-Use the UUID that `nvidia-smi --query-gpu=uuid --format=csv,noheader` prints, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`; an index such as `1` also works, but it can change when the host boots.
+Use the UUID that `nvidia-smi --query-gpu=uuid --format=csv,noheader` prints, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`. An index also works, but it can change when the host boots, and YAML needs it quoted, as in `gpu: "1"`, because the field is a string.
 Without `gpu`, the container gets every GPU, and the model runtime stops unless the host has exactly one.
 Native managed inference on Podman remains unsupported; a Podman gateway can consume a service on an explicitly selected remote Docker engine through [SSH placement](remote-service.md).
 These shared fields do not change [platform qualification limits](limits.md#platforms-models-and-placement).

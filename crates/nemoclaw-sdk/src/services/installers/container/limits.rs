@@ -27,7 +27,7 @@ pub struct ServiceContainer {
     /// Shared-memory size in GiB, from 1 through 64. Omission uses 8; host IPC uses the host's existing shared-memory mount instead.
     #[serde(default = "default_shm")]
     pub shared_memory_gi_b: u64,
-    /// The one GPU the model container gets on a host with several, as `docker run --gpus device=` names it: a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index, which can change when the host boots. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing it replaces the model container.
+    /// The one GPU the model container gets on a host with several, as `docker run --gpus device=` names it: a UUID from `nvidia-smi --query-gpu=uuid`, such as `GPU-79b44e99-d10d-a381-8cd6-5ccb073eaea3`, or an index as a string, such as "1", which can change when the host boots. Omission exposes every GPU, and the model runtime then requires the host to have exactly one. Changing it replaces the model container.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub gpu: Option<String>,
