@@ -438,7 +438,11 @@ export async function inspectAgentMcpSources(
       runtimeSelection,
       deadline,
     );
-    if (Object.keys(sources.native).length > 0 || Object.keys(sources.legacy).length > 0) {
+    if (
+      Object.keys(sources.native).length > 0 ||
+      Object.keys(sources.legacy).length > 0 ||
+      (sources.nativeServerNames?.length ?? 0) > 0
+    ) {
       candidates.push({ agent, sources });
     }
   }

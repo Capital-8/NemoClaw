@@ -483,6 +483,22 @@ network_policies:
     );
   });
 
+  it("detects Deep Agents from stdio-only native MCP state after local registry loss", async () => {
+    const recovered = { ...sandbox, agent: null };
+    mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => ({
+      status: 0,
+      stdout: command.includes("/sandbox/.deepagents/.mcp.json")
+        ? JSON.stringify([{ server: "local-stdio", url: null, env: null, source: "native" }])
+        : "[]",
+      stderr: "",
+    }));
+
+    const observed = await inspectAgentMcpSources(recovered, runtimeSelection);
+    expect(recovered.agent).toBe("langchain-deepagents-code");
+    expect(observed.nativeServerNames).toEqual(["local-stdio"]);
+    expect(observed.native).toEqual({});
+  });
+
   it("reports a policy/provider orphan without inventing an agent registration", async () => {
     await expect(
       inspectPolicyOnlyMcpEntry(sandbox, "github", "openclaw", "openclaw-config", runtimeSelection),
