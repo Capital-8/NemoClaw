@@ -15,14 +15,16 @@ import { readWorkflow, required, step } from "../../helpers/managed-image-public
 const image = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
 
 describe("native Hermes Discord qualification", () => {
-  it("propagates a native test failure and removes only its recorded container", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-qualification-cleanup-"));
-    const cidPath = path.join(directory, "cid-path");
-    const cleanupLog = path.join(directory, "cleanup");
-    const id = "a".repeat(64);
-    fs.writeFileSync(
-      path.join(directory, "docker"),
-      `#!/bin/sh
+  it.each([image, `localhost:5000/nemoclaw-managed-protected/hermes@sha256:${"b".repeat(64)}`])(
+    "propagates a native test failure for %s and removes only its recorded container",
+    (reference) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-qualification-cleanup-"));
+      const cidPath = path.join(directory, "cid-path");
+      const cleanupLog = path.join(directory, "cleanup");
+      const id = "a".repeat(64);
+      fs.writeFileSync(
+        path.join(directory, "docker"),
+        `#!/bin/sh
 case "$1" in
 run)
   while [ "$#" -gt 0 ] && [ "$1" != --cidfile ]; do shift; done
@@ -36,22 +38,23 @@ rm) printf '%s\\n' "$@" > "$FIXTURE_CLEANUP" ;;
 *) exit 99 ;;
 esac
 `,
-      { mode: 0o755 },
-    );
-    vi.stubEnv("PATH", `${directory}:${process.env.PATH}`);
-    vi.stubEnv("FIXTURE_CID_PATH", cidPath);
-    vi.stubEnv("FIXTURE_CLEANUP", cleanupLog);
-    try {
-      expect(() =>
-        runHermesDiscordRuntimeContract(["--image", image, "--platform", "linux/arm64"]),
-      ).toThrow("Native Hermes Discord runtime contract failed");
-      expect(fs.readFileSync(cleanupLog, "utf8")).toBe(`rm\n--force\n${id}\n`);
-      expect(fs.existsSync(path.dirname(fs.readFileSync(cidPath, "utf8")))).toBe(false);
-    } finally {
-      vi.unstubAllEnvs();
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
+        { mode: 0o755 },
+      );
+      vi.stubEnv("PATH", `${directory}:${process.env.PATH}`);
+      vi.stubEnv("FIXTURE_CID_PATH", cidPath);
+      vi.stubEnv("FIXTURE_CLEANUP", cleanupLog);
+      try {
+        expect(() =>
+          runHermesDiscordRuntimeContract(["--image", reference, "--platform", "linux/arm64"]),
+        ).toThrow("Native Hermes Discord runtime contract failed");
+        expect(fs.readFileSync(cleanupLog, "utf8")).toBe(`rm\n--force\n${id}\n`);
+        expect(fs.existsSync(path.dirname(fs.readFileSync(cidPath, "utf8")))).toBe(false);
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     [

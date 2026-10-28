@@ -53,7 +53,7 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Download reviewed OpenShell SDK archive",
   "Prepare E2E workspace",
   "Install reviewed OpenShell SDK archive without package credentials",
-  "Build shared policy boundary",
+  "Build candidate CLI and shared policy boundary",
   "Authenticate to Docker Hub",
   "Validate candidate activation contract",
   "Resolve reviewed Hermes platform base image",
@@ -64,17 +64,18 @@ const REVIEWED_EXECUTION_STEP_NAMES = [
   "Run every exact managed-image contract directly",
 ] as const;
 const REVIEWED_EXECUTION_SURFACE_SHA256 =
-  "75e088845fc2948988d198d5a42e518837665b419c101cc1a63ed8e174de8a38";
-const SHARED_POLICY_BOUNDARY_RUN = [
+  "48b7f2952d8c5cab4ab8f9afae5e77dcf8c963fb314c3511e14c0f2105f92c35";
+const CANDIDATE_CLI_BUILD_RUN = [
   "set -euo pipefail",
-  "[[ ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
-  '  echo "::error::Shared policy boundary output exists before the candidate build" >&2',
+  "[[ ! -e dist && ! -L dist && ! -e nemoclaw/dist && ! -L nemoclaw/dist ]] || {",
+  '  echo "::error::CLI or shared policy boundary output exists before the candidate build" >&2',
   "  exit 1",
   "}",
-  "npm run build:policy-boundary",
+  "npm run build:cli",
   "for artifact in \\",
   "  nemoclaw/dist/shared/openshell-policy-boundary.cjs \\",
-  "  nemoclaw/dist/shared/sandbox-name.cjs; do",
+  "  nemoclaw/dist/shared/sandbox-name.cjs \\",
+  "  dist/lib/actions/sandbox/channel-status.js; do",
   '  [[ -f "$artifact" && ! -L "$artifact" && -s "$artifact" ]] || {',
   '    echo "::error::Shared policy boundary artifact is missing or invalid: $artifact" >&2',
   "    exit 1",
@@ -348,11 +349,15 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "buildkitd-config-inline": '[registry."localhost:5000"]\n  http = true\n',
   });
 
-  const policyBoundary = requireStep(errors, steps, "Build shared policy boundary");
+  const policyBoundary = requireStep(
+    errors,
+    steps,
+    "Build candidate CLI and shared policy boundary",
+  );
   if (policyBoundary?.if !== undefined || policyBoundary?.["continue-on-error"] !== undefined) {
     errors.push(`${JOB_ID} shared policy boundary step must not set if or continue-on-error`);
   }
-  if (policyBoundary?.run !== SHARED_POLICY_BOUNDARY_RUN) {
+  if (policyBoundary?.run !== CANDIDATE_CLI_BUILD_RUN) {
     errors.push(`${JOB_ID} shared policy boundary step must match the reviewed narrow script`);
   }
   const dockerAuth = requireStep(errors, steps, "Authenticate to Docker Hub");
@@ -583,7 +588,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Download reviewed OpenShell SDK archive",
     "Prepare E2E workspace",
     "Install reviewed OpenShell SDK archive without package credentials",
-    "Build shared policy boundary",
+    "Build candidate CLI and shared policy boundary",
     "Authenticate to Docker Hub",
     "Validate candidate activation contract",
     "Resolve reviewed Hermes platform base image",

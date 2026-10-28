@@ -29,7 +29,7 @@ test(
       e2ePhases: [
         "validate protected activation and dispatch identity",
         "validate exact all-agent managed-image contracts",
-        "validate direct-start evidence binding",
+        "validate direct-start and Hermes Discord evidence binding",
         "verify Docker Engine 27 receipt transfer",
       ],
     },
@@ -49,7 +49,9 @@ test(
       JSON.parse(contractBytes.toString("utf8")),
       dispatch.platform,
     );
-    progress.phase("validate direct-start evidence binding");
+    progress.phase("validate direct-start and Hermes Discord evidence binding");
+    // A direct start alone cannot qualify native Hermes Discord status. Require
+    // the successful native contract result bound to that same immutable image.
     const evidence = parseProtectedManagedImageEvidence(
       JSON.parse(evidenceBytes.toString("utf8")),
       {

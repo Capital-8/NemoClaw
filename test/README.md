@@ -78,7 +78,8 @@ onboarding, production CUDA image qualification, or the complete supported E2E f
 ### Native Hermes Discord status
 
 Managed-image PR and release builds run the native Hermes Discord contract before publication,
-on AMD64 and ARM64. Both paths run the existing package-contract test.
+on AMD64 and ARM64. Protected multiarch qualification also runs it before recording evidence.
+All three paths run the existing package-contract test with the selected immutable image.
 It mounts the compiled CLI and checkout read-only in the image under test, disables networking,
 and provides an empty Hermes home and temporary caches.
 
