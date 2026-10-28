@@ -1066,17 +1066,21 @@ async fn deploy_and_export(
         &required("NEMOCLAW_TEST_AGENT_METADATA"),
         &[],
         sandboxes,
+        async |_| {},
         while_applying,
     )
     .await;
 }
 
+/// `before_applying` runs with the namespace name before the first apply, as an
+/// operator who prepares the namespace would; `while_applying` runs alongside it.
 async fn deploy_image_and_export(
     provider: &str,
     image: &str,
     metadata: &str,
     pull_secrets: &[&str],
     sandboxes: &[(&str, &str)],
+    before_applying: impl AsyncFnOnce(&str),
     while_applying: impl AsyncFnOnce(&str),
 ) -> Vec<u8> {
     use nemoclaw_sdk::{CancellationToken, Deployment};
@@ -1139,6 +1143,7 @@ async fn deploy_image_and_export(
     )
     .with_secrets(Arc::new(credentials));
     let cancel = CancellationToken::new();
+    before_applying(&namespace).await;
     // The stub's pod starts while the deployment applies.
     stub.place(&cluster).await;
 
