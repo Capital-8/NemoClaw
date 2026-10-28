@@ -166,6 +166,27 @@ describe("classifyDestroyContainerIdentity", () => {
     expect(verdict.reason).toContain("retained sandbox identity");
   });
 
+  it("accepts one managed container matching the retained identity and refuses a mismatch", () => {
+    const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(MANAGED.sandboxId)!;
+
+    expect(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([MANAGED]),
+        sandboxIdentityFingerprint,
+      ),
+    ).toEqual({ status: "clear", identity: MANAGED });
+
+    const mismatch = expectAmbiguous(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([{ ...MANAGED, sandboxId: "sb-replacement" }]),
+        sandboxIdentityFingerprint,
+      ),
+    );
+    expect(mismatch.reason).toContain("retained sandbox identity");
+  });
+
   it("accepts a managed container created without a workspace label", () => {
     const legacyManaged = { ...MANAGED, workspace: "" };
 

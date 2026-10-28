@@ -2281,7 +2281,14 @@ For one matching container, the command continues only when these labels have th
 - A nonempty `openshell.ai/sandbox-id`
 
 In an ordinary destroy flow, if the initial inspection cannot complete, more than one container matches, a matching container lacks a required label or value, or Docker returns malformed identity data, `destroy` exits before changing sandbox resources.
-Retained-sandbox recovery accepts multiple managed containers only when every immutable sandbox ID matches the retained recovery fingerprint and every container has the same `openshell.ai/sandbox-workspace` value, including no value.
+Retained-sandbox recovery continues only when all these conditions are true:
+
+- The recovery record has a durable identity fingerprint.
+- Every matching container has `openshell.ai/managed-by=openshell`.
+- The SHA-256 digest of every container's `openshell.ai/sandbox-id` matches that fingerprint.
+- Every container has the same `openshell.ai/sandbox-workspace` value. A missing label counts as one shared value.
+
+If the recovery record has no durable identity fingerprint and Docker returns any matching container, `destroy` exits before changing sandbox resources.
 The identity checks still apply with `--force`, `--yes`, or `NEMOCLAW_NON_INTERACTIVE=1`; those controls authorize confirmation but do not authorize an unproven container identity.
 NemoClaw rechecks the identity after read-only preflight, before provider cleanup, and synchronously at the sandbox-deletion boundary.
 If a later recheck detects drift or fails, `destroy` refuses sandbox deletion, preserves local ownership state, and reports any earlier cleanup already performed.
@@ -2294,7 +2301,7 @@ For common recovery steps, refer to [Docker is not running](troubleshooting#dock
 If onboarding fails before NemoClaw records a runtime provider, keep the original `NEMOCLAW_GATEWAY_RUNTIME` selection set when you rerun `destroy`.
 Recorded sandbox or gateway ownership takes precedence over that fallback and must agree when both are present.
 
-If `destroy` reports conflicting containers, a missing required label, or malformed identity data, inspect the matching containers:
+If `destroy` reports conflicting containers, a retained sandbox identity mismatch, a recovery record with no durable sandbox identity, a missing required label, or malformed identity data, inspect the matching containers:
 
 ```bash
 docker ps -a --no-trunc \
@@ -2314,12 +2321,22 @@ Docker cannot change labels on an existing container.
 Rerun the query after you resolve the conflict.
 Rerun `destroy` only when the query returns one of these verified states:
 
-- One container for the target sandbox with `openshell.ai/managed-by=openshell` and a nonempty `openshell.ai/sandbox-id`
-- A retained-sandbox recovery set where every container has `openshell.ai/managed-by=openshell`, the same nonempty `openshell.ai/sandbox-id`, and the same `openshell.ai/sandbox-workspace` value
-- No containers after you confirm that the sandbox is absent
+- For a sandbox without a retained recovery record: one container with `openshell.ai/managed-by=openshell` and a nonempty `openshell.ai/sandbox-id`
+- For a retained recovery record with a durable identity fingerprint: one or more containers with `openshell.ai/managed-by=openshell`, a nonempty `openshell.ai/sandbox-id` whose SHA-256 digest matches the record's durable identity fingerprint, and the same `openshell.ai/sandbox-workspace` value
+- For a sandbox that you confirmed absent: no containers
 
+If the retained recovery record has no durable identity fingerprint, only the no-container state applies.
+If the query shows a container that does not match the retained sandbox identity, keep the containers and the recovery record.
+Then follow [Inspect retained sandbox recovery](#inspect-retained-sandbox-recovery).
+To compare a container with the record, compute the SHA-256 digest of its `openshell.ai/sandbox-id` value:
+
+```bash
+printf '%s' '<sandbox-id>' | shasum -a 256
+```
+
+The digest must equal the durable sandbox identity fingerprint that onboarding printed.
 An empty workspace column is acceptable.
-OpenShell versions that predate workspaces do not set `openshell.ai/sandbox-workspace`.
+In a retained recovery set, every container must show the same workspace value, including an empty value.
 
 When the sandbox has MCP entries, destroy reads the current agent-native configuration and joins it to the live OpenShell policy and providers before deletion. It does not scrub the agent file or write an MCP destroy marker. OpenShell deletion owns sandbox-scoped policy and attachment cleanup. Workspace-level MCP providers and stored credentials are preserved, and NemoClaw prints their names for later inspection. `--force` does not bypass an unavailable, unsafe, or conflicting MCP source.
 
