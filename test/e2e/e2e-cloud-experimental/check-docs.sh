@@ -1119,12 +1119,16 @@ normalize_url_for_ignore_match() {
 }
 
 # Built-in skip list: pages that often fail in CI (bot wall, redirects, or flaky) but are non-critical for doc correctness.
+# URLs that are reachable for users but that a non-browser probe cannot
+# distinguish from a dead link, for example a page that redirects to a login
+# form and returns 401.
 check_docs_default_ignored_urls() {
   printf '%s\n' \
     'https://github.com/NVIDIA/NemoClaw/commits/main' \
     'https://github.com/NVIDIA/NemoClaw/pulls?q=is%3Apr+is%3Amerged' \
     'https://github.com/NVIDIA/NemoClaw/pulls?q=is:pr+is:merged' \
-    'https://github.com/openclaw/openclaw/issues/49950'
+    'https://github.com/openclaw/openclaw/issues/49950' \
+    'https://org.ngc.nvidia.com/setup/api-key'
 }
 
 url_should_skip_remote_probe() {

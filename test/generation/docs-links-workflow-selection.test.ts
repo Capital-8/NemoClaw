@@ -151,6 +151,38 @@ describe("changed-link workflow selects Fern MDX pages (#13842)", () => {
     expect(selected).toEqual([hostile]);
   });
 
+  it("refuses to probe external links outside trusted main (#13842)", () => {
+    const scheduled = readYaml<Record<string, unknown>>(
+      ".github/workflows/docs-external-links.yaml",
+    ) as unknown as {
+      jobs: Record<string, { steps?: WorkflowStep[] }>;
+    };
+    const steps = scheduled.jobs["external-links"]?.steps ?? [];
+    const guard = steps.find((step) => step.name === "Refuse to probe outside trusted main");
+
+    // Run the guard for real. A pull request must never reach the probing
+    // workflow, because its URL set would be contributor-controlled.
+    // Substitute only the compared expressions; the guard's own message keeps
+    // the literal refs/heads/main it asserts against.
+    const runGuard = (ref: string) =>
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          (guard?.run ?? "")
+            .replace("${{ github.repository }}", "NVIDIA/NemoClaw")
+            .replace("${{ github.ref }}", ref),
+        ],
+        { encoding: "utf8", env: { ...process.env } },
+      );
+    const pullRequest = runGuard("refs/pull/1/merge");
+    const trustedMain = runGuard("refs/heads/main");
+
+    expect(pullRequest.status).not.toBe(0);
+    expect(`${pullRequest.stdout}${pullRequest.stderr}`).toContain("refs/heads/main");
+    expect(trustedMain.status, `${trustedMain.stdout}${trustedMain.stderr}`).toBe(0);
+  });
+
   it("keeps remote probing disabled for contributor-controlled pages (#13842)", () => {
     const runStep = workflow().jobs["markdown-links"]?.steps?.find(
       (candidate) => candidate.name === "Run markdown link checker",
