@@ -32,9 +32,10 @@ jobs:
   external-links:
     name: Docs / Check external link reachability
     runs-on: ubuntu-latest
-    # The full published set is ~1100 unique URLs and measured ~27 minutes
-    # serial on a hosted runner. Budget 60 minutes so a slow host degrades into
-    # a reported failure rather than an unexplained timeout.
+    # The full published set is ~1100 unique URLs and measured ~24 minutes
+    # serial on a hosted runner. The checker's own probe budget stops the run
+    # and names unprobed URLs before this job deadline is reached, so a slow
+    # host reports a failure instead of timing out without evidence.
     timeout-minutes: 60
     steps:
       - name: Checkout trusted main
@@ -62,6 +63,8 @@ jobs:
           # weekly, so accuracy matters more than latency.
           CHECK_DOC_LINKS_REMOTE: "1"
           CHECK_DOC_LINKS_VERBOSE: "1"
+          # Stop and name unprobed URLs well inside the 60-minute job deadline.
+          CHECK_DOC_LINKS_PROBE_BUDGET_SECONDS: "2700"
         run: |
           set -euo pipefail
           bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links

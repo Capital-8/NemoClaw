@@ -23,6 +23,39 @@ function runCheckDocs(filePath: string, env: Record<string, string> = {}) {
   });
 }
 
+// Remote probing is off by default in these cases except where a case opts in,
+// so the suite never depends on network reachability.
+function runRemoteCheckDocs(filePath: string, env: Record<string, string> = {}) {
+  return spawnSync("bash", [CHECK_DOCS, "--only-links", filePath], {
+    encoding: "utf-8",
+    env: { ...process.env, ...env },
+  });
+}
+
+function writeDoc(prefix: string, body: string): string {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-check-docs-${prefix}-`));
+  const docPath = path.join(tempDir, "guide.mdx");
+  fs.writeFileSync(docPath, body);
+  return docPath;
+}
+
+// A curl stand-in that records each invocation and answers with fixed headers.
+function curlShim(prefix: string, response: string): { path: string; calls: () => string[] } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-check-docs-${prefix}-`));
+  const log = path.join(dir, "calls.log");
+  const shim = path.join(dir, "curl");
+  fs.writeFileSync(
+    shim,
+    `#!/usr/bin/env bash\necho "$*" >> ${log}\nprintf '${response}'\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  return {
+    path: shim,
+    calls: () =>
+      fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean) : [],
+  };
+}
+
 describe("check-docs link validation", () => {
   it("reports broken local markdown links with source line numbers", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-"));
@@ -403,5 +436,79 @@ describe("check-docs link validation", () => {
     expect(result.status).toBe(1);
     expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
     expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
+  });
+});
+
+// #13842: the scheduled external-link workflow probes the published set, so the
+// checker must refuse internal destinations, validate every redirect hop, and
+// stop before its own deadline rather than being killed by the job timeout.
+describe("check-docs remote probe admission (#13842)", () => {
+  it.each([
+    ["loopback IPv4", "http://127.0.0.1/admin"],
+    ["loopback name", "http://localhost/admin"],
+    ["link-local metadata", "http://169.254.169.254/latest/meta-data/"],
+    ["private 10/8", "http://10.0.0.5/admin"],
+    ["private 192.168/16", "http://192.168.1.1/admin"],
+    ["private 172.16/12", "http://172.16.0.1/admin"],
+    ["CGNAT 100.64/10", "http://100.64.0.1/admin"],
+    ["IPv6 loopback", "http://[::1]/admin"],
+    ["IPv6 link-local", "http://[fe80::1]/admin"],
+    ["IPv6 unique-local", "http://[fd00::1]/admin"],
+    ["userinfo disguise", "http://user:pass@example.com/admin"],
+  ])("refuses a %s destination without invoking curl (#13842)", (_label, url) => {
+    const shim = curlShim("ssrf", "HTTP/1.1 200 OK\\r\\n\\r\\n");
+    const result = runRemoteCheckDocs(writeDoc("ssrf", `- [target](${url})\n`), {
+      CURL: shim.path,
+    });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain("refused non-public probe destination");
+    // The guard must reject before the request, not merely report afterwards.
+    expect(shim.calls()).toHaveLength(0);
+  });
+
+  it("probes a public destination (#13842)", () => {
+    const shim = curlShim("public", "HTTP/1.1 200 OK\\r\\n\\r\\n");
+    const result = runRemoteCheckDocs(
+      writeDoc("public", "- [schema](https://docs.nvidia.com/openshell/latest/)\n"),
+      { CURL: shim.path },
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(shim.calls()).toHaveLength(1);
+  });
+
+  it.each([
+    ["link-local metadata", "http://169.254.169.254/latest/meta-data/"],
+    ["loopback", "http://127.0.0.1:8080/admin"],
+    ["private 10/8", "http://10.0.0.5/admin"],
+  ])("refuses a redirect to a %s destination (#13842)", (_label, target) => {
+    const shim = curlShim("redir", `HTTP/1.1 302 Found\\r\\nLocation: ${target}\\r\\n\\r\\n`);
+    const result = runRemoteCheckDocs(writeDoc("redir", "- [x](https://example.com/redir)\n"), {
+      CURL: shim.path,
+    });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain("refused non-public probe destination");
+    // Only the public first hop may be requested.
+    expect(shim.calls()).toHaveLength(1);
+  });
+
+  it("stops before its probe budget and lists every unprobed URL (#13842)", () => {
+    const shim = curlShim("budget", "HTTP/1.1 200 OK\\r\\n\\r\\n");
+    const body = Array.from(
+      { length: 3 },
+      (_, index) => `- [l${index}](https://example.com/p${index})`,
+    ).join("\n");
+    const result = runRemoteCheckDocs(writeDoc("budget", `${body}\n`), {
+      CHECK_DOC_LINKS_PROBE_BUDGET_SECONDS: "0",
+      CURL: shim.path,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("remote probe budget exhausted");
+    expect(output.match(/unprobed: https:\/\/example\.com\/p[0-9]+/g)).toHaveLength(3);
+    expect(shim.calls()).toHaveLength(0);
   });
 });
