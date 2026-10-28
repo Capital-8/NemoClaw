@@ -142,6 +142,7 @@ function paxRecord(key: string, value: string): string {
 type SandboxStateModule = Pick<
   typeof import("../../src/lib/state/sandbox.js"),
   | "validateTarEntries"
+  | "nativeTarInventoryViolation"
   | "rejectHardLinks"
   | "rejectHardLinkExtractionTraversal"
   | "rejectSymlinkExtractionTraversal"
@@ -170,6 +171,7 @@ async function loadSandboxState(): Promise<SandboxStateModule> {
   }
   return {
     validateTarEntries: mod.validateTarEntries,
+    nativeTarInventoryViolation: mod.nativeTarInventoryViolation,
     rejectHardLinks: mod.rejectHardLinks,
     rejectHardLinkExtractionTraversal: mod.rejectHardLinkExtractionTraversal,
     rejectSymlinkExtractionTraversal: mod.rejectSymlinkExtractionTraversal,
@@ -444,7 +446,7 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
   });
 
   it("accepts many bounded extended headers without an aggregate metadata ceiling", async () => {
-    const { validateTarEntries } = await loadSandboxState();
+    const { validateTarEntries, nativeTarInventoryViolation } = await loadSandboxState();
     const targetDir = "/tmp/nemoclaw-test-target";
     const metadataChunk = paxRecord("comment", "a".repeat(1024));
     const entries = Array.from({ length: 4200 }, (_, index) => [
@@ -456,10 +458,22 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
       { path: `workspace/member-${index}.json`, content: "{}" },
     ]).flat();
 
-    const validation = validateTarEntries(buildTar(entries), targetDir);
+    const archive = buildTar(entries);
+    let nameFormat: "literal" | "escaped-backslashes" | null = null;
+    const validation = validateTarEntries(archive, targetDir, undefined, undefined, (format) => {
+      nameFormat = format;
+    });
     expect(validation.safe, validation.violations.join("; ")).toBe(true);
     expect(validation.entries).toHaveLength(4200);
     expect(validation.entries.at(-1)).toBe("workspace/member-4199.json");
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-many-pax-inventory-"));
+    try {
+      const archivePath = path.join(fixture, "source.tar");
+      fs.writeFileSync(archivePath, archive);
+      expect(nativeTarInventoryViolation(archivePath, validation.entries, nameFormat)).toBeNull();
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it("stops tar at the configured output bound without retaining a listing file", async () => {

@@ -1852,29 +1852,6 @@ function readRawTarArchiveEntries(descriptor: number, deadlineMs?: number): RawT
       : violation;
 }
 
-function readRawTarArchiveEntriesFromPath(
-  archivePath: string,
-  deadlineMs?: number,
-): RawTarArchiveEntries {
-  let descriptor: number | null = null;
-  try {
-    descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    return readRawTarArchiveEntries(descriptor, deadlineMs);
-  } catch (error) {
-    const code =
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      typeof error.code === "string" &&
-      /^[A-Z0-9_]+$/.test(error.code)
-        ? ` (${error.code})`
-        : "";
-    return { failure: `native state archive could not be read${code}` };
-  } finally {
-    if (descriptor !== null) closeSync(descriptor);
-  }
-}
-
 const BSD_TAR_LISTING_ESCAPES = new Map<number, number>([
   [0x5c, 0x5c], // \\
   [0x61, 0x07], // alert
@@ -1915,6 +1892,16 @@ function decodeBsdtarListingBytes(listedName: string): Buffer | null {
   return decoded.subarray(0, output);
 }
 
+function nativeTarEntryMatches(
+  entry: string,
+  listed: string,
+  nameFormat: TarListingNameFormat,
+): boolean {
+  return nameFormat === "literal"
+    ? listed === entry
+    : (decodeBsdtarListingBytes(listed)?.equals(Buffer.from(entry, "utf8")) ?? false);
+}
+
 function nativeTarInventoriesMatch(
   rawEntries: readonly string[] | null,
   listedEntries: readonly string[],
@@ -1923,12 +1910,49 @@ function nativeTarInventoriesMatch(
   if (rawEntries === null || nameFormat === null || rawEntries.length !== listedEntries.length) {
     return false;
   }
-  return rawEntries.every((entry, index) => {
-    const listed = listedEntries[index]!;
-    return nameFormat === "literal"
-      ? listed === entry
-      : (decodeBsdtarListingBytes(listed)?.equals(Buffer.from(entry, "utf8")) ?? false);
-  });
+  return rawEntries.every((entry, index) =>
+    nativeTarEntryMatches(entry, listedEntries[index]!, nameFormat),
+  );
+}
+
+/** Compare actual archive members with tar's bounded listing without retaining another name array. */
+export function nativeTarInventoryViolation(
+  archivePath: string,
+  listedEntries: readonly string[],
+  nameFormat: TarListingNameFormat | null,
+  deadlineMs?: number,
+): string | null {
+  const mismatch = "tar raw header inventory did not match archive listing";
+  if (nameFormat === null) return mismatch;
+  let descriptor: number | null = null;
+  let index = 0;
+  try {
+    descriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const violation = walkNativeTarMembers(
+      descriptor,
+      undefined,
+      (entry, type) => {
+        const normalized = type === "5" && !entry.endsWith("/") ? `${entry}/` : entry;
+        const listed = listedEntries[index++];
+        return listed !== undefined && nativeTarEntryMatches(normalized, listed, nameFormat)
+          ? null
+          : mismatch;
+      },
+      deadlineMs,
+    );
+    if (violation !== null) {
+      return typeof violation === "string"
+        ? violation === "native state credential scan"
+          ? "native state archive header could not be parsed"
+          : violation
+        : "native state archive validation exceeded its deadline";
+    }
+    return index === listedEntries.length ? null : mismatch;
+  } catch {
+    return "native state archive could not be read";
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
 }
 
 function stageDescriptorArchiveCopy(
@@ -2062,7 +2086,7 @@ function extractSelectedNativeArchiveMembers(
   }
   rmSync(targetRoot, { recursive: true, force: true });
   return runPass(
-    members.map((member) => member.replaceAll("\\", "\\\\")),
+    members.map((member) => member.replace(/[\\*?[\]]/gu, "\\$&")),
     true,
   );
 }
@@ -2880,11 +2904,9 @@ function backupNativeSandboxState(
     // Reject sparse encodings with the bounded raw parser before invoking the
     // platform tar. GNU tar and bsdtar diagnose malformed or unsupported sparse
     // fixtures differently, but the security boundary must be deterministic.
-    const rawEntries: string[] = [];
     const rawArchiveViolation = nativeArchiveRawCredentialViolation(
       archivePath,
       options.deadlineMs,
-      rawEntries,
     );
     if (rawArchiveViolation && typeof rawArchiveViolation !== "string") {
       rmSync(backupPath, { recursive: true, force: true });
@@ -2906,24 +2928,9 @@ function backupNativeSandboxState(
         nameFormat = format;
       },
     );
-    const verifiedRawInventory = validation.safe
-      ? rawArchiveViolation === null
-        ? rawEntries
-        : readRawTarArchiveEntriesFromPath(archivePath, options.deadlineMs)
+    const rawInventoryViolation = validation.safe
+      ? nativeTarInventoryViolation(archivePath, validation.entries, nameFormat, options.deadlineMs)
       : null;
-    if (verifiedRawInventory && !Array.isArray(verifiedRawInventory)) {
-      rmSync(backupPath, { recursive: true, force: true });
-      return nativeStateFailure(
-        "deadlineExpired" in verifiedRawInventory
-          ? `Native archive validation exceeded the backup deadline at '${verifiedRawInventory.entry}'`
-          : `Native state archive validation failed: ${verifiedRawInventory.failure}`,
-      );
-    }
-    const rawInventoryViolation =
-      validation.safe &&
-      !nativeTarInventoriesMatch(verifiedRawInventory, validation.entries, nameFormat)
-        ? "tar raw header inventory did not match archive listing"
-        : null;
     if (!validation.safe || rawInventoryViolation) {
       rmSync(backupPath, { recursive: true, force: true });
       return nativeStateFailure(

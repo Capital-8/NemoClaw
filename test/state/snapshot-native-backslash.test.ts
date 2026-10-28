@@ -369,4 +369,49 @@ describe("native backup of backslash paths across tar quoting modes", () => {
       );
     },
   );
+
+  it.skipIf(!BSD_TAR)("selects only literal backslash glob names with native BSD tar", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-literal-globs-"));
+    const oldPath = process.env.PATH;
+    try {
+      const nativeRoot = path.join(fixture, "native-home");
+      const binDir = path.join(fixture, "bin");
+      const names = [
+        "literal\\*.env",
+        "literal\\?.env",
+        "literal\\[ab].env",
+        "literal\\a.env",
+        "literal\\other.env",
+      ];
+      fs.mkdirSync(nativeRoot);
+      fs.mkdirSync(binDir);
+      fs.symlinkSync(BSD_TAR!, path.join(binDir, "tar"));
+      for (const name of names) fs.writeFileSync(path.join(nativeRoot, name), "SAFE=value\n");
+      writeSnapshotRegistry(TMP_HOME, "literal-globs");
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+      const backup = sandboxState.backupSandboxState("literal-globs", {
+        nativeStateSource: {
+          root: "/sandbox",
+          directory: nativeRoot,
+          assertCurrent: () => undefined,
+        },
+      });
+      expect(backup.success, backup.error).toBe(true);
+      for (const requested of names.slice(0, 3)) {
+        sandboxState.inspectNativeSandboxState(
+          backup.manifest!.backupPath,
+          (root: string) => {
+            expect(fs.readFileSync(path.join(root, requested), "utf8")).toBe("SAFE=value\n");
+            for (const other of names.filter((name) => name !== requested)) {
+              expect(fs.existsSync(path.join(root, other))).toBe(false);
+            }
+          },
+          requested,
+        );
+      }
+    } finally {
+      restoreEnv("PATH", oldPath);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 });

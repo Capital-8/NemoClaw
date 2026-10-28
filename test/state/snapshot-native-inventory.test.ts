@@ -16,6 +16,11 @@ process.env.HOME = testHome;
 const sandboxState = await import(
   pathToFileURL(path.join(import.meta.dirname, "../..", "src/lib/state/sandbox.ts")).href
 );
+const stoppedBackup = await import(
+  pathToFileURL(
+    path.join(import.meta.dirname, "../..", "src/lib/actions/sandbox/snapshot/backup-authority.ts"),
+  ).href
+);
 
 afterAll(() => {
   originalHome === undefined
@@ -86,6 +91,14 @@ process.stdout.write(result.stdout.split("\\n").${_mode === "omitted" ? "filter"
       expect(() => sandboxState.inspectNativeSandboxState(backupPath, () => undefined)).toThrow(
         "tar raw header inventory did not match archive listing",
       );
+      const stoppedRoot = path.join(fixture, "stopped-root");
+      fs.mkdirSync(stoppedRoot);
+      expect(() =>
+        stoppedBackup.validateStoppedStateArchive(
+          path.join(backupPath, "native-home.tar"),
+          stoppedRoot,
+        ),
+      ).toThrow("Stopped state archive raw headers did not match its listing");
     } finally {
       oldPath === undefined
         ? Reflect.deleteProperty(process.env, "PATH")

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { runTarListing } from "../../../state/tar-listing";
+import { runTarListing, type TarListingNameFormat } from "../../../state/tar-listing";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { managedStartupStateRootOwnership } from "../../../onboard/managed-startup/state-roots";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
@@ -330,6 +330,50 @@ function makePrivateTreeRemovable(root: string): void {
   }
 }
 
+/** Validate a provider's stopped-state archive before any member is extracted. */
+export function validateStoppedStateArchive(archivePath: string, raw: string): void {
+  const deadlineMs = Date.now() + sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS;
+  const archive = { filePath: archivePath };
+  let unsupported = false;
+  const listingFailure = runTarListing(
+    archive,
+    ["-tvf", "-"],
+    "stopped state inventory",
+    (line) => {
+      if (!["-", "d", "l", "h"].includes(line[0] ?? "")) unsupported = true;
+    },
+  );
+  if (listingFailure || unsupported)
+    rejectStoppedState("Stopped state contains an unsupported archive entry.");
+  let nameFormat: TarListingNameFormat | null = null;
+  const validation = sandboxState.validateTarEntries(
+    archive,
+    raw,
+    undefined,
+    undefined,
+    (format) => {
+      nameFormat = format;
+    },
+  );
+  if (!validation.safe) rejectStoppedState("Stopped state archive failed snapshot validation.");
+  if (
+    sandboxState.nativeTarInventoryViolation(
+      archivePath,
+      validation.entries,
+      nameFormat,
+      deadlineMs,
+    )
+  ) {
+    rejectStoppedState("Stopped state archive raw headers did not match its listing.");
+  }
+  if (sandboxState.rejectSymlinkExtractionTraversal(archive, validation.entries).length > 0) {
+    rejectStoppedState("Stopped state archive contains an unsafe symlink extraction layout.");
+  }
+  if (sandboxState.rejectHardLinkExtractionTraversal(archive, validation.entries).length > 0) {
+    rejectStoppedState("Stopped state archive contains an unsafe hard-link extraction layout.");
+  }
+}
+
 /** Prepare a private complete native-state copy before inspecting a stopped source. */
 export async function prepareStoppedAgentState(
   sandboxName: string,
@@ -399,27 +443,8 @@ export async function prepareStoppedAgentState(
     } finally {
       fs.closeSync(descriptor);
     }
-    const archive = { filePath: archivePath };
-    let unsupported = false;
-    const listingFailure = runTarListing(
-      archive,
-      ["-tvf", "-"],
-      "stopped state inventory",
-      (line) => {
-        if (!["-", "d", "l", "h"].includes(line[0] ?? "")) unsupported = true;
-      },
-    );
-    if (listingFailure || unsupported)
-      rejectStoppedState("Stopped state contains an unsupported archive entry.");
     fs.mkdirSync(raw, { mode: 0o700 });
-    const validation = sandboxState.validateTarEntries(archive, raw);
-    if (!validation.safe) rejectStoppedState("Stopped state archive failed snapshot validation.");
-    if (sandboxState.rejectSymlinkExtractionTraversal(archive, validation.entries).length > 0) {
-      rejectStoppedState("Stopped state archive contains an unsafe symlink extraction layout.");
-    }
-    if (sandboxState.rejectHardLinkExtractionTraversal(archive, validation.entries).length > 0) {
-      rejectStoppedState("Stopped state archive contains an unsafe hard-link extraction layout.");
-    }
+    validateStoppedStateArchive(archivePath, raw);
     // This provider-owned stream has already containment-checked hard-link
     // targets and limited headers to files, directories, and links. Extract
     // into a new private directory without resolving symlink targets: absolute
