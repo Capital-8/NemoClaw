@@ -13,11 +13,10 @@
 
 <!-- List completed checks, results, and checks deferred to CI with reasons. -->
 
-## Authoring session
+<details>
+<summary>Authoring session</summary>
 
-<!-- Read .agents/skills/nemoclaw-contributor-create-pr/references/session-report.md.
-Replace each unavailable row when evidence exists; otherwise keep it and explain its limit.
-Report a cutoff before publication, not future activity. -->
+<!-- Fill in from .agents/skills/nemoclaw-contributor-create-pr/SKILL.md#session-report; keep rows you can't establish as unavailable. -->
 <!-- agent-session-report:v1 -->
 | Field | Status | Value | Evidence or limit |
 | --- | --- | --- | --- |
@@ -30,3 +29,5 @@ Report a cutoff before publication, not future activity. -->
 | Models | unavailable | - | Authoring model history unavailable. |
 | Reasoning levels | unavailable | - | Authoring reasoning-level history unavailable. |
 <!-- /agent-session-report -->
+
+</details>
