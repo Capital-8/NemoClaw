@@ -277,6 +277,24 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.vllmRunning).toBe(false);
   });
 
+  it.each([
+    ["200", true],
+    ["503", false],
+  ])(
+    "treats managed vLLM /health status %s as running=%s without a model list",
+    (status, running) => {
+      const managedHealth = "http://127.0.0.1:8000/health";
+      const state = detectWithDeps(
+        buildDeps({
+          getLocalProviderAvailabilityEndpoint: vi.fn(() => managedHealth),
+          runCapture: vi.fn((command) => (command.join(" ").includes(managedHealth) ? status : "")),
+        }),
+      );
+
+      expect(state.vllmRunning).toBe(running);
+    },
+  );
+
   it("fails the vLLM running probe closed when managed endpoint resolution fails", () => {
     const runCapture = vi.fn(() => "200");
     const state = detectWithDeps(
