@@ -26,7 +26,7 @@ $$nemoclaw <sandbox-name> rebuild
 ```
 
 The rebuild backs up the sandbox state, replaces the sandbox, and restores the state.
-After the state restore succeeds, the rebuild removes the legacy state record.
+After the state restore and the post-restore checks succeed, the rebuild removes the legacy state record.
 The retirement notice then no longer lists the sandbox.
 
 <AgentOnly variant="hermes">
@@ -52,21 +52,36 @@ Replace the sandbox only if you cannot restore read access to that state.
   only root can read.
 </Warning>
 
+While the legacy state record exists, `download` accepts only these paths instead of the full [manual transfer workflow](../state-and-backups/transfer-state-manually):
+
+<AgentOnly variant="openclaw">
+- The OpenClaw workspace Markdown files and the workspace `memory/` directory.
+- `/sandbox/SOUL.md` from the OpenShell-provided native home.
+</AgentOnly>
+<AgentOnly variant="hermes">
+- `/sandbox/.hermes/platforms/`.
+
+The ordinary manual workflow also lists `/sandbox/.hermes/SOUL.md` and `/sandbox/.hermes/state.db`; `download` accepts neither while the legacy record exists.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+- `/sandbox/.deepagents/config.toml`, plus `AGENTS.md`, `memories/`, and `skills/` under `/sandbox/.deepagents/agent/`.
+</AgentOnly>
+
+While the record exists, `download` rejects each file larger than 16 MiB, non-text content, and any file whose name or content marks it as credential-bearing.
+It also stops a transfer that takes longer than 30 seconds, and rejects a directory deeper than 32 levels or with more than 4,096 entries.
+These checks do not prove that an accepted file is credential-free.
+You cannot download state that only root can read.
+Do not download credential files.
+
 To replace the sandbox, complete these steps:
 
 1. Download each file or directory that you want to keep with `$$nemoclaw <sandbox-name> download <sandbox-path> <host-dir>`.
-   While the legacy state record exists, `download` accepts a restricted subset of the [manual transfer workflow](../state-and-backups/transfer-state-manually): the listed OpenClaw workspace Markdown files and `memory/`, `/sandbox/SOUL.md`, Hermes `platforms/`, and Deep Agents Code `config.toml`, agent `AGENTS.md`, `memories/`, and `skills/`.
-   The ordinary manual workflow also lists `/sandbox/.hermes/SOUL.md` and `/sandbox/.hermes/state.db`; neither is accepted while the legacy record exists.
-   While the record exists, `download` rejects each file larger than 16 MiB, non-text content, and any file whose name or content marks it as credential-bearing.
-   This check does not prove that an accepted file is credential-free.
-   You cannot download state that only root can read.
-   Do not download credential files.
 2. Review each downloaded file and delete any credential that remains.
-3. If `download` rejected a file that you need, stop and do not destroy the sandbox.
+3. If `download` rejected a file that you need, or a file that you need is not on the accepted list, stop and do not destroy the sandbox.
 4. Destroy the sandbox with `$$nemoclaw <sandbox-name> destroy --yes`.
    The command also removes the legacy state record.
 5. Onboard a replacement sandbox with the same name by running `$$nemoclaw onboard --name <sandbox-name>`.
-6. Upload only the files that you reviewed with `$$nemoclaw <sandbox-name> upload <host-path> <sandbox-dir>`.
+6. Upload only the reviewed files with `$$nemoclaw <sandbox-name> upload <host-path> <sandbox-dir>`.
    Do not upload a file that the manual transfer workflow tells you not to upload, such as `POLICY.md`.
 7. Reconfigure any setting whose files you could not copy.
 8. Run `$$nemoclaw <sandbox-name> status` and confirm that the retirement notice no longer lists the sandbox.

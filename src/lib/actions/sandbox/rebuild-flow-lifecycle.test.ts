@@ -17,6 +17,8 @@ import {
   tempFiles,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
+import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
+import { createSandboxWithBaseImageResolution } from "../../onboard/sandbox-create/orchestration";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
@@ -503,12 +505,63 @@ describe("rebuildSandbox flow: lifecycle", () => {
     fs.mkdirSync(path.dirname(recordPath), { recursive: true });
     fs.writeFileSync(recordPath, "{}\n");
     try {
+      const onboardingBoundaryPassed = new Error(
+        "onboarding accepted the rebuild record permission",
+      );
+      const createSandbox = createSandboxWithBaseImageResolution({
+        step: () => undefined,
+        promptValidatedSandboxName: () => {
+          throw new Error("rebuild must supply the sandbox name");
+        },
+        validateName: (name: string) => name,
+        sandboxAgent: { assertProviderlessSandboxAgent: () => undefined },
+        preparedDcodeRebuild: {
+          assertPreparedDcodeTarget: () => {
+            throw onboardingBoundaryPassed;
+          },
+        },
+      } as unknown as SandboxCreateOrchestrationRuntime);
+      const runRealOnboardingBoundary = (allowRemovedImmutabilityStateRecord: boolean) =>
+        createSandbox(
+          undefined as never,
+          null,
+          undefined as never,
+          null,
+          false,
+          null,
+          undefined as never,
+          undefined as never,
+          undefined as never,
+          "",
+          "",
+          null,
+          "alpha",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          [],
+          null,
+          null,
+          null,
+          null,
+          null,
+          allowRemovedImmutabilityStateRecord,
+          null,
+          null,
+        );
       const harness = createRebuildFlowHarness({
         sandboxEntry: {},
-        onboard: (_session, options) => {
-          enforceRemovedImmutabilityMigrationBoundaryReal("alpha", {
-            allowStateRecord: options.allowRemovedImmutabilityStateRecord === true,
-          });
+        onboard: async (_session, options) => {
+          await expect(runRealOnboardingBoundary(false)).rejects.toThrow(
+            "has a state record from the removed Shields feature",
+          );
+          await expect(
+            runRealOnboardingBoundary(options.allowRemovedImmutabilityStateRecord === true),
+          ).rejects.toThrow(onboardingBoundaryPassed);
         },
       });
       harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockImplementation(
