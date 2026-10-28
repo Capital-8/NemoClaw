@@ -378,6 +378,9 @@ mcpBridge.removeMcpBridge("alpha", "github", { force: true }).then(() => {
         "openshell provider delete -g nemoclaw-9090 alpha-mcp-github",
       );
       expect(rejection.message).toContain("OpenShell provider 'alpha-mcp-github' already exists");
+      expect(rejection.message).toContain(
+        "after `nemoclaw alpha mcp remove github` or `nemoclaw alpha destroy` preserved the provider",
+      );
       expect(rejection.message).toContain("openshell sandbox list -g nemoclaw-9090");
       expect(rejection.message).toContain(
         "openshell sandbox provider list -g nemoclaw-9090 <sandbox-name>",

@@ -155,7 +155,7 @@ Delete the provider with the printed `openshell provider delete` command only wh
 If `mcp remove` reports no preserved provider, skip provider deletion.
 Then run `mcp add` with the replacement exported under the same host variable name.
 Refer to [Rotate a Credential](manage-mcp-servers#rotate-a-credential) for the complete procedure.
-`mcp remove` and sandbox destroy preserve an existing detached provider for explicit operator cleanup.
+`mcp remove` and `destroy` keep the provider until you delete it.
 
 Inspect the registration after the add returns:
 

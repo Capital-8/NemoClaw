@@ -147,6 +147,7 @@ $$nemoclaw my-sandbox mcp remove github
 ```
 
 `remove` deletes the agent-native registration and detaches the managed provider.
+If `remove` reports an `MCP cleanup warning`, resolve that warning before you continue.
 When the provider exists, `remove` preserves it and prints its `openshell provider delete -g <gateway-name> <provider-name>` command.
 If `remove` reports no preserved provider, skip provider deletion and add the server again.
 If `remove` reports a preserved provider, use the gateway name from the printed command (`nemoclaw` for the default gateway, or `nemoclaw-<port>` on another port) to list every sandbox on that gateway:
@@ -161,7 +162,8 @@ For each listed sandbox, inspect its attached providers:
 openshell sandbox provider list -g nemoclaw <sandbox-name>
 ```
 
-If any sandbox lists the preserved provider, do not delete it; resolve that sandbox's use of the provider before you add the server again.
+If `my-sandbox` still lists the preserved provider, rerun `mcp remove` and resolve its cleanup warning.
+If another sandbox lists the preserved provider, keep the provider and do not add the server again until that sandbox no longer lists it.
 When no sandbox lists the preserved provider, delete it with the printed command:
 
 ```bash
@@ -241,10 +243,12 @@ $$nemoclaw my-sandbox mcp remove local-tools
 ```
 
 Removing the server deletes the agent-native entry, removes its generated policy key, and detaches the provider.
+If `mcp remove` reports an `MCP cleanup warning`, resolve that warning before you continue.
 If `mcp remove` reports no preserved provider, skip provider deletion and add the server again.
 If `mcp remove` reports a preserved provider, use the gateway name from the printed `openshell provider delete -g <gateway-name>` command (`nemoclaw` for the default gateway, or `nemoclaw-<port>` on another port).
 Run `openshell sandbox list -g <gateway-name>`, and run `openshell sandbox provider list -g <gateway-name> <sandbox-name>` for each listed sandbox.
-If any sandbox lists the preserved provider, do not delete it; resolve that sandbox's use of the provider first.
+If `my-sandbox` still lists the preserved provider, rerun `mcp remove` and resolve its cleanup warning.
+If another sandbox lists the preserved provider, keep the provider and do not add the server again until that sandbox no longer lists it.
 When no sandbox lists the preserved provider, delete it with the printed command:
 
 ```bash
@@ -292,7 +296,8 @@ This ordering blocks new agent use before cleanup.
 When the workspace provider exists, NemoClaw preserves it because current OpenShell provider deletion is name-based.
 If you plan to add the same server name again and `mcp remove` reports a preserved provider, use the gateway name from the printed command to run `openshell sandbox list -g <gateway-name>`.
 Run `openshell sandbox provider list -g <gateway-name> <sandbox-name>` for each listed sandbox.
-If any sandbox lists the preserved provider, do not delete it; resolve that sandbox's use of the provider first.
+If `my-sandbox` still lists the preserved provider, rerun `mcp remove` and resolve its cleanup warning.
+If another sandbox lists the preserved provider, keep the provider and do not add the server again until that sandbox no longer lists it.
 When no sandbox lists the preserved provider, delete it with the `openshell provider delete` command that `mcp remove` prints.
 If `mcp remove` reports no preserved provider, skip provider deletion.
 
@@ -320,7 +325,9 @@ If sandbox replacement fails, NemoClaw attempts to restore the previous attachme
 
 ## Destroy a Sandbox with MCP State
 
-Destroy reads the current agent and OpenShell sources before deletion but does not scrub a separate MCP registry or write destroy markers. OpenShell deletes the sandbox-scoped policy and attachments with the sandbox. NemoClaw preserves workspace-level MCP providers and prints their exact names for later inspection. An interrupted destroy is retried from current sandbox presence; no local MCP marker authorizes cleanup.
+Destroy reads the current agent and OpenShell sources before deletion but does not scrub a separate MCP registry or write destroy markers. OpenShell deletes the sandbox-scoped policy and attachments with the sandbox. NemoClaw preserves workspace-level MCP providers and prints their exact names for later inspection.
+Before you add the same server name to a recreated sandbox with the same name, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider).
+An interrupted destroy is retried from current sandbox presence; no local MCP marker authorizes cleanup.
 
 ## Respect the Lifecycle Lock
 
