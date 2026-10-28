@@ -175,9 +175,12 @@ sys.__stdout__.write(json.dumps(updated, indent=2))
 
 The helper reads the normalized config from standard input.
 It adds the Omni provider and `vision-operator` entry.
-The wrapper preserves the existing `main` settings and adds permission to delegate to `vision-operator`.
+The wrapper writes the patched config inside the private temporary directory.
+It preserves the existing `main` settings and adds permission to delegate to `vision-operator`.
 If `main` has no model, it uses the configured default.
-It writes the patched config inside the private temporary directory.
+A restrictive tool policy can still block `sessions_spawn`.
+Run `/tools` in a `main` session to inspect the effective tool list.
+If your policy permits delegation, configure the tool policy as described in [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents#tool-sessions-spawn).
 
 For a sub-agent other than the Omni example, copy the exported config to `openclaw.updated.json` in the private temporary directory.
 Use `cp "$NEMOCLAW_SUBAGENT_TMP/openclaw.json" "$NEMOCLAW_SUBAGENT_TMP/openclaw.updated.json"`.
@@ -243,8 +246,11 @@ A parsing or validation error prevents the requested update.
 A write failure or lost Docker connection can leave completion uncertain; do not assume the original configuration remains unchanged.
 Do not restart the gateway while the update result is uncertain.
 Reconnect and inspect the intended non-secret settings.
-Resolve the reported error before repeating this section.
-Restart the gateway only after the update succeeds.
+Run `nemoclaw "$SANDBOX" agents list --json` to inspect the live roster.
+If it includes `vision-operator`, do not rerun the wrapper.
+Use `openclaw configure`, `openclaw config set`, or `openclaw config patch` to update only the required settings while preserving existing agents.
+Resolve the reported error before retrying the update.
+Restart the gateway only after the update succeeds, then verify the roster again.
 On success, OpenClaw serializes the complete config as standard JSON, so JSON5 comments and formatting in the original file are removed.
 
 After the patch succeeds, confirm that the live gateway loaded the `agents.list` change:
