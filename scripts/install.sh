@@ -3473,11 +3473,12 @@ finish_nemoclaw_install() {
 
 link_nemoclaw_cli() {
   local source_root="$1" npm_prefix
-  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  npm_prefix="$(cd "$source_root" && npm config get prefix 2>/dev/null || true)"
   assert_npm_executable_prefix_safe "$npm_prefix"
   # shellcheck disable=SC2016  # $1 expands in the child shell.
   spin "Linking ${_CLI_DISPLAY} CLI" bash -c \
     'umask g-w,o-w; cd "$1" && npm link --ignore-scripts' _ "$source_root"
+  npm_prefix="$(cd "$source_root" && npm config get prefix 2>/dev/null || true)"
   assert_npm_executable_prefix_safe "$npm_prefix"
 }
 

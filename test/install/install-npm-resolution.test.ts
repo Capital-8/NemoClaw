@@ -79,8 +79,13 @@ function createNpmPermissionFixture(tmp: string): string {
   writeExecutable(
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
+active_prefix="$ACTIVE_NPM_PREFIX"
+if [[ -f .npmrc ]]; then
+  source_prefix="$(sed -n '1s/^prefix=//p' .npmrc)"
+  [[ -z "$source_prefix" ]] || active_prefix="$source_prefix"
+fi
 if [[ "$1 $2 $3" == "config get prefix" ]]; then
-  printf '%s\\n' "$ACTIVE_NPM_PREFIX"
+  printf '%s\\n' "$active_prefix"
   exit 0
 fi
 if [[ "$1 $2 $3" == "config set prefix" ]]; then
@@ -89,7 +94,7 @@ if [[ "$1 $2 $3" == "config set prefix" ]]; then
 fi
 if [[ "$1" == link ]]; then
   [[ -z "\${NPM_CALL_LOG:-}" ]] || printf '%s\\n' "$*" >> "$NPM_CALL_LOG"
-  mkdir -p "$ACTIVE_NPM_PREFIX/bin" "$ACTIVE_NPM_PREFIX/lib/node_modules"
+  mkdir -p "$active_prefix/bin" "$active_prefix/lib/node_modules"
   exit 0
 fi
 exit 99
@@ -391,6 +396,38 @@ describe("installer npm resolution", () => {
       expect(fs.statSync(npmPrefix).mode & 0o777).toBe(0o775);
       expect(fs.existsSync(npmCallLog)).toBe(false);
       expect(fs.existsSync(path.join(home, ".local", "bin", "nemoclaw"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  itWithPosixModes("checks the source .npmrc prefix before npm link", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-source-prefix-"));
+    try {
+      const fakeBin = createNpmPermissionFixture(tmp);
+      const home = path.join(tmp, "home");
+      const ambientPrefix = path.join(home, ".npm-global");
+      const sourcePrefix = path.join(tmp, "source-prefix");
+      const sourceRoot = path.join(tmp, "source");
+      const npmCallLog = path.join(tmp, "npm-calls.log");
+      fs.mkdirSync(home);
+      fs.mkdirSync(ambientPrefix);
+      fs.mkdirSync(sourcePrefix);
+      fs.mkdirSync(sourceRoot);
+      fs.chmodSync(sourcePrefix, 0o775);
+      fs.writeFileSync(path.join(sourceRoot, ".npmrc"), `prefix=${sourcePrefix}\n`);
+
+      const result = runInstallerFunction(
+        `link_nemoclaw_cli ${JSON.stringify(sourceRoot)}`,
+        fakeBin,
+        { ACTIVE_NPM_PREFIX: ambientPrefix, HOME: home, NPM_CALL_LOG: npmCallLog },
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(sourcePrefix);
+      expect(fs.existsSync(npmCallLog)).toBe(false);
+      expect(fs.statSync(sourcePrefix).mode & 0o777).toBe(0o775);
+      expect(fs.existsSync(path.join(sourcePrefix, "bin"))).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
