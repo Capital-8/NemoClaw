@@ -112,6 +112,19 @@ describe("registerRuntimeContext", () => {
   });
 
   it.each([
+    "What is the current weather in Paris?",
+    "What are today's stock prices?",
+    "Who is the current president of France?",
+    "Where are the latest flight delays?",
+    "Which airlines have availability today?",
+    "How much does gold cost now?",
+    "When is the next live broadcast today?",
+    "Search Dockerfile best practices.",
+    "Search license requirements for distribution.",
+    "Search Dockerfile for the base image, then what is the current weather in Paris?",
+    "Search file formats for best practices.",
+    "Search Dockerfile.base best practices.",
+    "Search README.md templates for ideas.",
     "Search for NemoClaw documentation.",
     "Search the latest Linux documentation for the current directory.",
     "Search for official documentation about local files.",
@@ -209,6 +222,19 @@ describe("registerRuntimeContext", () => {
   );
 
   it.each([
+    "Search Dockerfile for the base image",
+    "Search Containerfile for the base image.",
+    "Find the target in Makefile.",
+    "Search .gitignore for ignored paths.",
+    "Search scripts/start for the startup command.",
+    "Search the file LICENSE for distribution terms.",
+    "Search `NOTICE` for attribution.",
+    "What is the current working directory?",
+    "What is the latest error in the logs?",
+    "What is the current weather in README.md?",
+    "What is the current price in https://example.com/prices?",
+    "What's the current working directory?",
+    "Search Dockerfile.base for the base image.",
     "What files are in the current directory?",
     "Where is my configuration file?",
     "Which files changed in the last commit?",

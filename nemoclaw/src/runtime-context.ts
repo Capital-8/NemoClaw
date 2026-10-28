@@ -148,9 +148,12 @@ export function researchScope(prompt: string): "external" | "supplied" | "ordina
       );
     // A local source must be the action's target or an explicit source location.
     // Words in the requested research topic do not grant access to substitutes.
-    const subject = source.slice(action[0].length).trimStart();
+    const subject = source
+      .slice(action[0].length)
+      .trimStart()
+      .replace(/^(?:['’]s|is|are|was|were)\s+/iu, "");
     const localSource =
-      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current|working)\s+directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
+      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
         subject,
       ) ||
       /\b(?:(?:this|our|my|the)\s+(?:(?:unit|integration)\s+tests?|(?:build|test)\s+(?:error|failure|output|results?))|shell\s+history)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:failed|for|to|and|then)\b)/iu.test(
@@ -167,6 +170,8 @@ export function researchScope(prompt: string): "external" | "supplied" | "ordina
       /\bonline(?=\s*(?:[.!?]|$)|\s+(?:for|about|using|with|via|today|now|please)\b)/iu.test(
         source,
       ) ||
+      (/^(?:what|where|which|who|when|how)\b/iu.test(source) &&
+        /\b(?:current|latest|recent|today(?:['’]s)?|now|live|up[ -]to[ -]date)\b/iu.test(source)) ||
       (/\b(?:official|latest|recent|alternative)\b/iu.test(source) &&
         /\b(?:documentation|docs|installation\s+(?:instructions|procedure|guides?)|release\s+notes|announcements|news|sources)\b/iu.test(
           source,
