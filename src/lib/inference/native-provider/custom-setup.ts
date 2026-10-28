@@ -20,7 +20,7 @@ import {
 } from "../bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../bedrock-runtime-adapter";
 import { PERSONAL_POLICY_TIER_NAME } from "../../policy/tiers";
-import { assertCustomNativePolicyPins } from "./custom-policy";
+import { assertOpenShellPolicyEndpointPins } from "../../adapters/openshell/policy-boundary";
 
 export { isHostedCustomEndpoint };
 
@@ -134,7 +134,11 @@ export async function prepareCustomNativeProvider(input: {
     ...(bedrock ? { adapterEndpointUrl: BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL } : {}),
   } satisfies Omit<CustomNativeBinding, "provider" | "api"> & { provider: string; api: string });
   if (input.sandboxPolicyDocument !== undefined) {
-    assertCustomNativePolicyPins(input.sandboxPolicyDocument, definition);
+    assertOpenShellPolicyEndpointPins(
+      input.sandboxPolicyDocument,
+      definition.endpoint,
+      definition.allowedIps ?? [],
+    );
   }
   const lifecycle = nativeProviderLifecycle(definition);
   const gatewayAuthority = input.readAuthority(input.gatewayName, definition.providerName);

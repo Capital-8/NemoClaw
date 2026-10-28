@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
+  assertOpenShellPolicyEndpointPins,
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata,
@@ -253,5 +254,26 @@ describe("OpenShell policy boundary", () => {
 
   it.each(["", "{", "[]"])("rejects malformed sandbox metadata [case %#]", (raw) => {
     expect(() => parseSandboxPolicyMetadata(raw, "alpha")).toThrow();
+  });
+});
+
+describe("OpenShell endpoint pin admission", () => {
+  const document = YAML.stringify({
+    version: 1,
+    network_policies: {
+      existing_policy: { endpoints: [{ host: "*.example.com", ports: [443] }] },
+    },
+  });
+
+  it("refuses an unpinned wildcard overlap at the canonical policy boundary", () => {
+    expect(() =>
+      assertOpenShellPolicyEndpointPins(document, "https://api.example.com/v1", ["8.8.8.8"]),
+    ).toThrow(/existing_policy.*IP pins.*No provider was changed/);
+  });
+
+  it("admits a host outside the canonical wildcard label boundary", () => {
+    expect(() =>
+      assertOpenShellPolicyEndpointPins(document, "https://deep.api.example.com/v1", ["8.8.8.8"]),
+    ).not.toThrow();
   });
 });
