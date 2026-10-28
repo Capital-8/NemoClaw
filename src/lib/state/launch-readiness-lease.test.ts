@@ -655,6 +655,38 @@ describe("launch readiness lease storage", () => {
     }
   });
 
+  it("reports the unsafe receipt store even when the fenced epoch matches (#10638)", () => {
+    // The fence can rotate the authority and then fail to write its receipt.
+    // The epoch then matches while the receipt store stays unsafe, so the
+    // non-null branch must still report the receipt store instead of returning
+    // `current` and skipping the receipt-store policy.
+    const fence = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    const receiptDir = path.dirname(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home));
+    fs.chmodSync(receiptDir, 0o750);
+    try {
+      expect(
+        checkLaunchReadinessMutationAuthority(
+          SANDBOX,
+          GATEWAY_NAME,
+          GATEWAY_PORT,
+          fence.epochId,
+          options(),
+        ),
+      ).toMatchObject({ kind: "unsafe", scope: "receipt-store" });
+    } finally {
+      fs.chmodSync(receiptDir, 0o700);
+    }
+    expect(
+      checkLaunchReadinessMutationAuthority(
+        SANDBOX,
+        GATEWAY_NAME,
+        GATEWAY_PORT,
+        fence.epochId,
+        options(),
+      ),
+    ).toBe("current");
+  });
+
   it.each(["receipt", "persistent ancestor", "runtime ancestor"] as const)(
     "identifies the unsafe %s directory without blaming its safe child (#10638)",
     (target) => {

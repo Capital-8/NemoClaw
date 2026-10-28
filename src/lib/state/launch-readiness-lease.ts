@@ -1705,13 +1705,22 @@ export function checkLaunchReadinessMutationAuthority(
       return { kind: "unsafe", scope: "runtime-authority", evidence: inspection.evidence };
     if (inspection.kind === "missing") return "changed";
     const { authority } = inspection;
-    return authority.phase === "fence" &&
-      authority.epochId === expectedEpochId &&
-      authority.sandboxName === sandboxName &&
-      authority.gatewayName === gatewayName &&
-      authority.gatewayPort === gatewayPort
-      ? "current"
-      : "changed";
+    if (
+      authority.phase !== "fence" ||
+      authority.epochId !== expectedEpochId ||
+      authority.sandboxName !== sandboxName ||
+      authority.gatewayName !== gatewayName ||
+      authority.gatewayPort !== gatewayPort
+    ) {
+      return "changed";
+    }
+    // The runtime epoch matches, but the receipt store is a separate owner of
+    // the same decision. A fence that rotated the authority and then failed to
+    // write its receipt leaves this store unsafe, so report it instead of
+    // returning `current` and letting the caller skip the receipt-store policy.
+    const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
+    if (persistent.kind === "unsafe") return { ...persistent, scope: "receipt-store" };
+    return "current";
   } catch {
     return { kind: "unsafe", scope: "runtime-authority" };
   }
