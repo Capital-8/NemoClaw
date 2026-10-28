@@ -118,7 +118,7 @@ On ordinary supported macOS or Linux:
 
 - Offer Local Ollama for OpenClaw or Hermes when it is installed, running, or officially installable.
 - Do not offer Local Ollama for Deep Agents unless current official documentation adds support.
-- Offer an existing ready vLLM server when detected.
+- Offer an existing ready vLLM server when detected and its `/v1/models` reports a model with `owned_by: "vllm"`.
 - Also show all applicable hosted and compatible providers.
 - Do not hide Ollama merely because the computer is not DGX or GB300.
 - Omit managed vLLM unless current official support permits it for the detected hardware.
