@@ -1620,14 +1620,25 @@ For Deep Agents sandboxes, `config set` is unavailable because managed startup (
 
 Host-side config, inference, gateway recovery, backup, policy, channel, and sandbox destruction mutations serialize per sandbox.
 
-<AgentOnly variant="openclaw,hermes">
-
 ### `$$nemoclaw <name> recover`
+
+<AgentOnly variant="openclaw,hermes">
 
 Restore sandbox readiness and re-establish host-side forwards without opening an SSH session.
 Use this after a sandbox crash or when `$$nemoclaw <name> status` reports a stopped sandbox or an unhealthy forward.
 
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+Restore sandbox readiness without opening an SSH session.
+Use this after a sandbox crash or when `$$nemoclaw <name> status` reports a stopped sandbox.
+
+</AgentOnly>
+
 For a stopped standard sandbox, `recover` asks OpenShell to start that exact sandbox before it waits for readiness. If provider state appears active while OpenShell reports `Stopped`, recovery still submits the start through OpenShell so one lifecycle owner repairs the phase. If OpenShell cannot start the sandbox, recovery reports the failure and does not fall back to a direct provider-container mutation.
+
+<AgentOnly variant="openclaw,hermes">
 
 `recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock. After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
@@ -1646,11 +1657,21 @@ Legacy SSH forward records do not establish ownership.
 Stop the owning OpenShell gateway or service to release the listener, then run `recover` again.
 Use [`$$nemoclaw <name> gateway restart`](#$$nemoclaw-name-gateway-restart) when you deliberately need a running gateway to reload runtime configuration or plugins.
 
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+`recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock.
+Deep Agents Code has no in-sandbox agent gateway or host-side forward.
+After the sandbox is ready, `recover` verifies the managed `inference.local` route and runs the terminal smoke checks.
+It exits zero only when both checks pass.
+`recover` does not repair a degraded terminal runtime. If the checks fail, rebuild the sandbox.
+
+</AgentOnly>
+
 ```bash
 $$nemoclaw my-assistant recover
 ```
-
-</AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -1761,7 +1782,20 @@ mutation. Portable remains a separate receipt-bound lifecycle path.
 
 ### `$$nemoclaw <name> start`
 
-Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot, then repair the in-sandbox gateway and host-side forwards the same way [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
+Ask OpenShell to start a sandbox stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot.
+
+<AgentOnly variant="openclaw,hermes">
+
+`start` then repairs the in-sandbox gateway and host-side forwards the same way [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+`start` then waits for launch readiness and runs one inference request from inside the sandbox.
+If inference is not usable, `start` exits nonzero and names the sandbox `doctor` command to find the failing hop.
+
+</AgentOnly>
 
 ```bash
 $$nemoclaw my-assistant start
