@@ -2262,7 +2262,7 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 | Long system prompts or sender metadata | Risky                        | Yes                       |
 | Multi-turn tool dispatch               | Risky                        | Yes                       |
 
-[Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` whose `/v1/models` reports `owned_by: "vllm"`; for a llama.cpp server, select **Local llama.cpp**; for another server or address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
+[Set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family for persistent agent use. After the parser-aware server is ready, re-run onboarding. Select the **Local vLLM** entry for a server detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` whose `/v1/models` reports `owned_by: "vllm"`; for a llama.cpp server or another server on that port, or for another address, select **Other OpenAI-compatible endpoint**. On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not. On N1x, decline or disable Express, or set `NEMOCLAW_PROVIDER=vllm`, to enter standard onboarding; this route remains unvalidated on N1x.
 
 NemoClaw transfers the complete native OpenClaw configuration across rebuilds, but those edits do not change the OpenShell route, credential binding, or network policy.
 Use `$$nemoclaw inference set` when the provider change requires those host-side resources to stay aligned.
@@ -2834,9 +2834,12 @@ For an existing vLLM server, set `NEMOCLAW_VLLM_PORT` to its host port in the cu
 ```bash
 VLLM_HOST_PORT="${NEMOCLAW_VLLM_PORT:?Set NEMOCLAW_VLLM_PORT to the existing vLLM host port.}"
 curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/health"
+curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/v1/models" | grep -E '"owned_by": *"vllm"'
 ```
 
 Both checks use `/health` because a managed profile can require bearer authentication for `/v1/models`.
+`/health` proves only that the server answers.
+For an existing server, the `/v1/models` check confirms that it reports a model with `owned_by: "vllm"`, which onboarding requires before it offers **Local vLLM**.
 
 For an existing vLLM server, inspect its launch arguments:
 
