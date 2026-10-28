@@ -354,6 +354,15 @@ function requiresUnownedNotReadyRepair(signals: SandboxResumeSignals): boolean {
   );
 }
 
+function reuseSandboxDecision(signals: SandboxResumeSignals): SandboxResumeDecision {
+  return signals.compatibleEndpointReasoningChanged
+    ? {
+        kind: "reuse",
+        note: "  [resume] Reasoning capability differs from the Ready sandbox; keeping its baked value. Pass --recreate-sandbox to apply the saved onboarding value.",
+      }
+    : { kind: "reuse" };
+}
+
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
   if (continuesJournaledRecreate(signals)) {
     return {
@@ -369,14 +378,7 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
   if (requiresUnownedNotReadyRepair(signals)) return { kind: "repair-and-recreate" };
   const compatibilityDecision = compatibilityResumeDecision(signals);
   if (compatibilityDecision) return compatibilityDecision;
-  if (canReuseSandbox(signals)) {
-    return signals.compatibleEndpointReasoningChanged
-      ? {
-          kind: "reuse",
-          note: "  [resume] Reasoning capability differs from the Ready sandbox; keeping its baked value. Pass --recreate-sandbox to apply the saved onboarding value.",
-        }
-      : { kind: "reuse" };
-  }
+  if (canReuseSandbox(signals)) return reuseSandboxDecision(signals);
   const configurationDecision = runtimeConfigurationResumeDecision(signals);
   if (configurationDecision) return configurationDecision;
   const toolDisclosureDecision = toolDisclosureResumeDecision(signals);
