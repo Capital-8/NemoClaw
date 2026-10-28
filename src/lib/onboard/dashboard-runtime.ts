@@ -81,6 +81,7 @@ export function manageLaterLines(
   cliName: string,
   sandboxName: string,
   modelCommand: string,
+  onboardCommand = `${cliName} onboard`,
 ): string[] {
   return [
     "",
@@ -90,6 +91,6 @@ export function manageLaterLines(
     `    Logs:        ${cliName} ${sandboxName} logs --follow`,
     `    Model:       ${modelCommand}`,
     `    Policies:    ${cliName} ${sandboxName} policy add`,
-    `    Credentials: ${cliName} credentials reset <PROVIDER> && ${cliName} onboard`,
+    `    Credentials: ${cliName} credentials reset <PROVIDER> && ${onboardCommand}`,
   ];
 }
