@@ -150,12 +150,13 @@ test(
     // Keep the disposable HOME outside the world-writable system temporary root.
     const installCwd = createPublicInstallWorkspace(cleanupRegistry);
     const testHome = path.join(installCwd, "home");
+    const privateBin = path.join(testHome, ".local", "bin");
     const legacyDir = path.join(testHome, ".nemoclaw");
     const legacyFile = path.join(legacyDir, "credentials.json");
     const testEnv = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv =>
       env({
         HOME: testHome,
-        XDG_BIN_HOME: path.join(os.homedir(), ".local", "bin"),
+        XDG_BIN_HOME: privateBin,
         NPM_CONFIG_PREFIX: path.join(testHome, ".npm-global"),
         ...extra,
       });
@@ -163,6 +164,21 @@ test(
     delete hostedEnvWithoutCredentials[hosted.sourceSecretName];
     delete hostedEnvWithoutCredentials[hosted.credentialEnv];
     fs.mkdirSync(testHome, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(privateBin, { recursive: true, mode: 0o700 });
+    const installedBin = path.dirname(fs.realpathSync(process.env.OPENSHELL_BIN ?? ""));
+    // Keep the CLI and its driver binaries together so a fallback install writes only to this workspace.
+    fs.copyFileSync(path.join(installedBin, "openshell"), path.join(privateBin, "openshell"));
+    fs.copyFileSync(
+      path.join(installedBin, "openshell-gateway"),
+      path.join(privateBin, "openshell-gateway"),
+    );
+    fs.copyFileSync(
+      path.join(installedBin, "openshell-sandbox"),
+      path.join(privateBin, "openshell-sandbox"),
+    );
+    fs.chmodSync(path.join(privateBin, "openshell"), 0o755);
+    fs.chmodSync(path.join(privateBin, "openshell-gateway"), 0o755);
+    fs.chmodSync(path.join(privateBin, "openshell-sandbox"), 0o755);
     const corporateCa = createCorporateCaFixture("explicit", "nemoclaw-cloud-corporate-ca-");
     cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
       cleanupCorporateCaFixture(corporateCa),
