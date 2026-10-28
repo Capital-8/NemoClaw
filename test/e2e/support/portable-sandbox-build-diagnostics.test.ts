@@ -666,7 +666,7 @@ it("fails closed when a Podman group identity is missing or changes (#13482)", (
 it("reconciles the exact supervised group before test-owned Podman cleanup (#13482)", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-state-"));
   const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
-  const runCommand = vi.fn();
+  const runCommand = vi.fn((_args: string[]) => ({ status: 0, signal: null }));
   const input = {
     artifacts,
     unreconciled: true,
@@ -675,6 +675,7 @@ it("reconciles the exact supervised group before test-owned Podman cleanup (#134
     disposableNetworkId: "a".repeat(64),
     disposableNetworkName: "nemoclaw-portable-id-proof-123",
     runtimeDir: "/run/user/1001",
+    selectedPodmanUrl: "unix:///run/user/1001/podman/podman.sock",
     hermesImageRef: "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed",
     env: {},
   };
@@ -721,15 +722,78 @@ it("reconciles the exact supervised group before test-owned Podman cleanup (#134
     await cleanup;
     expect(runCommand.mock.calls.map(([args]) => args)).toEqual([
       ["--url", "unix:///run/user/1001/podman/podman.sock", "network", "rm", "a".repeat(64)],
-      ["rm", "--force", "nemoclaw-portable-registry"],
-      ["image", "rm", "--force", "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed"],
-      ["system", "reset", "--force"],
+      ["--url", input.selectedPodmanUrl, "rm", "--force", "nemoclaw-portable-registry"],
+      [
+        "--url",
+        input.selectedPodmanUrl,
+        "image",
+        "rm",
+        "--force",
+        "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed",
+      ],
+      ["--url", input.selectedPodmanUrl, "system", "reset", "--force"],
     ]);
     expect(
       JSON.parse(
         fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-reconciliation.json"), "utf8"),
       ),
-    ).toEqual({ schemaVersion: 1, status: "reconciled-cleanup-attempted" });
+    ).toEqual({ schemaVersion: 1, status: "reconciled-cleanup-completed" });
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("uses the selected Podman service and reports cleanup failures without output (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-authority-"));
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const selectedPodmanUrl = "unix:///run/user/1001/alternate/podman.sock";
+  const runCommand = vi
+    .fn()
+    .mockReturnValueOnce({
+      status: null,
+      signal: "SIGKILL",
+      error: Object.assign(new Error("credential=private-token"), { code: "ETIMEDOUT" }),
+    })
+    .mockReturnValue({ status: 0, signal: null });
+  try {
+    await expect(
+      cleanupPortablePodmanResources(
+        {
+          artifacts,
+          unreconciled: false,
+          selectedPodmanUrl,
+          disposableNetworkCreated: true,
+          disposableNetworkId: "a".repeat(64),
+          disposableNetworkName: "nemoclaw-portable-id-proof-123",
+          runtimeDir: "/run/user/1001",
+          hermesImageRef: "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed",
+          env: {},
+        },
+        runCommand,
+      ),
+    ).rejects.toThrow("Portable Podman cleanup failed for test-owned resources");
+    expect(runCommand.mock.calls.map(([args]) => args)).toEqual([
+      ["--url", selectedPodmanUrl, "network", "rm", "a".repeat(64)],
+      ["--url", selectedPodmanUrl, "rm", "--force", "nemoclaw-portable-registry"],
+      [
+        "--url",
+        selectedPodmanUrl,
+        "image",
+        "rm",
+        "--force",
+        "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed",
+      ],
+      ["--url", selectedPodmanUrl, "system", "reset", "--force"],
+    ]);
+    const evidence = fs.readFileSync(
+      artifacts.pathFor("portable-podman-cleanup-failure.json"),
+      "utf8",
+    );
+    expect(JSON.parse(evidence)).toEqual({
+      schemaVersion: 1,
+      failedTargets: [{ target: "network", category: "timeout" }],
+    });
+    expect(evidence).not.toContain("private-token");
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -1047,7 +1111,7 @@ it("stops live Podman cleanup after an unreconciled registry publish (#13482)", 
   const progress = startTestProgress("portable registry publish", ["build", "publish"], {
     logLine: () => undefined,
   });
-  const runCommand = vi.fn();
+  const runCommand = vi.fn(() => ({ status: 0, signal: null }));
   let unreconciled = false;
   let groupId: number | undefined;
   try {
@@ -1091,6 +1155,7 @@ it("stops live Podman cleanup after an unreconciled registry publish (#13482)", 
           disposableNetworkId: null,
           disposableNetworkName: "credential=private-network-token",
           runtimeDir: "/private/credential=private-socket-token",
+          selectedPodmanUrl: "unix:///run/user/1001/podman/podman.sock",
           hermesImageRef: "credential=private-image-token",
           env: {},
         },

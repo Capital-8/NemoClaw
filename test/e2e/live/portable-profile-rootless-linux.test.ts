@@ -972,6 +972,7 @@ async function main(
   const stateDir = path.join(root, "gateway-state");
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
+  let verifiedPodmanUrl = "";
   const hermesBaseStorageHome = process.env.E2E_HERMES_BASE_STORAGE_HOME;
   const disposableNetworkName = `nemoclaw-portable-id-proof-${String(process.pid)}`;
   let disposableNetworkCreated = false;
@@ -1038,7 +1039,7 @@ async function main(
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
-    const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
+    verifiedPodmanUrl = String(process.env.DOCKER_HOST);
     const markUnreconciled = podmanGroup.mark;
     const buildImage = buildImageFixture(
       artifacts,
@@ -1458,6 +1459,7 @@ async function main(
       await cleanupPortablePodmanResources({
         artifacts,
         ...podmanGroup.recoveryState(),
+        selectedPodmanUrl: verifiedPodmanUrl,
         disposableNetworkCreated,
         disposableNetworkId,
         disposableNetworkName,

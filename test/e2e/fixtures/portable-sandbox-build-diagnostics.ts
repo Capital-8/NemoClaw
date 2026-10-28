@@ -572,11 +572,18 @@ export function createPodmanGroupReconciliationTracker() {
 }
 
 /** Reconcile the supervised group before removing test-owned Podman resources. */
+type CleanupCommandResult = {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  error?: Error;
+};
+
 export async function cleanupPortablePodmanResources(
   input: {
     artifacts: ArtifactSink;
     unreconciled: boolean;
     unreconciledGroupId?: number;
+    selectedPodmanUrl: string | null;
     disposableNetworkCreated: boolean;
     disposableNetworkId: string | null;
     disposableNetworkName: string;
@@ -584,14 +591,13 @@ export async function cleanupPortablePodmanResources(
     hermesImageRef: string | null;
     env: NodeJS.ProcessEnv;
   },
-  runCommand: (args: string[]) => void = (args) => {
+  runCommand: (args: string[]) => CleanupCommandResult = (args) =>
     spawnSync("podman", args, {
       env: input.env,
       killSignal: "SIGKILL",
       stdio: "ignore",
       timeout: 15_000,
-    });
-  },
+    }),
   waitForGroupExit: (
     groupId: number,
     timeoutMs: number,
@@ -609,9 +615,11 @@ export async function cleanupPortablePodmanResources(
       schemaVersion: 1,
       status: "skipped-unreconciled-process",
       resumeAfter: "supervised-process-group-exited",
-      selectedPodmanSocket: ROOTLESS_RUNTIME_DIR.test(input.runtimeDir)
-        ? `${input.runtimeDir}/podman/podman.sock`
-        : null,
+      selectedPodmanSocket:
+        ROOTLESS_RUNTIME_DIR.test(input.runtimeDir) &&
+        input.selectedPodmanUrl === `unix://${input.runtimeDir}/podman/podman.sock`
+          ? `${input.runtimeDir}/podman/podman.sock`
+          : null,
       skippedTargets: {
         network,
         registryContainer: "nemoclaw-portable-registry",
@@ -628,21 +636,52 @@ export async function cleanupPortablePodmanResources(
     if (!(await waitForGroupExit(groupId, 5_000)))
       throw new Error("Portable Podman cleanup process group exit unproved");
   }
+  const selectedUrl = input.selectedPodmanUrl;
+  if (!selectedUrl?.startsWith("unix:///")) {
+    await input.artifacts.writeJson("portable-podman-cleanup-failure.json", {
+      schemaVersion: 1,
+      failedTargets: [{ target: "authority", category: "unproved" }],
+    });
+    throw new Error("Portable Podman cleanup authority unproved");
+  }
+  const failedTargets: Array<{ target: string; category: string }> = [];
+  const attempt = (target: string, args: string[]) => {
+    try {
+      const result = runCommand(["--url", selectedUrl, ...args]);
+      const category =
+        (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"
+          ? "timeout"
+          : result.error
+            ? "spawn-error"
+            : result.signal
+              ? "signal"
+              : result.status === 0
+                ? null
+                : result.status === null
+                  ? "unknown-result"
+                  : "nonzero-exit";
+      if (category) failedTargets.push({ target, category });
+    } catch {
+      failedTargets.push({ target, category: "invocation-error" });
+    }
+  };
   if (input.disposableNetworkCreated)
-    runCommand([
-      "--url",
-      `unix://${input.runtimeDir}/podman/podman.sock`,
-      "network",
-      "rm",
-      input.disposableNetworkId ?? input.disposableNetworkName,
-    ]);
-  runCommand(["rm", "--force", "nemoclaw-portable-registry"]);
-  if (input.hermesImageRef) runCommand(["image", "rm", "--force", input.hermesImageRef]);
-  runCommand(["system", "reset", "--force"]);
+    attempt("network", ["network", "rm", input.disposableNetworkId ?? input.disposableNetworkName]);
+  attempt("registry", ["rm", "--force", "nemoclaw-portable-registry"]);
+  if (input.hermesImageRef)
+    attempt("hermes-image", ["image", "rm", "--force", input.hermesImageRef]);
+  attempt("system-reset", ["system", "reset", "--force"]);
+  if (failedTargets.length > 0) {
+    await input.artifacts.writeJson("portable-podman-cleanup-failure.json", {
+      schemaVersion: 1,
+      failedTargets,
+    });
+    throw new Error("Portable Podman cleanup failed for test-owned resources");
+  }
   if (input.unreconciled)
     await input.artifacts.writeJson("portable-podman-cleanup-reconciliation.json", {
       schemaVersion: 1,
-      status: "reconciled-cleanup-attempted",
+      status: "reconciled-cleanup-completed",
     });
 }
 
