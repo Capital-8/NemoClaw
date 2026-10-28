@@ -432,6 +432,10 @@ def cli_main():
         f"startup_mode={args.startup_mode} approval_mode={args.approval_mode} "
         f"resolved_mode={_resolve_approval_mode(args).value}"
     )
+
+
+if __name__ == "__main__":
+    cli_main()
 `,
   );
   writeFixtureFile(

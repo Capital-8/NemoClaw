@@ -73,6 +73,9 @@ def cli_main():
         )
         raise SystemExit(exit_code)
     return args
+
+if __name__ == "__main__":
+    cli_main()
 `,
   "app.py": fs
     .readFileSync(
@@ -953,7 +956,9 @@ describe("Deep Agents 0.1.71 progressive-disclosure build patch", () => {
 
   it("fails closed when the native startup-mode resolver drifts (#13838)", () => {
     const fixture = makePatchFixture();
-    const mainPath = fixture.sourcePaths.find((sourcePath) => path.basename(sourcePath) === "main.py")!;
+    const mainPath = fixture.sourcePaths.find(
+      (sourcePath) => path.basename(sourcePath) === "main.py",
+    )!;
     const original = fs.readFileSync(mainPath, "utf8");
     fs.writeFileSync(
       mainPath,

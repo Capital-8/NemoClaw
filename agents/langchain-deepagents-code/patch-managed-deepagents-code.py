@@ -182,6 +182,7 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     _nemoclaw_assert_safe_runtime()
 '''
 
+MAIN_SCRIPT_GUARD_MARKER = '\nif __name__ == "__main__":\n    cli_main()\n'
 MAIN_APPROVAL_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code startup approval mode.
@@ -2122,6 +2123,10 @@ def main() -> None:
         raise RuntimeError(
             f"Expected one Deep Agents Code non-interactive timeout marker in {paths['main']}"
         )
+    if texts["main"].count(MAIN_SCRIPT_GUARD_MARKER) != 1:
+        raise RuntimeError(
+            f"Expected one Deep Agents Code script guard marker in {paths['main']}"
+        )
     transformed = dict(texts)
     transformed["entrypoint"] = texts["entrypoint"].replace(
         ENTRYPOINT_MARKER, ENTRYPOINT_PATCH, 1
@@ -2139,7 +2144,11 @@ def main() -> None:
         NON_INTERACTIVE_TIMEOUT_PATCH,
         1,
     )
-    transformed["main"] = f"{transformed['main'].rstrip()}\n{MAIN_APPROVAL_PATCH.lstrip()}"
+    transformed["main"] = transformed["main"].replace(
+        MAIN_SCRIPT_GUARD_MARKER,
+        f"\n{MAIN_APPROVAL_PATCH.lstrip()}\n{MAIN_SCRIPT_GUARD_MARKER}",
+        1,
+    )
     transformed["app"] = _append_patch(paths["app"], texts["app"], APP_PATCH)
     transformed["auth_store"] = _append_patch(
         paths["auth_store"], texts["auth_store"], AUTH_STORE_PATCH

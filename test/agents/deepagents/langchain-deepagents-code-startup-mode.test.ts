@@ -14,17 +14,19 @@ afterEach(cleanupPackageFixtures);
 
 describe("LangChain Deep Agents Code managed startup approval mode", () => {
   it.each([
-    ["disabled\n", "auto", "manual"],
-    ["disabled\n", "yolo", "manual"],
-    ["thread-opt-in\n", "auto", "auto"],
-    ["thread-opt-in\n", "manual", "manual"],
+    ["deepagents_code", "disabled\n", "auto", "manual"],
+    ["deepagents_code", "disabled\n", "yolo", "manual"],
+    ["deepagents_code", "thread-opt-in\n", "auto", "auto"],
+    ["deepagents_code", "thread-opt-in\n", "manual", "manual"],
+    ["deepagents_code.main", "disabled\n", "auto", "manual"],
+    ["deepagents_code.main", "thread-opt-in\n", "auto", "auto"],
   ])(
-    "applies capability %j to the native startup mode %s (#13838)",
-    (capability, nativeMode, resolvedMode) => {
+    "python -m %s applies capability %j to the native startup mode %s (#13838)",
+    (module, capability, nativeMode, resolvedMode) => {
       const tempDir = createPackageFixture();
       patchFixture(tempDir);
       writeManagedAutoApproval(tempDir, capability);
-      const result = spawnSync("python3", ["-m", "deepagents_code"], {
+      const result = spawnSync("python3", ["-m", module], {
         env: {
           PATH: process.env.PATH,
           PYTHONPATH: tempDir,
