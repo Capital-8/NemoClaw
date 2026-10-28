@@ -11,8 +11,11 @@ gateway has not loaded the plugin, and uses a separate test-only Hermes process 
 native loading and cleanup on the image's architecture. It does not install routing
 configuration or qualify provider routing. `test/agents/hermes/hermes-switchyard-package.test.ts`
 owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
-Both amd64 and arm64 image runs are required for Switchyard release qualification; one
-architecture's startup result does not qualify the other.
+The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native
+amd64 and arm64 runners against each job's built image. Both the PR build and publication
+jobs require it before exporting their validated image contracts. Their architecture-specific
+artifacts retain the probe results, including failures. Both architectures must pass for
+Switchyard release qualification; a startup-hold result alone does not qualify the package.
 
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
