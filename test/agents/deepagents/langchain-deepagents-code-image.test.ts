@@ -109,12 +109,12 @@ function expectVersionsMatchLock(requirementsLock: string, versions: Record<stri
 }
 
 const TARGETED_ADVISORY_VERSIONS = [
-  ["aiohttp", "3.14.3"],
+  ["aiohttp", "3.14.4"],
   ["cryptography", "50.0.0"],
-  ["uv", "0.11.33"],
-  ["langgraph-checkpoint-sqlite", "3.1.1"],
-  ["mcp", "2.0.0"],
-  ["pillow", "12.3.0"],
+  ["uv", "0.13.4"],
+  ["langgraph-checkpoint-sqlite", "3.1.2"],
+  ["mcp", "2.2.0"],
+  ["pillow", "13.0.0"],
   ["pyasn1", "0.6.4"],
 ] as const;
 
@@ -1441,10 +1441,10 @@ print(json.dumps(values, sort_keys=True))`,
   });
 
   it.each([
-    ["aiohttp", "3.14.3"],
+    ["aiohttp", "3.14.4"],
     ["cryptography", "50.0.0"],
-    ["deepagents-code", "0.1.71"],
-    ["langgraph-checkpoint-sqlite", "3.1.1"],
+    ["deepagents-code", "0.1.87"],
+    ["langgraph-checkpoint-sqlite", "3.1.2"],
   ] as const)(
     "records dependency advisory review for the lockfile [case %#]",
     (name, expectedVersion) => {
@@ -1465,17 +1465,17 @@ print(json.dumps(values, sort_keys=True))`,
       expect(review).toMatch(/Complete-lock audit result:.*No known vulnerabilities found/is);
       expect(review).toContain("`GHSA-cq5v-8q36-5273`");
       expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
-      expect(review).toContain("Deep Agents Code `0.1.71`");
-      expect(review).toContain("semantic migration from `0.1.55` through `0.1.71`");
-      expect(requirementsLock).toContain("uv==0.11.33");
-      expect(requirementsLock).toContain("aiohttp==3.14.3");
+      expect(review).toContain("Deep Agents Code `0.1.87`");
+      expect(review).toContain("semantic migration from `0.1.55` through `0.1.87`");
+      expect(requirementsLock).toContain("uv==0.13.4");
+      expect(requirementsLock).toContain("aiohttp==3.14.4");
       expect(requirementsLock).toContain("cryptography==50.0.0");
       expect(requirementsLock).not.toContain("aiohttp==3.14.1");
       expect(requirementsLock).not.toContain("cryptography==49.0.0");
-      expect(requirementsLock).toContain("mcp==2.0.0");
-      expect(requirementsLock).toContain("pillow==12.3.0");
+      expect(requirementsLock).toContain("mcp==2.2.0");
+      expect(requirementsLock).toContain("pillow==13.0.0");
       expect(requirementsLock).toContain("pyasn1==0.6.4");
-      expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.1");
+      expect(requirementsLock).toContain("langgraph-checkpoint-sqlite==3.1.2");
       const dockerfileBase = readAgentFile("Dockerfile.base");
       const versionSource =
         name === "deepagents-code" ? readAgentFile("validate-runtime-contract.py") : dockerfileBase;

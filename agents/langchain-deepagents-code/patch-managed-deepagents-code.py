@@ -22,11 +22,17 @@
 from __future__ import annotations
 
 import ast
+import base64
+import csv
+import hashlib
 import importlib.metadata
 import importlib.util
+import io
+import json
+import sys
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.71"
+EXPECTED_DCODE_VERSION = "0.1.87"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
 OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
@@ -760,10 +766,22 @@ def list_subagents(*args, **kwargs):
 
 NON_INTERACTIVE_ERROR_MARKER = '''    except Exception as e:
         logger.exception("Unexpected error during non-interactive execution")
-        console.print(
-            f"\\n[red]Unexpected error ({type(e).__name__}): "
-            f"{escape_markup(str(e))}[/red]"
-        )
+        if resume is not None and (conflict := _workspace_conflict_text(e)):
+            console.print(
+                f"\\n[red]Error: {escape_markup(conflict)}[/red]", soft_wrap=True
+            )
+            return 1
+        if e.args and isinstance(e.args[0], dict):
+            # The server raised it; show its type and message, not the dict.
+            from deepagents_code.client.remote_client import format_agent_exception
+
+            detail = format_agent_exception(e)
+            console.print(f"\\n[red]Agent error: {escape_markup(detail)}[/red]")
+        else:
+            console.print(
+                f"\\n[red]Unexpected error ({type(e).__name__}): "
+                f"{escape_markup(str(e))}[/red]"
+            )
         return 1
 '''
 
@@ -1332,6 +1350,19 @@ def _build_server_env() -> dict[str, str]:
     ):
         env.pop(name, None)
     return env
+
+
+def _nemoclaw_mcp_pass_fds(env) -> tuple[int, ...]:
+    """Revalidate the snapshot before passing it through the server bootstrap."""
+    path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
+    if not path:
+        return ()
+    from deepagents_code._nemoclaw_managed import managed_mcp_server_binding
+
+    descriptor, binding = managed_mcp_server_binding(path)
+    if env.get("NEMOCLAW_DCODE_MCP_BINDING") != binding:
+        raise RuntimeError("Managed MCP binding changed before server launch")
+    return (descriptor,)
 '''
 
 SERVER_CONFIG_PATCH = r'''
@@ -1397,7 +1428,9 @@ MCP_EXPLICIT_CONFIG_MARKER = '''    if explicit_config_path:
             if project_context is not None
             else explicit_config_path
         )
-        configs.append(load_mcp_config(config_path))
+        explicit_config = load_mcp_config(config_path)
+        configs.append(explicit_config)
+        session_cwd_servers.update(explicit_config["mcpServers"])
 '''
 
 MCP_EXPLICIT_CONFIG_PATCH = '''    if explicit_config_path:
@@ -1414,7 +1447,9 @@ MCP_EXPLICIT_CONFIG_PATCH = '''    if explicit_config_path:
                 else explicit_config_path
             )
         )
-        configs.append(load_mcp_config(config_path))
+        explicit_config = load_mcp_config(config_path)
+        configs.append(explicit_config)
+        session_cwd_servers.update(explicit_config["mcpServers"])
 '''
 
 SERVER_ENV_OVERRIDES_MARKER = '''            env = _server_env_with_overrides(
@@ -1443,7 +1478,6 @@ SERVER_ENV_OVERRIDES_PATCH = '''            env = _server_env_with_overrides(
 
             # Revalidate and bind the exact managed MCP snapshot before creating
             # any launch artifacts. Initial start and restart share this path.
-            nemoclaw_mcp_pass_fds: tuple[int, ...] = ()
             nemoclaw_mcp_binding_env = "NEMOCLAW_DCODE_MCP_BINDING"
             env.pop(nemoclaw_mcp_binding_env, None)
             nemoclaw_mcp_path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
@@ -1452,37 +1486,13 @@ SERVER_ENV_OVERRIDES_PATCH = '''            env = _server_env_with_overrides(
                     managed_mcp_server_binding,
                 )
 
-                descriptor, binding = managed_mcp_server_binding(nemoclaw_mcp_path)
-                nemoclaw_mcp_pass_fds = (descriptor,)
+                _, binding = managed_mcp_server_binding(nemoclaw_mcp_path)
                 env[nemoclaw_mcp_binding_env] = binding
 '''
 
-SERVER_POPEN_MARKER = '''            self._process = subprocess.Popen(  # noqa: S603
-                cmd,
-                cwd=str(work_dir),
-                env=env,
-                stdout=self._log_file,
-                stderr=subprocess.STDOUT,
-                start_new_session=(sys.platform != "win32"),
-                creationflags=(
-                    _WINDOWS_CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
-                ),
-            )
-'''
-
-SERVER_POPEN_PATCH = '''            self._process = subprocess.Popen(  # noqa: S603
-                cmd,
-                cwd=str(work_dir),
-                env=env,
-                stdout=self._log_file,
-                stderr=subprocess.STDOUT,
-                pass_fds=nemoclaw_mcp_pass_fds,
-                start_new_session=(sys.platform != "win32"),
-                creationflags=(
-                    _WINDOWS_CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
-                ),
-            )
-'''
+# Preserve the upstream parent-death pipe alongside the managed MCP snapshot.
+SERVER_POPEN_MARKER = '                pass_fds=(reader,),\n'
+SERVER_POPEN_PATCH = '                pass_fds=(reader, *_nemoclaw_mcp_pass_fds(env)),\n'
 
 UPDATE_CHECK_PATCH = r'''
 
@@ -2229,20 +2239,6 @@ def main() -> None:
         )
 
 
-# BEGIN NemoClaw 0.1.87 downstream dependency compatibility
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
-"""Explicit NemoClaw 0.1.87 dependency metadata patch."""
-
-import base64
-import csv
-import hashlib
-import importlib.metadata
-import io
-import json
-from pathlib import Path
-
 WHEEL_SHA256 = "e3a4a9905540eaf87e4ec19b54f02cc791ba7cc02ca1af3f3173754af445e206"
 METADATA_SHA256 = "4c7c41fab50ba2c85365179990bda77dcfe663ce55f294f7234b909d2ef40d89"
 REPLACEMENTS = {
@@ -2322,19 +2318,11 @@ def patch_installed_dependency_metadata():
     record_path.write_text(stream.getvalue())
     return receipt
 
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 def check_nemoclaw_dependency_compatibility():
     """Exercise the actual 0.1.87 consumers against the downstream dependency set."""
     import asyncio
-    import base64
-    import importlib.metadata
-    import json
     import os
-    from pathlib import Path
     import subprocess
-    import sys
     import tempfile
     import textwrap
     import unittest
@@ -2423,10 +2411,8 @@ def check_nemoclaw_dependency_compatibility():
                       "testsRun": result.testsRun, "status": "passed", "versions": {
                           name: importlib.metadata.version(name) for name in ["deepagents-code", "pillow", "filelock"]
                       }}, sort_keys=True))
-# END NemoClaw 0.1.87 downstream dependency compatibility
 
 if __name__ == "__main__":
-    import sys
     if sys.argv[1:] == ["--dependency-metadata-only"]:
         patch_installed_dependency_metadata()
     elif sys.argv[1:] == ["--dependency-compatibility-check"]:
