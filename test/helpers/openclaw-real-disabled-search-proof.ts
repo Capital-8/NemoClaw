@@ -146,6 +146,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Search for NemoClaw documentation.",
         "Search the latest Linux documentation for the current directory.",
         "Search for official documentation about local files.",
+        "Search for best practices in code review.",
+        "Search for the latest news in project management.",
         "Google the official NemoClaw installation documentation.",
         "Look up the official NemoClaw installation documentation.",
         "Find the official NemoClaw installation documentation.",
@@ -182,6 +184,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "What files are in the current directory?",
         "Search the current directory for the config file.",
         "Search the project for TODO comments.",
+        "Search through the project files for TODO comments.",
+        "Read the latest documentation in docs/README.md.",
         "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
       ]) {
         const localTurn = await runner().runBeforePromptBuild(
@@ -326,6 +330,11 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       );
       for (const [prompt, tool, params] of [
         ["Search the project for TODO comments.", "read", { file_path: "/sandbox/README.md" }],
+        [
+          "Read the latest documentation in docs/README.md.",
+          "read",
+          { file_path: "docs/README.md" },
+        ],
         [
           "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
           "web_fetch",

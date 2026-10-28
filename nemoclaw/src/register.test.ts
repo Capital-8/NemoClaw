@@ -477,6 +477,12 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   it.each([
     ["Search the project for TODO comments.", "read", { file_path: "/sandbox/project/README.md" }],
     [
+      "Search through the project files for TODO comments.",
+      "read",
+      { file_path: "/sandbox/project/README.md" },
+    ],
+    ["Read the latest documentation in docs/README.md.", "read", { file_path: "docs/README.md" }],
+    [
       "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
       "web_fetch",
       { url: "https://docs.nvidia.com/nemoclaw/" },

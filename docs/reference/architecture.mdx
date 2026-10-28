@@ -239,7 +239,11 @@ This guidance stays out of the visible chat transcript.
 The web-research guidance distinguishes configured search availability from tool availability and successful retrieval.
 It directs the agent to disclose unavailable search, report failed fetches, and label local knowledge as unverified.
 A press release or announcement must not be presented as installation documentation.
-Successfully retrieved content remains usable when search is disabled.
+When web search is disabled, the plugin classifies each request before inference.
+For external research, it supplies an empty per-turn tool allowlist, so the model cannot invoke tools.
+Ordinary local work and retrieval from user-supplied sources retain their tools.
+After a denied search attempt, tool interception blocks substitute research within the same turn while preserving supplied-source work.
+The agent can use content successfully retrieved from a user-supplied URL when search is disabled.
 The context tells the agent to try allowed network and filesystem operations before reporting them unavailable, and to distinguish policy denials from DNS, timeout, TLS, or filesystem errors.
 </AgentOnly>
 
