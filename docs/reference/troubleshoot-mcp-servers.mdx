@@ -418,7 +418,8 @@ $$nemoclaw <sandbox> mcp status <server> --tools
 ```
 
 The refresh preserves all other policy fields, including denied tools, and retains the existing agent configuration and credentials.
-Successful tool discovery verifies recovery.
+Successful tool discovery verifies only that the named server's endpoint is reachable through its existing credential binding.
+To verify another server on the same hostname and port, run `mcp status <server> --tools` for that server.
 Status, restart, rebuild, and restore preserve the live pins.
 If refresh cannot confirm a write, inspect status and the live OpenShell policy before retrying.
 
@@ -432,7 +433,9 @@ If status reports `private address pins: drift`, review the endpoint address cha
 Status, restart, rebuild, and restore do not add new trusted-private addresses.
 Remove and re-add the server with the same trusted host to run a new preflight and record new pins.
 NemoClaw rejects new pins that differ from a remaining server's recorded pins.
-Record each server's URL, credential environment name, trusted-private declaration (including `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` if used), and `--deny-tool` selectors before removal.
+Before removal, record each server's URL, credential environment name, trusted-private declaration (including `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` if used), and `--deny-tool` selectors.
+For each server, record the provider name from the `provider:` line of `mcp status <server>`.
+Then record the provider ID from the `Id` field of `openshell provider get -g <gateway-name> <provider-name>`.
 Remove every trusted-private server on that hostname and port in this sandbox before re-adding any of them.
 
 ```bash
@@ -441,7 +444,8 @@ $$nemoclaw <sandbox> mcp remove <server>
 
 Stop if a removal reports an unresolved `MCP cleanup warning`.
 If a provider is preserved, inspect it with `openshell provider get -g <gateway-name> <provider-name>`.
-Confirm its type is `nemoclaw-mcp-v1`, its only credential key matches the server's recorded environment name, and its identity is known to belong to that registration; the provider name alone is insufficient.
+Confirm its type is `nemoclaw-mcp-v1`, its only credential key matches the server's recorded environment name, and its `Id` matches the recorded provider ID.
+If any value differs or the `Id` field is absent, stop and do not delete the provider.
 Inspect every sandbox on the gateway with `openshell sandbox list -g <gateway-name>` and `openshell sandbox provider list -g <gateway-name> <sandbox-name>`.
 Stop if ownership or attachment state is uncertain.
 Repeat the removal and checks above for each server on the same hostname and port.

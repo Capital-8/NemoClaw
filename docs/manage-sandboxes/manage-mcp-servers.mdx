@@ -213,7 +213,8 @@ Otherwise, refresh changes no policy.
 It rejects private or special-use DNS answers and policies with address ranges.
 Correct a reported source conflict before retrying.
 If the write cannot be confirmed, inspect `mcp status` and the live OpenShell policy before retrying.
-Successful tool discovery verifies that the endpoint is reachable through its existing credential binding.
+Successful tool discovery verifies only that the named server's endpoint is reachable through its existing credential binding.
+To verify another server on the same hostname and port, run `mcp status <server> --tools` for that server.
 
 For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.
 
