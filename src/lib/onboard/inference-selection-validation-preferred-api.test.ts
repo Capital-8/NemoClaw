@@ -14,12 +14,7 @@ describe("custom endpoint validation with NEMOCLAW_PREFERRED_API", () => {
     ["openai-responses", false],
   ])("skips the Responses probe for %s: %s (#13884)", async (preferredApi, skipsResponses) => {
     vi.stubEnv("NEMOCLAW_PREFERRED_API", preferredApi);
-    const probeOpenAiLikeEndpoint = vi.fn(
-      (_endpointUrl: string, _model: string, _apiKey: string, _options?: unknown) => ({
-        ok: true,
-        api: "openai-completions",
-      }),
-    );
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
       agentProductName: () => "OpenClaw",
@@ -38,7 +33,7 @@ describe("custom endpoint validation with NEMOCLAW_PREFERRED_API", () => {
 
     expect(result).toMatchObject({ ok: true });
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledTimes(1);
-    const options = probeOpenAiLikeEndpoint.mock.calls[0]?.[3] as
+    const options = (probeOpenAiLikeEndpoint.mock.calls as unknown[][])[0]?.[3] as
       | { skipResponsesProbe?: boolean }
       | undefined;
     expect(options?.skipResponsesProbe === true).toBe(skipsResponses);
