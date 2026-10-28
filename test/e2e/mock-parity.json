@@ -674,7 +674,8 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/hermes-config-export-live.test.ts",
-        "test/e2e/support/hermes-discord-rebuild-contract.test.ts"
+        "test/e2e/support/hermes-discord-rebuild-contract.test.ts",
+        "test/install/install-npm-private-prefix.test.ts"
       ]
     },
     {
@@ -699,7 +700,8 @@
         "test/e2e/support/inference-adapter.test.ts",
         "test/e2e/support/security-posture.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
-        "test/helpers/e2e-answer-assertions.test.ts"
+        "test/helpers/e2e-answer-assertions.test.ts",
+        "test/install/install-npm-private-prefix.test.ts"
       ]
     },
     {

@@ -165,7 +165,14 @@ test(
     delete hostedEnvWithoutCredentials[hosted.credentialEnv];
     fs.mkdirSync(testHome, { recursive: true, mode: 0o700 });
     fs.mkdirSync(privateBin, { recursive: true, mode: 0o700 });
-    const installedBin = path.dirname(fs.realpathSync(process.env.OPENSHELL_BIN ?? ""));
+    const installedBin = path.dirname(
+      fs.realpathSync(
+        await host.resolveOpenShellCommandPath({
+          artifactName: "resolve-runner-openshell-command",
+          env: env({ HOME: testHome }),
+        }),
+      ),
+    );
     // Keep the CLI and its driver binaries together so a fallback install writes only to this workspace.
     fs.copyFileSync(path.join(installedBin, "openshell"), path.join(privateBin, "openshell"));
     fs.copyFileSync(

@@ -45,6 +45,22 @@ it.skipIf(process.platform === "win32")(
         { cwd: source, env, encoding: "utf8" },
       );
       expect(safe.status, `${safe.stdout}${safe.stderr}`).toBe(0);
+      expect(fs.existsSync(privatePrefix)).toBe(false);
+
+      fs.mkdirSync(privatePrefix, { mode: 0o700 });
+      const existingPrivate = spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$1" >/dev/null 2>&1; assert_npm_executable_prefix_safe "$2"',
+          "bash",
+          INSTALLER,
+          privatePrefix,
+        ],
+        { cwd: source, env, encoding: "utf8" },
+      );
+      expect(existingPrivate.status, `${existingPrivate.stdout}${existingPrivate.stderr}`).toBe(0);
+      expect(fs.statSync(privatePrefix).mode & 0o777).toBe(0o700);
 
       const unsafe = spawnSync(
         "bash",
@@ -60,7 +76,6 @@ it.skipIf(process.platform === "win32")(
       expect(unsafe.status).toBe(1);
       expect(unsafe.stderr).toContain(unsafePrefix);
       expect(fs.statSync(unsafePrefix).mode & 0o777).toBe(0o775);
-      expect(fs.existsSync(privatePrefix)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
