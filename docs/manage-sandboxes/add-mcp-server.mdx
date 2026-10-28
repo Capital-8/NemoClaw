@@ -217,7 +217,7 @@ Run `$$nemoclaw my-sandbox mcp update <server> --refresh-public-pins` to refresh
 - Trusted-private DNS differs from the recorded pins.
 - One server uses public pins and the other uses trusted-private pins.
 
-The error names the server to refresh, or to remove and add again.
+The error identifies the conflicting server and pin or policy state. Resolve that conflict before retrying.
 Public endpoints need no trusted-private declaration.
 Private endpoints require a trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.
 Supply the declaration with `--trusted-private-host` or the generic `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` environment variable.

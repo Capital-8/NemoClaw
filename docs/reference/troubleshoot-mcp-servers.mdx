@@ -432,12 +432,31 @@ If status reports `private address pins: drift`, review the endpoint address cha
 Status, restart, rebuild, and restore do not add new trusted-private addresses.
 Remove and re-add the server with the same trusted host to run a new preflight and record new pins.
 NemoClaw rejects new pins that differ from a remaining server's recorded pins.
-If other trusted-private servers use the same hostname and port, remove them before you run the example below.
-After the example succeeds, add those servers again.
+Record each server's URL, credential environment name, trusted-private declaration (including `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` if used), and `--deny-tool` selectors before removal.
+Remove every trusted-private server on that hostname and port in this sandbox before re-adding any of them.
+
+```bash
+$$nemoclaw <sandbox> mcp remove <server>
+```
+
+Stop if a removal reports an unresolved `MCP cleanup warning`.
+If a provider is preserved, inspect it with `openshell provider get -g <gateway-name> <provider-name>`.
+Confirm its type is `nemoclaw-mcp-v1`, its only credential key matches the server's recorded environment name, and its identity is known to belong to that registration; the provider name alone is insufficient.
+Inspect every sandbox on the gateway with `openshell sandbox list -g <gateway-name>` and `openshell sandbox provider list -g <gateway-name> <sandbox-name>`.
+Stop if ownership or attachment state is uncertain.
+Repeat the removal and checks above for each server on the same hostname and port.
+For each preserved provider that passed every ownership and attachment check, delete it after no sandbox lists it:
+
+```bash
+openshell provider delete -g <gateway-name> <provider-name>
+```
+
+Then re-add every removed server with its recorded URL, environment name, trusted-private declaration, and each original `--deny-tool` selector.
+If the original declaration used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again for each re-add command.
+The example below assumes no denied-tool selectors; repeat each recorded `--deny-tool` flag when present.
 
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
-$$nemoclaw <sandbox> mcp remove <server>
 $$nemoclaw <sandbox> mcp add <server> \
   --url https://mcp-host.corp.example/mcp \
   --env LOCAL_MCP_TOKEN \
