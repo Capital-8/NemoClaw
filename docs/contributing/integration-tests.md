@@ -166,7 +166,7 @@ A case holds three files:
 
 | File | Contents |
 |---|---|
-| `nemoclaw.yaml` | The NemoClaw document. The runner points its gateway, engine, and inference endpoints at the fixtures, keeps inference paths, and compiles it with the SDK into `nemoclaw.tf.json` beside the case's files. |
+| `nemoclaw.yaml` | The NemoClaw document. The runner points its gateway, any engine it names, and inference endpoints at the fixtures, keeps inference paths, and compiles it with the SDK into `nemoclaw.tf.json` beside the case's files. An external gateway loses its credential and TLS references, because the fixture gateway serves plaintext gRPC without a bearer. Each sandbox `image.metadata` variable names the runner's metadata bundle, which describes `fixture/agent@sha256:e5dee78a2d23235e73acb1f7aa4cba799df73c1a149f730b4ce0ebb598358d32` with the Fabric catalog; such a sandbox uses that image. |
 | `main.tf` | Fixture declarations and observations, through the `fixture` provider. |
 | `integration.tftest.hcl` | Provider mocks, run blocks, and assertions. |
 
@@ -174,11 +174,14 @@ The `fixture` provider, `nemoclaw-fixture-control` in `nemoclaw-test-fixtures`, 
 
 | Data source | Purpose |
 |---|---|
+| `fixture_gateway` | Declares the compute driver the OpenShell gateway reports, such as `kubernetes`; Docker when unset. Returns the gateway endpoint. |
 | `fixture_engine` | Declares images and containers that the fake engine reports, such as those a mocked Docker resource would create. A container is found by ID, and by name when `by_name` is set; leave it unset for a container that providers must not find before Docker would create it, such as the managed gateway. A container can declare `started_at`, volume `mounts` by destination, and `files` by path, which archive reads and file metadata return with mode 0600. Returns the engine endpoint. |
 | `fixture_http` | Declares the inference upstream's replies by `METHOD /path`; other requests receive 404. Returns the upstream endpoint. |
 | `fixture_observations` | Returns recorded facts as JSON: OpenShell RPCs, created registrations and sandboxes, sandbox execs, current objects, engine requests and storage, and upstream requests. Credential values are reported only by their source: `env:NAME` for a fixture credential, or `file:CONTAINER:PATH` for a declared container file such as a service's generated key. |
 
-Read the declarations in a first run that targets them, before the deployment's first plan reads the engine.
+Read the declarations in a first run that targets them, before the deployment's first plan reads the gateway or the engine.
+Locals are not evaluated in a targeted plan, so a targeted run decodes observations in its assertions.
+A case with a run that is expected to fail lists the failing checkable object in `expect_failures`; the runner requires at least one run and no failed run.
 The engine is a fixed socket, `/tmp/nemoclaw-integration/CASE.sock`, so the generated Docker provider alias and image addresses that `mock_provider` and `override_resource` name do not change between runs.
 OpenTofu removes resources with the providers of the last run that applied them; end with a run that applies the `openshell` and `fabric` providers with `destroy = true`, as the SDK's teardown graph does.
 
@@ -187,7 +190,7 @@ When a case fails, the runner keeps its directory and prints the path of redacte
 
 A case that needs an upstream operation the fixtures cannot simulate needs that fixture support once, in the runner and the `fixture` provider.
 A provider error that stops a run, rather than a failed assertion, fails the case.
-Each case runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies:
+Each case runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies. Kubernetes and OpenShift cases use an external gateway with no engine, so nothing is mocked:
 
 | Case | Checks |
 |---|---|
@@ -195,8 +198,13 @@ Each case runs the real OpenShell, Fabric, and host providers, plus the vLLM or 
 | `docker-openclaw-ollama` | A managed Ollama service: the container's Docker inputs from the Ollama runtime launch, the runtime image found on the engine, readiness from the container's status file, a registration at the service address without a credential, the sandbox's policy for that address, and the agent's model and address. |
 | `docker-openclaw-vllm` | A managed vLLM service with bearer authentication: credential storage created on the engine and mounted by the container, readiness from its status file and generated key, the registration holding that key under the sandbox's name for it, and the agent's model, address, and key name. |
 | `docker-hosted-ollama-two-agents` | An OpenClaw agent on hosted inference and a Hermes agent on Ollama: two registrations, each sandbox bound to and allowed to reach only its own provider, and each agent started once in its own sandbox with its own harness and configuration. |
+| `docker-openclaw-vllm-unauthenticated` | A managed vLLM service without authentication: no credential storage and only a data volume, readiness without a key read, and a registration without a credential. |
+| `docker-vllm-shared-two-agents` | One authenticated vLLM service shared by OpenClaw and Hermes agents: a registration for each harness, each holding the generated key under its own sandbox name, each sandbox naming only its own, and each agent started with that key name. |
+| `kubernetes-external-three-agents` | `examples/kubernetes/external-gateway.yaml`: a gateway reporting the Kubernetes driver, harnesses read from the metadata bundle without engine requests, one shared registration with the environment credential, and three agents started in their own sandboxes. |
+| `openshift-external-two-providers` | An OpenShift gateway with an Anthropic Messages provider and an NVIDIA provider: each registration's API, base URL, and credential, an OpenClaw agent with both routes and a Hermes agent with one, and no binding shared between their sandboxes. |
+| `kubernetes-gateway-driver-mismatch` | A Kubernetes document against a gateway that reports Docker: the workspace precondition rejects the plan, the gateway's incompatibility names the Kubernetes driver, and nothing reaches OpenShell, Fabric, or the upstream. |
 
-In every case, the inference upstream receives no request. The cases do not invoke agents or perform inference, and the vLLM and Ollama runtimes are represented by declared containers and files, not run.
+In every case, the inference upstream receives no request. The cases do not invoke agents or perform inference. The vLLM and Ollama runtimes are represented by declared containers and files, not run. The Kubernetes and OpenShift cases do not exercise gateway TLS or bearer credentials, a managed Kubernetes gateway, or Helm.
 
 ### Helm Release Recovery
 

@@ -7,8 +7,10 @@
 //! - starts the OpenShell gRPC fixture, a fake Docker engine, an inference
 //!   upstream, and the control endpoint of the `fixture` provider
 //!   (`nemoclaw-fixture-control`);
-//! - compiles the document with the SDK, its gateway, engine, and inference
-//!   endpoints redirected to the fixtures, beside the case's own files;
+//! - compiles the document with the SDK, its gateway, any engine, and
+//!   inference endpoints redirected to the fixtures, beside the case's own
+//!   files; an external gateway's credential and TLS are dropped, and image
+//!   metadata variables name the fixture image's metadata bundle;
 //! - runs the bundle's OpenTofu and providers with isolated state and only
 //!   fixture credentials;
 //! - checks what OpenTofu's automatic teardown leaves, which no run block can
@@ -223,6 +225,15 @@ impl Shared {
                 *self.images.lock().unwrap() = list(&declared["images"]);
                 *self.containers.lock().unwrap() = list(&declared["containers"]);
                 reply(json!({"endpoint": self.engine_endpoint}))
+            }
+            ("PUT", "/gateway") => {
+                let Ok(declared) = body() else {
+                    return (400, b"invalid JSON".to_vec());
+                };
+                // The compute driver the gateway reports; Docker by default.
+                self.gateway.lock().unwrap().driver =
+                    declared["compute_driver"].as_str().map(str::to_owned);
+                reply(json!({"endpoint": self.gateway_endpoint}))
             }
             ("PUT", "/http") => {
                 let Ok(declared) = body() else {
@@ -477,19 +488,17 @@ impl Fixtures {
         }
     }
 
-    /// Point the document's gateway, engine, and inference providers at the
-    /// fixtures. Inference paths are kept.
+    /// Point the document's gateway, any engine it names, and inference
+    /// providers at the fixtures. Inference paths are kept.
     fn redirect(&self, document: &mut Document) {
         *document.spec.gateway.endpoint_mut() = self.shared.gateway_endpoint.clone();
-        match &mut document.spec.gateway {
-            nemoclaw_sdk::config::Gateway::External(gateway) => {
-                gateway.engine = self.shared.engine_endpoint.clone();
-            }
-            gateway => {
-                if let Some(managed) = gateway.as_managed_mut() {
-                    managed.engine = self.shared.engine_endpoint.clone();
-                }
-            }
+        let engine = match &mut document.spec.gateway {
+            nemoclaw_sdk::config::Gateway::External(gateway) => Some(&mut gateway.engine),
+            gateway => gateway.as_managed_mut().map(|managed| &mut managed.engine),
+        };
+        // A Kubernetes or OpenShift gateway names no engine.
+        if let Some(engine) = engine.filter(|engine| !engine.is_empty()) {
+            engine.clone_from(&self.shared.engine_endpoint);
         }
         let upstream = self.shared.upstream_endpoint.lock().unwrap().clone();
         for provider in document.spec.inference_providers.values_mut() {
@@ -689,9 +698,24 @@ async fn run_case(bundle: Bundle, case: PathBuf) {
     let version = manifest["Version"].as_str().unwrap().to_owned();
     let mut document =
         Document::parse(fs::read(case.join("nemoclaw.yaml")).unwrap().as_slice()).unwrap();
+    // The fixture gateway serves plaintext gRPC without a bearer.
+    if let nemoclaw_sdk::config::Gateway::External(gateway) = &mut document.spec.gateway {
+        gateway.credential = None;
+        gateway.tls = None;
+    }
+    // Each image metadata reference names the fixture's metadata bundle, for
+    // gateways where no engine inspects images.
+    let image_metadata: BTreeSet<String> = document
+        .spec
+        .sandboxes
+        .values()
+        .filter_map(|sandbox| sandbox.image.metadata.as_ref())
+        .map(|metadata| metadata.env.clone())
+        .collect();
     let credentials: BTreeMap<String, String> = document
         .credential_names()
         .into_iter()
+        .filter(|name| !image_metadata.contains(*name))
         .map(|credential| {
             let value = format!("fixture-credential-{}", credential.to_lowercase());
             (credential.to_owned(), value)
@@ -732,6 +756,13 @@ async fn run_case(bundle: Bundle, case: PathBuf) {
     }
     let directory = work.join("cases").join(&name);
     copy_tree(&case, &directory);
+    assert!(
+        fs::read_dir(&case)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().ends_with(".tftest.hcl")),
+        "{name} has no .tftest.hcl file"
+    );
     fs::write(
         directory.join("nemoclaw.tf.json"),
         serde_json::to_vec_pretty(&graph).unwrap(),
@@ -766,6 +797,14 @@ async fn run_case(bundle: Bundle, case: PathBuf) {
     )
     .unwrap();
     let mut environment = credentials.clone();
+    if !image_metadata.is_empty() {
+        let directory = evidence.path().join("image-metadata");
+        fs::create_dir_all(&directory).unwrap();
+        let (_, bundle) = nemoclaw_e2e::image_runtime::metadata_bundle(&directory);
+        for variable in &image_metadata {
+            environment.insert(variable.clone(), bundle.to_string_lossy().into_owned());
+        }
+    }
     for (variable, value) in [
         ("HOME", evidence.path().join("home")),
         ("TMPDIR", evidence.path().join("tmp")),
@@ -809,10 +848,13 @@ async fn run_case(bundle: Bundle, case: PathBuf) {
     .await;
     let shown = fixtures.shared.redact(output.clone());
     assert!(tested, "{shown}");
-    assert!(
-        output.contains("Success! ") && output.contains(" passed, 0 failed."),
-        "{shown}"
-    );
+    // Every run passed, and there was at least one.
+    let passed = output
+        .split("Success! ")
+        .nth(1)
+        .and_then(|summary| summary.split(" passed, 0 failed.").next())
+        .and_then(|count| count.parse::<usize>().ok());
+    assert!(passed.is_some_and(|count| count > 0), "{shown}");
     for value in credentials.values() {
         assert!(
             !output.contains(value),

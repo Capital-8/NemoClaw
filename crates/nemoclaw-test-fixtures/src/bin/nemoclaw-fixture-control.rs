@@ -7,6 +7,7 @@
 //!
 //! - `fixture_engine` declares the images and containers the fake engine
 //!   reports, such as those a mocked Docker provider would have created.
+//! - `fixture_gateway` declares the compute driver the OpenShell gateway reports.
 //! - `fixture_http` declares the inference upstream's replies by request.
 //! - `fixture_observations` reports recorded requests and current fixture
 //!   state as JSON. Scenarios decide pass or fail with HCL assertions.
@@ -148,6 +149,59 @@ impl DataSource for Engine {
 }
 
 #[derive(Default, Serialize, Deserialize)]
+struct GatewayState {
+    compute_driver: Value<String>,
+    endpoint: Value<String>,
+}
+struct Gateway;
+#[async_trait]
+impl DataSource for Gateway {
+    type State<'a> = GatewayState;
+    type ProviderMetaState<'a> = ValueEmpty;
+    fn schema(&self, _: &mut Diagnostics) -> Option<Schema> {
+        use AttributeConstraint::{Computed, Optional};
+        Some(schema(&[
+            (
+                "compute_driver",
+                Optional,
+                "The compute driver the gateway reports, such as kubernetes; docker when unset.",
+            ),
+            (
+                "endpoint",
+                Computed,
+                "The OpenShell gateway fixture's endpoint.",
+            ),
+        ]))
+    }
+    async fn read<'a>(
+        &self,
+        diags: &mut Diagnostics,
+        mut config: GatewayState,
+        _: ValueEmpty,
+    ) -> Option<GatewayState> {
+        let work = async {
+            let driver = match &config.compute_driver {
+                Value::Value(driver) => serde_json::json!(driver),
+                Value::Null => serde_json::Value::Null,
+                Value::Unknown => return Err("the declaration is not yet known".to_owned()),
+            };
+            let body = serde_json::json!({"compute_driver": driver});
+            control("PUT", "/gateway", &body.to_string()).await
+        };
+        match work.await {
+            Ok(reply) => {
+                config.endpoint = Value::Value(reply["endpoint"].as_str()?.to_owned());
+                Some(config)
+            }
+            Err(error) => {
+                diags.root_error("Fixture gateway declaration failed", error);
+                None
+            }
+        }
+    }
+}
+
+#[derive(Default, Serialize, Deserialize)]
 struct HttpState {
     routes_json: Value<String>,
     endpoint: Value<String>,
@@ -268,6 +322,10 @@ impl Provider for FixtureProvider {
             (
                 "engine".into(),
                 Box::new(Engine) as Box<dyn DynamicDataSource>,
+            ),
+            (
+                "gateway".into(),
+                Box::new(Gateway) as Box<dyn DynamicDataSource>,
             ),
             ("http".into(), Box::new(Http) as Box<dyn DynamicDataSource>),
             (
