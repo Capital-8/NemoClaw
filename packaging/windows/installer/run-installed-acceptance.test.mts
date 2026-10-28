@@ -971,6 +971,87 @@ Write-Output 'SETUP_CUSTODY_9_PASS'
   assert.match(result.stdout, /SETUP_CUSTODY_9_PASS/u);
 });
 
+test("native phase timings remain diagnostic, bounded and separate for install and Repair", (context) => {
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:ACCEPTANCE_SOURCE, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Acceptance source does not parse.' }
+$owner = $ast.Find({ param($node)
+  $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-OwnedSetup'
+}, $true)
+$launch = '[Diagnostics.Process]::Start($info)'
+if ($owner.Extent.Text.Split($launch).Count -ne 2) { throw 'Setup process boundary is ambiguous.' }
+. ([scriptblock]::Create($owner.Extent.Text.Replace($launch, '(Start-Fixture)')))
+$setup = 'owned-setup-fixture'
+$timings = @{ stages = @{} }
+$script:SetupTransactionUnconfirmed = $false
+$script:reads = 0
+$exitCode = 0
+function Start-Fixture {
+  $process = [pscustomobject]@{ ExitCode = $exitCode; Id = 123 }
+  $process | Add-Member ScriptMethod WaitForExit { param($milliseconds) return $true }
+  $process | Add-Member ScriptMethod Dispose {}
+  return $process
+}
+function Get-ItemProperty {
+  param($LiteralPath, $ErrorAction)
+  $script:reads++
+  if ($LiteralPath -cne 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClaw\InstallDiagnostics' -or $ErrorAction -cne 'Stop') { throw 'Diagnostic owner changed.' }
+  if ($denied) { throw [UnauthorizedAccessException]::new('fixture-denied') }
+  return $retained
+}
+$denied = $false
+$retained = [pscustomobject]@{ RuntimeImageHashMilliseconds = '123'; RuntimeImageAttachMilliseconds = '456'; RuntimeImageMountMilliseconds = '400'; RuntimeNodeHashMilliseconds = '0' }
+Invoke-OwnedSetup '-install' 'fixture.log'
+$installed = $timings.stages['-install'].nativePhaseTimings
+if (-not $installed.diagnosticOnly -or -not $installed.available -or $installed.milliseconds.Count -ne 4 -or $installed.milliseconds.RuntimeImageHashMilliseconds -ne 123 -or $installed.milliseconds.RuntimeNodeHashMilliseconds -ne 0) { throw 'Complete phase timings were lost.' }
+$retained = [pscustomobject]@{ RuntimeImageHashMilliseconds = '7' }
+Invoke-OwnedSetup '-repair' 'fixture.log'
+if ($timings.stages['-repair'].nativePhaseTimings.milliseconds.Count -ne 1 -or $timings.stages['-repair'].nativePhaseTimings.milliseconds.RuntimeImageHashMilliseconds -ne 7 -or $installed.milliseconds.RuntimeImageHashMilliseconds -ne 123) { throw 'Repair overwrote installation evidence.' }
+foreach ($invalid in @('-1', '1.5', ' 1', '18446744073709551616', '999999999999999999999', 12, $null)) {
+  $retained = [pscustomobject]@{ RuntimeImageHashMilliseconds = '9'; RuntimeNodeHashMilliseconds = $invalid }
+  Invoke-OwnedSetup '-repair' 'fixture.log'
+  $measurement = $timings.stages['-repair'].nativePhaseTimings
+  if ($measurement.available -or $measurement.milliseconds.Count -ne 0) { throw 'Invalid or partial malformed timing was accepted.' }
+}
+$retained = [pscustomobject]@{}
+Invoke-OwnedSetup '-repair' 'fixture.log'
+if ($timings.stages['-repair'].nativePhaseTimings.available) { throw 'Missing observations were fabricated.' }
+$denied = $true
+Invoke-OwnedSetup '-repair' 'fixture.log'
+if ($timings.stages['-repair'].nativePhaseTimings.available) { throw 'An inaccessible measurement was accepted.' }
+$exitCode = 17
+$caught = $null
+try { Invoke-OwnedSetup '-repair' 'fixture.log' } catch { $caught = $_ }
+if ($null -eq $caught -or $caught.Exception.Message -cne 'Finished preview -repair failed with status 17.') { throw 'Diagnostics changed the primary failure.' }
+$before = $script:reads
+$exitCode = 0
+Invoke-OwnedSetup '-uninstall' 'fixture.log'
+if ($script:reads -ne $before -or $timings.stages['-uninstall'].ContainsKey('nativePhaseTimings')) { throw 'Uninstall reused installation measurements.' }
+Write-Output 'NATIVE_PHASE_TIMINGS_PASS'
+`;
+  const result = spawnSync(
+    process.platform === "win32" ? "pwsh.exe" : "pwsh",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      env: powershellEnvironment({
+        ACCEPTANCE_SOURCE: fileURLToPath(new URL("run-installed-acceptance.ps1", import.meta.url)),
+      }),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 30000,
+    },
+  );
+  if (process.platform !== "win32" && result.error?.code === "ENOENT") {
+    context.skip("PowerShell is unavailable on this non-Windows host.");
+    return;
+  }
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /NATIVE_PHASE_TIMINGS_PASS/u);
+});
+
 test("setup receives only installation environment while the controller retains credentials", (context) => {
   const script = String.raw`
 $ErrorActionPreference = 'Stop'

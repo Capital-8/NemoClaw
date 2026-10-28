@@ -613,6 +613,8 @@ impl WindowsStore {
                         .ok_or(Error::Identity)?
                         .trim_end_matches('\\')
                         .to_owned();
+                    let _mount_timing =
+                        super::diagnostics::Timing::start("RuntimeImageMountMilliseconds");
                     Self::diskpart(
                         runtime_id,
                         &[
@@ -890,6 +892,8 @@ impl NativeStore for WindowsStore {
                     .directory()?
                     .open_content_file(&format!("images/{}.vhdx", expected.runtime_id))
                     .map_err(native_error)?;
+                let _hash_timing =
+                    super::diagnostics::Timing::start("RuntimeImageHashMilliseconds");
                 if hash_file(&mut image)? != digest {
                     return Err(Error::Native("runtime-image-mismatch"));
                 }
@@ -899,7 +903,11 @@ impl NativeStore for WindowsStore {
             (None, None) => false,
             _ => return Err(Error::Identity),
         };
-        Self::attach_image(&expected.runtime_id)?;
+        {
+            let _attach_timing =
+                super::diagnostics::Timing::start("RuntimeImageAttachMilliseconds");
+            Self::attach_image(&expected.runtime_id)?;
+        }
         let control = self.directory()?;
         let prefix = format!("runtimes/{}", expected.runtime_id);
         let mut manifest = control
@@ -925,8 +933,11 @@ impl NativeStore for WindowsStore {
         let mut node = control
             .open_content_file("bin/node.exe")
             .map_err(native_error)?;
-        if hash_file(&mut node)? != expected.node_sha256 {
-            return Err(Error::Native("runtime-node-mismatch"));
+        {
+            let _node_timing = super::diagnostics::Timing::start("RuntimeNodeHashMilliseconds");
+            if hash_file(&mut node)? != expected.node_sha256 {
+                return Err(Error::Native("runtime-node-mismatch"));
+            }
         }
         // A package-specific helper pins and hashes the whole VHDX before its
         // read-only attach. Rewalking and hashing tens of thousands of inner

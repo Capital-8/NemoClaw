@@ -149,6 +149,56 @@ mod diagnostics {
     const ERROR_FILE_NOT_FOUND: i32 = 2;
     const PATH: &str = "SOFTWARE\\NVIDIA\\NemoClaw\\InstallDiagnostics";
     const VALUE: &str = "RuntimeMaintenancePrimary";
+    const TIMINGS: [&str; 4] = [
+        "RuntimeImageHashMilliseconds",
+        "RuntimeImageAttachMilliseconds",
+        "RuntimeImageMountMilliseconds",
+        "RuntimeNodeHashMilliseconds",
+    ];
+
+    pub(super) struct Timing {
+        name: &'static str,
+        started: std::time::Instant,
+    }
+
+    impl Timing {
+        pub(super) fn start(name: &'static str) -> Self {
+            Self {
+                name,
+                started: std::time::Instant::now(),
+            }
+        }
+    }
+
+    impl Drop for Timing {
+        fn drop(&mut self) {
+            let saved = unsafe { GetLastError() };
+            let elapsed = self.started.elapsed().as_millis();
+            if TIMINGS.contains(&self.name) {
+                if let Some(key) = key() {
+                    let data = wide(&elapsed.to_string());
+                    unsafe {
+                        RegSetValueExW(
+                            key,
+                            wide(self.name).as_ptr(),
+                            0,
+                            REG_SZ,
+                            data.as_ptr().cast(),
+                            (data.len() * 2) as u32,
+                        );
+                        RegCloseKey(key);
+                    }
+                }
+            }
+            unsafe { SetLastError(saved) };
+        }
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetLastError() -> u32;
+        fn SetLastError(error: u32);
+    }
 
     #[link(name = "advapi32")]
     unsafe extern "system" {
@@ -207,6 +257,9 @@ mod diagnostics {
         if let Some(key) = key() {
             unsafe {
                 RegDeleteValueW(key, wide(VALUE).as_ptr());
+                for name in TIMINGS {
+                    RegDeleteValueW(key, wide(name).as_ptr());
+                }
                 RegCloseKey(key);
             }
         }

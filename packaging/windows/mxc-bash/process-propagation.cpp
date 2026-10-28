@@ -229,6 +229,40 @@ LPVOID WINAPI observeMsysHeapAllocation(LPVOID address, SIZE_T bytes, DWORD allo
     return result;
 }
 
+void logMsysPrimaryStack(HANDLE child, HANDLE thread) {
+    const DWORD saved = GetLastError();
+    if (!observeDerivedMsysLayout() || !NemoClawMsysDiagnosticsEnabled()) {
+        SetLastError(saved);
+        return;
+    }
+    CONTEXT context = {};
+    context.ContextFlags = CONTEXT_CONTROL;
+    const BOOL known = GetThreadContext(thread, &context);
+    const DWORD contextError = known ? 0 : GetLastError();
+#if defined(_M_ARM64)
+    const uintptr_t stack = known ? context.Sp : 0;
+#elif defined(_M_X64)
+    const uintptr_t stack = known ? context.Rsp : 0;
+#else
+#error Unsupported MSYS observer architecture
+#endif
+    MEMORY_BASIC_INFORMATION region = {};
+    const SIZE_T queried = stack ? VirtualQueryEx(child, reinterpret_cast<LPCVOID>(stack), &region, sizeof(region)) : 0;
+    const DWORD queryError = !stack || queried == sizeof(region) ? 0 : queried ? ERROR_INVALID_DATA : GetLastError();
+    const bool regionKnown = stack && queried == sizeof(region);
+    const uintptr_t allocation = regionKnown ? reinterpret_cast<uintptr_t>(region.AllocationBase) : 0;
+    char line[768];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_PRIMARY_STACK={\"schemaVersion\":1,\"parentPid\":%lu,\"childPid\":%lu,\"threadId\":%lu,\"contextKnown\":%s,\"contextError\":%lu,\"stackPointer\":\"0x%llx\",\"regionKnown\":%s,\"queryError\":%lu,\"allocationBase\":\"0x%llx\",\"inCygheapRange\":%s,\"diagnosticOnly\":true}\n",
+        GetCurrentProcessId(), GetProcessId(child), GetThreadId(thread), known ? "true" : "false", contextError,
+        static_cast<unsigned long long>(stack), regionKnown ? "true" : "false", queryError,
+        static_cast<unsigned long long>(allocation),
+        regionKnown && stack >= 0x800000000ULL && stack < 0xa00000000ULL ? "true" : "false");
+    DWORD written = 0;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    SetLastError(saved);
+}
+
 struct ProcessImageFile {
     HANDLE handle = INVALID_HANDLE_VALUE;
     WCHAR path[4096] = {};
@@ -717,7 +751,7 @@ bool omitLockedChromeImport(HANDLE child, const ProcessImageFile& image, USHORT 
     return result.omitted;
 }
 
-BOOL inject(HANDLE child) {
+BOOL inject(HANDLE child, HANDLE thread) {
     alignas(SID) BYTE actualSid[SECURITY_MAX_SID_SIZE] = {};
     USHORT processMachine = 0, nativeMachine = 0;
     TokenProof proof;
@@ -794,7 +828,10 @@ BOOL inject(HANDLE child) {
     const WCHAR* imageLeaf = wcsrchr(image.path, L'\\');
     const bool observeHeap = machine == IMAGE_FILE_MACHINE_AMD64 && imageLeaf &&
         !_wcsicmp(imageLeaf + 1, L"grep.exe");
-    if (observeHeap) logMsysHeapReservation(child, "before-import");
+    if (observeHeap) {
+        logMsysHeapReservation(child, "before-import");
+        logMsysPrimaryStack(child, thread);
+    }
     BOOL ok = DetourUpdateProcessWithDll(child, dlls, 1);
     error = ok ? ERROR_SUCCESS : GetLastError();
     if (!ok && !error) error = ERROR_DLL_INIT_FAILED;
@@ -1184,7 +1221,7 @@ extern "C" BOOL NemoClawInitializeProcessContext(HMODULE self) {
 }
 
 extern "C" BOOL NemoClawCompleteSuspendedChild(PROCESS_INFORMATION* child, DWORD callerFlags) {
-    if (!inject(child->hProcess)) return failedChild(child, GetLastError());
+    if (!inject(child->hProcess, child->hThread)) return failedChild(child, GetLastError());
     if (!(callerFlags & CREATE_SUSPENDED) && ResumeThread(child->hThread) == static_cast<DWORD>(-1))
         return failedChild(child, GetLastError());
     return TRUE;

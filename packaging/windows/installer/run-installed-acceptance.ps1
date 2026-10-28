@@ -175,6 +175,23 @@ function Invoke-OwnedSetup([string]$Action, [string]$Log) {
       catch { if ($null -eq $setupFailure) { $setupFailure = $_ } else { Write-Warning 'The setup failure is preserved; its process handle also failed to close.' } }
     }
     $timings.stages[$Action] = @{ elapsedMilliseconds = $clock.ElapsedMilliseconds; exitCode = $code; processId = $startedPid; transactionStopped = -not $script:SetupTransactionUnconfirmed }
+    if ($Action -cin @('-install', '-repair') -and -not $script:SetupTransactionUnconfirmed) {
+      $measurement = @{ diagnosticOnly = $true; available = $false; milliseconds = @{} }
+      try {
+        $retained = Get-ItemProperty -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClaw\InstallDiagnostics' -ErrorAction Stop
+        foreach ($name in @('RuntimeImageHashMilliseconds','RuntimeImageAttachMilliseconds','RuntimeImageMountMilliseconds','RuntimeNodeHashMilliseconds')) {
+          $property = $retained.PSObject.Properties[$name]
+          if ($null -ne $property) {
+            [ulong]$value = 0
+            if ($property.Value -isnot [string] -or $property.Value -cnotmatch '^[0-9]{1,20}$' -or
+                -not [ulong]::TryParse($property.Value, [ref]$value)) { throw 'Invalid native phase timing.' }
+            $measurement.milliseconds[$name] = $value
+          }
+        }
+        $measurement.available = $measurement.milliseconds.Count -gt 0
+      } catch { $measurement.milliseconds = @{} }
+      $timings.stages[$Action]['nativePhaseTimings'] = $measurement
+    }
   }
   if ($null -ne $setupFailure) { throw $setupFailure }
   if ($code -ne 0) { throw "Finished preview $Action failed with status $code." }
