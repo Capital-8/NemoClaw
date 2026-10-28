@@ -592,7 +592,10 @@ While the original sandbox remains intact, correct the reported failure:
 
 - If the error reports a source-access failure, repair source access.
 - If the error reports insufficient space, free backup-disk space.
-- If the error reports `archive entry contains a line break`, rename the affected file, directory, or link, or recreate the link with a target that has no line break.
+- If the error reports `archive entry contains a line break`, rename the affected file or directory.
+  Recreate an affected symbolic link with a target that has no line break.
+  Replace an affected hard link with an independent regular file, or remove it if you no longer need it.
+  Native restore rejects hard links even without line breaks.
   The message shows the JSON-encoded first 240 characters of the affected path or link target.
 - If the error reports `archive header inspection timed out` or `archive listing timed out`, reduce the native-home size, entry count, or host disk-read load.
   NemoClaw allows each archive inspection up to 60 seconds, and the inspection must finish before the backup deadline.
