@@ -1432,6 +1432,8 @@ test("private and DNS-rebound endpoint admission cannot acquire state or change 
     "https://169.254.169.254/v1",
     "https://10.1.2.3/v1",
     "https://[::1]/v1",
+    "https://[::ffff:127.0.0.1]/v1",
+    "https://[::ffff:7f00:1]/v1",
     "https://public.example/v1",
   ]) {
     let protectedCalls = 0;

@@ -334,6 +334,7 @@ const mutations: Mutation[] = [
   },
   ...[
     "tools/windows-installer/**",
+    "src/lib/onboard/runtime-provider/**",
     "test/automation/pull-requests/windows-native-installer-workflow.test.ts",
   ].map((path) => ({
     name: "missing Windows workflow trigger for " + path,
