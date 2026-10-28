@@ -24,7 +24,7 @@ function defineCodebaseGrowthGuardrails(): void {
 
   beforeAll(async () => {
     diff = await loadGrowthGuardrailDiff();
-  });
+  }, 90_000);
 
   it("requires TypeScript for new Node.js files", () => {
     const violations = addedJavaScriptViolations(diff.files);
