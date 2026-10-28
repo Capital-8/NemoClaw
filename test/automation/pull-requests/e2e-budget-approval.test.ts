@@ -155,12 +155,13 @@ describe("Maintainer approval through the production diff loader", () => {
     const digest = e2eBudgetChangeDigest(source, head)!;
     const comments = [record("approve", digest)];
     const api = "gh api --hostname github.com --method GET repos/NVIDIA/NemoClaw";
+    const merged = "c".repeat(40);
     const responses = new Map<string, () => string>([
       ["git rev-parse --is-shallow-repository", () => "false"],
       [`git fetch --no-tags --depth=1024 origin refs/pull/${PR}/head`, () => ""],
       ["git rev-parse FETCH_HEAD", () => HEAD],
-      [`git merge-tree --write-tree --no-messages ${BASE} ${HEAD}`, () => HEAD],
-      [`git diff --name-status -z -M ${BASE} ${HEAD} --`, () => `M\0${BUDGET}\0`],
+      [`git merge-tree --write-tree --no-messages ${BASE} ${HEAD}`, () => merged],
+      [`git diff --name-status -z -M ${BASE} ${merged} --`, () => `M\0${BUDGET}\0`],
       [`${api}/issues/${PR}/comments?per_page=100&page=1`, () => JSON.stringify(comments)],
       [
         `${api}/collaborators/maintainer/permission`,
@@ -175,7 +176,7 @@ describe("Maintainer approval through the production diff loader", () => {
     });
     const contents = new Map([
       [`git show ${BASE}:${BUDGET}`, source],
-      [`git show ${HEAD}:${BUDGET}`, head],
+      [`git show ${merged}:${BUDGET}`, head],
     ]);
     processReads.spawnSync.mockImplementation((command, args) => {
       const content = contents.get(`${command} ${args.join(" ")}`);

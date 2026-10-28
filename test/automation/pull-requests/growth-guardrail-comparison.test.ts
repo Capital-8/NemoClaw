@@ -177,7 +177,7 @@ describe("growth checks against the proposed merge", () => {
     const candidate = repository.commit("candidate conflict");
     repository.cloneBase();
 
-    expect(() => load(base, candidate)).toThrow();
+    expect(() => load(base, candidate)).toThrow(/PR #1.*merge tree construction/);
     expect(repository.git(repository.checkout, "rev-parse", "HEAD")).toBe(base);
     expect(repository.git(repository.checkout, "status", "--porcelain=v1")).toBe("");
   });
@@ -191,7 +191,7 @@ describe("growth checks against the proposed merge", () => {
     repository.git(repository.origin, "branch", "-f", "candidate", candidate);
     repository.cloneBase();
 
-    expect(() => load(base, candidate)).toThrow();
+    expect(() => load(base, candidate)).toThrow(/PR #1.*merge tree construction/);
   });
 
   it.each([
