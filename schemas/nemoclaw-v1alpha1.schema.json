@@ -1699,11 +1699,11 @@
             },
             {
               "maximum": 64,
-              "minimum": 28
+              "minimum": 6
             }
           ],
           "default": 32,
-          "description": "Host memory reserve in GiB excluded from the serving budget.",
+          "description": "Host memory reserve in GiB excluded from the serving budget. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile or a recipe.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -1904,11 +1904,11 @@
             },
             {
               "maximum": 64,
-              "minimum": 28
+              "minimum": 6
             }
           ],
           "default": 32,
-          "description": "Host memory reserve excluded from serving.",
+          "description": "Host memory reserve excluded from serving. At least 6 with a dedicated-memory profile or dedicated hardware, and at least 28 with a unified-memory profile.",
           "format": "int64",
           "type": "integer",
           "x-nemoclaw-default-rule": "Omitted or zero selects the default."
@@ -2865,6 +2865,47 @@
                   }
                 ]
               }
+            },
+            {
+              "if": {
+                "properties": {
+                  "hardware": {
+                    "properties": {
+                      "profile": {
+                        "enum": [
+                          "dgx-spark",
+                          "rtx-spark"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "profile"
+                    ]
+                  }
+                },
+                "required": [
+                  "hardware"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "memory": {
+                    "properties": {
+                      "hostReserveGiB": {
+                        "anyOf": [
+                          {
+                            "const": 0
+                          },
+                          {
+                            "maximum": 64,
+                            "minimum": 28
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
             }
           ],
           "dependentRequired": {
@@ -3155,6 +3196,56 @@
                     }
                   }
                 ]
+              }
+            },
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "recipe"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "hardware": {
+                        "properties": {
+                          "profile": {
+                            "enum": [
+                              "dgx-spark",
+                              "rtx-spark"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "profile"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "hardware"
+                    ]
+                  }
+                ]
+              },
+              "then": {
+                "properties": {
+                  "memory": {
+                    "properties": {
+                      "hostReserveGiB": {
+                        "anyOf": [
+                          {
+                            "const": 0
+                          },
+                          {
+                            "maximum": 64,
+                            "minimum": 28
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
               }
             }
           ],
