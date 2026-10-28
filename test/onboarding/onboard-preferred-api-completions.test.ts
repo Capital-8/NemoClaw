@@ -93,8 +93,14 @@ async function run(preferredApi) {
         cwd: repoRoot,
         encoding: "utf-8",
         env: { ...childEnv, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+        timeout: 60_000,
+        killSignal: "SIGKILL",
       });
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(
+        result.status,
+        0,
+        `${String(result.error ?? "")}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+      );
       assert.deepEqual(JSON.parse(result.stdout.trim()), [
         {
           preferredApi: "completions",

@@ -8,7 +8,11 @@ const CHAT_COMPLETIONS_PREFERENCES = new Set([
   "completions",
 ]);
 
-/** Whether a NEMOCLAW_PREFERRED_API value selects the Chat Completions API. */
+/**
+ * Whether a NEMOCLAW_PREFERRED_API value selects the Chat Completions API. This lets
+ * backends that expose `/v1/responses` without full streaming-event support (for
+ * example SGLang) skip the Responses API probe during onboarding.
+ */
 export function isChatCompletionsPreference(preferredApi?: string): boolean {
   return CHAT_COMPLETIONS_PREFERENCES.has((preferredApi || "").trim().toLowerCase());
 }

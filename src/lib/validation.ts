@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isChatCompletionsPreference } from "./domain/inference/preferred-api";
-
 /**
  * Pure validation and failure-classification functions.
  *
@@ -295,14 +293,4 @@ export function shouldSkipResponsesProbe(provider: string): boolean {
     provider === "openrouter-api" ||
     provider === "llama-cpp-local"
   );
-}
-
-/**
- * Whether the caller has explicitly requested the chat completions API path.
- * Pass the value of `NEMOCLAW_PREFERRED_API` (or any other source). This lets
- * users with backends that expose `/v1/responses` but lack full streaming-event
- * support (e.g. SGLang) skip the Responses API probe during onboarding.
- */
-export function shouldForceCompletionsApi(preferredApi?: string): boolean {
-  return isChatCompletionsPreference(preferredApi);
 }

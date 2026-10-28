@@ -353,6 +353,11 @@ function requireCustomAnthropicRuntimeApi(
   throw new Error(`Unsupported custom Anthropic runtime API: ${String(value)}`);
 }
 
+/** Map an explicit NEMOCLAW_PREFERRED_API value to a custom route's API family (#13884). */
+export function customRoutePreferredApi(explicitApi: string): string | null {
+  return isChatCompletionsPreference(explicitApi) ? "openai-completions" : explicitApi || null;
+}
+
 export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
   validateSelectedRemoteModel: (
     args: ValidateSelectedRemoteModelArgs,
