@@ -86,6 +86,7 @@ import {
   portableSandboxImageBuilder as buildImageFixture,
   preservePortableE2eCrunForTarget,
   publishPortableSandboxImage as publishImage,
+  runPortableE2eWithCleanup,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbe } from "../fixtures/shell-probe.ts";
@@ -1002,7 +1003,7 @@ async function main(
     NEMOCLAW_SANDBOX_PREBUILD: "1",
   });
 
-  try {
+  await runPortableE2eWithCleanup(async () => {
     progress.phase("select the Podman-reported runtime socket");
     const installerDockerHost = selectInstallerPodmanRuntime(process.cwd());
     assert.equal(installerDockerHost, `unix://${runtimeDir}/podman/podman.sock`);
@@ -1456,8 +1457,8 @@ async function main(
     );
 
     console.log("Portable profile rootless environment E2E passed.");
-  } finally {
-    try {
+  }, [
+    async () => {
       await cleanupPortablePodmanResources({
         artifacts,
         ...podmanGroup.recoveryState(),
@@ -1469,18 +1470,15 @@ async function main(
         hermesImageRef,
         env: process.env,
       });
-    } finally {
-      try {
-        cleanupPortableHostGatewayAlias(
-          PORTABLE_HOST_GATEWAY_IP,
-          gatewayAliasPresentBefore,
-          process.env,
-        );
-      } finally {
-        await cleanupPortableProfileRootlessFixture(runtimeDir, root);
-      }
-    }
-  }
+    },
+    () =>
+      cleanupPortableHostGatewayAlias(
+        PORTABLE_HOST_GATEWAY_IP,
+        gatewayAliasPresentBefore,
+        process.env,
+      ),
+    () => cleanupPortableProfileRootlessFixture(runtimeDir, root),
+  ]);
 }
 test(
   "portable profile rootless environment completes authenticated routes and enforces the configured Hermes dashboard Host",

@@ -266,6 +266,41 @@ export function preservePortableE2eCrunForTarget(
   );
 }
 
+/** Run every owned cleanup step and retain the lifecycle failure when cleanup also fails. */
+export async function runPortableE2eWithCleanup(
+  work: () => Promise<void>,
+  cleanup: readonly (() => Promise<void> | void)[],
+): Promise<void> {
+  let primaryFailure: unknown;
+  let workFailed = false;
+  try {
+    await work();
+  } catch (error) {
+    primaryFailure = error;
+    workFailed = true;
+  }
+  const cleanupFailures: unknown[] = [];
+  for (const step of cleanup) {
+    try {
+      await step();
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+  }
+  if (workFailed && cleanupFailures.length) {
+    throw new AggregateError(
+      [primaryFailure, ...cleanupFailures],
+      "Portable E2E lifecycle and cleanup failed",
+      { cause: primaryFailure },
+    );
+  }
+  if (workFailed) throw primaryFailure;
+  if (cleanupFailures.length === 1) throw cleanupFailures[0];
+  if (cleanupFailures.length > 1) {
+    throw new AggregateError(cleanupFailures, "Portable E2E cleanup failed");
+  }
+}
+
 async function runPodmanBuild(
   args: readonly string[],
   env: NodeJS.ProcessEnv,

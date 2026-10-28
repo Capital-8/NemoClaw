@@ -27,6 +27,7 @@ import {
   probePortableSandboxOciAfterBuildFailure,
   probePodmanStore,
   publishPortableSandboxImage,
+  runPortableE2eWithCleanup,
   verifyPortablePodmanStoreAuthority,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -105,6 +106,40 @@ it("preserves the trusted Portable crun after host preparation regenerates Podma
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+it("preserves the lifecycle failure and runs every cleanup after a cleanup failure", async () => {
+  const primary = new Error("sandbox build failed");
+  const cleanup = new Error("Podman cleanup failed");
+  const steps: string[] = [];
+  const reported = await runPortableE2eWithCleanup(async () => {
+    throw primary;
+  }, [
+    async () => {
+      steps.push("podman");
+      throw cleanup;
+    },
+    () => {
+      steps.push("gateway alias");
+    },
+    () => {
+      steps.push("fixture");
+    },
+  ]).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(reported).toBeInstanceOf(AggregateError);
+  expect((reported as AggregateError).errors).toEqual([primary, cleanup]);
+  expect((reported as Error).cause).toBe(primary);
+  expect(steps).toEqual(["podman", "gateway alias", "fixture"]);
+});
+
+it("reports a cleanup failure when the Portable lifecycle succeeds", async () => {
+  const cleanup = new Error("Podman cleanup failed");
+  await expect(
+    runPortableE2eWithCleanup(async () => undefined, [async () => Promise.reject(cleanup)]),
+  ).rejects.toBe(cleanup);
 });
 
 it("aligns only a trusted selected storage config and records fixed equality evidence", async () => {
