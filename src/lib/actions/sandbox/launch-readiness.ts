@@ -199,8 +199,11 @@ export type LaunchReadinessMutationGateResult<T> =
   | {
       kind: "entered";
       value: T;
-      /** Present when the caller opted into a receipt-store-only unsafe verdict. */
-      toleratedUnsafe?: LaunchReadinessUnsafeAuthorityEvidence;
+      /**
+       * Present when the caller opted into a receipt-store-only unsafe verdict.
+       * `evidence` is absent when the store could not produce a bounded snapshot.
+       */
+      toleratedReceiptStoreUnsafe?: { evidence?: LaunchReadinessUnsafeAuthorityEvidence };
     }
   | { kind: "changed" }
   | {
@@ -1475,7 +1478,9 @@ export async function withLaunchReadinessMutationGate<T>(
           return {
             kind: "entered",
             value: await operation(),
-            ...(authority.evidence ? { toleratedUnsafe: authority.evidence } : {}),
+            toleratedReceiptStoreUnsafe: {
+              ...(authority.evidence ? { evidence: authority.evidence } : {}),
+            },
           };
         }
         return { kind: "unsafe", scope: authority.scope, evidence: authority.evidence };

@@ -3140,14 +3140,15 @@ async function prepareConnectSandboxWithinLifecycleFence(
         );
         process.exit(1);
       }
-      if (gated.toleratedUnsafe) {
+      if (gated.toleratedReceiptStoreUnsafe) {
         // The runtime authority epoch was durably rotated; only the persistent
         // receipt store is unsafe, so fresh evidence cannot be republished.
         // This caller does not require published evidence, so the complete
         // preflight and recovery continue and the run still reports success
-        // (#10638). Keep the bounded repair guidance visible.
+        // (#10638). Always report it, and keep the bounded repair guidance
+        // when the store could produce one.
         console.log(
-          `  Note: launch-readiness evidence cannot be republished because its stored receipt is unsafe.${formatLaunchReadinessUnsafeAuthorityEvidence(gated.toleratedUnsafe)}`,
+          `  Note: launch-readiness evidence cannot be republished because its stored receipt is unsafe.${formatLaunchReadinessUnsafeAuthorityEvidence(gated.toleratedReceiptStoreUnsafe.evidence)}`,
         );
       }
       publication = gated.value;
