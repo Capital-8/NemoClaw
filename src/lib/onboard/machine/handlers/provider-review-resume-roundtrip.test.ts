@@ -156,5 +156,6 @@ describe("review interruption resume round trip (#13802)", () => {
       ok: false,
       detail: "native local provider attachment is missing or invalid",
     });
-  });
+    // Loading the full onboard module takes several seconds on a busy runner.
+  }, 30_000);
 });

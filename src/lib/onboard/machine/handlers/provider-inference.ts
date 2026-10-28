@@ -1111,6 +1111,7 @@ function isEndpointlessHostLocalReviewCheckpoint(
 
 // A non-interactive selection would fall back to environment input or the
 // default provider and silently replace the interrupted local selection.
+// Station Express selection is bound to its saved intent instead.
 function refuseNonInteractiveEndpointlessReviewResume(
   deps: Pick<
     ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
@@ -1123,6 +1124,7 @@ function refuseNonInteractiveEndpointlessReviewResume(
   if (
     !effectiveResume ||
     !deps.isNonInteractive() ||
+    retriesStationExpressSelection(session) ||
     !isEndpointlessHostLocalReviewCheckpoint(session, sandboxName)
   )
     return;
@@ -1154,6 +1156,16 @@ function hasIncompleteCustomRoute(session: Session | null): boolean {
   return gatewayRouteIdentityConflictReasons(route, route).includes("incomplete-custom-route");
 }
 
+// An interrupted Station review has a provider/model but no validated model
+// identity yet. Retry selection so its checkpoint can bind that identity.
+function retriesStationExpressSelection(session: Session | null): boolean {
+  return Boolean(
+    session?.stationExpressIntent &&
+    session.stationExpressIntent.kind !== "spark" &&
+    session.steps.provider_selection.status !== "complete",
+  );
+}
+
 function canResumeProviderSelection(
   forceProviderSelection: boolean,
   effectiveResume: boolean,
@@ -1164,15 +1176,7 @@ function canResumeProviderSelection(
   model: string | null,
   interactive: boolean,
 ): boolean {
-  // An interrupted Station review has a provider/model but no validated model
-  // identity yet. Retry selection so its checkpoint can bind that identity.
-  if (
-    session?.stationExpressIntent &&
-    session.stationExpressIntent.kind !== "spark" &&
-    session.steps.provider_selection.status !== "complete"
-  ) {
-    return false;
-  }
+  if (retriesStationExpressSelection(session)) return false;
   // Review checkpoints from earlier releases kept only provider and model, so
   // a custom route cannot pass the gateway check. Ask again interactively;
   // non-interactive resume keeps failing closed at that check.
