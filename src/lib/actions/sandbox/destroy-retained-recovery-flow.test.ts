@@ -320,6 +320,49 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
+    "removes a retained recovery set created without workspace labels after OpenShell confirms the sandbox absent",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord();
+      const sandboxContainerId = "a".repeat(64);
+      const bootstrapContainerId = "b".repeat(64);
+      const identityRows = [sandboxContainerId, bootstrapContainerId]
+        .map((id) => `${id}\topenshell\t\tsb-alpha`)
+        .join("\n");
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerNameLabeledIds: [sandboxContainerId, bootstrapContainerId],
+        dockerOrphanIds: [bootstrapContainerId],
+        dockerRunResult: { status: 0, stdout: identityRows },
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        },
+        retainedRecoveryRecords: [recovery],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
+        ),
+      ).toBe(false);
+      expect(harness.dockerRunSpy).toHaveBeenCalledWith(
+        ["rm", "-f", sandboxContainerId],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.dockerRunSpy).toHaveBeenCalledWith(
+        ["rm", "-f", bootstrapContainerId],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
     "preserves recovery when a foreign name-labeled container appears after continuity checks (#10547)",
     { timeout: 30_000 },
     async () => {

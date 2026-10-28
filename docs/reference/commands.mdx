@@ -2331,11 +2331,20 @@ If the record has no durable identity fingerprint, `destroy` refuses deletion an
 For a retained recovery record without a durable identity fingerprint, only the no-container state applies.
 If the query shows a container that does not match the retained sandbox identity, keep the containers and the recovery record.
 Then follow [Inspect retained sandbox recovery](#inspect-retained-sandbox-recovery).
-To compare a container with the record, compute the SHA-256 digest of its `openshell.ai/sandbox-id` value:
+To compare a container with the record, compute the SHA-256 digest of its `openshell.ai/sandbox-id` value.
+On Linux, run this command when the host supplies `sha256sum`:
+
+```bash
+printf '%s' '<sandbox-id>' | sha256sum
+```
+
+On macOS, run this command:
 
 ```bash
 printf '%s' '<sandbox-id>' | shasum -a 256
 ```
+
+If a Linux host does not supply `sha256sum`, run the `shasum -a 256` command instead.
 
 The digest must equal the value after `Durable sandbox identity fingerprint:` that onboarding printed when it preserved the sandbox.
 An empty workspace column is acceptable.
