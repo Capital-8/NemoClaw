@@ -470,6 +470,10 @@ describe("shouldForceCompletionsApi", () => {
     expect(shouldForceCompletionsApi("chat-completions")).toBe(true);
   });
 
+  it("returns true for the documented completions value (#13884)", () => {
+    expect(shouldForceCompletionsApi("completions")).toBe(true);
+  });
+
   it("is case-insensitive", () => {
     expect(shouldForceCompletionsApi("OpenAI-Completions")).toBe(true);
   });

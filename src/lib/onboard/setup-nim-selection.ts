@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isChatCompletionsPreference } from "../domain/inference/preferred-api";
 import type { ModelSelectionProvenance } from "../domain/telemetry/provenance";
 import type { NimStartReceipt } from "../inference/nim";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
@@ -412,11 +413,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
             { credentialEnv: selectedCredentialEnv },
           );
           const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
-          if (
-            explicitApi &&
-            explicitApi !== "openai-completions" &&
-            explicitApi !== "chat-completions"
-          ) {
+          if (explicitApi && !isChatCompletionsPreference(explicitApi)) {
             state.preferredInferenceApi = validation.api;
           } else {
             if (validation.api !== "openai-completions") {

@@ -1844,7 +1844,7 @@ async function handleRemoteProviderSelection(
     const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
     state.preferredInferenceApi =
       selected.key === "custom"
-        ? explicitApi === "chat-completions"
+        ? validation.shouldForceCompletionsApi(explicitApi)
           ? "openai-completions"
           : explicitApi || null
         : null;
