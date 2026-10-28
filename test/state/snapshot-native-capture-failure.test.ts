@@ -60,6 +60,42 @@ beforeEach(() => {
 });
 
 describe("complete native-home capture failures", () => {
+  it("rejects a partial BSD staging copy before publishing a backup", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-copy-failure-"));
+    const oldPath = process.env.PATH;
+    const oldRealTar = process.env.NEMOCLAW_TEST_REAL_TAR;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const nativeRoot = path.join(fixture, "native-home");
+      fs.mkdirSync(binDir);
+      fs.mkdirSync(nativeRoot);
+      fs.writeFileSync(path.join(nativeRoot, "retained.txt"), "must survive");
+      const realTar = fs.realpathSync("/usr/bin/tar");
+      fs.writeFileSync(
+        path.join(binDir, "tar"),
+        '#!/bin/sh\n[ "$1" != "--hard-dereference" ] || exit 1\nexec "$NEMOCLAW_TEST_REAL_TAR" "$@"\n',
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(binDir, "cp"),
+        '#!/bin/sh\nprintf partial > "$3/partial.txt"\nexit 5\n',
+        { mode: 0o755 },
+      );
+      process.env.NEMOCLAW_TEST_REAL_TAR = realTar;
+      process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+
+      const backup = backupPreparedRoot(nativeRoot);
+
+      expect(backup).toMatchObject({ success: false, failedDirs: ["."] });
+      expect(backup.error).toContain("Native home/workspace capture failed");
+      expect(publishedBackups()).toEqual([]);
+    } finally {
+      restoreEnv("PATH", oldPath);
+      restoreEnv("NEMOCLAW_TEST_REAL_TAR", oldRealTar);
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [
       "a permission-denied reason for a denied tar read",
