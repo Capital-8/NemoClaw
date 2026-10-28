@@ -597,7 +597,7 @@ While the original sandbox remains intact, correct the reported failure:
   Native backup turns contained source hard links into separate regular files before restore.
   The message shows the JSON-encoded first 240 characters of the affected path or link target.
 - If the error reports `archive header inspection timed out` or `archive listing timed out`, reduce the native-home size, entry count, or host disk-read load.
-  NemoClaw allows each archive inspection up to 60 seconds, and the inspection must finish before the backup deadline.
+  A tar listing is limited to 60 seconds. During native-state backup, header inspection must also finish before the backup deadline.
 - If any tar listing error reports `exceeded 268435456 bytes`, reduce the native-home entry count or path lengths.
   NemoClaw limits each archive listing to 256 MiB.
 - If the error reports `archive header cannot be inspected for line breaks`, the archive has a malformed or truncated tar header or an extended-header, long-name, or long-link block larger than 1 MiB.

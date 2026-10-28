@@ -286,10 +286,15 @@ it("publishes a valid provider-owned stopped archive through the backup authorit
     const source = path.join(fixture, "source");
     fs.mkdirSync(path.join(source, ".openclaw"), { recursive: true });
     fs.writeFileSync(path.join(source, ".openclaw", "state.txt"), "provider-owned-state");
+    fs.linkSync(
+      path.join(source, ".openclaw", "state.txt"),
+      path.join(source, ".openclaw", "state-link.txt"),
+    );
     const archive = spawnSync("tar", ["-C", source, "-cf", "-", "."], {
       env: { ...process.env, COPYFILE_DISABLE: "1" },
     });
     expect(archive.status).toBe(0);
+    expect(sandboxState.rejectHardLinks(archive.stdout)).not.toEqual([]);
     writeSnapshotRegistry(testHome, "alpha");
     const { overrides } = stoppedProviderCapture(archive.stdout);
     prepared = await stoppedBackup.prepareStoppedAgentState(
@@ -310,6 +315,22 @@ it("publishes a valid provider-owned stopped archive through the backup authorit
     });
     expect(listing.status).toBe(0);
     expect(listing.stdout).toContain("./.openclaw/state.txt");
+    expect(listing.stdout).toContain("./.openclaw/state-link.txt");
+    expect(
+      sandboxState.rejectHardLinks({ filePath: path.join(backupPath, "native-home.tar") }),
+    ).toEqual([]);
+    const content = spawnSync(
+      "tar",
+      [
+        "-xOf",
+        path.join(backupPath, "native-home.tar"),
+        "./.openclaw/state.txt",
+        "./.openclaw/state-link.txt",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(content.status).toBe(0);
+    expect(content.stdout).toBe("provider-owned-state".repeat(2));
   } finally {
     prepared?.dispose();
     fs.rmSync(fixture, { recursive: true, force: true });
