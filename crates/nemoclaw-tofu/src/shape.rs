@@ -434,9 +434,28 @@ fn convert(shape: &Shape, value: &Value, outward: bool) -> Value {
                     if !outward && omitted {
                         return None;
                     }
+                    // OpenTofu's JSON syntax has no spelling for an empty map
+                    // block; it reads an absent one as empty.
+                    if outward
+                        && matches!(field.shape, Shape::ObjectMap(_))
+                        && value.as_object().is_some_and(Map::is_empty)
+                    {
+                        return None;
+                    }
                     Some((name, convert(&field.shape, value, outward)))
                 })
                 .collect();
+            if !outward {
+                // Configuration omits an empty map block, which OpenTofu
+                // reads back as empty; a required one keeps that value.
+                for field in fields.values() {
+                    if field.required && matches!(field.shape, Shape::ObjectMap(_)) {
+                        converted
+                            .entry(field.json.clone())
+                            .or_insert_with(|| Value::Object(Map::new()));
+                    }
+                }
+            }
             if fields
                 .get(EXTENSIONS)
                 .is_some_and(|field| field.json == OPEN)

@@ -519,6 +519,24 @@ async fn network_grants_apply_export_and_reapply_unchanged() {
     lifecycle.destroy();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn explicit_policy_without_network_rules_applies_exports_and_reapplies_unchanged() {
+    // An empty network_policies map grants no general egress, and survives
+    // export and re-apply.
+    let mut document = serde_json::to_value(
+        Document::parse(include_str!("../../../examples/explicit-policy.yaml").as_bytes()).unwrap(),
+    )
+    .unwrap();
+    *document
+        .pointer_mut("/spec/sandboxes/assistant/network/policy/explicit/network_policies")
+        .unwrap() = serde_json::json!({});
+    let lifecycle = Lifecycle::start(&document.to_string()).await;
+    let effects = lifecycle.apply().await;
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
 /// Progress events that the deployment's callback records.
 type Recorded<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
 
