@@ -5,8 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import { entry } from "../../../../test/helpers/native-launch-readiness.ts";
 import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
+import { LaunchReadinessFenceError } from "../../state/launch-readiness-lease";
 import type { SandboxEntry } from "../../state/registry";
-import { type LaunchReadinessDeps, withLaunchReadinessMutationGate } from "./launch-readiness";
+import {
+  inspectLaunchReadiness,
+  type LaunchReadinessDeps,
+  publicationFromDecision,
+  withLaunchReadinessMutationGate,
+} from "./launch-readiness";
 
 // The reported #10638 failure needs two facts kept apart: the persistent
 // receipt store is unsafe, but the runtime authority epoch was still durably
@@ -118,6 +124,55 @@ describe("launch readiness mutation gate unsafe verdict scope", () => {
       toleratedReceiptStoreUnsafe: {},
     });
     expect(mutation).toHaveBeenCalledOnce();
+  });
+});
+
+describe("launch readiness rotated-epoch handoff", () => {
+  // A fence that rotated the runtime authority and then failed to store its
+  // receipt must still pin that epoch. Otherwise the optional-publication gate
+  // receives null and accepts a producer that lost authority to a later one.
+  it("carries the rotated epoch from the fence through to the mutation gate (#10638)", async () => {
+    const rotatedEpochId = "b".repeat(64);
+    const laterEpochId = "c".repeat(64);
+    const deps: LaunchReadinessDeps = {
+      getSandbox: () => entry(),
+      withSandboxLock: async <T>(_name: string, operation: () => Promise<T> | T) => operation(),
+      withGatewayLock: async <T>(_name: string, operation: () => Promise<T> | T) => operation(),
+      readLease: () => ({ kind: "missing" }),
+      fenceLease: () => {
+        throw new LaunchReadinessFenceError(false, true, false, rotatedEpochId);
+      },
+      checkMutationAuthority: () => "changed",
+    };
+
+    const decision = await inspectLaunchReadiness(SANDBOX, deps);
+    expect(decision).toMatchObject({
+      kind: "fallback",
+      fence: null,
+      fenceFailed: true,
+      recoveryBlocked: false,
+      rotatedEpochId,
+    });
+    expect(publicationFromDecision(SANDBOX, decision)).toMatchObject({
+      epochId: rotatedEpochId,
+    });
+
+    // Another producer rotated the authority before this one reached the gate.
+    const checkMutationAuthority = vi.fn(() => "changed" as const);
+    const mutation = vi.fn();
+    await expect(
+      withLaunchReadinessMutationGate(
+        {
+          sandboxName: SANDBOX,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+          epochId: laterEpochId,
+        },
+        mutation,
+        { ...deps, checkMutationAuthority, tolerateReceiptStoreUnsafe: true },
+      ),
+    ).resolves.toEqual({ kind: "changed" });
+    expect(mutation).not.toHaveBeenCalled();
   });
 });
 
