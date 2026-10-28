@@ -107,7 +107,33 @@ describe("native NVIDIA recreate route reservation (#13810)", () => {
       "reserve the backed-up sandbox inference route",
     );
     expect(reserve).toHaveBeenCalledOnce();
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeNvidiaProviderAttachment: RECEIPT }),
+    );
     expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("carries a newly prepared NVIDIA attachment across the backup boundary", async () => {
+    const { nativeNvidiaProviderAttachment: _oldAttachment, ...sourceWithoutAttachment } =
+      PUBLISHED_SOURCE;
+    const { run, updateSandbox } = harness({
+      ...sourceWithoutAttachment,
+      provider: "openai",
+    });
+
+    const result = await run();
+
+    expect(result).toEqual({ ok: true, deferredInferenceRoute: expect.any(Function) });
+    expect(updateSandbox).not.toHaveBeenCalled();
+    const reserve = vi.fn();
+    await (
+      result as {
+        deferredInferenceRoute: (reserve: (route?: unknown) => void) => Promise<void>;
+      }
+    ).deferredInferenceRoute(reserve);
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({ nativeNvidiaProviderAttachment: RECEIPT }),
+    );
   });
 
   it("still reserves directly when the target row is already a pending reservation", async () => {
