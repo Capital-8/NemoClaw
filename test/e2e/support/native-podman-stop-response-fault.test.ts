@@ -16,9 +16,11 @@ import {
 
 import {
   captureNativeGatewayLogCursor,
+  captureNativeGatewayJournalCursor,
   createNativePodmanStopResponseFault,
   parseNativePodmanStoppedInternalTrace,
   readNativeGatewayLogWindow,
+  readNativeGatewayJournalWindow,
   NATIVE_PODMAN_STOP_FAULT_CANARY,
 } from "../fixtures/native-podman-stop-response-fault.ts";
 
@@ -450,6 +452,68 @@ async function createGatewayLog(contents = "previous gateway output\n") {
 }
 
 describe.skipIf(process.platform === "win32")("native gateway stop evidence", () => {
+  it("reads only the pinned managed user service journal after the pre-stop cursor", () => {
+    let invocationId = "a".repeat(32);
+    const run = vi.fn((command: string, args: string[]) => ({
+      status: 0,
+      stdout: command.endsWith("systemctl")
+        ? `${invocationId}\n`
+        : args.includes("--show-cursor")
+          ? "gateway ready\n-- cursor: s=abc;i=1\n"
+          : [TRACE_DRIVER, TRACE_STOPPED, TRACE_RESPONSE_THIRTEEN].join("\n"),
+    }));
+    const cursor = captureNativeGatewayJournalCursor(run);
+    const window = readNativeGatewayJournalWindow(cursor, run);
+    expect(cursor).toEqual({ cursor: "s=abc;i=1", invocationId });
+    expect(run).toHaveBeenCalledWith(
+      "/usr/bin/journalctl",
+      expect.arrayContaining([
+        "--unit=nemoclaw-openshell-gateway.service",
+        "--show-cursor",
+        "--lines=1",
+        "--output=cat",
+      ]),
+      expect.objectContaining({ maxBuffer: 262_144, timeout: 10_000 }),
+    );
+    expect(run).toHaveBeenCalledWith(
+      "/usr/bin/journalctl",
+      expect.arrayContaining([
+        "--unit=nemoclaw-openshell-gateway.service",
+        "--after-cursor=s=abc;i=1",
+        "--output=cat",
+      ]),
+      expect.objectContaining({ maxBuffer: 262_144, timeout: 10_000 }),
+    );
+    expect(parseNativePodmanStoppedInternalTrace(window.text, TRACE_OWNER)).toMatchObject({
+      requestId: TRACE_REQUEST,
+      grpcStatus: 13,
+      stoppedBeforeResponse: true,
+    });
+    invocationId = "b".repeat(32);
+    expect(() => readNativeGatewayJournalWindow(cursor, run)).toThrow(/identity changed/u);
+  });
+
+  it("fails closed when the managed journal cursor or bounded output is unavailable", () => {
+    const invocationId = "a".repeat(32);
+    const missingCursor = vi.fn((command: string) => ({
+      status: 0,
+      stdout: command.endsWith("systemctl") ? `${invocationId}\n` : "No entries\n",
+    }));
+    expect(() => captureNativeGatewayJournalCursor(missingCursor)).toThrow(
+      /cursor is unavailable/u,
+    );
+    const oversized = vi.fn((command: string, args: string[]) => ({
+      status: 0,
+      stdout: command.endsWith("systemctl")
+        ? `${invocationId}\n`
+        : args.includes("--show-cursor")
+          ? "-- cursor: s=abc;i=1\n"
+          : "x".repeat(262_145),
+    }));
+    const cursor = captureNativeGatewayJournalCursor(oversized);
+    expect(() => readNativeGatewayJournalWindow(cursor, oversized)).toThrow(/exceeds its bound/u);
+  });
+
   it("binds the owned native stop, watcher transition, and same-request status 13", () => {
     const trace = parseNativePodmanStoppedInternalTrace(
       [TRACE_DRIVER, TRACE_STOPPED, TRACE_RESPONSE_THIRTEEN].join("\n"),

@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import os from "node:os";
-
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { OPENSHELL_HEAVY_TIMEOUT_MS } from "../../../src/lib/adapters/openshell/timeouts.ts";
 import { fingerprintOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { parseCliOpenShellSandboxInventory } from "../../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
-import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import {
   registryEntryGatewayPort,
   resolveGatewayName,
@@ -32,11 +29,11 @@ import {
 } from "./phase6-messaging-helpers.ts";
 import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
 import {
-  captureNativeGatewayLogCursor,
+  captureNativeGatewayJournalCursor,
   createNativePodmanStopResponseFault,
   NATIVE_PODMAN_STOP_FAULT_CANARY,
   parseNativePodmanStoppedInternalTrace,
-  readNativeGatewayLogWindow,
+  readNativeGatewayJournalWindow,
 } from "../fixtures/native-podman-stop-response-fault.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-sb-ops";
@@ -261,13 +258,8 @@ test(
       expect(identityFingerprint).not.toBeNull();
       expect(identityFingerprint).toBe(entry?.lifecycleLiveIdentityFingerprint);
       const gatewayPort = registryEntryGatewayPort(entry!);
-      const cursor = captureNativeGatewayLogCursor(
-        resolveGatewayLogPathForPort({
-          configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-          home: env.HOME ?? os.homedir(),
-          port: gatewayPort,
-        }),
-      );
+      const cursor = captureNativeGatewayJournalCursor();
+      artifacts.addRedactionValues(redactions);
       stopFault.arm({ containerId, correlationId: `${SANDBOX_NAME}-completed-stop` });
       try {
         const rejected = await host.nemoclaw([SANDBOX_NAME, "stop"], {
@@ -291,7 +283,7 @@ test(
         await expect
           .poll(
             async () => {
-              const window = await readNativeGatewayLogWindow(cursor);
+              const window = readNativeGatewayJournalWindow(cursor);
               await artifacts.writeText("native-podman-stop-rpc.log", window.text);
               rpcEvidence = parseNativePodmanStoppedInternalTrace(window.text, {
                 containerId,
@@ -338,9 +330,12 @@ test(
         return { kind: "controlled-native-response-failure", rpcEvidence, recoveryPassed: true };
       } finally {
         stopFault.disarm();
-        await readNativeGatewayLogWindow(cursor)
-          .then((window) => artifacts.writeText("native-podman-stop-rpc.log", window.text))
-          .catch(() => undefined);
+        try {
+          const window = readNativeGatewayJournalWindow(cursor);
+          await artifacts.writeText("native-podman-stop-rpc.log", window.text);
+        } catch {
+          // Diagnostics must not hide the primary stop failure.
+        }
         await artifacts.writeJson("native-podman-stop-fault.json", stopFault.receipt());
       }
     };

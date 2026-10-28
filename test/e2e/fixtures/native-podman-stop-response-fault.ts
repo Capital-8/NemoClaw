@@ -3,6 +3,7 @@
 
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -58,6 +59,103 @@ export interface NativeGatewayLogWindow {
   readonly text: string;
   readonly startOffset: number;
   readonly endOffset: number;
+}
+
+export interface NativeGatewayJournalCursor {
+  readonly cursor: string;
+  readonly invocationId: string;
+}
+
+type JournalCommand = (
+  command: string,
+  args: string[],
+  options: { encoding: "utf8"; maxBuffer: number; timeout: number },
+) => {
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+  status: number | null;
+  stdout: string | null;
+};
+
+const NATIVE_GATEWAY_UNIT = "nemoclaw-openshell-gateway.service";
+const JOURNAL_MAX_BYTES = 262_144;
+const JOURNAL_TIMEOUT_MS = 10_000;
+
+function journalOutput(run: JournalCommand, command: string, args: string[]): string {
+  const result = run(command, args, {
+    encoding: "utf8",
+    maxBuffer: JOURNAL_MAX_BYTES,
+    timeout: JOURNAL_TIMEOUT_MS,
+  });
+  if (
+    result.error ||
+    result.signal ||
+    result.status !== 0 ||
+    typeof result.stdout !== "string" ||
+    Buffer.byteLength(result.stdout) > JOURNAL_MAX_BYTES
+  ) {
+    throw new Error("Owned native gateway journal evidence is unavailable or exceeds its bound.");
+  }
+  return result.stdout;
+}
+
+function nativeGatewayInvocationId(run: JournalCommand): string {
+  const id = journalOutput(run, "/usr/bin/systemctl", [
+    "--user",
+    "show",
+    NATIVE_GATEWAY_UNIT,
+    "--property=InvocationID",
+    "--value",
+  ]).trim();
+  if (!/^[a-f0-9]{32}$/u.test(id)) {
+    throw new Error("Owned native gateway service invocation is unavailable.");
+  }
+  return id;
+}
+
+/** Pin the managed user service's journal position and invocation before the fault is armed. */
+export function captureNativeGatewayJournalCursor(
+  run: JournalCommand = spawnSync,
+): NativeGatewayJournalCursor {
+  const invocationId = nativeGatewayInvocationId(run);
+  const output = journalOutput(run, "/usr/bin/journalctl", [
+    "--user",
+    `--unit=${NATIVE_GATEWAY_UNIT}`,
+    "--no-pager",
+    "--output=cat",
+    "--lines=1",
+    "--show-cursor",
+  ]);
+  const cursors = [...output.matchAll(/^-- cursor: ([A-Za-z0-9=;:_-]{1,512})$/gmu)];
+  if (cursors.length !== 1 || nativeGatewayInvocationId(run) !== invocationId) {
+    throw new Error("Owned native gateway journal cursor is unavailable or changed.");
+  }
+  return { cursor: cursors[0]![1]!, invocationId };
+}
+
+/** Read only entries appended to the same managed service invocation, with a hard output bound. */
+export function readNativeGatewayJournalWindow(
+  cursor: NativeGatewayJournalCursor,
+  run: JournalCommand = spawnSync,
+): NativeGatewayLogWindow {
+  if (
+    !/^[A-Za-z0-9=;:_-]{1,512}$/u.test(cursor.cursor) ||
+    !/^[a-f0-9]{32}$/u.test(cursor.invocationId) ||
+    nativeGatewayInvocationId(run) !== cursor.invocationId
+  ) {
+    throw new Error("Owned native gateway journal identity changed.");
+  }
+  const text = journalOutput(run, "/usr/bin/journalctl", [
+    "--user",
+    `--unit=${NATIVE_GATEWAY_UNIT}`,
+    `--after-cursor=${cursor.cursor}`,
+    "--no-pager",
+    "--output=cat",
+  ]);
+  if (nativeGatewayInvocationId(run) !== cursor.invocationId) {
+    throw new Error("Owned native gateway journal identity changed.");
+  }
+  return { text, startOffset: 0, endOffset: Buffer.byteLength(text) };
 }
 
 export interface NativePodmanStoppedInternalTrace {
