@@ -2323,9 +2323,12 @@ Rerun `destroy` only when the query returns one of these verified states:
 
 - For a sandbox without a retained recovery record: one container with `openshell.ai/managed-by=openshell` and a nonempty `openshell.ai/sandbox-id`
 - For a retained recovery record with a durable identity fingerprint: one or more containers with `openshell.ai/managed-by=openshell`, a nonempty `openshell.ai/sandbox-id` whose SHA-256 digest matches the record's durable identity fingerprint, and the same `openshell.ai/sandbox-workspace` value
-- For a sandbox that you confirmed absent: no containers
+- For any sandbox: no containers
 
-If the retained recovery record has no durable identity fingerprint, only the no-container state applies.
+If the query returns no containers and a retained recovery record exists, OpenShell can still report the sandbox as present.
+`destroy` then deletes the sandbox only after its durable identity matches the recovery record.
+If the record has no durable identity fingerprint, `destroy` refuses deletion and removes no sandbox resources.
+For a retained recovery record without a durable identity fingerprint, only the no-container state applies.
 If the query shows a container that does not match the retained sandbox identity, keep the containers and the recovery record.
 Then follow [Inspect retained sandbox recovery](#inspect-retained-sandbox-recovery).
 To compare a container with the record, compute the SHA-256 digest of its `openshell.ai/sandbox-id` value:
@@ -2334,7 +2337,7 @@ To compare a container with the record, compute the SHA-256 digest of its `opens
 printf '%s' '<sandbox-id>' | shasum -a 256
 ```
 
-The digest must equal the durable sandbox identity fingerprint that onboarding printed.
+The digest must equal the value after `Durable sandbox identity fingerprint:` that onboarding printed when it preserved the sandbox.
 An empty workspace column is acceptable.
 In a retained recovery set, every container must show the same workspace value, including an empty value.
 
