@@ -4,10 +4,11 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 import { writeExecutable, writeSnapshotRegistry } from "../support/native-snapshot.ts";
 
 const originalHome = process.env.HOME;
@@ -29,6 +30,52 @@ afterAll(() => {
   fs.rmSync(testHome, { recursive: true, force: true });
 });
 
+it("stops stopped-state validation when an earlier archive listing exhausts its deadline", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-inventory-deadline-"));
+  const source = path.join(fixture, "source");
+  const archivePath = path.join(fixture, "source.tar");
+  const raw = path.join(fixture, "raw");
+  fs.mkdirSync(source);
+  fs.mkdirSync(raw);
+  fs.writeFileSync(path.join(source, "state.txt"), "preserved");
+  const tar = spawnSync("tar", ["-C", source, "-cf", archivePath, "."], {
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
+  expect(tar.status).toBe(0);
+  const baseNow = Date.now();
+  let firstListingComplete = false;
+  let listingStarts = 0;
+  const originalRemove = fs.rmSync;
+  const originalTempDir = fs.mkdtempSync;
+  const remove = vi.spyOn(fs, "rmSync").mockImplementation((...args) => {
+    Reflect.apply(originalRemove, fs, args);
+    firstListingComplete ||= path.basename(String(args[0])).startsWith("nemoclaw-tar-listing-");
+  });
+  const tempDir = vi.spyOn(fs, "mkdtempSync").mockImplementation((...args) => {
+    listingStarts += Number(String(args[0]).includes("nemoclaw-tar-listing-"));
+    return Reflect.apply(originalTempDir, fs, args) as string;
+  });
+  syncBuiltinESMExports();
+  const clock = vi
+    .spyOn(Date, "now")
+    .mockImplementation(() =>
+      firstListingComplete ? baseNow + sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS + 1 : baseNow,
+    );
+  try {
+    expect(() => stoppedBackup.validateStoppedStateArchive(archivePath, raw)).toThrow(
+      "Stopped state archive failed snapshot validation",
+    );
+    expect(firstListingComplete).toBe(true);
+    expect(listingStarts).toBe(1);
+    expect(fs.readdirSync(raw)).toEqual([]);
+  } finally {
+    clock.mockRestore();
+    tempDir.mockRestore();
+    remove.mockRestore();
+    syncBuiltinESMExports();
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
 it.each([
   ["omitted", 'return !line.includes("unlisted.txt")'],
   ["substituted", 'return line.replace("unlisted.txt", "substitute.txt")'],

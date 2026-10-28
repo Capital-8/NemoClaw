@@ -331,8 +331,11 @@ function makePrivateTreeRemovable(root: string): void {
 }
 
 /** Validate a provider's stopped-state archive before any member is extracted. */
-export function validateStoppedStateArchive(archivePath: string, raw: string): void {
-  const deadlineMs = Date.now() + sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS;
+export function validateStoppedStateArchive(
+  archivePath: string,
+  raw: string,
+  deadlineMs = Date.now() + sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+): void {
   const archive = { filePath: archivePath };
   let unsupported = false;
   const listingFailure = runTarListing(
@@ -342,6 +345,8 @@ export function validateStoppedStateArchive(archivePath: string, raw: string): v
     (line) => {
       if (!["-", "d", "l", "h"].includes(line[0] ?? "")) unsupported = true;
     },
+    undefined,
+    deadlineMs,
   );
   if (listingFailure || unsupported)
     rejectStoppedState("Stopped state contains an unsupported archive entry.");
@@ -349,7 +354,7 @@ export function validateStoppedStateArchive(archivePath: string, raw: string): v
   const validation = sandboxState.validateTarEntries(
     archive,
     raw,
-    undefined,
+    deadlineMs,
     undefined,
     (format) => {
       nameFormat = format;
@@ -366,10 +371,20 @@ export function validateStoppedStateArchive(archivePath: string, raw: string): v
   ) {
     rejectStoppedState("Stopped state archive raw headers did not match its listing.");
   }
-  if (sandboxState.rejectSymlinkExtractionTraversal(archive, validation.entries).length > 0) {
+  if (
+    sandboxState.rejectSymlinkExtractionTraversal(
+      archive,
+      validation.entries,
+      undefined,
+      deadlineMs,
+    ).length > 0
+  ) {
     rejectStoppedState("Stopped state archive contains an unsafe symlink extraction layout.");
   }
-  if (sandboxState.rejectHardLinkExtractionTraversal(archive, validation.entries).length > 0) {
+  if (
+    sandboxState.rejectHardLinkExtractionTraversal(archive, validation.entries, deadlineMs).length >
+    0
+  ) {
     rejectStoppedState("Stopped state archive contains an unsafe hard-link extraction layout.");
   }
 }
@@ -431,6 +446,7 @@ export async function prepareStoppedAgentState(
   };
   process.once("exit", cleanupOnExit);
   try {
+    const deadlineMs = Date.now() + sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS;
     const descriptor = fs.openSync(archivePath, "wx", 0o600);
     try {
       // The provider archive and its extracted private tree coexist until the
@@ -444,15 +460,19 @@ export async function prepareStoppedAgentState(
       fs.closeSync(descriptor);
     }
     fs.mkdirSync(raw, { mode: 0o700 });
-    validateStoppedStateArchive(archivePath, raw);
+    validateStoppedStateArchive(archivePath, raw, deadlineMs);
     // This provider-owned stream has already containment-checked hard-link
     // targets and limited headers to files, directories, and links. Extract
     // into a new private directory without resolving symlink targets: absolute
     // and system-targeting links are legitimate native-home content, and tar
     // must preserve them rather than write through them.
+    const extractionTimeoutMs = Math.floor(deadlineMs - Date.now());
+    if (extractionTimeoutMs <= 0) {
+      rejectStoppedState("Stopped state archive validation exceeded its deadline.");
+    }
     const extracted = spawnSync("tar", ["-xf", archivePath, "--no-same-owner", "-C", raw], {
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: sandboxState.NATIVE_STATE_CAPTURE_TIMEOUT_MS,
+      timeout: extractionTimeoutMs,
     });
     if (extracted.status !== 0 || extracted.error || extracted.signal) {
       rejectStoppedState("Stopped state archive failed snapshot extraction.");
