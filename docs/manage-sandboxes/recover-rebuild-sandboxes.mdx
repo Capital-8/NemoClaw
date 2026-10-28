@@ -19,7 +19,7 @@ Use the lightest recovery operation that repairs the sandbox while preserving it
 Shields has been retired from NemoClaw. The current CLI has no Shields commands, status, timers, or supported locked posture. After an upgrade, NemoClaw prints a retirement notice while it still finds legacy Shields state and identifies the affected sandbox records when possible.
 
 Onboarding cannot recreate a sandbox that has a legacy state record.
-If the retirement notice tells you to run `rebuild` for the sandbox, rebuild it before you run other commands:
+If the retirement notice tells you to run `rebuild` for the sandbox, run it before other lifecycle mutations:
 
 ```bash
 $$nemoclaw <sandbox-name> rebuild
@@ -46,6 +46,7 @@ Then rerun `$$nemoclaw <sandbox-name> rebuild`.
 If the sandbox has a legacy state record and the backup reports `permission denied` or prints `Failed files:`, rebuild also prints a Shields note.
 The note explains that Shields can leave state that only root can read, then lists replacement steps.
 Replace the sandbox only if you cannot restore read access to that state.
+If rebuild cannot read the state, use the restricted `download` paths below to preserve reviewed files before you destroy the sandbox.
 
 <Warning>
   Destroying the sandbox deletes every file that you do not copy first, including locked state that
@@ -83,7 +84,8 @@ To replace the sandbox, complete these steps:
    The command also removes the legacy state record.
 5. Onboard a replacement sandbox with the same name by running `$$nemoclaw onboard --name <sandbox-name>`.
 6. Upload only the reviewed files with `$$nemoclaw <sandbox-name> upload <host-path> <sandbox-dir>`.
-   Do not upload a file that the manual transfer workflow tells you not to upload, such as `POLICY.md`.
+   Do not upload a file that the manual transfer workflow tells you not to upload.
+   For OpenClaw, this includes `POLICY.md`.
 7. Reconfigure any setting whose files you could not copy.
 8. Run `$$nemoclaw <sandbox-name> status` and confirm that the retirement notice no longer lists the sandbox.
 
