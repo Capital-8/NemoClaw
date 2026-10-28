@@ -74,13 +74,11 @@ export class OnboardRuntimeBoundary {
       provider?: string | null;
       model?: string | null;
       endpointUrl?: string | null;
+      credentialEnv?: string | null;
+      preferredInferenceApi?: string | null;
     } = {},
   ): Promise<void> {
-    const runtime = this.getRuntime();
-    await runtime.markStepStarted(stepName);
-    if (Object.keys(updates).length > 0) {
-      await runtime.updateContext(this.options.toSessionUpdates(updates));
-    }
+    await this.getRuntime().markStepStarted(stepName, this.options.toSessionUpdates(updates));
     this.options.maybeForceE2eStepFailure(stepName);
   }
 

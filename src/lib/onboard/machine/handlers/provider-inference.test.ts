@@ -70,6 +70,8 @@ describe("handleProviderInferenceState", () => {
       provider: "nvidia-prod",
       model: "nvidia/test",
       endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
     });
     expect(calls.startStep).toHaveBeenNthCalledWith(3, "inference", {
       provider: "nvidia-prod",

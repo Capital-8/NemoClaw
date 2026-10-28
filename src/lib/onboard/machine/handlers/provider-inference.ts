@@ -15,6 +15,7 @@ import {
   type CurrentGatewayRouteCompatibilityCheck,
   type CurrentGatewayRouteDiscoveryPreflight,
   type GatewayRouteDiscoveryConstraints,
+  gatewayRouteIdentityConflictReasons,
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 import { withModelRouterPortLifecycleLock } from "../../../inference/gateway-route-mutation-lock";
@@ -275,7 +276,13 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ) => Promise<boolean>;
     startRecordedStep(
       stepName: string,
-      updates?: { provider?: string | null; model?: string | null; endpointUrl?: string | null },
+      updates?: {
+        provider?: string | null;
+        model?: string | null;
+        endpointUrl?: string | null;
+        credentialEnv?: string | null;
+        preferredInferenceApi?: string | null;
+      },
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     recordStepRejected(stepName: string): Promise<Session>;
@@ -1092,6 +1099,18 @@ function reviewRecoveryState(session: Session | null, sandboxName: string | null
   );
 }
 
+function hasIncompleteCustomRoute(session: Session | null): boolean {
+  if (!session) return false;
+  const route = {
+    provider: session.provider,
+    model: session.model,
+    endpointUrl: session.endpointUrl,
+    credentialEnv: session.credentialEnv,
+    preferredInferenceApi: session.preferredInferenceApi,
+  };
+  return gatewayRouteIdentityConflictReasons(route, route).includes("incomplete-custom-route");
+}
+
 function canResumeProviderSelection(
   forceProviderSelection: boolean,
   effectiveResume: boolean,
@@ -1100,6 +1119,7 @@ function canResumeProviderSelection(
   interruptedReview: boolean,
   provider: string | null,
   model: string | null,
+  interactive: boolean,
 ): boolean {
   // An interrupted Station review has a provider/model but no validated model
   // identity yet. Retry selection so its checkpoint can bind that identity.
@@ -1108,6 +1128,12 @@ function canResumeProviderSelection(
     session.stationExpressIntent.kind !== "spark" &&
     session.steps.provider_selection.status !== "complete"
   ) {
+    return false;
+  }
+  // Review checkpoints from earlier releases kept only provider and model, so
+  // a custom route cannot pass the gateway check. Ask again interactively;
+  // non-interactive resume keeps failing closed at that check.
+  if (interactive && interruptedReview && hasIncompleteCustomRoute(session)) {
     return false;
   }
   return (
@@ -1247,6 +1273,7 @@ interface ConfigurationReviewInput<Agent> {
   model: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
+  preferredInferenceApi: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   webSearchConfig: WebSearchConfig | null;
   hermesToolGateways: string[];
@@ -1285,12 +1312,14 @@ async function reviewProviderConfiguration<Agent>(
     // claiming that provider registration or inference setup completed.
     await deps.checkpointSandboxIdentity(sandboxName, input.agent);
     if (needsSelectionRecovery && !selectionRecoveryStarted) {
-      // Resume reuses this selection without rerunning it, so keep the route
-      // endpoint that later setup and deployment verification compare against.
+      // Resume checks this route against the shared gateway route before it
+      // shows the review again, so keep the same secret-free route identity.
       await deps.startRecordedStep("provider_selection", {
         provider: input.provider,
         model: input.model,
         endpointUrl: input.endpointUrl,
+        credentialEnv: input.credentialEnv,
+        preferredInferenceApi: input.preferredInferenceApi,
       });
       selectionRecoveryStarted = true;
     }
@@ -1555,6 +1584,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     reviewRecoveryState(session, sandboxName),
     provider,
     model,
+    !deps.isNonInteractive(),
   );
   const initialHostLocalPolicyRoute = resolveInitialHostLocalPolicyRoute({
     resumeProviderSelection: initialResumeProviderSelection,
@@ -1605,6 +1635,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       completeRecoveredReviewSelectionAfterInference,
       provider,
       model,
+      !deps.isNonInteractive(),
     );
     const earlyManagedHostLocalLifecycleSelection = resolveEarlyManagedHostLocalLifecycleSelection({
       resumeProviderSelection,
@@ -2293,6 +2324,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           model,
           endpointUrl,
           credentialEnv,
+          preferredInferenceApi,
           hermesAuthMethod,
           webSearchConfig,
           hermesToolGateways,
