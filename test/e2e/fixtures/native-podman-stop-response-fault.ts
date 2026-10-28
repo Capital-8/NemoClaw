@@ -5,7 +5,6 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import type { Duplex } from "node:stream";
 
@@ -268,7 +267,8 @@ export async function createNativePodmanStopResponseFault(
     throw new Error("The Podman backend must be a socket owned by the current user.");
   }
 
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nc-stop-fault-"));
+  // Keep the proxy inside the backend's protected directory chain.
+  const directory = await fs.mkdtemp(path.join(path.dirname(backend), "nc-stop-fault-"));
   await fs.chmod(directory, 0o700);
   const socketPath = path.join(directory, "podman.sock");
   const connections = new Set<Duplex>();

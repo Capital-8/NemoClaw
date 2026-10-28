@@ -10,6 +10,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+} from "../../../src/lib/adapters/podman/socket-authority.ts";
+
+import {
   captureNativeGatewayLogCursor,
   createNativePodmanStopResponseFault,
   parseNativePodmanStoppedInternalTrace,
@@ -38,8 +43,9 @@ async function createBackend(
   respond: (request: IncomingMessage, response: ServerResponse) => void = (_request, response) => {
     response.writeHead(204).end();
   },
+  parentDirectory = os.homedir(),
 ) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nc-stop-backend-"));
+  const directory = await fs.mkdtemp(path.join(parentDirectory, "nc-stop-backend-"));
   const socketPath = path.join(directory, "podman.sock");
   const server = http.createServer(respond);
   const connections = new Set<net.Socket>();
@@ -126,6 +132,22 @@ describe.skipIf(process.platform === "win32")("native Podman stop response fault
       observations: [],
     });
     expect(verifyStopped).not.toHaveBeenCalled();
+  });
+
+  it("passes native Podman socket checks when the temporary directory is writable", async () => {
+    const backend = await createBackend();
+    const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "nc-unsafe-temporary-"));
+    await fs.chmod(temporaryDirectory, 0o777);
+    cleanup.push(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
+    vi.stubEnv("TMPDIR", temporaryDirectory);
+
+    const { socketPath } = await createFault(backend.socketPath);
+    expect(() => {
+      const authority = capturePodmanSocketAuthority(socketPath);
+      assertPodmanSocketAuthority(authority);
+    }).not.toThrow();
+    expect(await request(socketPath, STOP_PATH)).toEqual({ status: 204, body: "" });
+    expect((await fs.stat(temporaryDirectory)).mode & 0o777).toBe(0o777);
   });
 
   it("passes unrelated request bodies and responses without recording their secrets", async () => {
