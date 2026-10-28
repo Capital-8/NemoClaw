@@ -283,7 +283,8 @@ export async function runE2eCloudExperimentalChecks(
   }
   for (const scriptPath of checkScripts) {
     const result =
-      scriptPath === DEEPAGENTS_CODE_TUI_CHECK
+      scriptPath === DEEPAGENTS_CODE_TUI_CHECK ||
+      scriptPath === DEEPAGENTS_THREAD_AUTO_APPROVAL_CHECK
         ? await runDcodeTuiCheck(sandboxName, scriptPath, apiKey, context)
         : await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
             artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
