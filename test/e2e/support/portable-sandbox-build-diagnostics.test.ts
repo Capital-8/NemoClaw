@@ -19,6 +19,7 @@ import {
   PORTABLE_SANDBOX_CREATE_BUDGET_MS,
   PORTABLE_SANDBOX_DELETE_BUDGET_MS,
   buildPortableSandboxImageWithEvidence,
+  portableSandboxImageBuilder,
   probePortableSandboxOciAfterBuildFailure,
   probePodmanStore,
   publishPortableSandboxImage,
@@ -626,6 +627,101 @@ it("records a passing OCI probe and fails closed when exact cleanup is unproved 
   }
 });
 
+it("sequences authority, build evidence, and only safe sandbox OCI probes (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-callback-"));
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const progress = startTestProgress("portable build callback", ["prepare", "build"], {
+    logLine: () => undefined,
+  });
+  const selectedUrl = "unix:///run/user/1001/podman/podman.sock";
+  const baseImage = "docker.io/library/ubuntu@sha256:fixed";
+  const options = { env: { XDG_CONFIG_HOME: "/private/config" }, stdio: "inherit" as const };
+  const args = ["build", "-t", "localhost/sandbox:fixed", "."];
+  const events: string[] = [];
+  const outcomes = [
+    { status: 0, reconciled: true },
+    { status: 1, reconciled: true },
+    { status: null, reconciled: true },
+    { status: 1, reconciled: true },
+    { status: null, reconciled: false },
+  ];
+  const verifyAuthority = vi.fn(async () => {
+    events.push("verify");
+  });
+  const buildWithEvidence = vi.fn(
+    async (...call: Parameters<typeof buildPortableSandboxImageWithEvidence>) => {
+      events.push("build");
+      const outcome = outcomes.shift()!;
+      call[5]?.(outcome.reconciled);
+      return outcome.status;
+    },
+  );
+  const probeOci = vi.fn(async () => {
+    events.push("probe");
+  });
+  try {
+    const buildImage = portableSandboxImageBuilder(artifacts, progress, selectedUrl, baseImage, {
+      verifyAuthority,
+      buildWithEvidence,
+      probeOci,
+    });
+    expect(await buildImage("sandbox")(args, options)).toBe(0);
+    expect(await buildImage("sandbox")(args, options)).toBe(1);
+    expect(await buildImage("sandbox")(args, options)).toBeNull();
+    expect(await buildImage("hermes")(args, options)).toBe(1);
+    expect(await buildImage("sandbox")(args, options)).toBeNull();
+    expect(events).toEqual([
+      "verify",
+      "build",
+      "verify",
+      "build",
+      "probe",
+      "verify",
+      "build",
+      "probe",
+      "verify",
+      "build",
+      "verify",
+      "build",
+    ]);
+    expect(verifyAuthority).toHaveBeenCalledTimes(5);
+    expect(verifyAuthority).toHaveBeenNthCalledWith(
+      1,
+      options.env,
+      process.env,
+      selectedUrl,
+      "/private/config",
+      "portable-podman-store-sandbox.json",
+      artifacts,
+    );
+    expect(verifyAuthority).toHaveBeenNthCalledWith(
+      4,
+      options.env,
+      process.env,
+      selectedUrl,
+      "/private/config",
+      "portable-podman-store-hermes.json",
+      artifacts,
+    );
+    expect(buildWithEvidence).toHaveBeenCalledTimes(5);
+    expect(buildWithEvidence).toHaveBeenNthCalledWith(
+      1,
+      args,
+      options,
+      artifacts,
+      progress,
+      undefined,
+      expect.any(Function),
+    );
+    expect(probeOci).toHaveBeenCalledTimes(2);
+    expect(probeOci).toHaveBeenNthCalledWith(1, baseImage, options.env, artifacts, progress);
+    expect(probeOci).toHaveBeenNthCalledWith(2, baseImage, options.env, artifacts, progress);
+  } finally {
+    progress.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 it("reserves live-test time for bounded image, gateway, create, lifecycle, and cleanup work (#13482)", () => {
   expect(PORTABLE_GATEWAY_STARTUP_BUDGET_MS).toBeGreaterThanOrEqual(15_000);
   expect(PORTABLE_SANDBOX_CREATE_BUDGET_MS).toBeGreaterThanOrEqual(240_000);
@@ -657,6 +753,7 @@ it("retains a build signal and allowlisted error code without error text (#13482
   );
   try {
     const artifacts = new ArtifactSink(path.join(directory, "portable-build"));
+    const reconciled = vi.fn();
     const status = await buildPortableSandboxImageWithEvidence(
       ["build", "-t", "localhost/test:fixed", "."],
       { env: {}, stdio: "inherit" },
@@ -668,9 +765,11 @@ it("retains a build signal and allowlisted error code without error text (#13482
         diagnostic: "credential=private-build-token",
         error: Object.assign(new Error("private error text"), { code: "EACCES" }),
       })),
+      reconciled,
     );
 
     expect(status).toBeNull();
+    expect(reconciled).toHaveBeenCalledWith(true);
     const published = fs.readFileSync(
       artifacts.pathFor("portable-sandbox-image-build-failure.json"),
       "utf8",
@@ -686,6 +785,7 @@ it("retains a build signal and allowlisted error code without error text (#13482
     expect(published).not.toContain("private-build-token");
     expect(published).not.toContain("private error text");
 
+    const unreconciledSignal = vi.fn();
     await buildPortableSandboxImageWithEvidence(
       ["build", "-t", "localhost/test:fixed", "."],
       { env: {}, stdio: "inherit" },
@@ -697,7 +797,9 @@ it("retains a build signal and allowlisted error code without error text (#13482
         diagnostic: "credential=private-build-token",
         error: Object.assign(new Error("private error text"), { code: "EUNRECONCILED" }),
       })),
+      unreconciledSignal,
     );
+    expect(unreconciledSignal).toHaveBeenCalledWith(false);
     const unreconciled = fs.readFileSync(
       artifacts.pathFor("portable-sandbox-image-build-failure.json"),
       "utf8",

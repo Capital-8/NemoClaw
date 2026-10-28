@@ -342,6 +342,7 @@ export async function buildPortableSandboxImageWithEvidence(
   artifacts: ArtifactSink,
   progress: TestProgress,
   runBuild: ImageCommandRunner = runPodmanBuild,
+  onReconciled?: (reconciled: boolean) => void,
 ): Promise<number | null> {
   const result = await runBuild(args, options.env, PORTABLE_IMAGE_COMMAND_TIMEOUT_MS, progress);
   if (result.status !== 0 || result.error) {
@@ -356,6 +357,7 @@ export async function buildPortableSandboxImageWithEvidence(
       );
     }
   }
+  onReconciled?.((result.error as NodeJS.ErrnoException | undefined)?.code !== "EUNRECONCILED");
   return result.error ? null : result.status;
 }
 
@@ -441,15 +443,26 @@ export async function probePortableSandboxOciAfterBuildFailure(
 }
 
 /** Use the exact filtered child environment passed by the production prebuild callback. */
+type PortableSandboxImageBuilderHelpers = {
+  verifyAuthority: typeof verifyPortablePodmanStoreAuthority;
+  buildWithEvidence: typeof buildPortableSandboxImageWithEvidence;
+  probeOci: typeof probePortableSandboxOciAfterBuildFailure;
+};
+
 export function portableSandboxImageBuilder(
   artifacts: ArtifactSink,
   progress: TestProgress,
   selectedUrl: string,
   sandboxBaseImage: string,
+  helpers: PortableSandboxImageBuilderHelpers = {
+    verifyAuthority: verifyPortablePodmanStoreAuthority,
+    buildWithEvidence: buildPortableSandboxImageWithEvidence,
+    probeOci: probePortableSandboxOciAfterBuildFailure,
+  },
 ) {
   return (label: "sandbox" | "hermes") =>
     async (args: readonly string[], options: { env: NodeJS.ProcessEnv; stdio: "inherit" }) => {
-      await verifyPortablePodmanStoreAuthority(
+      await helpers.verifyAuthority(
         options.env,
         process.env,
         selectedUrl,
@@ -457,19 +470,20 @@ export function portableSandboxImageBuilder(
         `portable-podman-store-${label}.json`,
         artifacts,
       );
-      const status = await buildPortableSandboxImageWithEvidence(
+      let reconciled = false;
+      const status = await helpers.buildWithEvidence(
         args,
         options,
         artifacts,
         progress,
+        undefined,
+        (value) => {
+          reconciled = value;
+        },
       );
-      if (label === "sandbox" && typeof status === "number" && status !== 0) {
-        await probePortableSandboxOciAfterBuildFailure(
-          sandboxBaseImage,
-          options.env,
-          artifacts,
-          progress,
-        );
+      // A surviving build process group forbids another Podman command.
+      if (label === "sandbox" && status !== 0 && reconciled) {
+        await helpers.probeOci(sandboxBaseImage, options.env, artifacts, progress);
       }
       return status;
     };
