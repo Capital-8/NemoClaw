@@ -76,7 +76,14 @@ spec:
             process:
               run_as_user: "10001"
               run_as_group: "10001"
-            network_policies: {}
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/local/bin/hermes
             filesystem_policy:
               include_workdir: true
               read_only:

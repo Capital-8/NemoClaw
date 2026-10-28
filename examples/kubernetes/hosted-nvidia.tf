@@ -149,18 +149,14 @@ resource "openshell_sandbox" "agent" {
         )
         read_write = ["/sandbox"]
       }
-      dynamic "network_policies" {
-        for_each = each.key == "openclaw" ? ["hosted-inference"] : []
-        labels   = ["hosted-inference"]
-        content {
-          name = "hosted-inference"
-          endpoints {
-            host = "integrate.api.nvidia.com"
-            port = 443
-          }
-          binaries {
-            path = "/usr/bin/openclaw"
-          }
+      network_policies "hosted-inference" {
+        name = "hosted-inference"
+        endpoints {
+          host = "integrate.api.nvidia.com"
+          port = 443
+        }
+        binaries {
+          path = each.key == "hermes" ? "/usr/local/bin/hermes" : "/usr/bin/openclaw"
         }
       }
     }
