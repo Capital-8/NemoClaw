@@ -24,6 +24,8 @@ SHELL_ROUND_ONE="/sandbox/.nemoclaw-e2e-autorun-shell-1"
 WRITE_ROUND="/sandbox/.nemoclaw-e2e-autorun-write"
 SHELL_ROUND_THREE="/sandbox/.nemoclaw-e2e-autorun-shell-3"
 AUTORUN_DEBUG_DIR="/sandbox/.nemoclaw-e2e-autorun-debug"
+DCODE_CONFIG="/sandbox/.deepagents/config.toml"
+STARTUP_CONFIG_BACKUP="/sandbox/.nemoclaw-e2e-startup-config.bak"
 EXPORT_BASELINE_RECOVERY_ARMED=0
 
 fail() {
@@ -320,6 +322,54 @@ cleanup_probe_files() {
   sandbox_exec \
     "rm -f ${SHELL_ROUND_ONE@Q} ${WRITE_ROUND@Q} ${SHELL_ROUND_THREE@Q}; rm -rf -- ${AUTORUN_DEBUG_DIR@Q}" \
     >/dev/null 2>&1 || true
+  restore_native_startup_config
+}
+
+set_native_startup_mode() {
+  local mode="$1"
+  sandbox_exec "set -euo pipefail; test -e ${STARTUP_CONFIG_BACKUP@Q} || cp -p ${DCODE_CONFIG@Q} ${STARTUP_CONFIG_BACKUP@Q}; python3 -c 'import re, sys; path, mode = sys.argv[1:]; text = re.sub(r\"(?ms)^\\[startup\\]\\n(?:(?!\\[).*\\n?)*\", \"\", open(path).read()); open(path, \"w\").write(text.rstrip(\"\\n\") + \"\\n\\n[startup]\\nmode = \\\"\" + mode + \"\\\"\\n\")' ${DCODE_CONFIG@Q} ${mode@Q}; grep -A1 -x '\\[startup\\]' ${DCODE_CONFIG@Q} | tail -n 1" \
+    | grep -qx "mode = \"${mode}\"" || fail "could not set the native DCode startup mode to ${mode}"
+}
+
+restore_native_startup_config() {
+  sandbox_exec "test ! -e ${STARTUP_CONFIG_BACKUP@Q} || mv -f ${STARTUP_CONFIG_BACKUP@Q} ${DCODE_CONFIG@Q}" \
+    >/dev/null 2>&1 || true
+}
+
+# Print the approval-mode badge the managed TUI shows at startup.
+read_tui_startup_mode() {
+  NEMOCLAW_STARTUP_SANDBOX_NAME="$SANDBOX_NAME" expect <<'EXPECT'
+set timeout 120
+log_user 0
+match_max -d 200000
+set remote_script {cd /sandbox && /usr/local/bin/dcode --no-interpreter; status=$?; printf "\nNEMOCLAW_STARTUP_TUI_EXIT:%s\n" "$status"}
+spawn openshell sandbox exec --name $env(NEMOCLAW_STARTUP_SANDBOX_NAME) --tty -- env HOME=/sandbox TERM=xterm-256color bash -lc $remote_script
+expect {
+  -re {\x1b\[38;5;16;48;5;[0-9]+m(manual|auto|yolo)\x1b\[0m} { puts "NEMOCLAW_STARTUP_MODE:$expect_out(1,string)" }
+  timeout { puts "NEMOCLAW_STARTUP_MODE:timeout" }
+  eof { puts "NEMOCLAW_STARTUP_MODE:eof" }
+}
+send -- "/quit\r"
+set timeout 30
+expect {
+  -re {NEMOCLAW_STARTUP_TUI_EXIT:} {}
+  timeout { catch {send -- "\003"} }
+  eof {}
+}
+EXPECT
+}
+
+# A disabled capability must force Manual even when the native startup mode
+# requests Auto or YOLO (#13838).
+assert_disabled_native_startup_modes() {
+  local mode observed
+  for mode in auto yolo; do
+    set_native_startup_mode "$mode"
+    observed="$(read_tui_startup_mode | sed -n 's/^NEMOCLAW_STARTUP_MODE://p' | head -n 1)"
+    restore_native_startup_config
+    [ "$observed" = "manual" ] \
+      || fail "disabled capability started DCode in '${observed:-unknown}' for native startup mode ${mode}"
+  done
 }
 
 restore_export_baseline_on_exit() {
@@ -371,6 +421,9 @@ main() {
   assert_default_denial_ignores_ambient_override
   pass "fresh sandbox denies auto-approval by trusted default and ignores ambient overrides"
 
+  assert_disabled_native_startup_modes
+  pass "disabled capability starts the TUI in Manual for native Auto and YOLO startup modes"
+
   local rebuild_output
   info "Enabling thread-opt-in through the named sandbox rebuild interface"
   rebuild_output="$(rebuild_named_sandbox thread-opt-in)" \
@@ -411,7 +464,7 @@ main() {
   EXPORT_BASELINE_RECOVERY_ARMED=0
   pass "named sandbox rebuild restores the disabled export baseline"
 
-  printf '%s: 6 passed, 0 failed\n' "$PREFIX"
+  printf '%s: 7 passed, 0 failed\n' "$PREFIX"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
