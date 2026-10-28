@@ -279,11 +279,13 @@ Use these details when your first-run path needs more control.
     See the [environment-variable reference](../reference/commands#environment-variables) for the complete bind behavior.
     To keep the host forwards on loopback, leave the bind setting unset and use SSH port forwarding for remote access.
     Replace `<api-port>` below with the port in the OpenAI-compatible API URL printed after onboarding.
+    Choose a free workstation port for `<local-api-port>`, such as `18642` if available.
+    The local port can differ from the server's allocated API port.
     After onboarding and successful recovery, open the API tunnel in a local workstation terminal:
 
     ```bash
     ssh -N -o ExitOnForwardFailure=yes \
-      -L '127.0.0.1:<api-port>:127.0.0.1:<api-port>' <user>@<host>
+      -L '127.0.0.1:<local-api-port>:127.0.0.1:<api-port>' <user>@<host>
     ```
 
     Keep that terminal open while using the API.
@@ -291,7 +293,7 @@ Use these details when your first-run path needs more control.
     In a second local terminal, check API reachability:
 
     ```bash
-    curl -sS -o /dev/null -w '%{http_code}\n' --max-time 3 "http://127.0.0.1:<api-port>/health"
+    curl -sS -o /dev/null -w '%{http_code}\n' --max-time 3 "http://127.0.0.1:<local-api-port>/health"
     ```
 
     An HTTP status of `200` or `401` confirms reachability; it does not verify the API token.
@@ -307,7 +309,7 @@ Use these details when your first-run path needs more control.
     Keep this terminal open while using the dashboard.
     Open `http://127.0.0.1:<local-dashboard-port>` in a local browser to verify the dashboard tunnel.
     Press Ctrl+C in the dashboard terminal to close only that tunnel; the API tunnel remains active.
-    Use the same local API port in the client base URL, `http://127.0.0.1:<api-port>/v1`.
+    Use the chosen workstation port in the client base URL, `http://127.0.0.1:<local-api-port>/v1`.
     On the remote host, run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
     Pass the token in the client's `Authorization` header.
     Do not append an OpenClaw `#token=` fragment to either URL.
