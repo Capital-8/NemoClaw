@@ -1093,7 +1093,7 @@ function reviewRecoveryState(session: Session | null, sandboxName: string | null
     session?.steps?.provider_selection?.status === "failed" &&
     session.sandboxPromptProgress.sandboxName === true &&
     session.sandboxName === sandboxName &&
-    // Review checkpoints written before #13802 omit the endpoint. A host-local
+    // Review checkpoints from earlier releases omit the endpoint. A host-local
     // route cannot be verified without it, so select it again.
     (Boolean(session.endpointUrl) || !isHostLocalInferenceProvider(session.provider ?? ""))
   );

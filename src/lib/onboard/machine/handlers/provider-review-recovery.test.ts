@@ -754,7 +754,7 @@ describe("provider inference review recovery", () => {
     expect(prompt).toHaveBeenCalledOnce();
   });
 
-  it("selects again when a pre-#13802 review checkpoint has no host-local endpoint", async () => {
+  it("selects again when an earlier-release review checkpoint has no host-local endpoint", async () => {
     const session = failedReviewSession();
     session.endpointUrl = null;
     const setupNim = vi.fn(async () => ({
