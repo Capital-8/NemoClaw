@@ -2834,12 +2834,11 @@ For an existing vLLM server, set `NEMOCLAW_VLLM_PORT` to its host port in the cu
 ```bash
 VLLM_HOST_PORT="${NEMOCLAW_VLLM_PORT:?Set NEMOCLAW_VLLM_PORT to the existing vLLM host port.}"
 curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/health"
-curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/v1/models" | grep -E '"owned_by": *"vllm"'
 ```
 
 Both checks use `/health` because a managed profile can require bearer authentication for `/v1/models`.
 `/health` proves only that the server answers.
-For an existing server, the `/v1/models` check confirms that it reports a model with `owned_by: "vllm"`, which onboarding requires before it offers **Local vLLM**.
+Onboarding offers **Local vLLM** for an existing server only when its model list reports a model with `owned_by: "vllm"`; another OpenAI-compatible server on this port belongs to **Other OpenAI-compatible endpoint**.
 
 For an existing vLLM server, inspect its launch arguments:
 
