@@ -279,17 +279,15 @@ Use these details when your first-run path needs more control.
     See the [environment-variable reference](../reference/commands#environment-variables) for the complete bind behavior.
     To keep the host forwards on loopback, leave the bind setting unset and use SSH port forwarding for remote access.
     Replace `<api-port>` below with the port in the OpenAI-compatible API URL printed after onboarding.
-    Replace `18789` with the dashboard port printed in the onboarding summary if it differs.
-    After onboarding and successful recovery, run this command in a local workstation terminal:
+    After onboarding and successful recovery, open the API tunnel in a local workstation terminal:
 
     ```bash
     ssh -N -o ExitOnForwardFailure=yes \
-      -L 127.0.0.1:18789:127.0.0.1:18789 \
       -L '127.0.0.1:<api-port>:127.0.0.1:<api-port>' <user>@<host>
     ```
 
-    Keep that terminal open while using either forward.
-    Press Ctrl+C to close both tunnels.
+    Keep that terminal open while using the API.
+    Press Ctrl+C in that terminal to close the API tunnel.
     In a second local terminal, check API reachability:
 
     ```bash
@@ -297,9 +295,20 @@ Use these details when your first-run path needs more control.
     ```
 
     An HTTP status of `200` or `401` confirms reachability; it does not verify the API token.
-    Open `http://127.0.0.1:18789` in a local browser to check the dashboard tunnel, using the dashboard port you selected.
+    If you also need the dashboard, open its tunnel in a separate local terminal.
+    Replace `<dashboard-port>` with the dashboard port printed in the onboarding summary, usually `18789`.
+    Choose a free workstation port for `<local-dashboard-port>`, such as `18790` if available.
+
+    ```bash
+    ssh -N -o ExitOnForwardFailure=yes \
+      -L '127.0.0.1:<local-dashboard-port>:127.0.0.1:<dashboard-port>' <user>@<host>
+    ```
+
+    Keep this terminal open while using the dashboard.
+    Open `http://127.0.0.1:<local-dashboard-port>` in a local browser to verify the dashboard tunnel.
+    Press Ctrl+C in the dashboard terminal to close only that tunnel; the API tunnel remains active.
     Use the same local API port in the client base URL, `http://127.0.0.1:<api-port>/v1`.
-    Run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
+    On the remote host, run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
     Pass the token in the client's `Authorization` header.
     Do not append an OpenClaw `#token=` fragment to either URL.
     Treat the dashboard as a local management UI and protect it before you expose it on a shared network.
