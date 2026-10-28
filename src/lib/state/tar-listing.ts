@@ -30,7 +30,6 @@ const TAR_LISTING_READ_CHUNK_BYTES = 64 * 1024;
 const TAR_LISTING_MAX_LINE_CHARS = 1024 * 1024;
 export const TAR_BLOCK_BYTES = 512;
 const TAR_METADATA_MAX_BYTES = 1024 * 1024;
-const TAR_TOTAL_METADATA_MAX_BYTES = 4 * 1024 * 1024;
 let unsupportedLiteralQuotingExecutable: string | null = null;
 const TAR_LISTING_BOUNDED_WRITER_SCRIPT = String.raw`
 const { spawn } = require("node:child_process");
@@ -213,7 +212,6 @@ type TarHeaderLineBreakInspection =
   | "clean"
   | { kind: "line-break"; identifier: string }
   | "uninspectable"
-  | "limit-exceeded"
   | "timeout";
 
 /** Decode complete PAX records so header inspection and sanitation use the same framing rules. */
@@ -254,8 +252,7 @@ function inspectPaxHeaderForLineBreaks(payload: Buffer): TarHeaderLineBreakInspe
  * Inspect every tar header before tar lists the archive, within the metadata
  * and deadline budget. Return a failure when a member path or link target
  * contains a line break, when a header or its metadata is malformed or exceeds
- * TAR_METADATA_MAX_BYTES, or when cumulative inspection exceeds the
- * metadata-byte or deadline budget.
+ * TAR_METADATA_MAX_BYTES, or when inspection exceeds the deadline.
  */
 function inspectArchiveHeadersForLineBreaks(
   readRange: (position: number, length: number) => Buffer | "timeout" | null,
@@ -263,7 +260,6 @@ function inspectArchiveHeadersForLineBreaks(
   deadlineMs: number,
 ): TarHeaderLineBreakInspection {
   let offset = 0;
-  let inspectedMetadataBytes = 0;
   while (offset < archiveSize) {
     if (listingDeadlineExpired(deadlineMs)) return "timeout";
     if (offset + TAR_BLOCK_BYTES > archiveSize) return "uninspectable";
@@ -288,8 +284,6 @@ function inspectArchiveHeadersForLineBreaks(
     const type = String.fromCharCode(header[156] ?? 0);
     if (type === "x" || type === "g" || type === "L" || type === "K") {
       if (size > TAR_METADATA_MAX_BYTES) return "uninspectable";
-      inspectedMetadataBytes += size;
-      if (inspectedMetadataBytes > TAR_TOTAL_METADATA_MAX_BYTES) return "limit-exceeded";
       const metadata = readRange(dataOffset, size);
       if (metadata === "timeout") return "timeout";
       if (!metadata) return "uninspectable";
@@ -512,9 +506,6 @@ export function runTarListing(
     }
     if (typeof headerInspection === "object") {
       return `${failureLabel} failed: archive entry contains a line break: ${headerInspection.identifier}`;
-    }
-    if (headerInspection === "limit-exceeded") {
-      return `${failureLabel} failed: archive header inspection exceeded the metadata-byte limit`;
     }
     if (headerInspection === "timeout") {
       return `${failureLabel} failed: archive header inspection timed out`;

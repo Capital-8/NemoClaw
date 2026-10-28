@@ -443,11 +443,11 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
     });
   });
 
-  it("rejects an archive whose combined extended-header metadata exceeds the inspection limit", async () => {
+  it("accepts many bounded extended headers without an aggregate metadata ceiling", async () => {
     const { validateTarEntries } = await loadSandboxState();
     const targetDir = "/tmp/nemoclaw-test-target";
-    const metadataChunk = paxRecord("comment", "a".repeat(900 * 1024));
-    const entries = Array.from({ length: 5 }, (_, index) => [
+    const metadataChunk = paxRecord("comment", "a".repeat(1024));
+    const entries = Array.from({ length: 4200 }, (_, index) => [
       {
         path: `PaxHeaders/member-${index}`,
         type: "x",
@@ -456,13 +456,10 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
       { path: `workspace/member-${index}.json`, content: "{}" },
     ]).flat();
 
-    expect(validateTarEntries(buildTar(entries), targetDir)).toEqual({
-      safe: false,
-      entries: [],
-      violations: [
-        "tar listing failed: archive header inspection exceeded the metadata-byte limit",
-      ],
-    });
+    const validation = validateTarEntries(buildTar(entries), targetDir);
+    expect(validation.safe, validation.violations.join("; ")).toBe(true);
+    expect(validation.entries).toHaveLength(4200);
+    expect(validation.entries.at(-1)).toBe("workspace/member-4199.json");
   });
 
   it("stops tar at the configured output bound without retaining a listing file", async () => {
