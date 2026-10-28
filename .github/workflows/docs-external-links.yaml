@@ -32,9 +32,9 @@ jobs:
   external-links:
     name: Docs / Check external link reachability
     runs-on: ubuntu-latest
-    # The full published set is ~1100 unique URLs and measured ~24 minutes
-    # serial on a hosted runner. The checker's own probe budget stops the run
-    # and names unprobed URLs before this job deadline is reached, so a slow
+    # The full published set is ~1100 unique URLs and measured ~27 minutes
+    # serial on a hosted runner. The checker's own probe budget below stops the
+    # run and names unprobed URLs before this job deadline is reached, so a slow
     # host reports a failure instead of timing out without evidence.
     timeout-minutes: 60
     steps:

@@ -75,8 +75,8 @@ jobs:
             exit 1
           fi
           # Repository-local link and Fern-route validation only. Remote probing
-          # stays disabled here: this workflow runs on pull requests, so every
-          # URL in the changed pages is contributor-controlled, and a safe
-          # remote prober needs destination admission and redirect validation
-          # that this checker does not yet implement.
+          # stays disabled here because this workflow runs on pull requests, so
+          # every URL in the changed pages is contributor-controlled. External
+          # reachability is checked by docs-external-links.yaml from trusted
+          # main, where the URL set is repository-owned.
           bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links --local-only "${doc_files[@]}"

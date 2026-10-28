@@ -1096,23 +1096,6 @@ check_local_ref() {
   return 1
 }
 
-# shellcheck disable=SC2329 # invoked indirectly from the phase 2 probe loop
-check_remote_url() {
-  local url="$1"
-  if ! command -v "$CURL" >/dev/null 2>&1; then
-    echo "check-docs: [links] curl not found; cannot verify $url" >&2
-    return 1
-  fi
-  if ! "$CURL" -fsS -L -o /dev/null \
-    --connect-timeout 12 --max-time 35 \
-    -A 'NemoClaw-doc-link-check/1.0 (+https://github.com/NVIDIA/NemoClaw)' \
-    "$url" 2>/dev/null; then
-    echo "check-docs: [links] unreachable URL: $url" >&2
-    return 1
-  fi
-  return 0
-}
-
 # Reject a probe destination that is not a public unicast host.
 #
 # A remote probe must never reach loopback, link-local, private, or otherwise
@@ -1196,11 +1179,15 @@ is_internal_ipv4() {
 is_internal_ipv6() {
   local ip="${1,,}"
   [[ "$ip" == *:* ]] || return 1
-  # Loopback, unspecified, link-local, unique-local, and IPv4-mapped forms.
+  # Loopback, unspecified, unique-local, and IPv4-mapped forms.
   [[ "$ip" == "::1" || "$ip" == "::" ]] && return 0
-  [[ "$ip" == fe80:* ]] && return 0
   [[ "$ip" == fc* || "$ip" == fd* ]] && return 0
   [[ "$ip" == ::ffff:* ]] && return 0
+  # Link-local is the whole fe80::/10 range, so fe80 through febf.
+  local hextet="${ip%%:*}"
+  if [[ "$hextet" =~ ^fe[89ab][0-9a-f]$ ]]; then
+    return 0
+  fi
   return 1
 }
 
@@ -1219,6 +1206,38 @@ for info in socket.getaddrinfo(sys.argv[1], None):
   return 0
 }
 
+# Print the admitted address set for a URL, one address per line.
+# Returns non-zero when the URL is not permitted or no public address exists.
+admitted_probe_addrs() {
+  local url="$1"
+  url_is_permitted_probe_destination "$url" || return 1
+  local host="${url#*://}"
+  host="${host%%/*}"
+  host="${host%%\?*}"
+  host="${host%%#*}"
+  if [[ "$host" == *:* ]]; then
+    host="${host%:*}"
+  fi
+  host="${host#[}"
+  host="${host%]}"
+  if is_ipv4_literal "$host"; then
+    printf '%s\n' "$host"
+    return 0
+  fi
+  local -a addrs=()
+  mapfile -t addrs < <(resolve_host_addrs "$host")
+  local addr emitted=0
+  for addr in "${addrs[@]}"; do
+    [[ -z "$addr" ]] && continue
+    if ! is_internal_ipv4 "$addr" && ! is_internal_ipv6 "$addr"; then
+      printf '%s\n' "$addr"
+      emitted=1
+    fi
+  done
+  [[ "$emitted" -eq 1 ]]
+}
+
+# shellcheck disable=SC2329 # invoked indirectly from the phase 2 probe loop
 check_remote_url() {
   local url="$1"
   if ! command -v "$CURL" >/dev/null 2>&1; then
@@ -1238,11 +1257,50 @@ check_remote_url() {
       echo "check-docs: [links] refused non-public probe destination: $current" >&2
       return 1
     fi
+    # Pin the connection to the addresses that passed admission. curl would
+    # otherwise resolve the name again, and a second answer could point at an
+    # internal address (DNS rebinding).
+    local hop_host hop_port hop_scheme
+    hop_scheme="${current%%://*}"
+    hop_host="${current#*://}"
+    hop_host="${hop_host%%/*}"
+    hop_host="${hop_host%%\?*}"
+    hop_host="${hop_host%%#*}"
+    hop_port=""
+    if [[ "$hop_host" == *:* ]]; then
+      hop_port="${hop_host##*:}"
+      hop_host="${hop_host%:*}"
+    fi
+    hop_host="${hop_host#[}"
+    hop_host="${hop_host%]}"
+    [[ -n "$hop_port" ]] || hop_port=443
+    [[ "$hop_scheme" == "http" ]] && [[ -z "${hop_port}" ]] && hop_port=80
+    local -a pin_addrs=()
+    mapfile -t pin_addrs < <(admitted_probe_addrs "$current")
+    if [[ "${#pin_addrs[@]}" -eq 0 ]]; then
+      echo "check-docs: [links] refused non-public probe destination: $current" >&2
+      return 1
+    fi
+    # Pin exactly one admitted address. Passing every answer makes curl try each
+    # in turn and fail when a secondary address is unreachable, which turns a
+    # live page into a false positive.
+    local -a resolve_args=()
+    local pin=""
+    for candidate in "${pin_addrs[@]}"; do
+      [[ -z "$candidate" ]] && continue
+      if is_ipv4_literal "$candidate"; then
+        pin="$candidate"
+        break
+      fi
+    done
+    [[ -n "$pin" ]] || pin="${pin_addrs[0]}"
+    resolve_args=(--resolve "${hop_host}:${hop_port}:${pin}")
     headers=()
     mapfile -t headers < <(
       "$CURL" -sS -o /dev/null -D - \
         --connect-timeout 12 --max-time 35 \
         --proto '=http,https' --proto-redir '=http,https' \
+        "${resolve_args[@]}" \
         -A 'NemoClaw-doc-link-check/1.0 (+https://github.com/NVIDIA/NemoClaw)' \
         "$current" 2>/dev/null
     )
