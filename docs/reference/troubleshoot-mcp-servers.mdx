@@ -15,7 +15,8 @@ Use the reported status or lifecycle error to choose the matching remediation.
 
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
 Restart validates and reloads the current provider-backed registration; it never consumes an exported replacement credential.
-To replace the credential, export the replacement value and remove the server:
+To replace the credential, first record the existing `--deny-tool` selectors and trusted-private declaration from `--trusted-private-host` or `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`.
+Then export the replacement value and remove the server:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
@@ -25,15 +26,19 @@ $$nemoclaw <sandbox> mcp remove <server>
 If `mcp remove` reports an `MCP cleanup warning`, resolve that warning before you continue.
 If `mcp remove` reports no preserved provider, skip provider deletion and add the server again.
 If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](#add-reports-an-existing-provider) before you add the server again.
-Before you re-add, record the denied-tool selectors and the trusted-private declaration from `--trusted-private-host` or `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`.
 `mcp remove` deletes the generated policy that holds them.
 If the original command used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again for the re-add.
-Add the server again:
+Add the server again with each recorded denied-tool selector and the recorded trusted-private host:
 
 ```bash
-$$nemoclaw <sandbox> mcp add <server> --url <MCP_URL> --env <CREDENTIAL_ENV>
+$$nemoclaw <sandbox> mcp add <server> --url <MCP_URL> --env <CREDENTIAL_ENV> \
+  --deny-tool <recorded-selector> \
+  --trusted-private-host <recorded-host>
 unset <CREDENTIAL_ENV>
 ```
+
+Repeat `--deny-tool` for each recorded selector. Omit either option when the original registration did not use it.
+If the original trusted-private declaration came from `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, keep that variable exported for this command and omit `--trusted-private-host`.
 
 For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
 Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
@@ -77,7 +82,8 @@ $$nemoclaw <sandbox> mcp status <server> --json
 ```
 
 If status cannot reach the sandbox, repair the reported gateway condition first.
-Export the replacement under the same environment-variable name and remove the server:
+Record the existing `--deny-tool` selectors and trusted-private declaration from `--trusted-private-host` or `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` before removal.
+Then export the replacement under the same environment-variable name and remove the server:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
@@ -90,9 +96,14 @@ If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Pr
 Add the server again so NemoClaw creates a fresh provider binding and agent placeholder:
 
 ```bash
-$$nemoclaw <sandbox> mcp add <server> --url <HTTPS_MCP_URL> --env <CREDENTIAL_ENV>
+$$nemoclaw <sandbox> mcp add <server> --url <HTTPS_MCP_URL> --env <CREDENTIAL_ENV> \
+  --deny-tool <recorded-selector> \
+  --trusted-private-host <recorded-host>
 unset <CREDENTIAL_ENV>
 ```
+
+Repeat `--deny-tool` for each recorded selector. Omit either option when the original registration did not use it.
+If the original trusted-private declaration came from `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again for this command and omit `--trusted-private-host`.
 
 Run status again.
 OpenShell can retain the same `s…` stable handle after a provider update; verify endpoint authorization with the named `mcp status` probe.
