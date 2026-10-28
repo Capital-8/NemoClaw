@@ -5,6 +5,16 @@
 
 Direct E2E coverage runs through Vitest.
 
+Messaging lifecycle, pairing, Hermes Discord, and token-rotation targets use a
+test-only Node preload for their synthetic Discord enrollment tokens. The
+fixture runs in installer and CLI children and returns a bot identity only for
+the matching synthetic token at Discord's identity endpoint. Other requests
+and real credentials retain normal authentication. This fixture establishes
+enrollment state for those targets; it does not prove live Discord authentication
+or message delivery. `support/discord-enrollment-child.test.ts` owns the child
+transport and production compiler contract. Existing live assertions still own
+provider attachment, persisted state, native configuration, stop/start, and cleanup.
+
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
 Changes to the OpenClaw scope patch select the compatible-endpoint, latency, skill-lifecycle, inference-switch, and full OpenClaw targets on both runtimes, plus the Docker llama.cpp GPU target. The compatible-endpoint case owns the native in-sandbox CLI-to-gateway consumer proof before admin approval: it checks command success, the model reply, and newly observed mock-provider traffic separately.
