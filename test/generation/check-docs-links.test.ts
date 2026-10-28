@@ -23,6 +23,22 @@ function runCheckDocs(filePath: string, env: Record<string, string> = {}) {
   });
 }
 
+// Remote probing is off by default in these cases except where a case opts in,
+// so the suite never depends on network reachability.
+function runRemoteCheckDocs(filePath: string, env: Record<string, string> = {}) {
+  return spawnSync("bash", [CHECK_DOCS, "--only-links", filePath], {
+    encoding: "utf-8",
+    env: { ...process.env, ...env },
+  });
+}
+
+function writeDoc(prefix: string, body: string, extension = "mdx"): string {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-check-docs-${prefix}-`));
+  const docPath = path.join(tempDir, `guide.${extension}`);
+  fs.writeFileSync(docPath, body);
+  return docPath;
+}
+
 describe("check-docs link validation", () => {
   it("reports broken local markdown links with source line numbers", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-"));
@@ -403,5 +419,86 @@ describe("check-docs link validation", () => {
     expect(result.status).toBe(1);
     expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
     expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
+  });
+});
+
+// NemoClaw#13842: enabling the remote probe in the pull-request workflow made
+// every URL in changed pages contributor-controlled, so the checker must own
+// destination admission and a bounded probe budget.
+describe("check-docs remote probe admission (#13842)", () => {
+  it.each([
+    ["loopback IPv4", "http://127.0.0.1/admin"],
+    ["loopback name", "http://localhost/admin"],
+    ["link-local metadata", "http://169.254.169.254/latest/meta-data/"],
+    ["private 10/8", "http://10.0.0.5/admin"],
+    ["private 192.168/16", "http://192.168.1.1/admin"],
+    ["private 172.16/12", "http://172.16.0.1/admin"],
+    ["CGNAT 100.64/10", "http://100.64.0.1/admin"],
+    ["IPv6 loopback", "http://[::1]/admin"],
+    ["IPv6 link-local", "http://[fe80::1]/admin"],
+    ["IPv6 unique-local", "http://[fd00::1]/admin"],
+    ["userinfo disguise", "http://user:pass@example.com/admin"],
+  ])("refuses a %s destination without invoking curl (#13842)", (_label, url) => {
+    const invocationLog = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-curl-")),
+      "invocations.log",
+    );
+    const curlShim = path.join(path.dirname(invocationLog), "curl");
+    fs.writeFileSync(curlShim, `#!/usr/bin/env bash\necho "$*" >> ${invocationLog}\nexit 0\n`, {
+      mode: 0o755,
+    });
+    const docPath = writeDoc("ssrf", `- [target](${url})\n`);
+
+    const result = runRemoteCheckDocs(docPath, { CURL: curlShim });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain("refused non-public probe destination");
+    // The guard must reject before the request, not merely report afterwards.
+    expect(fs.existsSync(invocationLog)).toBe(false);
+  });
+
+  it("still probes a public destination (#13842)", () => {
+    const invocationLog = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-curl-public-")),
+      "invocations.log",
+    );
+    const curlShim = path.join(path.dirname(invocationLog), "curl");
+    fs.writeFileSync(curlShim, `#!/usr/bin/env bash\necho "$*" >> ${invocationLog}\nexit 0\n`, {
+      mode: 0o755,
+    });
+    const docPath = writeDoc("public", "- [schema](https://docs.nvidia.com/openshell/latest/)\n");
+
+    const result = runRemoteCheckDocs(docPath, { CURL: curlShim });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(fs.readFileSync(invocationLog, "utf8")).toContain("docs.nvidia.com");
+  });
+
+  it("stops before the probe budget and lists every unprobed URL (#13842)", () => {
+    const docPath = writeDoc(
+      "budget",
+      Array.from({ length: 6 }, (_, index) => `- [l${index}](https://example.com/p${index})`).join(
+        "\n",
+      ),
+    );
+    const curlShim = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-curl-budget-")),
+      "curl",
+    );
+    fs.writeFileSync(curlShim, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const result = runRemoteCheckDocs(docPath, {
+      CHECK_DOC_LINKS_MAX_PROBES: "2",
+      CURL: curlShim,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("remote probe budget exhausted");
+    expect(output).toContain("4 URL(s) not probed");
+    expect(output.match(/unprobed: https:\/\/example\.com\/p[0-9]+/g)).toHaveLength(4);
+    // The two probed URLs must not be reported as unprobed.
+    expect(output).not.toContain("unprobed: https://example.com/p0");
+    expect(output).not.toContain("unprobed: https://example.com/p1");
   });
 });
