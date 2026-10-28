@@ -194,17 +194,43 @@ describe("custom native provider policy admission", () => {
     expect(test.beforeAttach).toHaveBeenCalledOnce();
   });
 
-  it("stops without changing providers when policy observation fails", async () => {
+  it.each([
+    {
+      kind: "authentication",
+      message: "OpenShell could not authenticate the sandbox policy read.",
+    },
+    { kind: "timeout", message: "The OpenShell sandbox policy read timed out." },
+    { kind: "schema", message: "The OpenShell CLI and gateway policy schemas do not match." },
+    { kind: "transport", reason: "unreachable", message: "OpenShell gateway is unreachable." },
+  ] as const)("reports the $kind policy-read failure without changing providers", async (error) => {
     const test = fixture("openrouter.ai", null);
     test.readSandboxPolicy.mockResolvedValue({
       ok: false,
-      error: { kind: "transport", reason: "unreachable", message: "unavailable" },
+      error,
+    });
+    await expect(test.select()).rejects.toThrow(error.message);
+    expect(test.createProvider).not.toHaveBeenCalled();
+    expect(test.attachProvider).not.toHaveBeenCalled();
+    expect(test.beforeAttach).not.toHaveBeenCalled();
+    expect(test.writeAuthority).not.toHaveBeenCalled();
+  });
+
+  it("redacts credentials from policy-read diagnostics before reporting them", async () => {
+    const test = fixture("openrouter.ai", null);
+    test.readSandboxPolicy.mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "authentication",
+        message: "Policy authentication failed with Bearer synthetic-policy-credential",
+      },
     });
     await expect(test.select()).rejects.toThrow(
-      /Cannot inspect the sandbox policy.*No provider was changed/,
+      "Policy authentication failed with Bearer <REDACTED>",
     );
     expect(test.createProvider).not.toHaveBeenCalled();
+    expect(test.attachProvider).not.toHaveBeenCalled();
     expect(test.beforeAttach).not.toHaveBeenCalled();
+    expect(test.writeAuthority).not.toHaveBeenCalled();
   });
 
   it.each([

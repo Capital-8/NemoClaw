@@ -4,6 +4,7 @@
 import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../../inference-credential";
 import type { InferenceSetDeps } from "../inference-set";
 import type { ConfigObject } from "../../security/credential-filter";
+import { redactInferenceSetRouteDiagnostic } from "../inference-set-provider-diagnostics";
 import { nativeHostedAgentConfig } from "../../inference/native-provider/agent-config";
 import {
   isLocalInferenceProvider,
@@ -222,7 +223,7 @@ export async function prepareNativeSelection(input: {
     });
     if (!policy.ok) {
       throw new InferenceSetError(
-        "Cannot inspect the sandbox policy before selecting a custom endpoint. No provider was changed.",
+        `Cannot inspect the sandbox policy before selecting a custom endpoint: ${redactInferenceSetRouteDiagnostic(policy.error.message)} Resolve the policy-read error before retrying. No provider was changed.`,
       );
     }
     const receipt = await prepareCustomNativeProvider({
