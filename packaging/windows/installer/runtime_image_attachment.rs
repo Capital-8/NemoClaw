@@ -7,6 +7,45 @@ use super::runtime_transaction::{Error, RuntimeIdentity};
 // with these read-only handles; the MSI-owned service restores the image at boot.
 pub(super) const INSTALLED_IMAGE_ATTACH_FLAGS: u32 = 0x1 | 0x2 | 0x4;
 
+#[repr(C)]
+#[derive(Default)]
+pub(super) struct StorageDeviceNumber {
+    pub device_type: u32,
+    pub device_number: u32,
+    pub partition_number: u32,
+}
+
+impl StorageDeviceNumber {
+    pub fn is_runtime_partition(&self, disk: &Self) -> bool {
+        self.device_type == 7
+            && disk.device_type == 7
+            && self.device_number == disk.device_number
+            && self.partition_number == 1
+    }
+}
+
+pub(super) fn select_runtime_volume(
+    disk: &StorageDeviceNumber,
+    mut next: impl FnMut() -> Result<Option<(Vec<u16>, Option<StorageDeviceNumber>)>, u32>,
+) -> Result<Vec<u16>, u32> {
+    if disk.device_type != 7 {
+        return Err(13);
+    }
+    let mut selected = None;
+    for _ in 0..4096 {
+        let Some((volume, number)) = next()? else {
+            return selected.ok_or(1168);
+        };
+        if number.is_some_and(|number| number.is_runtime_partition(disk)) {
+            if selected.is_some() {
+                return Err(13);
+            }
+            selected = Some(volume);
+        }
+    }
+    Err(122)
+}
+
 // NTFS creates this volume-root directory independently of the package payload.
 // Never exempt a loose-runtime entry, nested name, file, or reparse point.
 pub(super) fn is_volume_metadata(read_only_image_root: bool, relative: &str, attributes: u32) -> bool {
@@ -55,6 +94,88 @@ pub(super) fn finish_attachment(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn runtime_mount_requires_partition_one_on_the_exact_physical_disk() {
+        assert_eq!(std::mem::size_of::<StorageDeviceNumber>(), 12);
+        let disk = StorageDeviceNumber {
+            device_type: 7,
+            device_number: 4,
+            partition_number: u32::MAX,
+        };
+        for (device_type, device_number, partition_number, accepted) in [
+            (7, 4, 1, true),
+            (7, 0, 1, false),
+            (7, 5, 1, false),
+            (7, 4, 0, false),
+            (7, 4, 2, false),
+            (7, 4, u32::MAX, false),
+            (2, 4, 1, false),
+            (0, 4, 1, false),
+        ] {
+            let volume = StorageDeviceNumber {
+                device_type,
+                device_number,
+                partition_number,
+            };
+            assert_eq!(volume.is_runtime_partition(&disk), accepted);
+            assert!(!volume.is_runtime_partition(&StorageDeviceNumber {
+                device_type: 2,
+                device_number: 4,
+                partition_number: 0,
+            }));
+        }
+    }
+
+    #[test]
+    fn runtime_volume_selection_rejects_missing_ambiguous_and_incomplete_inventory() {
+        let disk = StorageDeviceNumber {
+            device_type: 7,
+            device_number: 4,
+            partition_number: u32::MAX,
+        };
+        let matching = || StorageDeviceNumber {
+            device_type: 7,
+            device_number: 4,
+            partition_number: 1,
+        };
+        let volume = vec![65, 0];
+        let mut inventory = vec![
+            Ok(Some((vec![66, 0], None))),
+            Ok(Some((volume.clone(), Some(matching())))),
+            Ok(None),
+        ]
+        .into_iter();
+        assert_eq!(
+            select_runtime_volume(&disk, || inventory.next().unwrap()),
+            Ok(volume.clone())
+        );
+        assert_eq!(select_runtime_volume(&disk, || Ok(None)), Err(1168));
+        assert_eq!(
+            select_runtime_volume(&disk, || Ok(Some((volume.clone(), Some(matching()))))),
+            Err(13)
+        );
+        let mut inventory = vec![Ok(Some((volume.clone(), Some(matching())))), Err(5)].into_iter();
+        assert_eq!(
+            select_runtime_volume(&disk, || inventory.next().unwrap()),
+            Err(5)
+        );
+        let calls = Cell::new(0);
+        assert_eq!(
+            select_runtime_volume(&disk, || {
+                calls.set(calls.get() + 1);
+                Ok(Some((volume.clone(), None)))
+            }),
+            Err(122)
+        );
+        assert_eq!(calls.get(), 4096);
+        assert_eq!(
+            select_runtime_volume(&StorageDeviceNumber::default(), || panic!(
+                "invalid disk must not enumerate"
+            )),
+            Err(13)
+        );
+    }
 
     #[test]
     fn volume_metadata_is_not_a_package_inventory_exemption() {

@@ -12,14 +12,10 @@ use super::runtime_transaction::{
 use super::windows_sha256::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::c_void;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::MetadataExt;
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const STORAGE_HEADER: &str = "NEMOCLAW_MSI_STORAGE_V1\n";
@@ -90,10 +86,25 @@ unsafe extern "system" {
         overlapped: *mut c_void,
     ) -> u32;
     fn DetachVirtualDisk(handle: RawHandle, flags: u32, provider_flags: u32) -> u32;
+    fn GetVirtualDiskPhysicalPath(handle: RawHandle, bytes: *mut u32, path: *mut u16) -> u32;
 }
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn CloseHandle(handle: RawHandle) -> i32;
+    fn FindFirstVolumeW(name: *mut u16, length: u32) -> RawHandle;
+    fn FindNextVolumeW(search: RawHandle, name: *mut u16, length: u32) -> i32;
+    fn FindVolumeClose(search: RawHandle) -> i32;
+    fn SetVolumeMountPointW(mount: *const u16, volume: *const u16) -> i32;
+    fn DeviceIoControl(
+        device: RawHandle,
+        code: u32,
+        input: *const c_void,
+        input_size: u32,
+        output: *mut c_void,
+        output_size: u32,
+        returned: *mut u32,
+        overlapped: *mut c_void,
+    ) -> i32;
     fn GetVolumeInformationW(
         root: *const u16,
         label: *mut u16,
@@ -177,6 +188,105 @@ impl Drop for VirtualDisk {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.0) };
     }
+}
+
+struct VolumeSearch(RawHandle);
+impl Drop for VolumeSearch {
+    fn drop(&mut self) {
+        unsafe { FindVolumeClose(self.0) };
+    }
+}
+
+fn storage_device_number(
+    path: &[u16],
+) -> Result<super::runtime_image_attachment::StorageDeviceNumber, u32> {
+    let raw = unsafe { StoreCreateFileW(path.as_ptr(), 0, 3, null(), 3, 0, null_mut()) };
+    if raw.is_null() || raw as isize == -1 {
+        return Err(unsafe { GetLastError() });
+    }
+    let handle = Handle(raw);
+    let mut number = super::runtime_image_attachment::StorageDeviceNumber::default();
+    let mut returned = 0;
+    let size = std::mem::size_of_val(&number) as u32;
+    if unsafe {
+        DeviceIoControl(
+            handle.0,
+            0x002d_1080,
+            null(),
+            0,
+            (&mut number as *mut super::runtime_image_attachment::StorageDeviceNumber).cast(),
+            size,
+            &mut returned,
+            null_mut(),
+        )
+    } == 0
+    {
+        return Err(unsafe { GetLastError() });
+    }
+    if returned != size {
+        return Err(13);
+    }
+    Ok(number)
+}
+
+fn mount_virtual_disk(image: &Path, mount: &Path) -> Result<(), u32> {
+    let disk = open_virtual_disk(image, 0x0008_0000)
+        .map_err(|_| LAST_NATIVE_STATUS.load(Ordering::Relaxed))?;
+    let mut physical_path = [0u16; 260];
+    let mut bytes = std::mem::size_of_val(&physical_path) as u32;
+    let status =
+        unsafe { GetVirtualDiskPhysicalPath(disk.0, &mut bytes, physical_path.as_mut_ptr()) };
+    if status != 0 {
+        return Err(status);
+    }
+    if bytes as usize > std::mem::size_of_val(&physical_path)
+        || !physical_path.contains(&0)
+        || physical_path[0] == 0
+    {
+        return Err(13);
+    }
+    let expected = storage_device_number(&physical_path)?;
+    if expected.device_type != 7 {
+        return Err(13);
+    }
+    let mut volume = [0u16; 260];
+    let search = unsafe { FindFirstVolumeW(volume.as_mut_ptr(), volume.len() as u32) };
+    if search.is_null() || search as isize == -1 {
+        return Err(unsafe { GetLastError() });
+    }
+    let search = VolumeSearch(search);
+    let mut first = true;
+    let selected = super::runtime_image_attachment::select_runtime_volume(&expected, || {
+        if !first {
+            volume.fill(0);
+            if unsafe { FindNextVolumeW(search.0, volume.as_mut_ptr(), volume.len() as u32) } == 0 {
+                let status = unsafe { GetLastError() };
+                return if status == 18 { Ok(None) } else { Err(status) };
+            }
+        }
+        first = false;
+        let length = volume.iter().position(|value| *value == 0).ok_or(13u32)?;
+        if length < 2 || volume[length - 1] != b'\\' as u16 {
+            return Err(13);
+        }
+        let mut device = volume[..length].to_vec();
+        device[length - 1] = 0;
+        Ok(Some((
+            volume[..=length].to_vec(),
+            storage_device_number(&device).ok(),
+        )))
+    })?;
+    let _mount_guard = open_mount_point(mount, 0, false)
+        .map_err(|_| LAST_NATIVE_STATUS.load(Ordering::Relaxed))?;
+    let mut mount_path = mount.as_os_str().encode_wide().collect::<Vec<_>>();
+    if mount_path.last() != Some(&(b'\\' as u16)) {
+        mount_path.push(b'\\' as u16);
+    }
+    mount_path.push(0);
+    if unsafe { SetVolumeMountPointW(mount_path.as_ptr(), selected.as_ptr()) } == 0 {
+        return Err(unsafe { GetLastError() });
+    }
+    Ok(())
 }
 
 fn open_mount_point(path: &Path, access: u32, mounted: bool) -> Result<Handle, Error> {
@@ -553,42 +663,6 @@ impl WindowsStore {
             installation.join("runtimes").join(runtime_id),
         ))
     }
-    fn diskpart(runtime_id: &str, commands: &[String]) -> Result<(), Error> {
-        let installation = PathBuf::from(native::installed_path().map_err(native_error)?);
-        let script = installation.join(format!("runtime-image-{runtime_id}.txt"));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&script)
-            .map_err(|_| Error::Native("runtime-image-script"))?;
-        for command in commands {
-            writeln!(file, "{command}").map_err(|_| Error::Native("runtime-image-script"))?;
-        }
-        file.sync_all()
-            .map_err(|_| Error::Native("runtime-image-script"))?;
-        drop(file);
-        let system_root = std::env::var_os("SystemRoot")
-            .map(PathBuf::from)
-            .filter(|value| value.is_absolute())
-            .ok_or(Error::Native("runtime-image-system-root"))?;
-        let status = Command::new(system_root.join("System32").join("diskpart.exe"))
-            .args(["/s", script.to_str().ok_or(Error::Identity)?])
-            // Null standard streams alone do not prevent a console window.
-            .creation_flags(0x0800_0000)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|_| Error::Native("runtime-image-diskpart"));
-        let removed = std::fs::remove_file(&script);
-        if removed.is_err() {
-            return Err(Error::Native("runtime-image-script-cleanup"));
-        }
-        if !status.map_err(|_| Error::Native("runtime-image-diskpart"))?.success() {
-            return Err(Error::Native("runtime-image-diskpart"));
-        }
-        Ok(())
-    }
     fn attach_image(runtime_id: &str) -> Result<(), Error> {
         let (image, mount) = Self::image_paths(runtime_id)?;
         if !image.is_file() || mount.join("runtime.manifest").is_file() {
@@ -605,25 +679,12 @@ impl WindowsStore {
                             .store(error.raw_os_error().unwrap_or(0) as u32, Ordering::Relaxed);
                         Error::Native("runtime-image-mount")
                     })?;
-                    let image_text = image.to_str().ok_or(Error::Identity)?;
-                    // DiskPart's folder-mount grammar takes the empty directory path itself;
-                    // a trailing separator makes the quoted `assign mount=` operand invalid.
-                    let mount = mount
-                        .to_str()
-                        .ok_or(Error::Identity)?
-                        .trim_end_matches('\\')
-                        .to_owned();
                     let _mount_timing =
                         super::diagnostics::Timing::start("RuntimeImageMountMilliseconds");
-                    Self::diskpart(
-                        runtime_id,
-                        &[
-                            format!("select vdisk file=\"{image_text}\""),
-                            "select partition 1".into(),
-                            format!("assign mount=\"{mount}\""),
-                            "exit".into(),
-                        ],
-                    )?;
+                    mount_virtual_disk(&image, &mount).map_err(|status| {
+                        LAST_NATIVE_STATUS.store(status, Ordering::Relaxed);
+                        Error::Native("runtime-image-mount")
+                    })?;
                 }
                 authorize_mount_point(&mount, true)?;
                 if !mount.join("runtime.manifest").is_file() {
