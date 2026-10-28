@@ -11,7 +11,8 @@
         "url": "https://github.com/NVIDIA/OpenShell/releases/download/v0.1.5/openshell.rb"
       },
       "installerTemplateSha256": [
-        "3c78eb8993e3ee940057b952639cc197252e58b69e96489ae4ffef90c9fc94e1"
+        "3c78eb8993e3ee940057b952639cc197252e58b69e96489ae4ffef90c9fc94e1",
+        "32226056dbea5585861eddd7b1dd50bfd7dd79345bac04ecbf6194b9ef4e7677"
       ],
       "manifests": [
         {

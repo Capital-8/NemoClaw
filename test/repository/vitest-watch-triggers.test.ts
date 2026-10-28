@@ -117,6 +117,7 @@ describe("Vitest opaque-input watch triggers", () => {
   it("maps the installer cutover boundary to its process tests", () => {
     expect(triggeredBy("scripts/install-openshell.sh")).toEqual([
       "test/installer-integration/install-openshell-version-check.test.ts",
+      "test/installer-integration/install-openshell-retained-state-size.test.ts",
       "test/installer-integration/install-openshell-version-pin.test.ts",
     ]);
   });

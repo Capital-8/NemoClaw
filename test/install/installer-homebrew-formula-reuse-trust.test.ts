@@ -13,8 +13,8 @@ const INSTALLER_SOURCE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
   "utf8",
 );
-const TRUSTED_V013_TEMPLATE_DIGEST =
-  "3c78eb8993e3ee940057b952639cc197252e58b69e96489ae4ffef90c9fc94e1";
+const TRUSTED_V015_TEMPLATE_DIGEST =
+  "32226056dbea5585861eddd7b1dd50bfd7dd79345bac04ecbf6194b9ef4e7677";
 const originalCurl =
   'curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \\';
 const boundedCurl = [
@@ -88,7 +88,7 @@ describe("installer Homebrew formula reuse trust", () => {
   it("accepts only the reviewed OpenShell 0.1.5 installer template", () => {
     expect(INSTALLER_SOURCE).toContain('MIN_VERSION="0.1.5"');
     expect(INSTALLER_SOURCE).toContain('MAX_VERSION="0.1.5"');
-    expectTrustedTemplate(boundedInstaller, TRUSTED_V013_TEMPLATE_DIGEST);
+    expectTrustedTemplate(boundedInstaller, TRUSTED_V015_TEMPLATE_DIGEST);
   });
 
   it.each([
