@@ -396,15 +396,6 @@ exit "$status"`,
 
     await expectSandboxInference42(sandbox, model, "phase-6-sandbox-inference-after-reonboard");
 
-    progress.phase("verify the Ollama model is active before switching providers");
-    const activeModelsBeforeSwitch = await host.command("ollama", ["ps"], {
-      artifactName: "phase-7-ollama-ps-before-provider-switch",
-      env: env(),
-      timeoutMs: 30_000,
-    });
-    expect(activeModelsBeforeSwitch.exitCode, resultText(activeModelsBeforeSwitch)).toBe(0);
-    expect(activeModelsBeforeSwitch.stdout).toContain(model);
-
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: SWITCH_API_KEY,
       chatContent: "42",
@@ -423,6 +414,29 @@ exit "$status"`,
         await fake.close();
       }
     });
+    progress.phase("verify the Ollama model is active before switching providers");
+    const keepAlivePayload = JSON.stringify({
+      model,
+      prompt: "Hello, reply in less than 5 words",
+      stream: false,
+      keep_alive: "45m",
+      options: { num_predict: 16 },
+    });
+    const activeModelsBeforeSwitch = await host.command(
+      "bash",
+      [
+        "-lc",
+        `curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 120 -H 'Content-Type: application/json' -d ${shellQuote(keepAlivePayload)} http://127.0.0.1:11434/api/generate >/dev/null && ollama ps`,
+      ],
+      {
+        artifactName: "phase-7-ollama-ps-before-provider-switch",
+        env: env(),
+        timeoutMs: 150_000,
+      },
+    );
+    expect(activeModelsBeforeSwitch.exitCode, resultText(activeModelsBeforeSwitch)).toBe(0);
+    expect(activeModelsBeforeSwitch.stdout).toContain(model);
+
     progress.phase("switch inference to a non-Ollama provider");
     const providerSwitch = await nemoclaw(
       host,
