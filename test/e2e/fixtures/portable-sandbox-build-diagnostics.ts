@@ -206,6 +206,66 @@ export async function verifyPortablePodmanStoreAuthority(
   if (category !== "match") throw new Error(`Portable Podman store authority ${category}`);
 }
 
+/** Carry the trusted job's pinned crun across portable host config regeneration. */
+export function preservePortableE2eCrun(
+  configPath: string,
+  expectedRuntimePath: string,
+  selectedUrl: string,
+  env: NodeJS.ProcessEnv,
+  probe: StoreProbe = probePodmanStore,
+): void {
+  if (
+    !/^\/usr\/local\/libexec\/nemoclaw\/portable-crun\.[1-9][0-9]*\.[1-9][0-9]*$/u.test(
+      expectedRuntimePath,
+    ) ||
+    !selectedUrl.startsWith("unix:///") ||
+    probe(env, selectedUrl).ociRuntimePath !== expectedRuntimePath
+  ) {
+    throw new Error("Portable E2E crun authority mismatch");
+  }
+  let fd: number;
+  try {
+    fd = fs.openSync(
+      configPath,
+      fs.constants.O_RDWR | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW,
+    );
+  } catch {
+    throw new Error("Portable E2E runtime config authority mismatch");
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    const contents = fs.readFileSync(fd, "utf8");
+    if (
+      !stat.isFile() ||
+      stat.uid !== process.getuid?.() ||
+      (stat.mode & 0o777) !== 0o600 ||
+      contents.includes("[engine.runtimes]")
+    ) {
+      throw new Error("Portable E2E runtime config authority mismatch");
+    }
+    fs.writeSync(fd, `\n[engine.runtimes]\ncrun = ["${expectedRuntimePath}"]\n`);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (probe(env).ociRuntimePath !== expectedRuntimePath) {
+    throw new Error("Portable E2E local crun selection mismatch");
+  }
+}
+
+/** Apply the trusted runtime handoff only to the Portable Hermes job that pins crun. */
+export function preservePortableE2eCrunForTarget(
+  env: NodeJS.ProcessEnv,
+  selectedUrl: string,
+): void {
+  if (env.E2E_TARGET_ID !== "portable-hermes-finalization") return;
+  preservePortableE2eCrun(
+    String(env.CONTAINERS_CONF),
+    `/usr/local/libexec/nemoclaw/portable-crun.${env.GITHUB_RUN_ID}.${env.GITHUB_RUN_ATTEMPT}`,
+    selectedUrl,
+    env,
+  );
+}
+
 async function runPodmanBuild(
   args: readonly string[],
   env: NodeJS.ProcessEnv,

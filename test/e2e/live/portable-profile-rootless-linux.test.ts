@@ -84,6 +84,7 @@ import {
   cleanupPortablePodmanResources,
   createPodmanGroupReconciliationTracker,
   portableSandboxImageBuilder as buildImageFixture,
+  preservePortableE2eCrunForTarget,
   publishPortableSandboxImage as publishImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -1040,6 +1041,7 @@ async function main(
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
     verifiedPodmanUrl = String(process.env.DOCKER_HOST);
+    preservePortableE2eCrunForTarget(process.env, verifiedPodmanUrl);
     const markUnreconciled = podmanGroup.mark;
     const buildImage = buildImageFixture(
       artifacts,

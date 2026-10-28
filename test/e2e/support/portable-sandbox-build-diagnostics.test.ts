@@ -23,6 +23,7 @@ import {
   cleanupPortablePodmanResources,
   createPodmanGroupReconciliationTracker,
   portableSandboxImageBuilder,
+  preservePortableE2eCrun,
   probePortableSandboxOciAfterBuildFailure,
   probePodmanStore,
   publishPortableSandboxImage,
@@ -57,6 +58,53 @@ it("parses only the fixed Podman store fields from the selected service", () => 
   expect(() => probePodmanStore(env, undefined, () => ({ status: 0, stdout: "{}" }))).toThrow(
     "missing-field",
   );
+});
+
+it("preserves the trusted Portable crun after host preparation regenerates Podman config", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-crun-"));
+  try {
+    const config = path.join(root, "containers.conf");
+    const runtime = "/usr/local/libexec/nemoclaw/portable-crun.40669583707.1";
+    const selectedUrl = "unix:///run/user/1001/podman/podman.sock";
+    const env = { CONTAINERS_CONF: config };
+    const probe = vi.fn((_env: NodeJS.ProcessEnv, url?: string) => ({
+      graphRoot: "/private/graph",
+      runRoot: "/private/run",
+      ociRuntimePath: url
+        ? runtime
+        : fs.readFileSync(config, "utf8").includes(`crun = ["${runtime}"]`)
+          ? runtime
+          : "/usr/bin/crun",
+    }));
+    fs.writeFileSync(config, '[network]\ndefault_rootless_network_cmd = "pasta"\n', {
+      mode: 0o600,
+    });
+    preservePortableE2eCrun(config, runtime, selectedUrl, env, probe);
+    expect(probe).toHaveBeenCalledWith(env, selectedUrl);
+    expect(probe).toHaveBeenCalledWith(env);
+    expect(fs.readFileSync(config, "utf8")).toContain(
+      `\n[engine.runtimes]\ncrun = ["${runtime}"]\n`,
+    );
+
+    fs.writeFileSync(config, "[network]\n");
+    const wrongService = vi.fn(() => ({
+      graphRoot: "/private/graph",
+      runRoot: "/private/run",
+      ociRuntimePath: "/usr/bin/crun",
+    }));
+    expect(() => preservePortableE2eCrun(config, runtime, selectedUrl, env, wrongService)).toThrow(
+      "Portable E2E crun authority mismatch",
+    );
+    expect(fs.readFileSync(config, "utf8")).toBe("[network]\n");
+    const linked = path.join(root, "linked.conf");
+    fs.symlinkSync(config, linked);
+    expect(() => preservePortableE2eCrun(linked, runtime, selectedUrl, env, probe)).toThrow(
+      "Portable E2E runtime config authority mismatch",
+    );
+    expect(fs.readFileSync(config, "utf8")).toBe("[network]\n");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 it("aligns only a trusted selected storage config and records fixed equality evidence", async () => {
