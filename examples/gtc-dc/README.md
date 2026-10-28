@@ -108,6 +108,8 @@ Both agents select `nvidia/nemotron-3.5-super-vl-120b-a12b` at `https://integrat
 Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../../docs/security.md#credentials-and-authentication) describes its storage and removal.
 Model requests can incur cloud inference charges.
 Each harness gets a registration bound to its image's executables, using the shared endpoint and credential reference.
+Both sandboxes retain explicit process and filesystem policies, with writes limited to `/sandbox`.
+Hermes also reads its packaged source, Switchyard plugin, and the public CA bundle used for HTTPS.
 
 Follow the [Kubernetes prerequisites and image preparation](../../docs/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/kubernetes.md#use-an-existing-gateway).
 Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.

@@ -37,7 +37,29 @@ spec:
         metadata: {env: NEMOCLAW_OPENCLAW_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/openclaw@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        tier: isolated
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies:
+              hosted-inference:
+                name: hosted-inference
+                endpoints:
+                  - host: integrate.api.nvidia.com
+                    port: 443
+                binaries:
+                  - path: /usr/bin/openclaw
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+              read_write:
+                - /sandbox
       agent:
         name: openclaw
         inferenceRef: chat
@@ -48,7 +70,25 @@ spec:
         metadata: {env: NEMOCLAW_HERMES_IMAGE_METADATA}
         ref: registry.example.com/nemoclaw/hermes@sha256:0000000000000000000000000000000000000000000000000000000000000000
       network:
-        tier: isolated
+        policy:
+          explicit:
+            version: 1
+            process:
+              run_as_user: "10001"
+              run_as_group: "10001"
+            network_policies: {}
+            filesystem_policy:
+              include_workdir: true
+              read_only:
+                - /usr
+                - /opt/fabric
+                - /opt/nemoclaw
+                - /app
+                - /opt/hermes
+                - /opt/nemo-relay/plugins/switchyard
+                - /etc/ssl/certs/ca-certificates.crt
+              read_write:
+                - /sandbox
       agent:
         name: hermes
         inferenceRef: chat

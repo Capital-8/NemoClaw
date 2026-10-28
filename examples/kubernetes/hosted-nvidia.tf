@@ -135,6 +135,35 @@ resource "openshell_sandbox" "agent" {
   launch_json = data.fabric_harness.agent[each.key].launch_json
   providers   = [openshell_inference.cloud[each.key].ref]
   policy {
+    explicit {
+      version = 1
+      process {
+        run_as_user  = "10001"
+        run_as_group = "10001"
+      }
+      filesystem_policy {
+        include_workdir = true
+        read_only = concat(
+          ["/usr", "/opt/fabric", "/opt/nemoclaw", "/app"],
+          each.key == "hermes" ? ["/opt/hermes", "/opt/nemo-relay/plugins/switchyard", "/etc/ssl/certs/ca-certificates.crt"] : [],
+        )
+        read_write = ["/sandbox"]
+      }
+      dynamic "network_policies" {
+        for_each = each.key == "openclaw" ? ["hosted-inference"] : []
+        labels   = ["hosted-inference"]
+        content {
+          name = "hosted-inference"
+          endpoints {
+            host = "integrate.api.nvidia.com"
+            port = 443
+          }
+          binaries {
+            path = "/usr/bin/openclaw"
+          }
+        }
+      }
+    }
     managed {
       name = "nemoclaw-inference-${openshell_inference.cloud[each.key].name}"
       dynamic "binaries" {
