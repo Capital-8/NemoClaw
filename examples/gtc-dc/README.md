@@ -6,7 +6,7 @@
 The nine local-inference templates cover Hermes, OpenClaw, and LangChain Deep Agents on the three ARM64 GTC DC target environments.
 Each declares one agent, a local managed Docker gateway, and one managed vLLM service.
 On DGX Spark, the Hermes and Deep Agents templates are verified; the other combinations are untested.
-The directory also links [AMD64 Kubernetes profiles](#amd64-kubernetes-with-nvidia-cloud-inference) that use NVIDIA cloud inference.
+The directory also links an [AMD64 Kubernetes profile](#amd64-kubernetes-with-nvidia-cloud-inference) that uses NVIDIA cloud inference.
 
 | Template | DGX Spark result |
 |---|---|
@@ -92,24 +92,36 @@ Follow [the deployment workflow](../../docs/usage.md) for apply, recovery, and r
 
 ## AMD64 Kubernetes with NVIDIA Cloud Inference
 
-These profiles target Linux AMD64 Kubernetes workers, an existing OpenShell gateway, and NVIDIA's hosted Super VL API.
+One profile targets Linux AMD64 Kubernetes workers, an existing OpenShell gateway, and NVIDIA's hosted Super VL API.
+It replaces the earlier three-OpenClaw Kubernetes example with two sandboxes: one OpenClaw agent and one Hermes agent.
 Inference runs on NVIDIA's cloud; the Kubernetes workers need no local GPU.
-The links below are symlinks to the owning files in `examples/kubernetes/`.
-Both combinations require live validation.
+Choose the [YAML](kubernetes-amd64.yaml) or equivalent [OpenTofu HCL](kubernetes-amd64.tf) configuration.
+Both links are symlinks to the owning files in `examples/kubernetes/`.
+The profile requires live validation.
 
-| Harness | Profile | Sandboxes |
+| Sandbox | Harness | Image metadata environment variable |
 |---|---|---|
-| OpenClaw | [AMD64 Kubernetes](openclaw-kubernetes-amd64.yaml) | Three independent OpenClaw agents sharing one provider |
-| Hermes | [AMD64 Kubernetes](hermes-kubernetes-amd64.yaml) | One Hermes agent |
+| `openclaw` | `nvidia.fabric.openclaw` | `NEMOCLAW_OPENCLAW_IMAGE_METADATA` |
+| `hermes` | `nvidia.fabric.hermes` | `NEMOCLAW_HERMES_IMAGE_METADATA` |
 
-Both select `nvidia/nemotron-3.5-super-vl-120b-a12b` at `https://integrate.api.nvidia.com/v1` through the OpenAI completions API.
+Both agents select `nvidia/nemotron-3.5-super-vl-120b-a12b` at `https://integrate.api.nvidia.com/v1` through the OpenAI completions API.
 Set `NVIDIA_INFERENCE_API_KEY` on the applying host; [credential ownership](../../docs/security.md#credentials-and-authentication) describes its storage and removal.
 Model requests can incur cloud inference charges.
+Each harness gets a registration bound to its image's executables, using the shared endpoint and credential reference.
 
 Follow the [Kubernetes prerequisites and image preparation](../../docs/kubernetes.md#prerequisites), then the [existing-gateway procedure](../../docs/kubernetes.md#use-an-existing-gateway).
-Select a Linux AMD64 image for the chosen harness, push it to a registry the cluster can pull from, and supply its matching metadata bundle.
-Assign a fresh deployment UID and replace the gateway endpoint, gateway credential and TLS references, and image digest before planning.
-Use the [deployment workflow](../../docs/usage.md) for apply and retained teardown, then verify an [agent response](../../docs/inference.md#verify-the-result) separately.
+Select a Linux AMD64 image for each harness, push both to a registry the cluster can pull from, and supply their matching metadata bundles.
+Set `GATEWAY_TOKEN` and the `GATEWAY_CA`, `GATEWAY_CERT`, and `GATEWAY_KEY` TLS file references for the existing gateway.
+
+For YAML, assign a fresh deployment UID and replace the gateway endpoint and both image digests before planning.
+Follow the [deployment workflow](../../docs/usage.md) for apply and retained teardown.
+
+For HCL, copy `hosted-nvidia.tf` alone into a private working directory and set `gateway_endpoint`, a fresh `workspace`, and both `images` references.
+Pin the two NVIDIA providers to the matching native bundle's manifest version and install them from its `providers` directory, as in the [HCL setup](../hcl/travel-team/README.md#run-it).
+Run the bundle's `libexec/tofu` to initialize, validate, plan, and apply that directory.
+The HCL protects its workspace with `prevent_destroy`; full workspace deletion requires removing that protection and setting `destroy=true`.
+Choose one authoring path per deployment, with its own workspace and state; applying both configurations does not adopt the other path's resources.
+Verify an [agent response](../../docs/inference.md#verify-the-result) from each sandbox separately.
 
 ## Sources and Adaptation
 
