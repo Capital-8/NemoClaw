@@ -2848,8 +2848,29 @@ user_local_executable_directory_safe() {
 assert_npm_executable_prefix_safe() {
   local npm_prefix="${1:-}"
   [[ -n "$npm_prefix" ]] || error "Could not resolve the active npm executable directory."
-  local directory
-  for directory in "$npm_prefix" "$npm_prefix/bin" "$npm_prefix/lib" "$npm_prefix/lib/node_modules"; do
+  local directory existing_parent parent_mode
+  if ! user_local_executable_directory_safe "$npm_prefix"; then
+    error "Unsafe npm executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
+  fi
+  if [[ ! -e "$npm_prefix" && ! -L "$npm_prefix" ]]; then
+    existing_parent="$npm_prefix"
+    while [[ ! -e "$existing_parent" && ! -L "$existing_parent" ]]; do
+      existing_parent="${existing_parent%/*}"
+      [[ -n "$existing_parent" ]] || existing_parent=/
+    done
+    if parent_mode="$(stat -c '%a' -- "$existing_parent" 2>/dev/null)"; then
+      :
+    elif parent_mode="$(stat -f '%Lp' "$existing_parent" 2>/dev/null)"; then
+      :
+    else
+      error "Could not inspect npm executable directory $existing_parent."
+    fi
+    [[ "$parent_mode" =~ ^[0-7]{3,4}$ ]] || error "Could not inspect npm executable directory $existing_parent."
+    if (((8#$parent_mode) & 022)); then
+      error "Unsafe npm executable directory $npm_prefix. Create it under a private parent before linking the CLI."
+    fi
+  fi
+  for directory in "$npm_prefix/bin" "$npm_prefix/lib" "$npm_prefix/lib/node_modules"; do
     if ! user_local_executable_directory_safe "$directory"; then
       error "Unsafe npm executable directory $UNSAFE_USER_LOCAL_EXECUTABLE_PATH. Make it a real directory owned by you or root without group or world write access, then rerun the installer."
     fi

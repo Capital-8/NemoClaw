@@ -396,6 +396,37 @@ describe("installer npm resolution", () => {
     }
   });
 
+  it.skipIf(
+    process.platform !== "linux" ||
+      fs.statSync("/tmp").uid !== 0 ||
+      (fs.statSync("/tmp").mode & 0o1777) !== 0o1777,
+  )("stops before npm link when a missing prefix is beneath shared /tmp", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-missing-prefix-"));
+    try {
+      const fakeBin = createNpmPermissionFixture(tmp);
+      const npmPrefix = path.join("/tmp", `${path.basename(tmp)}-unclaimed`);
+      const npmCallLog = path.join(tmp, "npm-calls.log");
+      const sourceRoot = path.join(tmp, "source");
+      const home = path.join(tmp, "home");
+      fs.mkdirSync(sourceRoot);
+      fs.mkdirSync(home);
+      expect(fs.existsSync(npmPrefix)).toBe(false);
+
+      const result = runInstallerFunction(
+        `link_nemoclaw_cli ${JSON.stringify(sourceRoot)}`,
+        fakeBin,
+        { ACTIVE_NPM_PREFIX: npmPrefix, HOME: home, NPM_CALL_LOG: npmCallLog },
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(npmPrefix);
+      expect(fs.existsSync(npmCallLog)).toBe(false);
+      expect(fs.existsSync(npmPrefix)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps an existing user-local npm PATH stable when fixing permissions", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-path-"));
     const fakeBin = path.join(tmp, "bin");
