@@ -257,6 +257,12 @@ export class LaunchReadinessFenceError extends Error {
     readonly blocksRecovery: boolean,
     readonly priorEpochInvalidated: boolean,
     readonly authorityUnsupported = false,
+    /**
+     * The runtime epoch this failed fence durably rotated, when the failure came
+     * after rotation. A later mutation gate must match this exact epoch so a
+     * second producer's rotation is detected as `changed` instead of tolerated.
+     */
+    readonly rotatedEpochId: string | null = null,
   ) {
     super(
       blocksRecovery
@@ -1808,7 +1814,9 @@ export function fenceLaunchReadinessLease(
     writeRecord(context, directory, fence);
     return fence;
   } catch {
-    throw new LaunchReadinessFenceError(false, true);
+    // The authority rotation above already succeeded, so the prior epoch is
+    // invalidated even though the fence record could not be stored.
+    throw new LaunchReadinessFenceError(false, true, false, epochId);
   } finally {
     closeDirectory(directory);
   }

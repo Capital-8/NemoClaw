@@ -612,6 +612,49 @@ describe("launch readiness lease storage", () => {
     }
   });
 
+  it("retains the rotated epoch so a later producer's rotation is detected (#10638)", () => {
+    // A receipt-store write failure happens after the authority rotation. The
+    // error must carry that epoch, otherwise the tolerated mutation gate would
+    // accept a second producer that rotated the authority in the meantime.
+    publish();
+    // Queue a distinct epoch for the second producer so a rotation is visible.
+    epochs.push(EPOCH_C);
+    const receiptDir = path.dirname(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home));
+    fs.chmodSync(receiptDir, 0o750);
+    let rotatedEpochId: string | null = null;
+    try {
+      fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    } catch (error) {
+      expect(error).toBeInstanceOf(LaunchReadinessFenceError);
+      const fenceError = error as LaunchReadinessFenceError;
+      expect(fenceError.blocksRecovery).toBe(false);
+      expect(fenceError.priorEpochInvalidated).toBe(true);
+      rotatedEpochId = fenceError.rotatedEpochId;
+    } finally {
+      fs.chmodSync(receiptDir, 0o700);
+    }
+    expect(rotatedEpochId).toBe(EPOCH_B);
+
+    // A second producer rotates the authority before the first reaches the gate.
+    const second = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
+    expect(second.epochId).toBe(EPOCH_C);
+    expect(second.epochId).not.toBe(rotatedEpochId);
+    fs.chmodSync(receiptDir, 0o750);
+    try {
+      expect(
+        checkLaunchReadinessMutationAuthority(
+          SANDBOX,
+          GATEWAY_NAME,
+          GATEWAY_PORT,
+          rotatedEpochId,
+          options(),
+        ),
+      ).toBe("changed");
+    } finally {
+      fs.chmodSync(receiptDir, 0o700);
+    }
+  });
+
   it.each(["receipt", "persistent ancestor", "runtime ancestor"] as const)(
     "identifies the unsafe %s directory without blaming its safe child (#10638)",
     (target) => {

@@ -132,6 +132,11 @@ export type LaunchReadinessDecision =
       fenceFailed: boolean;
       recoveryBlocked: boolean;
       authorityUnsupported?: true;
+      /**
+       * The runtime epoch a failed fence already durably rotated. The mutation
+       * gate must match it so a second producer's rotation is not tolerated.
+       */
+      rotatedEpochId?: string;
     };
 
 export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
@@ -1010,6 +1015,7 @@ function fallback(
   fenceFailed: boolean,
   recoveryBlocked = false,
   authorityUnsupported = false,
+  rotatedEpochId: string | null = null,
 ): LaunchReadinessDecision {
   debugDecision(category);
   return {
@@ -1021,6 +1027,7 @@ function fallback(
     fenceFailed,
     recoveryBlocked,
     ...(authorityUnsupported ? { authorityUnsupported: true as const } : {}),
+    ...(rotatedEpochId ? { rotatedEpochId } : {}),
   };
 }
 
@@ -1430,6 +1437,7 @@ export async function inspectLaunchReadiness(
           true,
           recoveryBlocked,
           error instanceof LaunchReadinessFenceError && error.authorityUnsupported,
+          error instanceof LaunchReadinessFenceError ? error.rotatedEpochId : null,
         );
       } finally {
         recordPerformanceStage("evidence-fence", fenceStartedAt);
@@ -1602,6 +1610,8 @@ export function publicationFromDecision(
     sandboxName,
     gatewayName: decision.gatewayName,
     gatewayPort: decision.gatewayPort,
-    epochId: decision.fence?.epochId ?? null,
+    // A failed fence that already rotated the runtime epoch must still pin that
+    // exact epoch. Falling back to null would accept any later producer.
+    epochId: decision.fence?.epochId ?? decision.rotatedEpochId ?? null,
   };
 }
