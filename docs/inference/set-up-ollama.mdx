@@ -426,7 +426,7 @@ Before manually releasing a listed model, verify that no active sandbox on this 
 2. For each gateway port, run `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw list --json`. This lists that port's registered sandboxes and any entries recovered from its live gateway; it does not scan other gateway ports.
 3. For every sandbox in each inventory, run `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw <name> status --json` and `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw <name> inference get --json`. Check the live phase and effective provider/model route. A sandbox that is active and uses the same local Ollama daemon and model owns it; do not stop that model. If any gateway, sandbox phase, or route cannot be inspected or is ambiguous, leave the model loaded and restore access or obtain recovery support before retrying.
 4. After every gateway and sandbox check succeeds and no active sandbox uses the listed model, run `ollama ps` against the host Ollama daemon NemoClaw uses.
-   Treat a listed model without a tag as its `:latest` variant when comparing with `ollama ps`.
+   For ownership checks and `ollama ps`, treat an omitted `:latest` tag or default `registry.ollama.ai/library/` prefix as the same model.
    If a matching model is present, stop only the matching `ollama ps` model and confirm it is absent:
 
    ```bash
