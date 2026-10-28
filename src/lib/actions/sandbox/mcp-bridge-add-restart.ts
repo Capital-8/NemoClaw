@@ -445,7 +445,8 @@ async function inspectMcpAddRecovery(
     (entry.providerId === undefined || providerInspection.id === entry.providerId) &&
     providerInspection.resourceVersion !== null &&
     providerInspection.type === MCP_BRIDGE_PROVIDER_TYPE &&
-    providerInspection.credentialKeys?.length === 1;
+    providerInspection.credentialKeys?.length === 1 &&
+    providerInspection.credentialKeys[0] === entry.env[0];
   if (
     !deadline &&
     providerMatchesRetainedMcpShape &&
@@ -461,7 +462,7 @@ async function inspectMcpAddRecovery(
       providerRuntimeSelection.gatewayName,
     );
     throw new McpBridgeError(
-      `OpenShell provider '${entry.providerName}' already exists, but no MCP registration, policy, or attachment for '${entry.server}' is active on sandbox '${sandboxName}' (for example, after \`nemoclaw ${sandboxName} mcp remove ${entry.server}\` or \`nemoclaw ${sandboxName} destroy\` preserved the provider). Confirm that no sandbox on the gateway uses '${entry.providerName}' (${attachmentChecks}), delete it with \`${deleteCommand}\`, and rerun \`mcp add\`. No source was changed.`,
+      `OpenShell provider '${entry.providerName}' already exists, but no MCP registration, policy, or attachment for '${entry.server}' is active on sandbox '${sandboxName}' (for example, after \`nemoclaw ${sandboxName} mcp remove ${entry.server}\` or \`nemoclaw ${sandboxName} destroy\` preserved the provider). Confirm its type, credential key, and known provider identity; the name alone does not prove ownership. Confirm that no sandbox on the gateway uses '${entry.providerName}' (${attachmentChecks}). Only then delete it with \`${deleteCommand}\` and rerun \`mcp add\`. If ownership is uncertain, preserve it. No source was changed.`,
     );
   }
   if (

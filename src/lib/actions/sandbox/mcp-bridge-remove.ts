@@ -242,7 +242,7 @@ export async function removeMcpBridge(
           `Provider '${entry.providerName}' could not be proven as the current exact MCP provider and was preserved.`,
         );
       }
-      if (provider.exists !== false) {
+      if (provider.exists !== false && exact && warnings.length === 0) {
         const deleteCommand = formatDeleteMcpProviderCommand(
           entry.providerName,
           runtimeSelection.gatewayName,
@@ -252,6 +252,10 @@ export async function removeMcpBridge(
         );
         console.warn(
           `  Preserved OpenShell provider '${entry.providerName}'. Confirm that no sandbox on the gateway uses it (${attachmentChecks}), then delete it with \`${deleteCommand}\` before you add '${server}' again.`,
+        );
+      } else if (provider.exists !== false) {
+        console.warn(
+          `  Preserved OpenShell provider '${entry.providerName}'. Resolve the MCP cleanup warning(s) and prove provider ownership before detaching or deleting it.`,
         );
       }
     }

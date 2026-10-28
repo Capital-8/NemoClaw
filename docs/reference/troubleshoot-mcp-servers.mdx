@@ -126,8 +126,17 @@ Use this procedure also when `mcp remove` reports a preserved provider.
 If `mcp remove` also reports an `MCP cleanup warning` that the provider could not be proven as the current exact MCP provider, stop this procedure.
 Do not run the printed `openshell provider delete` command, and do not detach the provider.
 The provider name can belong to an unrelated provider that stores a different credential.
+Stop for any other unresolved cleanup warning before detaching or deleting the provider.
 `mcp add` for the same server name fails while that provider exists.
-Its error names the provider type and credential key it found.
+If it reports an incompatible provider, stop without deleting it.
+Inspect the provider before proceeding:
+
+```bash
+openshell provider get -g <gateway-name> <provider-name>
+```
+
+Confirm that its type is `nemoclaw-mcp-v1`, its only credential key matches the environment variable from the original MCP registration, and its identity matches a provider you know belonged to that registration.
+The name alone cannot prove ownership. If any check is uncertain, keep the provider and stop.
 Use the gateway name from the `mcp add` error or the `mcp remove` warning to list every sandbox on that gateway:
 
 ```bash

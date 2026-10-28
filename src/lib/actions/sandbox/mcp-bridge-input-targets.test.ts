@@ -311,6 +311,7 @@ let attachments = [{ name: "alpha-mcp-github", providerId, credentialKeys: ["GIT
 const nativeSourceState = {
   github: { server: "github", agent: "openclaw", adapter: "openclaw-config", url: "https://8.8.8.8/mcp", env: ["GITHUB_TOKEN"], providerName: "alpha-mcp-github", providerId, policyName: "mcp-bridge-github", source: "native" },
 };
+const originalSource = { ...nativeSourceState.github };
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "assertAgentMcpTeardownRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", (_sandbox, _adapter, entry) => ({ state: nativeSourceState[entry.server] ? "registered" : "absent" }));
@@ -343,7 +344,14 @@ mcpBridge.removeMcpBridge("alpha", "github", { force: true }).then(() => {
     providerState = { ...providerState, type: "generic" };
     const incompatibleMessage = await mcpBridge.addMcpBridge("alpha", { server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "GITHUB_TOKEN" }] }).then(() => "resolved", (e) => String(e.message || e));
     const after = { policyState, attachments: [...attachments], native: { ...sourceState.inspectSourceBridgeState(sandbox, runtimeSelection).sources.native } };
-    process.stdout.write(JSON.stringify({ warnings, mutations, message: sameEnvMessage, rotatedEnvMessage, incompatibleMessage, before, after }), () => process.exit(0));
+    const removalWarnings = [...warnings];
+    providerState = { ...providerState, type: "nemoclaw-mcp-v1", credentialKeys: ["OTHER_TOKEN"] };
+    nativeSourceState.github = originalSource;
+    policyState = "bound";
+    warnings.length = 0;
+    await mcpBridge.removeMcpBridge("alpha", "github", { force: true });
+    const unprovenRemoveWarnings = [...warnings];
+    process.stdout.write(JSON.stringify({ warnings: removalWarnings, mutations, message: sameEnvMessage, rotatedEnvMessage, incompatibleMessage, unprovenRemoveWarnings, before, after }), () => process.exit(0));
   });
 });
 `;
@@ -367,6 +375,7 @@ mcpBridge.removeMcpBridge("alpha", "github", { force: true }).then(() => {
         message: string;
         rotatedEnvMessage: string;
         incompatibleMessage: string;
+        unprovenRemoveWarnings: string[];
         before: Record<string, unknown>;
         after: Record<string, unknown>;
       }>(result.stdout);
@@ -383,17 +392,29 @@ mcpBridge.removeMcpBridge("alpha", "github", { force: true }).then(() => {
       );
       expect(rejection.message).toContain("openshell sandbox list -g nemoclaw-9090");
       expect(rejection.message).toContain(
+        "Confirm its type, credential key, and known provider identity; the name alone does not prove ownership",
+      );
+      expect(rejection.message).toContain(
         "openshell sandbox provider list -g nemoclaw-9090 <sandbox-name>",
       );
       expect(rejection.message).toContain(
         "openshell provider delete -g nemoclaw-9090 alpha-mcp-github",
       );
       expect(rejection.message).toContain("No source was changed");
-      expect(rejection.rotatedEnvMessage).toBe(rejection.message);
+      expect(rejection.rotatedEnvMessage).toContain(
+        "found an incompatible provider 'alpha-mcp-github'",
+      );
+      expect(rejection.rotatedEnvMessage).not.toContain("openshell provider delete");
       expect(rejection.incompatibleMessage).toContain(
         "found an incompatible provider 'alpha-mcp-github'",
       );
       expect(rejection.incompatibleMessage).not.toContain("openshell provider delete");
+      expect(rejection.unprovenRemoveWarnings.join("\n")).toContain(
+        "could not be proven as the current exact MCP provider",
+      );
+      expect(rejection.unprovenRemoveWarnings.join("\n")).not.toContain(
+        "openshell provider delete",
+      );
       expect(rejection.mutations).toEqual([]);
       expect(rejection.after).toEqual(rejection.before);
     } finally {
