@@ -17,7 +17,7 @@ status.runtime_status_pid_is_live = lambda record: fixture["live"]
 sys.modules["gateway"] = gateway
 sys.modules["gateway.status"] = status
 def open_status(path, mode):
-    if str(path) != "/sandbox/.hermes/gateway_state.json" or mode != "rb":
+    if str(path) != "/sandbox/.hermes/runtime/gateway_state.json" or mode != "rb":
         raise ValueError("unexpected read")
     return io.BytesIO(json.dumps(fixture["record"]).encode() + b" " * fixture["record"].get("fixturePaddingBytes", 0))
 Path.open = open_status
@@ -79,7 +79,7 @@ describe("Hermes Discord runtime evidence", () => {
     });
     expect(output).toEqual(['NEMOCLAW_DISCORD_STATUS_V1\n{"state": "unknown"}\n']);
   });
-  it("reports native authentication rejection without exposing the error text (#13809)", () => {
+  it("reports authentication rejection from the runtime directory without exposing errors (#13809)", () => {
     const output = probe(record());
     expect(output).toContain('"state": "auth_failed"');
     expect(output).not.toContain("invalid-token-for-test");

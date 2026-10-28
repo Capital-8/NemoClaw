@@ -10,7 +10,7 @@ sys.path.insert(0, "/opt/hermes")
 state = "unknown"
 try:
     from gateway.status import runtime_status_pid_is_live
-    with Path("/sandbox/.hermes/gateway_state.json").open("rb") as source:
+    with Path("/sandbox/.hermes/runtime/gateway_state.json").open("rb") as source:
         raw = source.read(65537)
     if len(raw) > 65536:
         raise ValueError("oversize status")
