@@ -181,7 +181,7 @@ type SourceRecord = {
   source: "native" | "legacy";
 };
 
-const SOURCE_RECORD_MAX = 64;
+const SOURCE_RECORD_MAX = 128;
 const SOURCE_OUTPUT_MAX_BYTES = 262_144;
 
 function sourcePayload(value: unknown): string {

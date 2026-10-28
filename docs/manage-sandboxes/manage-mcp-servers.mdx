@@ -69,6 +69,11 @@ OpenClaw translates the managed Mcporter `baseUrl` entry into `openclaw.json` `m
 
 Migration treats the current OpenShell policy as authoritative, including its denied-tool selectors. A stale registry selector that differs from the live policy stops before mutation. Apply also requires the existing restrictive policy, exact provider identity, and attachment to verify before it writes native configuration.
 
+<AgentOnly variant="deepagents">
+`mcp migrate --apply` also stops before rebuild when `/sandbox/.deepagents/.mcp.json` would contain more than 64 `mcpServers` entries.
+The count includes entries that NemoClaw does not manage, such as stdio servers.
+</AgentOnly>
+
 Migration writes the native configuration atomically, reloads or rebuilds the agent, verifies native enumeration, and only then retires the legacy adapter or projection. OpenClaw must activate the new Tool Search catalog before legacy cleanup, and Deep Agents removes the migrated entry from `.deepagents/.nemoclaw-mcp.json` before reporting success. Failure restores newly created native entries and leaves the legacy configuration, OpenShell policy, provider, and attachment available for retry.
 
 ## Discover Advertised Tools
@@ -268,7 +273,11 @@ The replacement image must expose native MCP capability v3 before NemoClaw resto
 
 </AgentOnly>
 
-If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state at the path used by the surviving image. A later `mcp restart` can retry an incomplete post-rebuild restore.
+If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state at the path used by the surviving image.
+When the MCP provider attachments are already present, `mcp restart` can retry an incomplete post-rebuild restore.
+Run `openshell sandbox provider list <sandbox>` to count attached providers.
+If post-rebuild restore stops because the replacement sandbox reached 32 attached providers, free a provider attachment first.
+Then follow [Rotate a Credential](#rotate-a-credential) for each affected server with the original URL, credential name, denied tools, and trusted-private host.
 
 ## Destroy a Sandbox with MCP State
 

@@ -190,20 +190,26 @@ If this server uses the profile-less `generic` provider from an earlier NemoClaw
 That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
 
 OpenShell allows at most 32 attached providers in one sandbox.
-This total includes inference, messaging, web search, managed MCP, and `credentials add` providers that a rebuild attached to this sandbox.
 Each managed MCP server uses one attached provider.
+The total also includes inference, messaging, web search, and `credentials add` providers attached to this sandbox.
 If the only other attached provider is one inference provider, NemoClaw can attach at most 31 managed MCP servers.
 When a sandbox already has 32 attached providers, NemoClaw rejects a new server before it creates a provider or policy.
-If another command attaches a provider at the same time, the add fails with the same error, removes the generated policy, and can keep a detached provider that you must delete separately.
-Before you add the server, run `mcp remove` for an unused MCP server, or remove another provider-backed integration, such as a messaging channel with `channels remove`.
+If another command attaches a provider at the same time, the add fails with the same error and removes the generated policy.
+It can keep a detached provider.
+Delete that provider with `openshell provider delete <PROVIDER_NAME>` before you retry the add.
+Before you add the server, run `mcp remove` for an unused MCP server, or remove another provider-backed integration.
+`channels remove` deletes the channel credentials and rebuilds the sandbox.
 Rebuild checks this limit before it changes the original sandbox.
-If the MCP providers would exceed 32 attachments, rebuild stops and leaves the original sandbox unchanged.
+If attaching the MCP providers would bring the sandbox above 32 attached providers, rebuild stops before it changes the original sandbox.
 Rebuild checks the limit again before it reattaches MCP providers to the recreated sandbox.
-If the recreated sandbox has no room, rebuild reports `MCP bridge restore incomplete` and leaves those MCP servers unavailable until you free a provider attachment and run `mcp remove` and `mcp add` for each affected server.
+If the recreated sandbox has no room, rebuild reports `MCP bridge restore incomplete` and leaves those MCP servers unavailable.
+Run `openshell sandbox provider list <sandbox>` to count attached providers.
+To recover each affected server, free a provider attachment.
+Then follow [Rotate a Credential](manage-mcp-servers#rotate-a-credential) with the original URL, credential name, denied tools, and trusted-private host.
 `mcp restart` reloads an already attached registration and does not use another provider attachment.
 
 <AgentOnly variant="deepagents">
-`mcp add` fails when `/sandbox/.deepagents/.mcp.json` would contain more than 64 `mcpServers` entries.
+`mcp add` and `mcp migrate --apply` fail when `/sandbox/.deepagents/.mcp.json` would contain more than 64 `mcpServers` entries.
 The count includes entries that NemoClaw does not manage, such as stdio servers.
 </AgentOnly>
 

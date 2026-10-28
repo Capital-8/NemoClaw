@@ -255,6 +255,73 @@ network_policies:
     },
   );
 
+  it("accepts 64 Deep Agents native entries alongside legacy entries during source inspection", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-source-bound-"));
+    mocks.configRoot = root;
+    try {
+      const deepAgentsDir = path.join(root, ".deepagents");
+      fs.mkdirSync(deepAgentsDir);
+      const nativeServers = Object.fromEntries([
+        ...Array.from({ length: 63 }, (_, index) => [
+          `srv${String(index)}`,
+          {
+            url: `https://8.8.8.8/mcp/${String(index)}`,
+            headers: { Authorization: `Bearer openshell:resolve:env:T_MCP_${String(index)}` },
+          },
+        ]),
+        ["local-stdio", { command: "npx", args: ["-y", "server"] }],
+      ]);
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".mcp.json"),
+        JSON.stringify({ mcpServers: nativeServers }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".nemoclaw-mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            legacy: {
+              url: "https://8.8.8.8/mcp/legacy",
+              headers: { Authorization: "Bearer openshell:resolve:env:T_MCP_LEGACY" },
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      mocks.executeSandboxExecCommand.mockImplementation((_name: string, command: string) => {
+        const program = command.split("<<'PY'\n")[1].split("\nPY")[0];
+        const result = spawnSync("python3", ["-I", "-S", "-"], {
+          cwd: root,
+          input: program,
+          encoding: "utf8",
+          timeout: 10_000,
+        });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+      });
+
+      const liveObserved = await inspectAgentMcpSources(
+        { ...sandbox, agent: "langchain-deepagents-code" },
+        runtimeSelection,
+      );
+      expect(Object.keys(liveObserved.native)).toHaveLength(63);
+      expect(liveObserved.nativeServerNames).toHaveLength(64);
+      expect(Object.keys(liveObserved.legacy)).toEqual(["legacy"]);
+
+      const capturedObserved = inspectCapturedAgentMcpSources({
+        sandboxName: "alpha",
+        agentName: "langchain-deepagents-code",
+        directory: deepAgentsDir,
+        assertCurrent: vi.fn(),
+      });
+      expect(Object.keys(capturedObserved.native)).toHaveLength(63);
+      expect(capturedObserved.nativeServerNames).toHaveLength(64);
+      expect(Object.keys(capturedObserved.legacy)).toEqual(["legacy"]);
+    } finally {
+      mocks.configRoot = "/sandbox";
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("joins native agent configuration with live policy and provider state", async () => {
     mocks.executeSandboxExecCommand.mockReturnValue({
       status: 0,
