@@ -20,6 +20,7 @@ import {
   type SandboxRuntimeSnapshot,
 } from "../../state/registry/runtime-snapshot";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import { registryEntryGatewayPort } from "../gateway-binding/identity";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import type { SandboxMessagingState } from "../../state/registry-messaging";
 import type { SnapshotRestoreAuthority } from "../../state/sandbox";
@@ -291,6 +292,11 @@ function reboundMessaging(
 export function prepareManagedWorkloadCloneHandoff(
   input: PrepareManagedWorkloadCloneHandoffInput,
 ): PreparedManagedWorkloadCloneHandoff {
+  if (input.source.nativeLocalProviderAttachment !== undefined) {
+    fail(
+      "Native local provider attachments cannot be cloned. Onboard the destination with its own provider.",
+    );
+  }
   const sourceSandboxName = requireSandboxName(input.source.name, "source");
   const snapshotSandboxName = requireSandboxName(input.snapshot.sandboxName, "snapshot source");
   const destinationSandboxName = requireSandboxName(input.destinationSandboxName, "destination");
@@ -367,6 +373,7 @@ export function prepareManagedWorkloadCloneHandoff(
   try {
     rebound = rebindManagedStartupProfileForClone({
       sourceSandboxName,
+      sourceGatewayPort: registryEntryGatewayPort(input.source),
       destinationSandboxName,
       expectedAgent: snapshotAuthority.agent,
       destinationDashboardPort: input.destinationDashboardPort,

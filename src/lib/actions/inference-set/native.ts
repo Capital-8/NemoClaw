@@ -5,6 +5,33 @@ import { managedInferenceApiKey, NVIDIA_INFERENCE_PLACEHOLDER } from "../../infe
 import type { InferenceSetDeps } from "../inference-set";
 import type { ConfigObject } from "../../security/credential-filter";
 import { nativeHostedAgentConfig } from "../../inference/native-provider/agent-config";
+import {
+  isLocalInferenceProvider,
+  nativeLocalCredentialReference,
+} from "../../inference/native-local/agent-config";
+export { isLocalInferenceProvider };
+export {
+  resolveOpenClawLocalSwitch,
+  prepareOpenClawLocalSwitch,
+  rollbackOpenClawLocalSwitch,
+  detachPreviousOpenClawLocal,
+  restorePreviousOpenClawLocal,
+  retirePreviousOpenClawLocal,
+  openClawLocalProbeFields,
+  openClawLocalRegistryFields,
+} from "./native-local";
+export {
+  getNativeLocalProviderAuthority,
+  setNativeLocalProviderAuthority,
+  clearNativeLocalProviderAuthority,
+  listNativeLocalProviderAuthorities,
+} from "../../state/registry/native-local-provider-authority";
+export { reconcilePreviousOpenClawLocal } from "./native-local";
+export {
+  resolveLocalSwitchRuntime,
+  validateLocalProvider,
+  type ValidationResult,
+} from "./local-runtime";
 import { isSafeModelId } from "../../validation";
 import { InferenceSetError } from "../inference-set-error";
 import type { NativeProviderAttachment } from "../../inference/native-provider/contract";
@@ -20,9 +47,18 @@ import {
 import {
   hostedNativeProvider,
   usesNativeHermesEndpoint,
+  isCustomHostedProvider,
+  customNativeCredentialEnv,
 } from "../../inference/native-provider/hosted";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
+import { prepareCustomNativeProvider } from "../../inference/native-provider/custom-setup";
+import { isHostedCustomEndpoint } from "../../inference/native-provider/custom";
+
+/** Preserve shared-route config unless a custom native endpoint is explicit. */
+export function usesNativeConfigByDefault(provider: string, nativeEndpointUrl?: string): boolean {
+  return !isCustomHostedProvider(provider) || Boolean(nativeEndpointUrl);
+}
 
 export function isNativeInferenceSelection(
   provider: string,
@@ -31,6 +67,11 @@ export function isNativeInferenceSelection(
   gatewayName: string,
   deps: InferenceSetDeps,
 ): boolean {
+  if (isCustomHostedProvider(provider)) {
+    const endpoint = endpointUrl ?? (entry.provider === provider ? entry.endpointUrl : undefined);
+    if (!endpoint || !recordedNativeProviderAttachment(entry)) return false;
+    return isHostedCustomEndpoint(provider, endpoint);
+  }
   if (!fixedNativeProvider(provider)) return false;
   if (provider !== "hermes-provider") return true;
   const authority =
@@ -73,6 +114,10 @@ export function resolveNativeSelectionAuthority(input: {
   deps: InferenceSetDeps;
 }): NativeProviderAttachment | undefined {
   if (!input.selectingNative) return undefined;
+  if (isCustomHostedProvider(input.provider))
+    return input.previousAttachment?.custom?.provider === input.provider
+      ? input.previousAttachment
+      : undefined;
   const fixed = fixedNativeProvider(input.provider);
   if (!fixed) return undefined;
   const previous =
@@ -114,7 +159,9 @@ export function nativeSelectionRegistryFields(
       ? { nativeNvidiaProviderAttachment: nvidia }
       : {
           nativeHostedProviderAttachment: attachment,
-          credentialEnv: fixedNativeProviderForAttachment(attachment).credentialEnv,
+          credentialEnv:
+            attachment.custom?.credentialEnv ??
+            fixedNativeProviderForAttachment(attachment).credentialEnv,
         }),
   };
 }
@@ -141,15 +188,60 @@ export async function prepareNativeSelection(input: {
   selectingNative: boolean;
   provider: string;
   expectedAttachment?: NativeProviderAttachment;
+  previousAttachment?: NativeProviderAttachment;
   gatewayName: string;
   sandboxName: string;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  inferenceApi?: string | null;
+  beforeAttach?: (receipt: NativeProviderAttachment) => Promise<void>;
   deps: InferenceSetDeps;
 }): Promise<{
   attachment?: NativeProviderAttachment;
   attachmentChanged: boolean;
+  providerChanged?: boolean;
   endpointUrl?: string;
 }> {
   if (!input.selectingNative) return { attachmentChanged: false };
+  if (isCustomHostedProvider(input.provider)) {
+    if (
+      !input.deps.getNativeHostedProviderAuthority ||
+      !input.deps.setNativeHostedProviderAuthority
+    )
+      throw new InferenceSetError("Native hosted provider ownership storage is unavailable");
+    const credentialEnv = input.credentialEnv || customNativeCredentialEnv(input.provider);
+    const receipt = await prepareCustomNativeProvider({
+      gatewayName: input.gatewayName,
+      provider: input.provider,
+      endpointUrl: input.endpointUrl || "",
+      api:
+        input.inferenceApi ||
+        (input.provider === "compatible-anthropic-endpoint"
+          ? "anthropic-messages"
+          : "openai-completions"),
+      credentialEnv,
+      credentialValue: input.deps.resolveCredentialValue(credentialEnv) || null,
+      adapter: input.deps.providerAdapter,
+      recordedAttachment: input.expectedAttachment,
+      recordedSandboxName: input.sandboxName,
+      readAuthority: input.deps.getNativeHostedProviderAuthority,
+      writeAuthority: input.deps.setNativeHostedProviderAuthority,
+    });
+    await input.beforeAttach?.(receipt);
+    const attached = await nativeProviderLifecycle(
+      fixedNativeProviderForAttachment(receipt),
+    ).ensureNativeProviderAttached({
+      adapter: input.deps.providerAdapter,
+      target: { kind: "named", gatewayName: input.gatewayName },
+      sandboxName: input.sandboxName,
+      expected: receipt,
+    });
+    return {
+      attachment: attached.receipt,
+      attachmentChanged: attached.changed,
+      endpointUrl: receipt.endpointUrl,
+    };
+  }
   const definition = input.expectedAttachment
     ? fixedNativeProviderForAttachment(input.expectedAttachment)
     : fixedNativeProvider(input.provider);
@@ -161,18 +253,24 @@ export async function prepareNativeSelection(input: {
     hostedNativeProvider(input.provider, definition.endpointUrl)?.endpoint,
   );
   const target = { kind: "named", gatewayName: input.gatewayName } as const;
+  // Repeated selections reuse the sandbox's attached NVIDIA credential.
+  // Hermes host credentials use NOUS_API_KEY; OPENAI_API_KEY is its injection slot.
+  const credentialValue =
+    input.expectedAttachment &&
+    (!isNativeNvidiaProvider(input.provider) ||
+      input.previousAttachment?.providerName === input.expectedAttachment.providerName)
+      ? null
+      : input.deps.resolveCredentialValue(
+          input.provider === "hermes-provider" ? "NOUS_API_KEY" : definition.credentialEnv,
+        ) || null;
   const ensured = await lifecycle.ensureNativeProvider({
     adapter: input.deps.providerAdapter,
     target,
-    // Hosted model selection must not rotate a gateway-shared provider credential.
-    // Hermes host credentials use NOUS_API_KEY; OPENAI_API_KEY is its injection slot.
-    credentialValue:
-      input.expectedAttachment && !isNativeNvidiaProvider(input.provider)
-        ? null
-        : input.deps.resolveCredentialValue(
-            input.provider === "hermes-provider" ? "NOUS_API_KEY" : definition.credentialEnv,
-          ) || null,
+    credentialValue,
     ...(input.expectedAttachment ? { expected: input.expectedAttachment } : {}),
+    ...(input.expectedAttachment && !authority.read(input.gatewayName)
+      ? { recordedSandboxName: input.sandboxName }
+      : {}),
   });
   await lifecycle.persistNativeProviderAuthority({
     adapter: input.deps.providerAdapter,
@@ -192,6 +290,7 @@ export async function prepareNativeSelection(input: {
   return {
     attachment: attached.receipt,
     attachmentChanged: attached.changed,
+    providerChanged: !input.expectedAttachment || credentialValue !== null,
     endpointUrl: attached.receipt.endpointUrl,
   };
 }
@@ -226,6 +325,7 @@ export async function rollbackNativeSelection(input: {
 export async function detachPreviousNativeBeforePublish(input: {
   selectingNative: boolean;
   selectedProvider: string;
+  selectedAttachment?: NativeProviderAttachment;
   previousAttachment?: NativeProviderAttachment;
   gatewayName: string;
   sandboxName: string;
@@ -233,7 +333,13 @@ export async function detachPreviousNativeBeforePublish(input: {
 }): Promise<boolean> {
   if (!input.previousAttachment) return false;
   const previous = fixedNativeProviderForAttachment(input.previousAttachment);
-  if (input.selectingNative && input.selectedProvider === previous.logicalProvider) return false;
+  if (
+    input.selectingNative &&
+    (input.selectedAttachment
+      ? input.selectedAttachment.providerName === input.previousAttachment.providerName
+      : !input.previousAttachment.custom && input.selectedProvider === previous.logicalProvider)
+  )
+    return false;
   await nativeProviderLifecycle(previous).detachNativeProvider({
     adapter: input.deps.providerAdapter,
     target: { kind: "named", gatewayName: input.gatewayName },
@@ -283,11 +389,17 @@ export function nativeSelectionConfigCredentials(
   return {
     apiKey:
       native?.apiKey ??
+      (isLocalInferenceProvider(provider)
+        ? nativeLocalCredentialReference(provider, baseUrl)
+        : null) ??
       managedInferenceApiKey(
         baseUrl,
         typeof existingApiKey === "string" &&
           existingApiKey &&
-          existingApiKey !== NVIDIA_INFERENCE_PLACEHOLDER
+          existingApiKey !== NVIDIA_INFERENCE_PLACEHOLDER &&
+          !/^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?NEMOCLAW_LOCAL_INFERENCE_TOKEN$/u.test(
+            existingApiKey,
+          )
           ? existingApiKey
           : "unused",
       ),

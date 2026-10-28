@@ -69,7 +69,7 @@ describe("native runtime qualification producer workflow", () => {
     const compile = step(plan, "Compile the trusted qualification producer matrix");
 
     expect(plan.if).toBe(
-      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}",
+      "${{ !cancelled() && needs.generate-matrix.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}",
     );
     expect(plan.permissions).toEqual({
       actions: "read",
@@ -574,7 +574,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(identity.run).toContain('.status == "in_progress"');
     expect(identity.run).toContain("select(length == 1)");
     expect(identity.run).toContain("Aggregate job lookup exceeds the bounded 100-job page");
-    expect(setupNode.with?.["node-version"]).toBe("24.18.1");
+    expect(setupNode.with?.["node-version"]).toBe("24.22.1");
     expect(collect.run).toContain("native-runtime-qualification-producer-aggregate.mts");
     expect(collect.env?.QUALIFICATION_PLAN).toBe(
       "${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}",

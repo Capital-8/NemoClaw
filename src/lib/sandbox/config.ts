@@ -391,11 +391,13 @@ function classifyNewKeyGate(inputs: NewKeyGateInputs): NewKeyGate {
  * privileged docker exec path.
  */
 function composeSandboxConfigBody(config: ConfigObject, target: AgentConfigTarget): string {
-  const body = serializeConfig(config, target.format);
   if (target.agentName === "hermes" && target.format === "yaml") {
+    // Hermes/PyYAML reads YAML 1.1. Preserve strings such as tool_search's "on"
+    // when a credential-only restore writes a config sanitized as JSON.
+    const body = require("yaml").stringify(config, { compat: "yaml-1.1" });
     return `${buildHermesUpstreamHeader(config as Record<string, unknown>)}${body}`;
   }
-  return body;
+  return serializeConfig(config, target.format);
 }
 
 /**
@@ -527,7 +529,9 @@ function isHermesCompatHashRecoveryError(error: unknown): boolean {
 function hermesCompatHashRecoveryError(sandboxName: string): SandboxConfigError {
   return new SandboxConfigError([
     "  Hermes integrity metadata is not ready for a configuration write.",
-    `  Run: nemoclaw ${shellQuote(sandboxName)} recover`,
+    `  Back up needed data from ${shellQuote(sandboxName)} before recovery.`,
+    "  Rebuild preserves the native home and may retain this mismatch.",
+    "  Repair the integrity state from a trusted backup or create a fresh Hermes sandbox.",
     "  The configuration write was not applied.",
   ]);
 }
@@ -536,6 +540,7 @@ function writeSandboxConfig(
   sandboxName: string,
   target: AgentConfigTarget,
   config: ConfigObject,
+  options: { restoreNativeLocalCredential?: true } = {},
 ): void {
   if (target.agentName === "openclaw") {
     throw new Error(
@@ -572,6 +577,7 @@ function writeSandboxConfig(
           HERMES_RESTART_SEAL_STATE,
           "--expected-config-sha256",
           expectedConfigSha256,
+          ...(options.restoreNativeLocalCredential ? ["--restore-native-local-credential"] : []),
         ],
         { input: content, timeout: HERMES_CONFIG_GUARD_TIMEOUT_MS },
       );

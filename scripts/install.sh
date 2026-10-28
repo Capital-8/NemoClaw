@@ -196,6 +196,28 @@ resolve_stamped_version() {
   printf "%s" "$version"
 }
 
+# Use explicit Git/libcurl timeout diagnostics. Elapsed time is not a timeout cause.
+classify_install_ref_fetch_failure() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      "fatal: couldn't find remote ref "* | "fatal: invalid refspec "*)
+        printf 'missing-ref'
+        return 0
+        ;;
+      "fatal: unable to access "* | "error: RPC failed; "*)
+        case "$line" in
+          *"timed out"* | *"Timeout was reached"* | *"Operation too slow."* | *"SSL connection timeout"*)
+            printf 'connect-timeout'
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  done <<<"$1"
+  printf 'lookup-failed'
+}
+
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
@@ -204,8 +226,22 @@ clone_nemoclaw_ref() {
     umask 022
     git init --quiet "$dest"
     git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-    if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
-      error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+    local fetch_error="" elapsed_detail=""
+    if ! fetch_error="$(LC_ALL=C git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target" 2>&1)"; then
+      [[ -z "$fetch_error" ]] || printf '%s\n' "$fetch_error" >&2
+      [[ "$fetch_error" =~ after\ ([0-9]+)\ ms ]] \
+        && elapsed_detail=" Git reported ${BASH_REMATCH[1]} ms elapsed before the lookup failed."
+      case "$(classify_install_ref_fetch_failure "$fetch_error")" in
+        connect-timeout)
+          error "Timed out looking up install ref '$ref' at https://github.com/NVIDIA/NemoClaw.git. Check network access to github.com and try again."
+          ;;
+        missing-ref)
+          error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+          ;;
+        *)
+          error "Could not verify install ref '$ref' from https://github.com/NVIDIA/NemoClaw.git.$elapsed_detail Check repository access and the Git diagnostic, then try again."
+          ;;
+      esac
     fi
     git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
   )
@@ -6279,12 +6315,9 @@ configure_station_express_model() {
       # Super VL is single-host only. Explicit peers retain the Ultra recipe.
       NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
       NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
-    elif [ "${_STATION_INSTALL_MODE:-}" = "express" ]; then
-      NEMOCLAW_VLLM_MODEL="$STATION_SUPER_VL_VLLM_MODEL"
-      NEMOCLAW_MODEL="$STATION_SUPER_VL_SERVED_MODEL"
     else
-      # A direct provider selection outside Express keeps the Station profile
-      # default unless the operator selects a model or peer.
+      # The catalog owns the single-Station default for Express and direct
+      # provider setup. Keep automatic intent available for pair discovery.
       unset NEMOCLAW_VLLM_MODEL
     fi
   else
@@ -6323,10 +6356,6 @@ station_dual_model_requested() {
   local selected_model
   selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
   case "$selected_model" in
-    "$STATION_SUPER_VL_VLLM_MODEL")
-      # Implicit Express still discovers trusted pairs before final selection.
-      [ "${_STATION_INSTALL_MODE:-}" = "express" ] && [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]
-      ;;
     "$STATION_ULTRA_VLLM_MODEL" | "$STATION_ULTRA_SERVED_MODEL" | "$STATION_ULTRA_DUAL_SERVED_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
       return 0
       ;;
@@ -6627,11 +6656,6 @@ load_station_express_resume() {
 save_station_express_resume() {
   local state_file state_dir temp_file revision generation
   local model="${NEMOCLAW_VLLM_MODEL:-auto}" agent="${NEMOCLAW_AGENT:-openclaw}"
-  # Preserve topology discovery across reboot instead of turning the implicit
-  # single-Station default into an explicit prohibition on paired serving.
-  if [ "$model" = "$STATION_SUPER_VL_VLLM_MODEL" ] && [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
-    model=auto
-  fi
   local sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}" policy_tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local gateway_port dashboard_port vllm_port mode="${_STATION_INSTALL_MODE:-express}"
   validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
@@ -6675,6 +6699,7 @@ save_station_express_resume() {
   assert_station_express_resume_file_safe "$state_file"
   _STATION_EXPRESS_RESUME_REVISION="$revision"
   _STATION_EXPRESS_RESUME_GENERATION="$generation"
+  export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$generation"
   _STATION_EXPRESS_RESUME_AGENT="$agent"
   _STATION_EXPRESS_RESUME_SANDBOX="$sandbox"
   _STATION_EXPRESS_RESUME_POLICY_TIER="$policy_tier"
@@ -7254,14 +7279,13 @@ ensure_station_express_pair() {
         if [ "${_STATION_EXPRESS_MIGRATING_LEGACY_HEAD:-0}" = "1" ]; then
           NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
           NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+          export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
         else
-          NEMOCLAW_VLLM_MODEL="$STATION_SUPER_VL_VLLM_MODEL"
-          NEMOCLAW_MODEL="$STATION_SUPER_VL_SERVED_MODEL"
+          unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
         fi
-        export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
       fi
       unset NEMOCLAW_DGX_STATION_SSH_BINDING
-      info "No eligible reciprocal dual-DGX Station pair is available; using single-Station model ${NEMOCLAW_VLLM_MODEL}."
+      info "No eligible reciprocal dual-DGX Station pair is available; using single-Station model ${NEMOCLAW_VLLM_MODEL:-selected by the serving catalog}."
       ;;
     ready)
       [ "$status" -eq 0 ] \
