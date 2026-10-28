@@ -61,6 +61,7 @@ on:
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
+      - "test/package-contract/channels/hermes-discord-runtime.test.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
@@ -933,9 +934,33 @@ jobs:
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install managed-image direct harness dependencies
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
         run: |
-          npm ci --ignore-scripts --no-audit --no-fund
+          set -euo pipefail
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts prepare
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts check
+          fi
           npm run build:policy-boundary
+
+      - name: Build CLI for Hermes runtime contract
+        if: matrix.agent == 'hermes'
+        run: npm run build:cli
+
+      - name: Verify native Hermes Discord status before publication
+        if: matrix.agent == 'hermes'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
 
       - name: Exercise managed startup root stdin and hold
         shell: bash
@@ -2380,9 +2405,23 @@ jobs:
           sbom: true
 
       - name: Install managed-image publication harness dependencies
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
         run: |
-          npm ci --ignore-scripts --no-audit --no-fund
+          set -euo pipefail
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts prepare
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund --@nvidia:registry=https://npm.pkg.github.com
+          if [ "$AGENT" = "hermes" ]; then
+            node scripts/lib/openshell-sdk-install.mts check
+          fi
           npm run build:policy-boundary
+
+      - name: Build CLI for Hermes runtime contract
+        if: matrix.agent == 'hermes'
+        run: npm run build:cli
 
       - name: Validate exact managed image before promotion
         id: validate
@@ -2617,6 +2656,18 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Verify native Hermes Discord status before publication
+        if: matrix.agent == 'hermes'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.validate.outputs.reference }}
+          PLATFORM: ${{ matrix.platform }}
+          DOCKER_CONFIG: ${{ steps.build.outputs.docker-config }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
 
       - name: Capture exact managed image publication evidence
         id: evidence

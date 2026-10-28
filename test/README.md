@@ -77,18 +77,23 @@ onboarding, production CUDA image qualification, or the complete supported E2E f
 
 ### Native Hermes Discord status
 
-Build the CLI, then run `test/package-contract/channels/hermes-discord-runtime.test.ts` in a
-disposable managed Hermes image with networking disabled. Mount the checkout, Linux dependencies
-and compiled `dist/`, and provide an empty `/sandbox/.hermes` directory. Set
-`NEMOCLAW_HERMES_RUNTIME_TEST=1` and run:
+Managed-image PR and release builds run the native Hermes Discord contract before publication,
+on AMD64 and ARM64. Both paths run the existing package-contract test.
+It mounts the compiled CLI and checkout read-only in the image under test, disables networking,
+and provides an empty Hermes home and temporary caches.
+
+To run it on Linux, build the CLI and select a cached immutable Hermes image for the native platform.
+Use Linux dependencies that match the image's architecture:
 
 ```bash
-npx vitest run --project package-contract test/package-contract/channels/hermes-discord-runtime.test.ts
+npm run build:cli
+npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts --image '<image@sha256:digest>' --platform linux/amd64
 ```
 
 The test uses Hermes's installed runtime writer and the compiled channel status action. It checks
 authentication rejection, connected recovery, dead-writer uncertainty and native-error redaction.
-It does not contact Discord or prove message delivery. Other environments skip this opt-in test.
+It does not contact Discord or prove message delivery. Ordinary package-contract runs skip the test;
+the qualification command supplies `NEMOCLAW_HERMES_RUNTIME_TEST=1` inside the image.
 
 ## Test contracts
 
