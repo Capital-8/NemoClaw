@@ -2737,7 +2737,7 @@ function hasDockerSandboxRegistrations(
   );
 }
 
-/** Container deletion belongs to the runtime owners; names only identify uncertain leftovers. */
+/** Container deletion belongs to the runtime owners. Inventory rows are ID|IMAGE|NAMES with no whitespace; IMAGE or NAMES may be empty, but not both. Any other row keeps uninstall state. */
 function verifyDockerContainerCleanup(
   runtime: UninstallRuntime,
   gatewayName: string | null,
@@ -2747,7 +2747,7 @@ function verifyDockerContainerCleanup(
 ): boolean {
   if (!runtime.commandExists("docker") && !hasDockerSandboxRegistrations(registrations))
     return true;
-  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
+  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}}|{{.Image}}|{{.Names}}"], {
     env: runtime.env,
   });
   if (result.status !== 0 || result.error || result.signal) {
@@ -2759,11 +2759,11 @@ function verifyDockerContainerCleanup(
   const rows = result.stdout
     .split(/\r?\n/u)
     .filter((line) => line.trim().length > 0)
-    .map((line) => line.trimEnd().split(" "));
+    .map((line) => line.split("|"));
   if (
     rows.some(
       (fields) =>
-        (fields.length !== 2 && fields.length !== 3) ||
+        fields.length !== 3 ||
         !fields[0] ||
         (!fields[1] && !fields[2]) ||
         fields.some((field) => /\s/u.test(field)),
@@ -2780,7 +2780,7 @@ function verifyDockerContainerCleanup(
     GATEWAY_PORT,
     sandboxNames,
     registrations,
-    rows.map((fields) => fields[2]).filter((name): name is string => Boolean(name)),
+    rows.map((fields) => fields[2]!).filter(Boolean),
     (args) => runtime.runDocker(args, { env: runtime.env, timeout: 5_000 }),
     (args) => runtime.run("openshell", args, { env: runtime.env, timeout: 10_000 }),
   );
@@ -2791,9 +2791,10 @@ function verifyDockerContainerCleanup(
     return false;
   }
   const remaining = rows.filter((fields) => {
-    const image = fields[1] ?? "";
-    const name = fields[2] ?? "";
+    const image = fields[1]!;
+    const name = fields[2]!;
     if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) return false;
+    if (!name && isOwnedDockerImageRepository(image)) return true;
     return (
       (gatewayName !== null &&
         (name === `openshell-cluster-${gatewayName}` ||

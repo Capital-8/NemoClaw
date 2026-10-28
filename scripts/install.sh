@@ -3744,9 +3744,9 @@ run_preupgrade_backup() {
 }
 
 force_fresh_install_has_existing_state() {
-  local container_id container_image container_inventory container_label_inventory container_name
+  local container_id container_image container_inventory container_label_inventory container_name container_row
   local receipt_volume_inventory user_bin volume_name volume_suffix
-  local existing_state=0
+  local existing_state=0 docker_inventory_row_pattern='^[0-9a-f]+[|][^|]*[|][^|]*$'
   _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER=""
   _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME=""
   user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
@@ -3774,10 +3774,13 @@ force_fresh_install_has_existing_state() {
     )" || return 2
     _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER="$(printf '%s\n' "$container_label_inventory" | sed -n '1p')"
     container_inventory="$(
-      docker ps -a --format '{{.ID}} {{.Image}} {{.Names}}' 2>/dev/null
+      docker ps -a --format '{{.ID}}|{{.Image}}|{{.Names}}' 2>/dev/null
     )" || return 2
-    while read -r container_id container_image container_name; do
-      [[ -n "$container_id" ]] || continue
+    while IFS= read -r container_row; do
+      [[ -n "$container_row" ]] || continue
+      [[ "$container_row" =~ $docker_inventory_row_pattern ]] || return 5
+      IFS='|' read -r container_id container_image container_name <<<"$container_row"
+      [[ -n "$container_image$container_name" ]] || return 5
       if [[ -z "$container_name" ]]; then
         case "$container_image" in
           openshell-* | nemoclaw-*) container_name="$container_image" ;;
