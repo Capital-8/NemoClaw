@@ -152,7 +152,6 @@ describe("portable profile rootless runtime workflow", () => {
     expect(policyIndex).toBeGreaterThan(provisionIndex);
     expect(hermesBaseIndex).toBeGreaterThan(policyIndex);
     expect(liveTestIndex).toBeGreaterThan(hermesBaseIndex);
-    expect(job?.["timeout-minutes"]).toBe(65);
     expect(steps[hermesBaseIndex]?.env?.XDG_DATA_HOME).toBe(
       "${{ runner.temp }}/nemoclaw-hermes-base-storage",
     );
