@@ -405,7 +405,7 @@ setInterval(() => {}, 1_000);
     },
   );
 
-  it("removes late SIGINT listeners and calls only those that missed the signal before re-raising SIGINT", async () => {
+  it("removes SIGINT listeners added after registration and calls those that missed the signal before re-raising it", async () => {
     const signalEvents = new EventEmitter();
     const outerListener = vi.fn();
     signalEvents.on("SIGINT", outerListener);
@@ -452,7 +452,7 @@ setInterval(() => {}, 1_000);
   });
 
   it.skipIf(process.platform === "win32")(
-    "removes the policy directory, releases the lock, and stops before later steps when SIGINT interrupts a policy preset submission",
+    "records the policies step as interrupted, removes the policy directory and lock, and exits by SIGINT when SIGINT interrupts a policy submission",
     async () => {
       const childDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-signal-"));
       const openshellBin = path.join(childDir, "openshell");
@@ -559,11 +559,12 @@ registerIncompleteOnboardExitFailureHandler(
         openshellPid = pid;
         expect(fs.existsSync(lockFile)).toBe(true);
         expect(fs.existsSync(policyDir)).toBe(true);
-        const exited = once(child, "exit", { signal: AbortSignal.timeout(5_000) });
-        const closed = once(child, "close", { signal: AbortSignal.timeout(5_000) });
+        const settled = Promise.all([
+          once(child, "exit", { signal: AbortSignal.timeout(5_000) }),
+          once(child, "close", { signal: AbortSignal.timeout(5_000) }),
+        ]);
         child.kill("SIGINT");
-        const [code, signal] = await exited;
-        await closed;
+        const [[code, signal]] = await settled;
         expect(code).toBeNull();
         expect(signal).toBe("SIGINT");
         expect(stderr).toContain("onboard --resume");
