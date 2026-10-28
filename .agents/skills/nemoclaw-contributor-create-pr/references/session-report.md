@@ -12,10 +12,12 @@ Inspect evidence for the current authoring session through a stated report cutof
 
 ## Table contract
 
-Every PR body must contain exactly one block from [the template](../../../../.github/PULL_REQUEST_TEMPLATE.md), including all eight rows. Preserve the markers, header, field names, and four-column table. Row order is flexible. Use semicolons instead of literal pipes inside cells.
+Every PR must have exactly one opening report comment using [the comment template](session-report-template.md), including all eight rows. Keep the `opening` marker and the `<details>` wrapper without an `open` attribute. Preserve the summary, table markers, header, field names, and four-column table. Row order is flexible. Use semicolons instead of literal pipes inside cells.
 
-This reference owns the report's meaning. The validator enforces its versioned structure; the template supplies the default description.
-The metadata job validates the actual template through the same validator before checking the event body, so incompatible template changes fail CI.
+Keep the report out of the PR description. The description retains its outcome, validation, review notes, and DCO declaration.
+
+This reference owns the report's meaning. The validator enforces its versioned structure; the comment template supplies the default report.
+The metadata job validates the actual template through the same validator before checking current PR comments, so incompatible template changes fail CI.
 Synthetic test inputs exercise invalid reports independently of that template-to-validator check.
 
 | Status | Meaning | Value and evidence |
@@ -51,9 +53,17 @@ Publish only compact metadata and evidence descriptions. Exclude raw transcripts
 
 ## CI boundary
 
-`Governance / Lint PR Title` validates this table alongside the title on opened, synchronize, reopened, and edited events.
-The validator reads the actual PR body from the event as data. Description edits rerun metadata validation;
-main's CI workflow skips platform builds for description-only edits. The check validates structure and allowed statuses, not truth or skill compliance.
+`Governance / Lint PR Title` validates the opening comment alongside the title on opened, synchronize, reopened, and edited events.
+The workflow fetches every page of current PR comments and passes JSON to the validator as data.
+Description edits still rerun metadata validation; main's CI skips platform builds for description-only edits.
+The comment refresh workflow reruns only the latest metadata run for the current PR commit when an opening report is created, edited, or deleted.
+It reads the current comment body and the prior body on edits, so removing the marker also triggers validation.
+It waits for an active metadata run before rerunning it; a failed refresh needs a metadata rerun after the interruption is resolved.
+The check validates presence, collapsed structure, and allowed statuses, not truth, author identity, or skill compliance.
+
+GitHub activates the comment refresh workflow only after it reaches the default branch.
+The introducing PR validates its fetched comments through its ordinary PR events. Before rollout, edit the description or rerun metadata after posting a report.
+An opening check can fail before its comment exists; posting the comment refreshes it after rollout.
 
 The existing `commit-lint` job contains this check, so rulesets that already require that context also require a valid report.
 Repositories without that required context need a separate maintainer ruleset decision. This change does not modify rulesets.
@@ -65,7 +75,17 @@ Trusted-base enforcement would need a separately scoped rollout because the base
 
 ## Existing and automated PRs
 
-On the next update, append the template's report block to an existing PR description and preserve its other content and DCO declaration.
+On the next update, post the template as a collapsed opening comment. Preserve the existing description and DCO declaration.
+When moving an existing report, preserve its evidence and cutoff. Post and read back the comment before removing the report from the description.
 If historical authoring evidence is unavailable, keep each affected field unavailable and explain that limit. Do not reconstruct it from current files.
-A maintainer updating an automated PR, including Dependabot, follows the same process within their authority to edit that PR.
+A maintainer updating an automated PR, including Dependabot, follows the same process within their authority to comment on that PR.
 The requirement has no bot or creation-date exemption. Missing authoring evidence is handled by the all-unavailable report, not by omitting it.
+
+## Later reports
+
+This change requires only the opening report. Future commit-update and merge reports use the same eight-field contract and collapsed wrapper.
+For a later report, use `<!-- agent-session-report:commit -->` with summary `Authoring session report: Commit update`,
+or `<!-- agent-session-report:merge -->` with summary `Authoring session report: PR merge`.
+Publish each as a separate comment. Identify the relevant commit or merge in the prose inside the collapsed section.
+Preserve earlier reports and cutoffs. Do not rewrite an opening report to describe later activity.
+These later report formats are defined here; their publication and enforcement are not required by this change.

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 // Adapted from NVIDIA/NemoClaw V1 2732ba7d1da3ffc44cab11e84430c978a0b20ebf:
-// replace the standalone Rust validator with main's TypeScript tooling and event input.
+// replace the standalone Rust validator with main's TypeScript tooling and PR comment input.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -9,10 +9,28 @@ import { fileURLToPath } from "node:url";
 
 const START = "<!-- agent-session-report:v1 -->";
 const END = "<!-- /agent-session-report -->";
+const OPENING = "<!-- agent-session-report:opening -->";
 
 export function validateSessionReport(body: string): void {
+  const match = body
+    .replaceAll("\r\n", "\n")
+    .trim()
+    .match(
+      /^<!-- agent-session-report:(opening|commit|merge) -->\n<details>\n<summary>Authoring session report: (PR opening|Commit update|PR merge)<\/summary>\n\n([\s\S]+)\n<\/details>$/,
+    );
+  const labels = { opening: "PR opening", commit: "Commit update", merge: "PR merge" };
+  if (!match || labels[match[1] as keyof typeof labels] !== match[2]) {
+    throw new Error("Use the collapsed session report comment template");
+  }
+  if (/<\/?(?:details|summary)\b/i.test(match[3])) {
+    throw new Error("Use one collapsed section for the report");
+  }
+  validateTable(match[3]);
+}
+
+function validateTable(body: string): void {
   if (body.split(START).length !== 2 || body.split(END).length !== 2) {
-    throw new Error("Include exactly one v1 session report; see the PR template");
+    throw new Error("Include exactly one v1 session report; see the comment template");
   }
   const start = body.indexOf(START) + START.length;
   const end = body.indexOf(END);
@@ -26,7 +44,7 @@ export function validateSessionReport(body: string): void {
     lines.shift() !== "| Field | Status | Value | Evidence or limit |" ||
     lines.shift() !== "| --- | --- | --- | --- |"
   ) {
-    throw new Error("Use the report table header from the PR template");
+    throw new Error("Use the report table header from the comment template");
   }
   const remaining = new Set([
     "Harness",
@@ -58,32 +76,28 @@ export function validateSessionReport(body: string): void {
   if (remaining.size) throw new Error("Include all eight report fields, even when unavailable");
 }
 
-function eventBody(text: string): string {
-  const event: unknown = JSON.parse(text);
-  if (typeof event !== "object" || event === null || !("pull_request" in event)) {
-    throw new Error("Expected a pull request event");
-  }
-  const pull = event.pull_request;
-  if (typeof pull !== "object" || pull === null || !("body" in pull)) {
-    throw new Error("Expected a PR body in the event");
-  }
-  if (pull.body === null) return "";
-  if (typeof pull.body !== "string") throw new Error("Expected a string PR body");
-  return pull.body;
+export function validateOpeningReport(comments: unknown): void {
+  if (!Array.isArray(comments)) throw new Error("Expected the complete PR comments array");
+  const reports = comments.filter(
+    (comment) => typeof comment?.body === "string" && comment.body.trim().startsWith(OPENING),
+  );
+  if (reports.length !== 1) throw new Error("Include exactly one PR opening report comment");
+  validateSessionReport(reports[0].body);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const [mode, file, ...extra] = process.argv.slice(2);
-    if (!file || extra.length || !["--body-file", "--event-file"].includes(mode)) {
-      throw new Error("Expected --body-file PATH or --event-file PATH");
+    if (!file || extra.length || !["--body-file", "--comments-file"].includes(mode)) {
+      throw new Error("Expected --body-file PATH or --comments-file PATH");
     }
     const input = readFileSync(file, "utf8");
-    validateSessionReport(mode === "--event-file" ? eventBody(input) : input);
+    if (mode === "--comments-file") validateOpeningReport(JSON.parse(input));
+    else validateSessionReport(input);
   } catch {
     // Input and JSON parser errors can contain untrusted body text. Do not echo it to CI logs.
     console.error(
-      "Session report validation failed. Check the input and the PR template's eight-field report contract.",
+      "Session report validation failed. Check the collapsed comment and its eight-field report contract.",
     );
     process.exitCode = 1;
   }

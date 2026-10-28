@@ -26,7 +26,7 @@ Preserve the user's scope and any explicit instruction to stop at a draft or wit
 
 ## Publication requirements
 
-Every PR description must include the [authoring-session report](references/session-report.md),
+Every PR must have a collapsed opening [authoring-session report](references/session-report.md) comment,
 including unavailable fields. Inspect recorded authoring evidence; load only the applicable
 [Codex](references/codex.md) or [Pi](references/pi.md) reference. Preserve the report cutoff on updates.
 

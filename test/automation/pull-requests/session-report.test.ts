@@ -6,13 +6,20 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { validateSessionReport } from "../../../scripts/checks/pr-session-report.mts";
+import {
+  validateSessionReport,
+  validateOpeningReport,
+} from "../../../scripts/checks/pr-session-report.mts";
 
-it("rejects a PR description without an authoring report", () => {
+it("rejects a comment without an authoring report", () => {
   expect(() => validateSessionReport("## Outcome\nRead skills and ran tests.")).toThrow();
 });
 
-const template = `<!-- agent-session-report:v1 -->
+const template = `<!-- agent-session-report:opening -->
+<details>
+<summary>Authoring session report: PR opening</summary>
+
+<!-- agent-session-report:v1 -->
 | Field | Status | Value | Evidence or limit |
 | --- | --- | --- | --- |
 | Harness | unavailable | - | Authoring harness evidence unavailable. |
@@ -23,10 +30,57 @@ const template = `<!-- agent-session-report:v1 -->
 | Compactions | unavailable | - | Compaction record missing. |
 | Models | unavailable | - | Model history missing. |
 | Reasoning levels | unavailable | - | Settings history missing. |
-<!-- /agent-session-report -->`;
+<!-- /agent-session-report -->
+</details>`;
 
 it("accepts a report when all authoring evidence is unavailable", () => {
   expect(() => validateSessionReport(template)).not.toThrow();
+});
+
+it("accepts Windows line endings in a posted comment", () => {
+  expect(() => validateOpeningReport([{ body: template.replaceAll("\n", "\r\n") }])).not.toThrow();
+});
+
+it("requires the report comment to be collapsed by default", () => {
+  expect(() => validateSessionReport(template.replace("<details>", "<details open>"))).toThrow();
+});
+
+it("does not let a later report replace the opening report", () => {
+  const later = template
+    .replace(":opening -->", ":commit -->")
+    .replace("PR opening", "Commit update");
+  const quoted = later.replace(
+    "<!-- agent-session-report:v1 -->",
+    "<!-- agent-session-report:opening -->\n<!-- agent-session-report:v1 -->",
+  );
+  expect(() => validateOpeningReport([{ body: quoted }])).toThrow();
+  expect(() => validateOpeningReport([{ body: quoted }, { body: template }])).not.toThrow();
+});
+
+it("selects one opening report among unrelated and later comments", () => {
+  const later = template
+    .replace(":opening -->", ":commit -->")
+    .replace("PR opening", "Commit update");
+  expect(() =>
+    validateOpeningReport([{ body: "Looks good" }, { body: later }, { body: template }]),
+  ).not.toThrow();
+  expect(() => validateOpeningReport([{ body: later }])).toThrow();
+  expect(() => validateOpeningReport([{ body: template }, { body: template }])).toThrow();
+  expect(() =>
+    validateOpeningReport([{ body: template.replace("| unavailable |", "| invented |") }]),
+  ).toThrow();
+  expect(() => validateOpeningReport([])).toThrow();
+});
+
+it.each([
+  ["commit", "Commit update"],
+  ["merge", "PR merge"],
+])("accepts the shared collapsed format for a future %s report", (stage, label) => {
+  expect(() =>
+    validateSessionReport(
+      template.replace(":opening -->", `:${stage} -->`).replace("PR opening", label),
+    ),
+  ).not.toThrow();
 });
 
 it("accepts mixed evidence statuses and a confirmed zero", () => {
@@ -69,24 +123,24 @@ it.each([
   expect(() => validateSessionReport(change(template))).toThrow();
 });
 
-it("validates the actual event body and treats shell syntax as data", () => {
+it("validates fetched comments and treats shell syntax as data", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "pr-session-report-"));
   const eventFile = path.join(directory, "event.json");
   const marker = path.join(directory, "must-not-exist");
   const run = () =>
     spawnSync(
       process.execPath,
-      ["--import", "tsx", "scripts/checks/pr-session-report.mts", "--event-file", eventFile],
+      ["--import", "tsx", "scripts/checks/pr-session-report.mts", "--comments-file", eventFile],
       { encoding: "utf8" },
     );
   try {
-    writeFileSync(eventFile, JSON.stringify({ pull_request: { body: "No report" } }));
+    writeFileSync(eventFile, JSON.stringify([{ body: "No report" }]));
     expect(run().status).toBe(1);
     const body = template.replace(
       "Authoring harness evidence unavailable.",
       `$(touch ${marker}); \`false\`; <script>`,
     );
-    writeFileSync(eventFile, JSON.stringify({ pull_request: { body } }));
+    writeFileSync(eventFile, JSON.stringify([{ body }]));
     expect(run().status).toBe(0);
     expect(() => readFileSync(marker)).toThrow();
   } finally {
