@@ -342,9 +342,9 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("nemoclaw beta start");
   });
 
-  it("prints no guidance for a Ready sandbox", async () => {
+  it("prints no guidance and returns no exit code for a Ready sandbox", async () => {
     const cap = captureConsoleLog();
-    await printGuidance({ phase: "Ready", dockerRuntime: null });
+    await expect(printGuidance({ phase: "Ready", dockerRuntime: null })).resolves.toBeUndefined();
     const text = cap.lines();
     cap.restore();
     expect(text).toContain("Phase: Ready");
