@@ -41,6 +41,7 @@ import {
   type LaunchReadinessLeaseRead,
   type LaunchReadinessStoreOptions,
   type LaunchReadinessUnsafeAuthorityEvidence,
+  type LaunchReadinessUnsafeStoreScope,
   publishLaunchReadinessLease,
   readLaunchReadinessLease,
 } from "../../state/launch-readiness-lease";
@@ -135,6 +136,14 @@ export type LaunchReadinessDecision =
 
 export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   checkMutationAuthority?: typeof checkLaunchReadinessMutationAuthority;
+  /**
+   * Allow the complete preflight to run when the unsafe verdict is confined to
+   * the persistent receipt store. The runtime authority epoch was still
+   * durably rotated, so no stale epoch can be reused; only republishing the
+   * evidence cache is impossible. Callers that do not require published
+   * evidence set this to true. A runtime-authority verdict always refuses.
+   */
+  tolerateReceiptStoreUnsafe?: boolean;
   getSandbox?: typeof registry.getSandbox;
   updateSandbox?: typeof registry.updateSandbox;
   observeSandbox?: SandboxRecreateObserver;
@@ -187,9 +196,18 @@ export type LaunchReadinessPublicationResult =
     };
 
 export type LaunchReadinessMutationGateResult<T> =
-  | { kind: "entered"; value: T }
+  | {
+      kind: "entered";
+      value: T;
+      /** Present when the caller opted into a receipt-store-only unsafe verdict. */
+      toleratedUnsafe?: LaunchReadinessUnsafeAuthorityEvidence;
+    }
   | { kind: "changed" }
-  | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+  | {
+      kind: "unsafe";
+      scope: LaunchReadinessUnsafeStoreScope;
+      evidence?: LaunchReadinessUnsafeAuthorityEvidence;
+    };
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -1429,7 +1447,7 @@ export async function withLaunchReadinessMutationGate<T>(
   deps: LaunchReadinessDeps = {},
 ): Promise<LaunchReadinessMutationGateResult<T>> {
   const { sandboxName, gatewayName, gatewayPort, epochId } = publication;
-  if (!gatewayName || !gatewayPort) return { kind: "unsafe" };
+  if (!gatewayName || !gatewayPort) return { kind: "unsafe", scope: "runtime-authority" };
   const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
   return withSandboxLock(sandboxName, async () => {
@@ -1446,7 +1464,22 @@ export async function withLaunchReadinessMutationGate<T>(
         deps.storeOptions,
       );
       if (authority === "changed") return { kind: "changed" };
-      if (authority !== "current") return { kind: "unsafe", evidence: authority.evidence };
+      if (authority !== "current") {
+        // The runtime authority is the fence's security guarantee: it proves
+        // the prior epoch was durably rotated. When that guarantee holds and
+        // only the persistent receipt store is unsafe, a caller that does not
+        // require published evidence may still run the complete preflight. The
+        // operation's publication attempt then reports evidence-failed, which
+        // those callers already tolerate (#10638, #9280).
+        if (deps.tolerateReceiptStoreUnsafe === true && authority.scope === "receipt-store") {
+          return {
+            kind: "entered",
+            value: await operation(),
+            ...(authority.evidence ? { toleratedUnsafe: authority.evidence } : {}),
+          };
+        }
+        return { kind: "unsafe", scope: authority.scope, evidence: authority.evidence };
+      }
       return { kind: "entered", value: await operation() };
     });
   });

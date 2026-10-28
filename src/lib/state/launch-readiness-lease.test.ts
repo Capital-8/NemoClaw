@@ -560,6 +560,7 @@ describe("launch readiness lease storage", () => {
       checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
     ).toEqual({
       kind: "unsafe",
+      scope: "receipt-store",
       evidence: {
         resource: "persistent receipt",
         path: receiptPath,
@@ -574,6 +575,41 @@ describe("launch readiness lease storage", () => {
     });
 
     fs.chmodSync(receiptPath, 0o600);
+  });
+
+  it("scopes a receipt-store verdict apart from the runtime authority epoch (#10638)", () => {
+    // The reported start failure needs both facts to be distinguishable: the
+    // persistent receipt store is unsafe, but the runtime authority (the
+    // fence's security guarantee) was still durably rotated.
+    const first = publish();
+    const authorityPath = launchReadinessAuthorityPath(SANDBOX, runtimeRoot);
+    const epochBefore = (JSON.parse(fs.readFileSync(authorityPath, "utf8")) as { epochId: string })
+      .epochId;
+    expect(epochBefore).toBe(first.epochId);
+
+    fs.chmodSync(path.dirname(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home)), 0o750);
+    try {
+      expectFenceFailure(() => fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()), false);
+      // The prior epoch was invalidated even though the fence could not record
+      // the new fence in the unsafe receipt store.
+      expect(
+        (JSON.parse(fs.readFileSync(authorityPath, "utf8")) as { epochId: string }).epochId,
+      ).not.toBe(epochBefore);
+      expect(
+        checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+      ).toMatchObject({ kind: "unsafe", scope: "receipt-store" });
+    } finally {
+      fs.chmodSync(path.dirname(launchReadinessReceiptPath(SANDBOX, GATEWAY_PORT, home)), 0o700);
+    }
+
+    fs.chmodSync(path.join(runtimeRoot, "nemoclaw", "launch-readiness"), 0o750);
+    try {
+      expect(
+        checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
+      ).toMatchObject({ kind: "unsafe", scope: "runtime-authority" });
+    } finally {
+      fs.chmodSync(path.join(runtimeRoot, "nemoclaw", "launch-readiness"), 0o700);
+    }
   });
 
   it.each(["receipt", "persistent ancestor", "runtime ancestor"] as const)(
@@ -602,6 +638,7 @@ describe("launch readiness lease storage", () => {
           ),
         ).toEqual({
           kind: "unsafe",
+          scope: target === "runtime ancestor" ? "runtime-authority" : "receipt-store",
           evidence: {
             resource:
               target === "runtime ancestor"
@@ -631,6 +668,7 @@ describe("launch readiness lease storage", () => {
       checkLaunchReadinessMutationAuthority(SANDBOX, GATEWAY_NAME, GATEWAY_PORT, null, options()),
     ).toMatchObject({
       kind: "unsafe",
+      scope: "runtime-authority",
       evidence: {
         path: authorityPath,
         expectedMode: "0600",
@@ -657,6 +695,7 @@ describe("launch readiness lease storage", () => {
       );
       expect(result).toMatchObject({
         kind: "unsafe",
+        scope: "runtime-authority",
         evidence: {
           path: authorityPath,
           expectedMode: "0600",

@@ -114,10 +114,23 @@ export interface LaunchReadinessUnsafeAuthorityEvidence {
   repair: "chmod" | "manual";
 }
 
+/**
+ * Which store an unsafe verdict came from. The runtime authority is the fence's
+ * security guarantee: it proves the prior epoch was durably rotated. The
+ * persistent receipt is only the published evidence cache. Callers that do not
+ * require published evidence may continue past a receipt-store-only verdict,
+ * but never past a runtime-authority verdict.
+ */
+export type LaunchReadinessUnsafeStoreScope = "receipt-store" | "runtime-authority";
+
 export type LaunchReadinessMutationAuthorityCheck =
   | "current"
   | "changed"
-  | { kind: "unsafe"; evidence?: LaunchReadinessUnsafeAuthorityEvidence };
+  | {
+      kind: "unsafe";
+      scope: LaunchReadinessUnsafeStoreScope;
+      evidence?: LaunchReadinessUnsafeAuthorityEvidence;
+    };
 
 export interface LaunchReadinessStoreOptions {
   home?: string;
@@ -1668,7 +1681,7 @@ export function checkLaunchReadinessMutationAuthority(
     gatewayPort > 65535 ||
     (expectedEpochId !== null && !isEpoch(expectedEpochId))
   ) {
-    return { kind: "unsafe" };
+    return { kind: "unsafe", scope: "runtime-authority" };
   }
   try {
     const base = buildBaseContext(options);
@@ -1676,12 +1689,14 @@ export function checkLaunchReadinessMutationAuthority(
     if (expectedEpochId === null) {
       if (inspection.kind === "unsupported") return "current";
       const persistent = inspectPersistentStore(base, sandboxName, gatewayPort, options);
-      if (inspection.kind === "unsafe") return { kind: "unsafe", evidence: inspection.evidence };
-      if (persistent.kind === "unsafe") return persistent;
+      if (inspection.kind === "unsafe")
+        return { kind: "unsafe", scope: "runtime-authority", evidence: inspection.evidence };
+      if (persistent.kind === "unsafe") return { ...persistent, scope: "receipt-store" };
       return inspection.kind === "missing" && persistent.kind === "missing" ? "current" : "changed";
     }
     if (inspection.kind === "unsupported") return "changed";
-    if (inspection.kind === "unsafe") return { kind: "unsafe", evidence: inspection.evidence };
+    if (inspection.kind === "unsafe")
+      return { kind: "unsafe", scope: "runtime-authority", evidence: inspection.evidence };
     if (inspection.kind === "missing") return "changed";
     const { authority } = inspection;
     return authority.phase === "fence" &&
@@ -1692,7 +1707,7 @@ export function checkLaunchReadinessMutationAuthority(
       ? "current"
       : "changed";
   } catch {
-    return { kind: "unsafe" };
+    return { kind: "unsafe", scope: "runtime-authority" };
   }
 }
 
