@@ -62,6 +62,8 @@ on:
       - "src/lib/state/state-root.ts"
       - "test/helpers/openclaw-real-agent-reload-proof.ts"
       - "test/e2e/fixtures/docker-build-guard.ts"
+      - "test/e2e/fixtures/hermes-switchyard-package.ts"
+      - "test/e2e/live/hermes-root-entrypoint-smoke.test.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/support/mcp-bridge-portable-lock-barrier.ts"
       - "test/e2e/fixtures/gateway-runtime-start.ts"

@@ -877,6 +877,12 @@ describe("complete managed-image publication workflow", () => {
     "propagates Hermes package qualification status $exitCode before $job publication",
     ({ job, reference, barrier, exitCode }) => {
       const workflow = readWorkflow("managed-images.yaml");
+      expect(workflow.on?.pull_request?.paths).toEqual(
+        expect.arrayContaining([
+          "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+          "test/e2e/fixtures/hermes-switchyard-package.ts",
+        ]),
+      );
       const builder = required(workflow.jobs?.[job], `missing ${job}`);
       const qualification = step(builder, "Qualify Hermes root entrypoint and Switchyard package");
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-qualification-"));
