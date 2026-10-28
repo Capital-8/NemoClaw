@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { shouldReconcileRestoredOpenClawSelection } from "./onboard-recreate-journal";
+import { shouldReconcileRestoredSelection } from "./onboard-recreate-journal";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -549,7 +549,6 @@ describe("restored selection override admission", () => {
       label: "changed model",
       agent: "openclaw",
       custom: false,
-      forced: false,
       unknown: false,
       providerChanged: false,
       modelChanged: true,
@@ -559,7 +558,6 @@ describe("restored selection override admission", () => {
       label: "changed provider",
       agent: "openclaw",
       custom: false,
-      forced: false,
       unknown: false,
       providerChanged: true,
       modelChanged: false,
@@ -569,7 +567,6 @@ describe("restored selection override admission", () => {
       label: "unchanged intent with native edits",
       agent: "openclaw",
       custom: false,
-      forced: false,
       unknown: false,
       providerChanged: false,
       modelChanged: false,
@@ -579,17 +576,24 @@ describe("restored selection override admission", () => {
       label: "unknown intent",
       agent: "openclaw",
       custom: false,
-      forced: false,
       unknown: true,
       providerChanged: true,
       modelChanged: true,
       expected: false,
     },
     {
-      label: "rebuild",
-      agent: "openclaw",
+      label: "Deep Agents changed provider (#13897)",
+      agent: "langchain-deepagents-code",
       custom: false,
-      forced: true,
+      unknown: false,
+      providerChanged: true,
+      modelChanged: true,
+      expected: true,
+    },
+    {
+      label: "Deep Agents custom image",
+      agent: "langchain-deepagents-code",
+      custom: true,
       unknown: false,
       providerChanged: true,
       modelChanged: true,
@@ -599,7 +603,6 @@ describe("restored selection override admission", () => {
       label: "custom image",
       agent: "openclaw",
       custom: true,
-      forced: false,
       unknown: false,
       providerChanged: true,
       modelChanged: true,
@@ -609,16 +612,12 @@ describe("restored selection override admission", () => {
       label: "Hermes",
       agent: "hermes",
       custom: false,
-      forced: false,
       unknown: false,
       providerChanged: true,
       modelChanged: true,
       expected: false,
     },
-  ])(
-    "bounds reconciliation for $label (#12667)",
-    ({ agent, custom, forced, expected, ...drift }) => {
-      expect(shouldReconcileRestoredOpenClawSelection(agent, custom, forced, drift)).toBe(expected);
-    },
-  );
+  ])("bounds reconciliation for $label (#12667)", ({ agent, custom, expected, ...drift }) => {
+    expect(shouldReconcileRestoredSelection(agent, custom, drift)).toBe(expected);
+  });
 });

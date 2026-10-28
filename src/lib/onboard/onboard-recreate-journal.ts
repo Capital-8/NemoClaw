@@ -180,20 +180,22 @@ export function openOnboardRecreateJournal(
   };
 }
 
-/** Only a known, explicitly changed managed OpenClaw selection overrides restored native routing. */
-export function shouldReconcileRestoredOpenClawSelection(
+/**
+ * Only a known, explicitly changed managed OpenClaw or Deep Agents selection
+ * overrides restored native routing. Forced recreation is included because the
+ * documented provider switch uses `--recreate-sandbox` (#13897).
+ */
+export function shouldReconcileRestoredSelection(
   agentName: string,
   customImage: boolean,
-  forcedRecreation: boolean,
   drift: Pick<
     import("./selection-drift").SelectionDrift,
     "unknown" | "providerChanged" | "modelChanged"
   >,
 ): boolean {
   return (
-    agentName === "openclaw" &&
+    (agentName === "openclaw" || agentName === "langchain-deepagents-code") &&
     !customImage &&
-    !forcedRecreation &&
     !drift.unknown &&
     (drift.providerChanged || drift.modelChanged)
   );
