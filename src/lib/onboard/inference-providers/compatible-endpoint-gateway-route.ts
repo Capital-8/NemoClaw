@@ -100,6 +100,56 @@ export function compatibleEndpointNoAuthSelection(
   return { eligible, noAuth };
 }
 
+/**
+ * Bind the shared-route check to the credential identity of a provider
+ * selection. Non-interactive runs know that identity now, so the check runs at
+ * once. Interactive no-auth-eligible runs learn it at the API-key prompt, so
+ * the check runs before the provider-key bridge or the prompt stages an API
+ * key, and again after the prompt (a stored key or the no-auth choice).
+ */
+export function bindCompatibleEndpointRouteCheck(
+  selectedKey: string,
+  state: {
+    provider: string;
+    endpointUrl: string | null | undefined;
+    credentialEnv: string | null;
+    assertRouteCompatible?: () => unknown;
+  },
+  nonInteractive: boolean,
+  proxyCredentialEnv: string,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const { eligible, noAuth } = compatibleEndpointNoAuthSelection(
+    selectedKey,
+    state.provider,
+    state.endpointUrl,
+    nonInteractive,
+    env,
+  );
+  const deferred = eligible && !nonInteractive;
+  const assertRoute = (): void => {
+    state.assertRouteCompatible?.();
+  };
+  if (noAuth && nonInteractive) state.credentialEnv = proxyCredentialEnv;
+  if (!deferred) assertRoute();
+  return {
+    eligible,
+    noAuth,
+    beforeSave: deferred ? assertRoute : undefined,
+    guardSave: (guard?: (operation: string) => void) =>
+      deferred
+        ? (operation: string) => {
+            assertRoute();
+            guard?.(operation);
+          }
+        : guard,
+    afterPrompt: (credential: unknown): void => {
+      if (credential === "") state.credentialEnv = proxyCredentialEnv;
+      if (deferred) assertRoute();
+    },
+  };
+}
+
 /** Revalidate the no-auth endpoint at the proxy's final mutation boundary. */
 export function assertLoopbackNoAuthCompatibleEndpointUrl(
   endpointUrl: string,

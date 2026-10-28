@@ -1856,17 +1856,14 @@ async function handleRemoteProviderSelection(
           : "anthropic-messages";
     }
   }
-  const { eligible: compatibleNoAuth, noAuth: useNoAuth } =
-    compatibleEndpointGatewayRoute.compatibleEndpointNoAuthSelection(
-      selected.key,
-      state.provider,
-      state.endpointUrl,
-      isNonInteractive(),
-    );
-  // Route checks need the credential identity the route will use (see helper);
-  // API-key staging below still reads the provider's API-key env.
-  if (useNoAuth && isNonInteractive()) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
-  if (!compatibleNoAuth || isNonInteractive()) state.assertRouteCompatible?.();
+  // Route checks use the route credential; API-key staging reads the provider env.
+  const routeCheck = compatibleEndpointGatewayRoute.bindCompatibleEndpointRouteCheck(
+    selected.key,
+    state,
+    isNonInteractive(),
+    OLLAMA_PROXY_CREDENTIAL_ENV,
+  );
+  const { eligible: compatibleNoAuth, noAuth: useNoAuth } = routeCheck;
   if (selected.key === "hermesProvider") {
     const selectedHermesAuthMethod = await promptHermesAuthMethod();
     if (isBackToSelection(selectedHermesAuthMethod)) {
@@ -1986,7 +1983,10 @@ async function handleRemoteProviderSelection(
       state,
       `stage inference provider ${JSON.stringify(state.provider)} credential`,
     );
-    providerKeyBridge.stageRemoteProviderKeyBridge(remoteConfig.credentialEnv);
+    providerKeyBridge.stageRemoteProviderKeyBridge(
+      remoteConfig.credentialEnv,
+      routeCheck.beforeSave,
+    );
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
     const defaultModel =
@@ -2077,12 +2077,12 @@ async function handleRemoteProviderSelection(
         remoteConfig.helpUrl,
         openrouterSelection.credentialValidatorForProvider(selected.key),
         compatibleNoAuth,
-        credentialMutationGuardFor(state),
+        routeCheck.guardSave(credentialMutationGuardFor(state)),
       );
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
-      if (credentialResult === "") state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
+      routeCheck.afterPrompt(credentialResult);
     }
     if (!useNoAuth)
       openrouterSelection.validateNonInteractiveCredential({
