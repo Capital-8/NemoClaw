@@ -47,7 +47,10 @@ export function reportProviderSelectionFailure(input: ReportProviderSelectionFai
       );
       if (input.reason.providerKey === "vllm") {
         input.writeError(
-          '  NEMOCLAW_PROVIDER=vllm requires an already-running local vLLM server whose /v1/models reports owned_by "vllm", but none was detected.',
+          "  NEMOCLAW_PROVIDER=vllm requires an already-running local vLLM server, but none was detected.",
+        );
+        input.writeError(
+          '  An operator-run server counts as vLLM only when its /v1/models reports owned_by "vllm".',
         );
         input.writeError(
           input.availableProviderKeys.includes("install-vllm")
