@@ -46,7 +46,9 @@ assert version('nemo-relay') == '0.8.3'
 # The supervised gateway is already healthy. Packaging must not activate routing.
 pid = int(sys.argv[1])
 assert library.name not in Path(f'/proc/{pid}/maps').read_text()
-assert b'HERMES_NEMO_RELAY_PLUGINS_TOML=' not in Path(f'/proc/{pid}/environ').read_bytes()
+assert relay_runtime.RELAY_PLUGINS_CONFIG_ENV.encode() not in {
+    entry.partition(b'=')[0] for entry in Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+}
 assert not os.environ.get(relay_runtime.RELAY_PLUGINS_CONFIG_ENV)
 runtime = relay_runtime.RelayRuntime()
 try:
