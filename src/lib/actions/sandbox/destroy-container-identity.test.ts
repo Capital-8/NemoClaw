@@ -196,6 +196,29 @@ describe("classifyDestroyContainerIdentity", () => {
     });
   });
 
+  it("rejects a same-name container when its ID conflicts with the registered sandbox", () => {
+    const registeredFingerprint = fingerprintOpenShellSandboxId(MANAGED.sandboxId)!;
+    const differentIdentity = { ...MANAGED, workspace: "", sandboxId: "sb-other" };
+
+    const verdict = expectAmbiguous(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([differentIdentity]),
+        undefined,
+        registeredFingerprint,
+      ),
+    );
+    expect(verdict.reason).toContain("registered sandbox identity");
+    expect(
+      classifyDestroyContainerIdentity(
+        "destroytest",
+        observeRows([{ ...MANAGED, workspace: "" }]),
+        undefined,
+        registeredFingerprint,
+      ).status,
+    ).toBe("clear");
+  });
+
   it("accepts a retained recovery set created without workspace labels and rejects mixed workspaces", () => {
     const sandboxIdentityFingerprint = fingerprintOpenShellSandboxId(MANAGED.sandboxId)!;
     const legacyIdentities = [

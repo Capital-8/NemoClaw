@@ -25,6 +25,7 @@ import {
   traceDestroyBoundaryCalls,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import type { SandboxWorkloadReceipt } from "../../state/registry";
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
@@ -1130,6 +1131,9 @@ describe("destroySandbox flow", () => {
     let identityProbeCalls = 0;
     const harness = createDestroyHarness({
       dockerRunResult: managed,
+      registryEntryOverrides: {
+        lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId("sb-alpha")!,
+      },
       onDockerRun: (call) => {
         identityProbeCalls = call;
         trace.push(`probe:${String(call)}`);
@@ -1147,6 +1151,25 @@ describe("destroySandbox flow", () => {
       `probe:${String(identityProbeCalls)}`,
     ]);
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("refuses to destroy a same-name legacy container with a different registered identity", async () => {
+    const harness = createDestroyHarness({
+      dockerRunResult: {
+        status: 0,
+        stdout: "aaaa000000000000\topenshell\t\tsb-other",
+      },
+      registryEntryOverrides: {
+        lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxId("sb-alpha")!,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "delete"]),
+      expect.anything(),
+    );
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {
