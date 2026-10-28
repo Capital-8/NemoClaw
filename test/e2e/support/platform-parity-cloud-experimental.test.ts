@@ -948,6 +948,9 @@ assert_status_mode disabled
           command: "bash",
           args: expect.arrayContaining(["recover", "deepagents-sandbox", sessionId, "2"]),
         });
+        expect(recoveryCommand?.args.includes("restore-startup-config")).toBe(
+          tuiCheck.endsWith("12-deepagents-code-thread-auto-approval.sh"),
+        );
 
         await expect(cleanup.runAll()).resolves.toEqual({
           passed: [expect.stringContaining("clean up failed DCode TUI session")],
@@ -959,6 +962,44 @@ assert_status_mode disabled
       }
     },
   );
+
+  it("reports failed startup config restoration after a DCode TUI timeout (#13838)", async () => {
+    const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tui-restore-failure-"));
+    const responses: ShellProbeResult[] = [
+      shellResult(0, ""),
+      shellResult(0, "NEMOCLAW_DCODE_PROCESS_COUNT:2\n"),
+      { ...shellResult(0, ""), exitCode: null, signal: "SIGTERM", timedOut: true },
+      shellResult(1, "mv: permission denied"),
+    ];
+    let responseIndex = 0;
+    const run = vi.fn(
+      async (_command: TrustedShellCommand, _options?: ShellProbeRunOptions) =>
+        responses[responseIndex++]!,
+    );
+
+    try {
+      await expect(
+        runE2eCloudExperimentalChecks(
+          "cloud-langchain-deepagents-code",
+          "deepagents-sandbox",
+          ["test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh"],
+          {
+            artifacts: new ArtifactSink(artifactRoot),
+            cleanup: new CleanupRegistry(),
+            host: new HostCliClient({ run }),
+            secrets: new SecretStore({}, (note) => {
+              throw new Error(note);
+            }),
+          },
+        ),
+      ).rejects.toThrow("clean up the failed DCode TUI session failed: mv: permission denied");
+      expect(run.mock.calls[3]?.[0]).toMatchObject({
+        args: expect.arrayContaining(["restore-startup-config"]),
+      });
+    } finally {
+      fs.rmSync(artifactRoot, { force: true, recursive: true });
+    }
+  });
 
   it("shares process classification across normal waits and failed-session cleanup (#11847)", async () => {
     const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tui-session-guard-"));
