@@ -75,6 +75,7 @@ import {
 } from "../fixtures/portable-profile-systemctl.ts";
 import {
   createPortableHermesFinalizationOptions,
+  capturePortableCrunConfiguration,
   runPortableDoctor,
   withoutPodmanConnectionSelectors,
   writePortableRegistry,
@@ -1009,7 +1010,9 @@ async function main(
     );
 
     progress.phase("prepare the rootless container runtime");
+    const restoreCrunConfiguration = capturePortableCrunConfiguration(process.env);
     const prepared = preparePortableExperimentalHost(process.env, { home });
+    restoreCrunConfiguration();
     assert.equal(prepared?.authority.configHome, configHome);
     const runtimeAuthority = prepared!.authority;
     const expectedPodmanSocket =

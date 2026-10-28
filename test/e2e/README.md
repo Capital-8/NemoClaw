@@ -71,7 +71,9 @@ The install refuses package removals, preserving the runner's Docker and contain
   runs the portable-profile scenario on the reviewed x86-64 NVIDIA GPU runner with
   rootless Podman 5.7. It builds Podman and rootlessport from the pinned v5.7.0
   source commit. It reuses the reviewed native pasta, netavark, and aardvark-dns
-  components. The scenario proves that mismatched receipt and registry authority
+  components. The scenario retains the trusted job's compatible crun selection
+  when host preparation replaces the client configuration, so local image builds
+  and the managed registry use the reviewed runtime. It proves that mismatched receipt and registry authority
   pauses onboarding and makes `doctor` fail. It then restores valid authority
   and requires finalization and `doctor` to accept the same authenticated
   readiness evidence. Deterministic finalization tests own unhealthy gateway,
@@ -821,6 +823,8 @@ or exactly one thread whose recorded cwd matches. Ambiguous results fail cleanup
 thread. Listing, deletion, and removal of the private directory each use a 30-second host timeout with
 a five-second kill grace. A failed command or timeout marks cleanup as failed, retains the private
 directory and recovery instructions, and allows policy and capture cleanup to continue.
+The same target writes an npm cache marker under the DCode native home before its existing rebuild.
+After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.

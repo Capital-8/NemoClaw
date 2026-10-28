@@ -49,6 +49,7 @@
         "src/lib/onboard/sandbox-prebuild.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
         "test/e2e/support/portable-registry-readiness.test.ts",
+        "test/e2e/support/portable-profile-crun-configuration.test.ts",
         "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
       ]
     },
