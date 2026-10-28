@@ -3256,6 +3256,11 @@ curl -sS -o /dev/null -w '%{http_code}\n' --max-time 3 "http://127.0.0.1:<api-po
 An HTTP status of `200` or `401` means the API endpoint is reachable; it does not validate the inference credential.
 If the connection fails or status reports an API forward failure, run `nemohermes <name> recover` to verify or restore the sandbox's required forwards.
 Follow the reported gateway or forwarding diagnostic if recovery fails.
+New and successfully migrated API forwards bind to `127.0.0.1`.
+If NemoClaw cannot prove ownership of a legacy wildcard forward, it refuses migration and leaves that listener unchanged.
+A missing or different gateway endpoint in the listener's process command also prevents migration.
+The old listener can remain remotely reachable.
+Do not assume loopback isolation until recovery succeeds.
 `openshell forward list` lists legacy and user-managed forwards; it can omit NemoClaw's receipt-owned API forward.
 A missing row alone does not mean that the API forward is absent or unhealthy.
 

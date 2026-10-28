@@ -149,8 +149,14 @@ Do not approve an unexpected client or an unrelated `operator.admin` request.
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes exposes an OpenAI-compatible API through a loopback-only host forward and can optionally expose the native Hermes dashboard.
-`NEMOCLAW_DASHBOARD_BIND=0.0.0.0` exposes only the dashboard; the Hermes API stays on `127.0.0.1` after onboarding and restart.
+Hermes exposes an OpenAI-compatible API and can optionally expose the native Hermes dashboard.
+New and successfully migrated API forwards bind to `127.0.0.1`, including after restart and on WSL.
+`NEMOCLAW_DASHBOARD_BIND=0.0.0.0` changes only the dashboard bind.
+If NemoClaw cannot prove ownership of a legacy wildcard forward, it refuses migration and leaves that listener unchanged.
+A missing or different gateway endpoint in the listener's process command also prevents migration.
+The old listener can remain remotely reachable.
+Run `$$nemoclaw <name> status` and `$$nemoclaw <name> recover`, then follow any refusal diagnostic.
+Do not assume loopback isolation until recovery succeeds.
 For remote API access, use the [SSH forwarding procedure](/user-guide/hermes/get-started/quickstart#installation-and-runtime-details).
 Protect any remotely exposed dashboard with your own access controls.
 

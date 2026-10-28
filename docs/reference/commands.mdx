@@ -2178,7 +2178,12 @@ Use `nemohermes my-assistant status` to check sandbox readiness.
 Use `nemohermes my-assistant recover` to verify or restore its required forwards.
 When onboarding records a non-loopback `CHAT_UI_URL`, `dashboard-url` returns that browser-facing URL.
 `NEMOCLAW_DASHBOARD_BIND` controls only the dashboard forward.
-The Hermes API forward always binds to `127.0.0.1`, including on WSL and when remote dashboard binding is enabled.
+New and successfully migrated Hermes API forwards bind to `127.0.0.1`, including on WSL and when remote dashboard binding is enabled.
+If NemoClaw cannot prove ownership of a legacy wildcard forward, it refuses migration and leaves that listener unchanged.
+A missing or different gateway endpoint in the listener's process command also prevents migration.
+The old listener can remain remotely reachable.
+Run `nemohermes my-assistant status` and `nemohermes my-assistant recover`, then follow any refusal diagnostic.
+Do not assume loopback isolation until recovery succeeds.
 Use the [SSH forwarding procedure](/user-guide/hermes/get-started/quickstart#installation-and-runtime-details) for remote API access.
 
 </AgentOnly>
@@ -2219,6 +2224,8 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 Print the Hermes API bearer token for a running sandbox to stdout. NemoClaw retrieves the sandbox's `API_SERVER_KEY`, which authenticates OpenAI-compatible clients on the forwarded API port. During a normal sandbox lifecycle, the token is generated once for each sandbox home. Different sandbox homes receive different tokens. NemoClaw preserves it across a gateway restart, sandbox stop and start, and host OpenShell gateway restart. When you rebuild or replace the sandbox, the replacement home receives a new token. At gateway startup, NemoClaw also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters. If an ordinary restart changes the token while the existing `API_SERVER_KEY` was present and valid, collect the before and after sandbox identity plus redacted mint logs and report it as a bug.
 Read the API port from the OpenAI-compatible API URL printed after onboarding.
 Replace `<api-port>` below with that port.
+Before sending the token, run `nemohermes my-assistant recover` to verify or restore the required forwards.
+If recovery refuses a legacy wildcard migration, stop and follow its diagnostic.
 Capture the token and pass it in the `Authorization` header:
 
 ```bash
@@ -4457,7 +4464,9 @@ Only `0.0.0.0` enables the remote bind; onboarding rejects any other non-empty v
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-The Hermes API forward stays on `127.0.0.1`, including on WSL and when `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` is set.
+New and successfully migrated Hermes API forwards bind to `127.0.0.1`, including on WSL and when `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` is set.
+If migration is refused, NemoClaw leaves the legacy listener unchanged; it can remain remotely reachable.
+Use the [Hermes API recovery guidance](#nemoclaw-name-dashboard-url) before assuming loopback isolation.
 Use [SSH port forwarding](/user-guide/hermes/get-started/quickstart#installation-and-runtime-details) for remote API access.
 </AgentOnly>
 
