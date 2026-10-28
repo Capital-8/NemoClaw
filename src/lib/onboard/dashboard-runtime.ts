@@ -80,8 +80,8 @@ export function canReuseDashboardForwardForAgent(
 export function manageLaterLines(
   cliName: string,
   sandboxName: string,
-  modelCommand: string,
-  onboardCommand = `${cliName} onboard`,
+  modelCommand: string | null,
+  credentialsCommand = `${cliName} credentials reset <PROVIDER> && ${cliName} onboard`,
 ): string[] {
   return [
     "",
@@ -89,8 +89,8 @@ export function manageLaterLines(
     "",
     `    Status:      ${cliName} ${sandboxName} status`,
     `    Logs:        ${cliName} ${sandboxName} logs --follow`,
-    `    Model:       ${modelCommand}`,
+    ...(modelCommand === null ? [] : [`    Model:       ${modelCommand}`]),
     `    Policies:    ${cliName} ${sandboxName} policy add`,
-    `    Credentials: ${cliName} credentials reset <PROVIDER> && ${onboardCommand}`,
+    `    Credentials: ${credentialsCommand}`,
   ];
 }

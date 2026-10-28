@@ -227,9 +227,13 @@ function logTerminalReadyBlock(
     log(`  Headless: ${terminalAgent.runtime.headless_command} "<task>"`);
   }
   const agentFlag = typeof terminalAgent.name === "string" ? ` --agent ${terminalAgent.name}` : "";
-  const onboard = `${CLI_NAME} onboard${agentFlag}`;
-  const reonboard = `${onboard} --name ${sandboxName} --fresh --recreate-sandbox  # the model is built into the image`;
-  for (const line of manageLaterLines(CLI_NAME, sandboxName, reonboard, onboard)) log(line);
+  const onboard = `${CLI_NAME} onboard${agentFlag} --name ${sandboxName}`;
+  const reonboard =
+    terminalAgent.name === DCODE_AGENT_NAME
+      ? `${onboard} --fresh --recreate-sandbox  # the model is built into the image`
+      : null;
+  const rotate = `${onboard}  # with the replacement key exported`;
+  for (const line of manageLaterLines(CLI_NAME, sandboxName, reonboard, rotate)) log(line);
 }
 
 function recoveryIncompleteMessage(

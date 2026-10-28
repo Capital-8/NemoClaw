@@ -621,11 +621,36 @@ describe("finalization handlers", () => {
         "    Logs:        nemoclaw my-assistant logs --follow",
         "    Model:       nemoclaw onboard --agent langchain-deepagents-code --name my-assistant --fresh --recreate-sandbox  # the model is built into the image",
         "    Policies:    nemoclaw my-assistant policy add",
-        "    Credentials: nemoclaw credentials reset <PROVIDER> && nemoclaw onboard --agent langchain-deepagents-code",
+        "    Credentials: nemoclaw onboard --agent langchain-deepagents-code --name my-assistant  # with the replacement key exported",
       ].join("\n"),
     );
     expect(output).not.toContain("inference set");
+    expect(output).not.toContain("credentials reset");
     expect(result.verificationDiagnostics).toEqual([]);
+    expect(result.stateResult.type).toBe("complete");
+  });
+
+  it("omits the built-in model command for terminal agents other than Deep Agents Code", async () => {
+    const { deps, calls } = createDeps();
+    const agent = {
+      name: "pi",
+      displayName: "Pi",
+      runtime: { kind: "terminal", interactive_command: "pi" },
+    };
+
+    const result = await runFinalizationHandlers({ ...baseOptions(deps), agent });
+
+    const output = calls.log.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain(
+      [
+        "    Logs:        nemoclaw my-assistant logs --follow",
+        "    Policies:    nemoclaw my-assistant policy add",
+        "    Credentials: nemoclaw onboard --agent pi --name my-assistant  # with the replacement key exported",
+      ].join("\n"),
+    );
+    expect(output).not.toContain("Model:       ");
+    expect(output).not.toContain("built into the image");
+    expect(output).not.toContain("credentials reset");
     expect(result.stateResult.type).toBe("complete");
   });
 
