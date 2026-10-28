@@ -63,4 +63,4 @@ If a Station Express model is selected:
 - Describe automatic Express selection according to the installer's reported result. Describe the distributed two-Station topology as selected only after the installer reports that reciprocal Station, GPU, rail, MAC, route, neighbor, and jumbo-frame checks qualified the pair.
 
 If Station Express is declined, continue with the normal provider selection.
-Offer existing vLLM when a ready server is detected, managed vLLM, supported local Ollama, and every hosted or compatible provider supported by the selected agent.
+Offer existing vLLM when a ready server is detected and its `/v1/models` reports a model with `owned_by: "vllm"`, managed vLLM, supported local Ollama, and every hosted or compatible provider supported by the selected agent.
