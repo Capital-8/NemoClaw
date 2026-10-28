@@ -219,12 +219,16 @@ The `managed-image-multiarch-startup` no-build job keeps that setting and compil
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
-base activation. PR runs build all three managed-agent bases from the selected
-checkout's Dockerfiles, pins and lockfiles on native CPU runners. Each base has
-a separate OCI layout and receipt bound to its agent, source SHA, trusted
-workflow SHA, platform, run ID and attempt. The protected GPU controller verifies
-these identities and every config, manifest and layer digest before using the
-bases offline. PR runs reject published-base substitution and failed verification.
+base activation. PR image-publication runs build all three managed-agent bases
+from the selected checkout's Dockerfiles, pins and lockfiles on native CPU runners.
+Each candidate base has a separate OCI layout and receipt bound to its agent,
+source SHA, trusted workflow SHA, platform, run ID and attempt. The protected
+GPU controller verifies these identities and every config, manifest and layer
+digest before using candidate bases offline. In a protected startup PR run, the
+trusted resolver may select a published OpenClaw base only when its direct inputs
+match the candidate. The GPU controller rechecks that published base's digest.
+Hermes and Deep Agents Code use candidate bases in protected startup PR runs.
+Failed verification stops the run.
 Runs without a PR source retain published OpenClaw and Hermes bases; Deep Agents
 uses a published base with v1 activation and a candidate base with v2 activation.
 The receipt command retains its Deep Agents default for existing callers; an
@@ -2259,6 +2263,13 @@ Direct `main` runs use the same publication workflow and artifact contract.
 Protected managed-image build jobs apply a separate rule to their reusable base receipt.
 The producer must be from the same workflow run and no later than the consumer attempt.
 Receipt verification remains bound to the producer attempt.
+For a manual PR run, the protected startup job uses a trusted resolver to compare
+the candidate's OpenClaw base Dockerfile and its inputs with the published base's
+source revision. Matching inputs permit an immutable published base reference.
+Changed or unverified inputs use a base built from the exact candidate instead.
+The final managed image always builds from the selected candidate commit, and the
+GPU job verifies the same-run build-cache identity and any published OpenClaw
+base digest before its offline rebuild.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.
