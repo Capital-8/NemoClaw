@@ -491,7 +491,7 @@ describe("installOllamaOnLinux (system)", () => {
   it("names the failed URL, host, and curl error with a recovery hint", () => {
     const message = ollamaInstallerDownloadFailureMessage(
       7,
-      "curl: (7) Failed to connect\nto raw.githubusercontent.com port 443",
+      "curl: (7) Failed to connect to raw.githubusercontent.com port 443",
     );
     expect(message).toContain("exit 7");
     expect(message).toContain(OFFICIAL_OLLAMA_INSTALLER_URL);
@@ -509,6 +509,25 @@ describe("installOllamaOnLinux (system)", () => {
     expect(message).toContain("exit unknown");
     expect(message).not.toContain("curl reported:");
     expect(message).toContain("Allow outbound HTTPS");
+  });
+
+  it("redacts credential-bearing curl errors and ignores verbose proxy headers", () => {
+    const message = ollamaInstallerDownloadFailureMessage(
+      7,
+      "> Proxy-Authorization: Basic FAKE_PROXY_TOKEN\n" +
+        "* Connected through https://user:FAKE_PROXY_PASSWORD@proxy.example\n" +
+        "curl: (7) Failed to connect through https://user:FAKE_PROXY_PASSWORD@proxy.example",
+    );
+    expect(message).toContain("curl: (7) Failed to connect through");
+    expect(message).not.toContain("FAKE_PROXY_TOKEN");
+    expect(message).not.toContain("FAKE_PROXY_PASSWORD");
+    expect(message).not.toContain("Proxy-Authorization");
+  });
+
+  it("bounds a curl failure detail from the host environment", () => {
+    const message = ollamaInstallerDownloadFailureMessage(7, `curl: (7) ${"x".repeat(500)}`);
+    const detail = message.split("\n").find((line) => line.includes("curl reported:"));
+    expect(detail?.split("curl reported:")[1]?.trim().length).toBeLessThanOrEqual(240);
   });
 
   it("never executes a partially transferred installer (#9698)", () => {

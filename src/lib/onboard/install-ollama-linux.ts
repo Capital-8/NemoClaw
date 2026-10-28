@@ -32,7 +32,12 @@ import {
 export type { InstallOllamaLinuxMode } from "./install-ollama-linux-mode";
 export { decideInstallOllamaLinuxMode } from "./install-ollama-linux-mode";
 
-const { runCaptureEx, runShell, shellQuote }: typeof import("../runner") = require("../runner");
+const {
+  redactFullWithUrls,
+  runCaptureEx,
+  runShell,
+  shellQuote,
+}: typeof import("../runner") = require("../runner");
 const {
   setResolvedOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
@@ -54,7 +59,18 @@ export function ollamaInstallerDownloadFailureMessage(
   exitCode: number | null,
   stderr: string | undefined,
 ): string {
-  const curlDetail = (stderr ?? "").trim().replace(/\s*\n\s*/g, " ");
+  // Captured stderr is raw: a user's curl configuration can add verbose
+  // proxy headers, so keep only curl's own failure line before displaying it.
+  const curlError = (stderr ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => /^curl: \(\d+\)/u.test(line))
+    .at(-1);
+  const curlDetail = curlError
+    ? redactFullWithUrls(curlError)
+        .replace(/[\x00-\x1f\x7f]/gu, " ")
+        .slice(0, 240)
+    : "";
   const lines = [
     `  Ollama installer download failed after bounded retries (exit ${exitCode ?? "unknown"}).`,
     `  Could not download: ${OFFICIAL_OLLAMA_INSTALLER_URL}`,
