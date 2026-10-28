@@ -9,6 +9,10 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, expect, it, vi } from "vitest";
+import { managedStartupE2eProfile } from "../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
+import type { RuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/contract.ts";
+import type { SandboxEntry } from "../../src/lib/state/registry/types.ts";
 import { writeExecutable, writeSnapshotRegistry } from "../support/native-snapshot.ts";
 
 const originalHome = process.env.HOME;
@@ -154,6 +158,121 @@ process.stdout.write(result.stdout.split("\\n").${_mode === "omitted" ? "filter"
     }
   },
 );
+
+it("refuses a provider-owned stopped archive with a forged listing before extraction and cleans staging", async () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stopped-caller-inventory-"));
+  const oldPath = process.env.PATH;
+  try {
+    const source = path.join(fixture, "source");
+    const binDir = path.join(fixture, "bin");
+    const extractionMarker = path.join(fixture, "extracted");
+    fs.mkdirSync(source);
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(path.join(source, "visible.txt"), "visible");
+    fs.writeFileSync(path.join(source, "unlisted.txt"), "hidden from listing");
+    const systemTar = spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).stdout.trim();
+    expect(systemTar).not.toBe("");
+    const archive = spawnSync(systemTar, ["-C", source, "-cf", "-", "."], {
+      env: { ...process.env, COPYFILE_DISABLE: "1" },
+    });
+    expect(archive.status).toBe(0);
+    writeExecutable(
+      path.join(binDir, "tar"),
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args.includes("-xf")) fs.writeFileSync(${JSON.stringify(extractionMarker)}, "called");
+const result = spawnSync(${JSON.stringify(systemTar)}, args, { input: fs.readFileSync(0) });
+if (result.status !== 0) { process.stderr.write(result.stderr); process.exit(result.status || 1); }
+process.stdout.write(args.includes("-tf")
+  ? result.stdout.toString("utf8").split("\\n").filter((line) => !line.includes("unlisted.txt")).join("\\n")
+  : result.stdout);
+`,
+    );
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+
+    const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+    const workload = {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+      platform: "linux/amd64",
+      release: "v0.0.88",
+      sourceRevision: "b".repeat(40),
+      sourceCohort: "ghrun-123-1",
+      capabilityContractVersion: 1,
+      startupProfileContractVersion: 1,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+      credentialProxyReplayRequired: false,
+      shared: true,
+    } as const;
+    const entry = {
+      name: "alpha",
+      agent: "openclaw",
+      openshellDriver: "mxc",
+      imageTag: workload.reference,
+      fromDockerfile: null,
+      workload,
+    } satisfies SandboxEntry;
+    const provider = {
+      identity: { id: "mxc" },
+      workload: { acceptsReceipt: () => true },
+      snapshot: {
+        supported: true,
+        providerId: "mxc",
+        capabilities: { backup: true },
+        prepareStoppedStateCapture: () => ({
+          capture: (fd: number) => {
+            fs.writeSync(fd, archive.stdout);
+          },
+          assertCurrent: () => undefined,
+        }),
+      },
+    } as unknown as RuntimeProviderBundle;
+    const runtime = {
+      schemaVersion: 1,
+      providerId: "mxc",
+      providerHandle: "opaque-session-1",
+      lifecycleState: "stopped",
+      lifecycleGeneration: "generation-1",
+      runtime: {
+        schemaVersion: 1,
+        providerId: "mxc",
+        runtime: { kind: "session", handle: "session-1" },
+        acceleration: { kind: "none" },
+      },
+    } as const;
+    const originalTempDir = fs.mkdtempSync;
+    let staging: string | undefined;
+    const tempDir = vi.spyOn(fs, "mkdtempSync").mockImplementation((...args) => {
+      const result = Reflect.apply(originalTempDir, fs, args) as string;
+      if (String(args[0]).includes("nemoclaw-stopped-state-")) staging = result;
+      return result;
+    });
+    syncBuiltinESMExports();
+    try {
+      await expect(
+        stoppedBackup.prepareStoppedAgentState("alpha", () => entry, {
+          requireProvider: () => provider,
+          captureRuntime: () => runtime,
+        }),
+      ).rejects.toThrow("Stopped state archive raw headers did not match its listing");
+    } finally {
+      tempDir.mockRestore();
+      syncBuiltinESMExports();
+    }
+    expect(fs.existsSync(extractionMarker)).toBe(false);
+    expect(staging).toBeDefined();
+    expect(fs.existsSync(staging!)).toBe(false);
+  } finally {
+    oldPath === undefined
+      ? Reflect.deleteProperty(process.env, "PATH")
+      : Reflect.set(process.env, "PATH", oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 it("rejects a same-count substituted tar listing during native capture", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-capture-inventory-"));

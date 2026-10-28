@@ -2015,6 +2015,39 @@ function stageDescriptorArchiveCopy(
   }
 }
 
+/** Confirm an extraction contains exactly the requested paths and their parent directories. */
+function extractedNativeMembersMatch(
+  targetRoot: string,
+  members: readonly string[],
+  deadlineMs: number,
+): boolean {
+  const missing = new Set<string>();
+  for (const member of members) {
+    let relative = member.replace(/^(?:\.\/)+/u, "").replace(/\/+$/u, "");
+    while (relative && relative !== ".") {
+      missing.add(relative);
+      relative = path.posix.dirname(relative);
+    }
+  }
+  const pending = [targetRoot];
+  try {
+    while (pending.length > 0) {
+      if (backupDeadlineExpired(deadlineMs)) return false;
+      const directory = pending.pop()!;
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (backupDeadlineExpired(deadlineMs)) return false;
+        const full = path.join(directory, entry.name);
+        const relative = path.relative(targetRoot, full).split(path.sep).join("/");
+        if (!missing.delete(relative)) return false;
+        if (entry.isDirectory()) pending.push(full);
+      }
+    }
+    return missing.size === 0;
+  } catch {
+    return false;
+  }
+}
+
 function extractSelectedNativeArchiveMembers(
   archiveSource: { archivePath: string } | { descriptor: number },
   temporaryDir: string,
@@ -2078,17 +2111,30 @@ function extractSelectedNativeArchiveMembers(
     }
   };
   const initial = runPass(members, false);
+  const needsLiteralBackslashCheck = members.some((member) => member.includes("\\"));
   if (
-    (initial.status === 0 && !initial.error && !initial.signal) ||
-    !members.some((member) => member.includes("\\"))
+    !needsLiteralBackslashCheck ||
+    (initial.status === 0 &&
+      !initial.error &&
+      !initial.signal &&
+      extractedNativeMembersMatch(targetRoot, members, extractionDeadlineMs))
   ) {
     return initial;
   }
   rmSync(targetRoot, { recursive: true, force: true });
-  return runPass(
+  const retried = runPass(
     members.map((member) => member.replace(/[\\*?[\]]/gu, "\\$&")),
     true,
   );
+  if (
+    retried.status === 0 &&
+    !retried.error &&
+    !retried.signal &&
+    !extractedNativeMembersMatch(targetRoot, members, extractionDeadlineMs)
+  ) {
+    throw new Error("Native archive extraction did not select only requested members");
+  }
+  return retried;
 }
 
 function nativeArchiveRawCredentialViolation(

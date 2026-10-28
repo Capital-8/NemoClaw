@@ -393,8 +393,11 @@ export function validateStoppedStateArchive(
 export async function prepareStoppedAgentState(
   sandboxName: string,
   getSandbox: SnapshotBackupAuthorityDependencies["getSandbox"],
+  overrides: Partial<
+    Pick<SnapshotBackupAuthorityDependencies, "requireProvider" | "captureRuntime">
+  > = {},
 ): Promise<PreparedStoppedNativeState | null> {
-  const dependencies = { ...defaultDependencies, getSandbox };
+  const dependencies = { ...defaultDependencies, ...overrides, getSandbox };
   const entry = getSandbox(sandboxName);
   const agentName = entry?.agent ?? "openclaw";
   if (!entry || (agentName !== "openclaw" && agentName !== "langchain-deepagents-code"))
