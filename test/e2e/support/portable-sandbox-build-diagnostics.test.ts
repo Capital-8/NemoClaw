@@ -61,13 +61,13 @@ it("parses only the fixed Podman store fields from the selected service", () => 
   );
 });
 
-it("preserves the trusted Portable crun after host preparation regenerates Podman config", () => {
+it("preserves trusted crun and selects pinned Netavark's supported backend after host preparation", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-crun-"));
   try {
     const config = path.join(root, "containers.conf");
     const runtime = "/usr/local/libexec/nemoclaw/portable-crun.40669583707.1";
     const selectedUrl = "unix:///run/user/1001/podman/podman.sock";
-    const env = { CONTAINERS_CONF: config };
+    const env = { CONTAINERS_CONF: config, NETAVARK_FW: "iptables" };
     const probe = vi.fn((_env: NodeJS.ProcessEnv, url?: string) => ({
       graphRoot: "/private/graph",
       runRoot: "/private/run",
@@ -77,15 +77,22 @@ it("preserves the trusted Portable crun after host preparation regenerates Podma
           ? runtime
           : "/usr/bin/crun",
     }));
-    fs.writeFileSync(config, '[network]\ndefault_rootless_network_cmd = "pasta"\n', {
-      mode: 0o600,
-    });
+    fs.writeFileSync(
+      config,
+      '[network]\ndefault_rootless_network_cmd = "pasta"\nfirewall_driver = "iptables"\n\n[engine]\nenv = ["NETAVARK_FW=iptables"]\n',
+      {
+        mode: 0o600,
+      },
+    );
     preservePortableE2eCrun(config, runtime, selectedUrl, env, probe);
     expect(probe).toHaveBeenCalledWith(env, selectedUrl);
     expect(probe).toHaveBeenCalledWith(env);
     expect(fs.readFileSync(config, "utf8")).toContain(
       `\n[engine.runtimes]\ncrun = ["${runtime}"]\n`,
     );
+    expect(fs.readFileSync(config, "utf8")).toContain('firewall_driver = "nftables"');
+    expect(fs.readFileSync(config, "utf8")).not.toContain('firewall_driver = "iptables"');
+    expect(fs.readFileSync(config, "utf8")).toContain('env = ["NETAVARK_FW=iptables"]');
 
     fs.writeFileSync(config, "[network]\n");
     const wrongService = vi.fn(() => ({
@@ -95,6 +102,10 @@ it("preserves the trusted Portable crun after host preparation regenerates Podma
     }));
     expect(() => preservePortableE2eCrun(config, runtime, selectedUrl, env, wrongService)).toThrow(
       "Portable E2E crun authority mismatch",
+    );
+    expect(fs.readFileSync(config, "utf8")).toBe("[network]\n");
+    expect(() => preservePortableE2eCrun(config, runtime, selectedUrl, env, probe)).toThrow(
+      "Portable E2E runtime config authority mismatch",
     );
     expect(fs.readFileSync(config, "utf8")).toBe("[network]\n");
     const linked = path.join(root, "linked.conf");

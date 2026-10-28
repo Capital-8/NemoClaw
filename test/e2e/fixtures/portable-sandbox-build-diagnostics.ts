@@ -206,7 +206,7 @@ export async function verifyPortablePodmanStoreAuthority(
   if (category !== "match") throw new Error(`Portable Podman store authority ${category}`);
 }
 
-/** Carry the trusted job's pinned crun across portable host config regeneration. */
+/** Carry the trusted crun and Netavark backend across portable host config regeneration. */
 export function preservePortableE2eCrun(
   configPath: string,
   expectedRuntimePath: string,
@@ -225,10 +225,7 @@ export function preservePortableE2eCrun(
   }
   let fd: number;
   try {
-    fd = fs.openSync(
-      configPath,
-      fs.constants.O_RDWR | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW,
-    );
+    fd = fs.openSync(configPath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
   } catch {
     throw new Error("Portable E2E runtime config authority mismatch");
   }
@@ -239,11 +236,21 @@ export function preservePortableE2eCrun(
       !stat.isFile() ||
       stat.uid !== process.getuid?.() ||
       (stat.mode & 0o777) !== 0o600 ||
-      contents.includes("[engine.runtimes]")
+      contents.includes("[engine.runtimes]") ||
+      contents.split('firewall_driver = "iptables"').length !== 2
     ) {
       throw new Error("Portable E2E runtime config authority mismatch");
     }
-    fs.writeSync(fd, `\n[engine.runtimes]\ncrun = ["${expectedRuntimePath}"]\n`);
+    // The pinned CI Netavark 2.1 rejects the product's iptables backend. Keep
+    // the product-generated config intact until this test-only runtime handoff.
+    // The trusted native Podman service already selects nftables.
+    const adapted = contents.replace(
+      'firewall_driver = "iptables"',
+      'firewall_driver = "nftables"',
+    );
+    const selected = `${adapted}\n[engine.runtimes]\ncrun = ["${expectedRuntimePath}"]\n`;
+    fs.writeSync(fd, selected, 0, "utf8");
+    fs.ftruncateSync(fd, Buffer.byteLength(selected));
   } finally {
     fs.closeSync(fd);
   }

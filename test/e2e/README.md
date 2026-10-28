@@ -77,8 +77,8 @@ The install refuses package removals, preserving the runner's Docker and contain
   readiness evidence. Deterministic finalization tests own unhealthy gateway,
   missing secret, and redacted-diagnostic failures. This job does not qualify
   Hermes inference or widen Portable profile support. Select it with
-  `jobs=portable-hermes-finalization`; that jobs-only selection chooses Podman.
-  When combining it with other `targets`, set `gateway_runtimes=podman`.
+  `jobs=portable-hermes-finalization`. This selects Podman even when you also
+  select `targets`.
   The live scenario also runs the receipt-bound Hermes build, registry
   publication, and OpenShell create transaction against those services.
   Its managed-registry HTTP readiness check uses a bounded read-only policy with
