@@ -4,17 +4,18 @@
 // Windows-host Ollama actions invoked from WSL via PowerShell interop.
 // Detection lives in onboard.ts; this module owns the action side.
 
-const { spawn } = require("child_process");
-const { detectContainerRuntimeFromDockerInfo } = require("../../adapters/docker/runtime");
-const { isWsl } = require("../../platform");
-const { run, runCapture } = require("../../runner");
-const {
+import { spawn } from "node:child_process";
+import { detectContainerRuntimeFromDockerInfo } from "../../adapters/docker/runtime";
+import { isWsl } from "../../platform";
+import { run, runCapture, windowsInteropWorkingDirectory } from "../../runner";
+import {
   getWindowsHostOllamaDockerHostValidationArgs,
   getWindowsHostOllamaDockerReachabilityArgs,
   OLLAMA_HOST_DOCKER_INTERNAL,
   probeWindowsHostOllamaRouteProtection,
   setResolvedOllamaHost,
-} = require("../local");
+  type WindowsHostOllamaRouteProtectionOptions,
+} from "../local";
 // Avoid starting a subprocess for each fixed readiness delay.
 // The supported Windows-host Ollama path runs through WSL PowerShell interop.
 // Native Windows activation remains gated by #8178.
@@ -74,6 +75,7 @@ function parseWindowsProcessId(value: string): number | null {
 function terminateWindowsProcessTree(pid: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const taskkill = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+      cwd: windowsInteropWorkingDirectory("taskkill.exe"),
       stdio: "ignore",
     });
     taskkill.once("error", (error: NodeJS.ErrnoException) => {
@@ -112,6 +114,7 @@ function buildWindowsOllamaInstallerCommand(): string {
 
 function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
   const child = spawn("powershell.exe", ["-Command", buildWindowsOllamaInstallerCommand()], {
+    cwd: windowsInteropWorkingDirectory("powershell.exe"),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let windowsPid: number | null = null;
@@ -353,7 +356,10 @@ function killWindowsOllamaProcesses(): void {
 }
 
 function awaitWindowsOllamaReady(
-  opts: { prepareDockerEnvironment?: () => unknown; delay?: (seconds: number) => void } = {},
+  opts: {
+    prepareDockerEnvironment?: WindowsHostOllamaRouteProtectionOptions["prepareDockerEnvironment"];
+    delay?: (seconds: number) => void;
+  } = {},
 ): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
   const delay = opts.delay ?? sleep;
@@ -381,7 +387,7 @@ type WindowsOllamaLaunchAttempt = {
 type WindowsOllamaLaunchOperations = {
   runAttempt: (attempt: WindowsOllamaLaunchAttempt) => {
     status: number | null;
-    stderr?: string;
+    stderr?: string | Buffer;
     error?: Error;
   };
   awaitReady: () => boolean;
@@ -753,7 +759,7 @@ function printWindowsOllamaSnapshotDiagnostics(): void {
   console.error("    nemoclaw onboard");
 }
 
-module.exports = {
+export {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   buildWindowsOllamaInstallerCommand,

@@ -458,7 +458,7 @@ describe("Windows Ollama helper", () => {
         expect(spawnProcess).toHaveBeenLastCalledWith(
           "taskkill.exe",
           ["/PID", "4321", "/T", "/F"],
-          { stdio: "ignore" },
+          { cwd: "/", stdio: "ignore" },
         ),
       );
 
