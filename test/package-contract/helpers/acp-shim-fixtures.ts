@@ -180,6 +180,16 @@ export function createCleanManagedSourceAcpWorkTree(home: string, destination: s
   fs.copyFileSync(packageFile, path.join(destination, "package.json"));
 }
 
+/** Point repository configuration at a clean copy of the committed package.json. */
+export function redirectSourceCheckoutWorkTree(sourceRoot: string, destination: string): void {
+  fs.mkdirSync(destination, { recursive: true });
+  fs.writeFileSync(
+    path.join(destination, "package.json"),
+    runFixtureGit(["-C", sourceRoot, "show", "HEAD:package.json"]),
+  );
+  runFixtureGit(["-C", sourceRoot, "config", "core.worktree", destination]);
+}
+
 export function linkSourceCheckoutWorktree(
   sourceRoot: string,
   prefix: string,
@@ -279,8 +289,41 @@ export function configureSourceCheckoutGitHooks(sourceRoot: string, sentinel: st
   runFixtureGit(["-C", sourceRoot, "config", "diff.external", hook]);
 }
 
-export function dirtyManagedSourceNemoClawAcp(home: string): void {
-  const packageFile = path.join(home, ".nemoclaw", "source", "package.json");
+/**
+ * Turn the fixture checkout into a promisor repository whose committed
+ * package.json blob is missing, with a remote helper that records execution.
+ * A verification step that lazily fetches runs the helper; a local-only one does not.
+ */
+export function configureSourceCheckoutPromisorRemote(sourceRoot: string, sentinel: string): void {
+  const remote = path.join(path.dirname(sourceRoot), "promisor-remote.sh");
+  writeExecutable(remote, `#!/bin/sh\nprintf executed > ${JSON.stringify(sentinel)}\nexit 1\n`);
+  const blob = runFixtureGit(["-C", sourceRoot, "rev-parse", "HEAD:package.json"]).trim();
+  fs.rmSync(path.join(sourceRoot, ".git", "objects", blob.slice(0, 2), blob.slice(2)));
+  [
+    ["remote.origin.url", `ext::${remote}`],
+    ["remote.origin.promisor", "true"],
+    ["remote.origin.partialclonefilter", "blob:none"],
+    ["extensions.partialClone", "origin"],
+    ["protocol.ext.allow", "always"],
+  ].forEach(([key, value]) => runFixtureGit(["-C", sourceRoot, "config", key, value]));
+  // Make preflight compare bytes rather than accept the cached stat for package.json.
+  fs.utimesSync(path.join(sourceRoot, "package.json"), new Date(1000), new Date(1000));
+  // Confirm the fixture would fetch without the guard, so the assertion cannot pass vacuously.
+  const probe = spawnSync("git", ["-C", sourceRoot, "diff", "--quiet", "--"], {
+    encoding: "utf8",
+    env: fixtureGitEnv(),
+    timeout: 3000,
+  });
+  if (!fs.existsSync(sentinel))
+    throw new Error(`promisor remote did not fetch through Git: ${probe.stderr}`);
+  fs.rmSync(sentinel);
+}
+
+export function dirtyManagedSourceNemoClawAcp(
+  home: string,
+  sourceRoot = path.join(home, ".nemoclaw", "source"),
+): void {
+  const packageFile = path.join(sourceRoot, "package.json");
   const pkg = JSON.parse(fs.readFileSync(packageFile, "utf8")) as { version: string };
   pkg.version = "0.0.132";
   fs.writeFileSync(packageFile, JSON.stringify(pkg));

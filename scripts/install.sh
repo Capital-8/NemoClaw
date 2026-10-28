@@ -2649,28 +2649,48 @@ try {
   for (const [key, value] of Object.entries(process.env)) {
     if (!key.startsWith("GIT_") && value !== undefined) gitEnv[key] = value;
   }
+  // Keep verification local. A promisor remote must not be contacted mid-check.
+  // GIT_NO_LAZY_FETCH needs Git 2.46; the transport allowlist covers older Git.
+  gitEnv.GIT_NO_LAZY_FETCH = "1";
+  gitEnv.GIT_ALLOW_PROTOCOL = "none";
   const gitOptions = {
     encoding: "utf8",
     env: gitEnv,
     maxBuffer: 64 * 1024,
     timeout: 3000,
   };
+  // Bind every Git command to the validated source and Git directories. Repository
+  // discovery through -C still honors core.worktree, which can redirect the work
+  // tree to a clean copy while the validated directory stays modified.
+  const gitRepoArgs = ["--git-dir", gitDir, "--work-tree", packageRoot];
+  const reportedGitDir = execFileSync(
+    "git",
+    [...gitRepoArgs, "rev-parse", "--absolute-git-dir"],
+    gitOptions,
+  ).trim();
+  const reportedTopLevel = execFileSync(
+    "git",
+    [...gitRepoArgs, "rev-parse", "--show-toplevel"],
+    gitOptions,
+  ).trim();
+  if (fs.realpathSync(reportedGitDir) !== fs.realpathSync(gitDir) ||
+      fs.realpathSync(reportedTopLevel) !== packageRoot) process.exit(1);
   // Disabling textconv and external diff does not disable clean/process filters.
   const filterConfigKeys = execFileSync(
     "git",
-    ["-C", packageRoot, "config", "--null", "--name-only", "--list"],
+    [...gitRepoArgs, "config", "--null", "--name-only", "--list"],
     gitOptions,
   ).split("\0").filter(key => /^filter\..*\.(clean|process)$/i.test(key));
   if (filterConfigKeys.some(key => key.includes("="))) process.exit(1);
   const disableFilterArgs = filterConfigKeys.flatMap(key => ["-c", `${key}=`]);
   const gitDiffArgs = [
     ...disableFilterArgs,
-    "-c", "core.fsmonitor=false", "-C", packageRoot,
+    "-c", "core.fsmonitor=false", ...gitRepoArgs,
     "diff", "--no-ext-diff", "--no-textconv", "--quiet", "--ignore-submodules",
   ];
   const revision = execFileSync(
     "git",
-    ["-c", "core.fsmonitor=false", "-C", packageRoot, "rev-parse", "--verify", "HEAD^{commit}"],
+    ["-c", "core.fsmonitor=false", ...gitRepoArgs, "rev-parse", "--verify", "HEAD^{commit}"],
     gitOptions,
   ).trim();
   if (revision !== identity.sourceRevision) process.exit(1);
