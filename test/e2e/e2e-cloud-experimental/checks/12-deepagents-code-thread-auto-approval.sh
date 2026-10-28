@@ -325,18 +325,61 @@ cleanup_probe_files() {
   restore_native_startup_config
 }
 
+# Set only [startup].mode and prove every other TOML value is unchanged.
 set_native_startup_mode() {
-  local mode="$1"
-  sandbox_exec "set -euo pipefail; test -e ${STARTUP_CONFIG_BACKUP@Q} || cp -p ${DCODE_CONFIG@Q} ${STARTUP_CONFIG_BACKUP@Q}; python3 -c 'import re, sys; path, mode = sys.argv[1:]; text = re.sub(r\"(?ms)^\\[startup\\]\\n(?:(?!\\[).*\\n?)*\", \"\", open(path).read()); open(path, \"w\").write(text.rstrip(\"\\n\") + \"\\n\\n[startup]\\nmode = \\\"\" + mode + \"\\\"\\n\")' ${DCODE_CONFIG@Q} ${mode@Q}; grep -A1 -x '\\[startup\\]' ${DCODE_CONFIG@Q} | tail -n 1" \
-    | grep -qx "mode = \"${mode}\"" || fail "could not set the native DCode startup mode to ${mode}"
+  local mode="$1" output script
+  script="$(
+    cat <<'PY'
+import re
+import sys
+import tomllib
+
+path, mode = sys.argv[1:]
+with open(path, "rb") as handle:
+    before = tomllib.load(handle)
+with open(path, encoding="utf-8") as handle:
+    lines = handle.read().splitlines()
+out, table, header_index = [], None, None
+for line in lines:
+    header = re.match(r"\s*\[([^\[\]]+)\]\s*(?:#.*)?$", line)
+    if header:
+        table = header.group(1).strip()
+        if table == "startup" and header_index is None:
+            header_index = len(out)
+    elif table == "startup" and re.match(r"\s*mode\s*=", line):
+        continue
+    out.append(line)
+entry = f'mode = "{mode}"'
+if header_index is None:
+    out += ["", "[startup]", entry]
+else:
+    out.insert(header_index + 1, entry)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(out) + "\n")
+with open(path, "rb") as handle:
+    after = tomllib.load(handle)
+assert after["startup"]["mode"] == mode
+before.setdefault("startup", {}).pop("mode", None)
+after["startup"].pop("mode")
+assert {key: value for key, value in after.items() if value != {}} == {
+    key: value for key, value in before.items() if value != {}
+}
+print("NEMOCLAW_STARTUP_CONFIG_OK")
+PY
+  )"
+  output="$(sandbox_exec "set -euo pipefail; test -e ${STARTUP_CONFIG_BACKUP@Q} || cp -p ${DCODE_CONFIG@Q} ${STARTUP_CONFIG_BACKUP@Q}; python3 -c ${script@Q} ${DCODE_CONFIG@Q} ${mode@Q}")" \
+    || fail "could not set the native DCode startup mode to ${mode}: ${output}"
+  [[ "$output" == *NEMOCLAW_STARTUP_CONFIG_OK* ]] \
+    || fail "native DCode startup mode ${mode} was not confirmed: ${output}"
 }
 
 restore_native_startup_config() {
-  sandbox_exec "test ! -e ${STARTUP_CONFIG_BACKUP@Q} || mv -f ${STARTUP_CONFIG_BACKUP@Q} ${DCODE_CONFIG@Q}" \
-    >/dev/null 2>&1 || true
+  sandbox_exec "set -euo pipefail; if test -e ${STARTUP_CONFIG_BACKUP@Q}; then mv -f ${STARTUP_CONFIG_BACKUP@Q} ${DCODE_CONFIG@Q}; fi; test ! -e ${STARTUP_CONFIG_BACKUP@Q}" \
+    >/dev/null 2>&1
 }
 
-# Print the approval-mode badge the managed TUI shows at startup.
+# Print the approval-mode badge the managed TUI shows at startup. Answer
+# terminal color queries so the TUI can render without a local terminal.
 read_tui_startup_mode() {
   NEMOCLAW_STARTUP_SANDBOX_NAME="$SANDBOX_NAME" expect <<'EXPECT'
 set timeout 120
@@ -345,15 +388,19 @@ match_max -d 200000
 set remote_script {cd /sandbox && /usr/local/bin/dcode --no-interpreter; status=$?; printf "\nNEMOCLAW_STARTUP_TUI_EXIT:%s\n" "$status"}
 spawn openshell sandbox exec --name $env(NEMOCLAW_STARTUP_SANDBOX_NAME) --tty -- env HOME=/sandbox TERM=xterm-256color bash -lc $remote_script
 expect {
-  -re {\x1b\[38;5;16;48;5;[0-9]+m(manual|auto|yolo)\x1b\[0m} { puts "NEMOCLAW_STARTUP_MODE:$expect_out(1,string)" }
+  -re {\x1b\]1([01]);\?(\x07|\x1b\\)} {
+    send -- "\x1b\]1$expect_out(1,string);rgb:0000/0000/0000\x1b\\"
+    exp_continue
+  }
+  -re {\x1b\[[0-9;]*m(manual|auto|yolo)\x1b\[} { puts "NEMOCLAW_STARTUP_MODE:$expect_out(1,string)" }
   timeout { puts "NEMOCLAW_STARTUP_MODE:timeout" }
-  eof { puts "NEMOCLAW_STARTUP_MODE:eof" }
+  eof { puts "NEMOCLAW_STARTUP_MODE:eof"; exit 0 }
 }
 send -- "/quit\r"
 set timeout 30
 expect {
   -re {NEMOCLAW_STARTUP_TUI_EXIT:} {}
-  timeout { catch {send -- "\003"} }
+  timeout { catch {send -- "\003"}; after 200; catch {send -- "\003"} }
   eof {}
 }
 EXPECT
@@ -366,7 +413,8 @@ assert_disabled_native_startup_modes() {
   for mode in auto yolo; do
     set_native_startup_mode "$mode"
     observed="$(read_tui_startup_mode | sed -n 's/^NEMOCLAW_STARTUP_MODE://p' | head -n 1)"
-    restore_native_startup_config
+    restore_native_startup_config \
+      || fail "could not restore the DCode startup configuration after native startup mode ${mode}"
     [ "$observed" = "manual" ] \
       || fail "disabled capability started DCode in '${observed:-unknown}' for native startup mode ${mode}"
   done
@@ -376,8 +424,12 @@ restore_export_baseline_on_exit() {
   local original_status=$?
   local recovery_output recovery_status
   trap - EXIT
-  cleanup_probe_files
   recovery_status=0
+  if ! cleanup_probe_files; then
+    printf '%s: FAIL: could not restore the DCode startup configuration from %s\n' \
+      "$PREFIX" "$STARTUP_CONFIG_BACKUP" >&2
+    recovery_status=1
+  fi
   if [ "$EXPORT_BASELINE_RECOVERY_ARMED" -eq 1 ]; then
     info "Restoring the disabled export baseline after an interrupted thread-opt-in check" >&2
     if ! recovery_output="$(rebuild_named_sandbox disabled --no-observability)"; then
@@ -414,7 +466,7 @@ main() {
     || fail "DEEPAGENTS_AUTORUN_TIMEOUT must be a positive integer"
 
   trap restore_export_baseline_on_exit EXIT
-  cleanup_probe_files
+  cleanup_probe_files || fail "could not restore the DCode startup configuration from a previous run"
 
   assert_capability_projection disabled
   assert_status_mode disabled
