@@ -6,6 +6,7 @@ import YAML from "yaml";
 
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_VLLM_PORT, VLLM_PORT } from "../core/vllm-port";
+import { isDcodeAgent } from "../onboard/observability-policy-presets";
 
 export type PolicyValue = JsonValue;
 export type PolicyObject = JsonObject;
@@ -142,4 +143,99 @@ export function materializeLocalInferencePresetPorts(content: string): string {
   }
   vllmEndpoints[0].port = VLLM_PORT;
   return YAML.stringify(document);
+}
+
+const WEB_SEARCH_PRESET_PROVIDER_SUFFIXES: Readonly<Record<string, string>> = {
+  brave: "brave-search",
+  tavily: "tavily-search",
+};
+
+export function isWebSearchPolicyPreset(presetName: string): boolean {
+  return Object.hasOwn(WEB_SEARCH_PRESET_PROVIDER_SUFFIXES, presetName);
+}
+
+/**
+ * OpenClaw and Hermes register a sandbox-scoped web-search provider during
+ * onboarding. Deep Agents registers the gateway-wide name because its opt-in
+ * runs after the sandbox exists.
+ */
+export function webSearchCredentialProviderCandidates(
+  presetName: string,
+  sandboxName: string,
+  agentName: string | null | undefined,
+): readonly string[] {
+  const suffix = WEB_SEARCH_PRESET_PROVIDER_SUFFIXES[presetName];
+  if (!suffix || !sandboxName) return [];
+  const scoped = `${sandboxName}-${suffix}`;
+  return isDcodeAgent(agentName) ? [suffix, scoped] : [scoped, suffix];
+}
+
+export function resolveWebSearchCredentialProvider(input: {
+  readonly presetName: string;
+  readonly sandboxName: string;
+  readonly agentName?: string | null;
+  readonly availableProviders: ReadonlySet<string>;
+}): string | null {
+  for (const candidate of webSearchCredentialProviderCandidates(
+    input.presetName,
+    input.sandboxName,
+    input.agentName,
+  )) {
+    if (input.availableProviders.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Bind a web-search preset endpoint to the provider that holds its credential.
+ * OpenShell resolves a static credential only at an endpoint that names its
+ * provider, so an unbound endpoint denies the request after the network and L7
+ * stages allow it.
+ */
+export function applyWebSearchCredentialBinding(
+  content: string,
+  presetName: string,
+  providerName: string | null,
+): string {
+  if (!providerName) return content;
+  let parsed: PolicyValue;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    return content;
+  }
+  if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) return content;
+  const policy = parsed.network_policies[presetName];
+  if (!isPolicyObject(policy) || !Array.isArray(policy.endpoints)) return content;
+  let changed = false;
+  for (const endpoint of policy.endpoints) {
+    if (!isPolicyObject(endpoint) || Object.hasOwn(endpoint, "credential_binding")) continue;
+    endpoint.credential_binding = { provider: providerName };
+    changed = true;
+  }
+  return changed ? YAML.stringify(parsed) : content;
+}
+
+/**
+ * Bind every web-search policy already present in a sandbox policy document.
+ * Only providers the sandbox create plan attaches qualify: a binding that names
+ * any other provider fails the create-time provider check.
+ */
+export function bindWebSearchPresetProviders(input: {
+  readonly content: string;
+  readonly sandboxName: string;
+  readonly agentName?: string | null;
+  readonly availableProviders: ReadonlySet<string>;
+}): string {
+  let content = input.content;
+  for (const presetName of Object.keys(WEB_SEARCH_PRESET_PROVIDER_SUFFIXES)) {
+    const providerName = resolveWebSearchCredentialProvider({
+      presetName,
+      sandboxName: input.sandboxName,
+      agentName: input.agentName,
+      availableProviders: input.availableProviders,
+    });
+    content = applyWebSearchCredentialBinding(content, presetName, providerName);
+  }
+  return content;
 }

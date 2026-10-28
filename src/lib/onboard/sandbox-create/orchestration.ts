@@ -390,6 +390,7 @@ export function selectRebuildCreatePolicy(
   authorizedCredentialBindingProviders: readonly string[],
   policySource?: string,
   inferenceProvider: string | null = null,
+  webSearchCredentialProviders: readonly string[] = [],
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
@@ -425,6 +426,8 @@ export function selectRebuildCreatePolicy(
     ],
     requiredNetworkPolicySources,
     authorizedCredentialBindingProviders,
+    webSearchAgentName: messagingAgent,
+    webSearchCredentialProviders,
   });
 }
 
@@ -3019,6 +3022,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicyProviderAuthority,
           rebuildPolicySource?.document,
           resolvedCreateIntent.inferenceProvider,
+          resolvedCreateIntent.extraProviders,
         )
       : materializedInitialSandboxPolicy;
     const createRequestPlan = selectRebuildCreateRequestPlan({

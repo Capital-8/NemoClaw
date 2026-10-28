@@ -1857,6 +1857,10 @@ If Tavily is still blocked after rebuild, inspect recent policy denials:
 nemo-deepagents <name> logs --tail 50
 ```
 
+A `credential_unavailable` denial means the `tavily` preset endpoint has no credential binding.
+NemoClaw adds the binding only for a `tavily-search` provider that you registered with `nemo-deepagents credentials add`.
+Confirm that `nemo-deepagents credentials list` shows `tavily-search`. If the last rebuild ran before you registered it, rebuild the sandbox again.
+
 The `tavily` preset is a managed-Python opt-in. It is process-wide for sandbox Python and is not a `dcode`-only boundary.
 
 ### Deep Agents read-only path checks fail

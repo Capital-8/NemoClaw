@@ -475,6 +475,67 @@ network_policies:
     expect(handoff.cleanup?.()).toBe(true);
   });
 
+  it("binds an applied web-search policy to the attached provider", () => {
+    const livePath = tempPolicy(
+      "live-web-search.yaml",
+      `version: 1
+network_policies:
+  tavily:
+    name: tavily
+    endpoints:
+      - host: api.tavily.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+`,
+    );
+    const replacementPath = tempPolicy("replacement-web-search.yaml", "version: 1\n");
+
+    const handoff = materializeRebuildPolicyHandoff({
+      sandboxName: "alpha",
+      livePolicyPath: livePath,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+      webSearchAgentName: "langchain-deepagents-code",
+      webSearchCredentialProviders: ["tavily-search"],
+    });
+
+    expect(handoff.credentialBindingProviders).toEqual(["tavily-search"]);
+    const endpoint = readPrivatePolicy(handoff.policyPath).policy as {
+      network_policies: { tavily: { endpoints: Array<Record<string, unknown>> } };
+    };
+    expect(endpoint.network_policies.tavily.endpoints[0]!.credential_binding).toEqual({
+      provider: "tavily-search",
+    });
+    expect(handoff.cleanup?.()).toBe(true);
+  });
+
+  it("leaves an applied web-search policy unbound without an attached provider", () => {
+    const source = `version: 1
+network_policies:
+  tavily:
+    name: tavily
+    endpoints:
+      - host: api.tavily.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+`;
+    const livePath = tempPolicy("live-unbound.yaml", source);
+    const replacementPath = tempPolicy("replacement-unbound.yaml", source);
+
+    const handoff = materializeRebuildPolicyHandoff({
+      sandboxName: "alpha",
+      livePolicyPath: livePath,
+      livePolicySource: source,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+      webSearchAgentName: "langchain-deepagents-code",
+      webSearchCredentialProviders: [],
+    });
+
+    expect(handoff.credentialBindingProviders).toEqual([]);
+    expect(fs.readFileSync(handoff.policyPath, "utf8")).toBe(source);
+  });
+
   it("rejects live credential bindings outside the verified replacement plan", () => {
     const livePath = tempPolicy(
       "live-provider.yaml",

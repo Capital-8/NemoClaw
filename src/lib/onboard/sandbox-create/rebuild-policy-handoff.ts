@@ -11,6 +11,7 @@ import {
 } from "../../adapters/openshell/policy-boundary";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
+import { bindWebSearchPresetProviders } from "../../policy/preset-parsing";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
@@ -312,6 +313,35 @@ export function mergeReplacementPolicyAccess(
     : { changed: false, source: normalizedLivePolicySource };
 }
 
+function bindRebuildWebSearchProviders(
+  source: string,
+  input: {
+    readonly sandboxName?: string;
+    readonly webSearchAgentName?: string | null;
+    readonly webSearchCredentialProviders?: readonly string[];
+  },
+): string {
+  const providers = input.webSearchCredentialProviders ?? [];
+  if (!input.sandboxName || providers.length === 0) return source;
+  return bindWebSearchPresetProviders({
+    content: source,
+    sandboxName: input.sandboxName,
+    agentName: input.webSearchAgentName,
+    availableProviders: new Set(providers),
+  });
+}
+
+/** Providers this handoff may bind: the verified replacement plan and the attached web-search providers. */
+function handoffAuthorizedProviders(input: {
+  readonly authorizedCredentialBindingProviders?: readonly string[];
+  readonly webSearchCredentialProviders?: readonly string[];
+}): string[] {
+  return [
+    ...(input.authorizedCredentialBindingProviders ?? []),
+    ...(input.webSearchCredentialProviders ?? []),
+  ];
+}
+
 /** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
   readonly sandboxName?: string;
@@ -322,6 +352,8 @@ export function materializeRebuildPolicyHandoff(input: {
   readonly removedNetworkPolicyKeys?: readonly string[];
   readonly requiredNetworkPolicySources?: readonly string[];
   readonly authorizedCredentialBindingProviders?: readonly string[];
+  readonly webSearchAgentName?: string | null;
+  readonly webSearchCredentialProviders?: readonly string[];
 }): InitialSandboxPolicy {
   const liveSource = input.livePolicySource ?? fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =
@@ -335,7 +367,9 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicySources,
     input.sandboxName,
   );
-  if (!merged.changed && input.livePolicySource === undefined) {
+  const boundSource = bindRebuildWebSearchProviders(merged.source, input);
+  const changed = merged.changed || boundSource !== merged.source;
+  if (!changed && input.livePolicySource === undefined) {
     return {
       ...input.replacementPolicy,
       policyPath: input.livePolicyPath,
@@ -343,7 +377,7 @@ export function materializeRebuildPolicyHandoff(input: {
       credentialBindingProviders: authorizedCredentialBindingProviders(
         liveSource,
         input.replacementPolicy,
-        input.authorizedCredentialBindingProviders ?? [],
+        handoffAuthorizedProviders(input),
       ),
       sourceBytes: Buffer.from(liveSource),
     };
@@ -351,7 +385,7 @@ export function materializeRebuildPolicyHandoff(input: {
 
   const policyPath = secureTempFile(REBUILD_POLICY_HANDOFF_PREFIX, ".yaml");
   try {
-    fs.writeFileSync(policyPath, merged.source, {
+    fs.writeFileSync(policyPath, boundSource, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
@@ -367,11 +401,11 @@ export function materializeRebuildPolicyHandoff(input: {
       policyPath,
       appliedPresets: [],
       credentialBindingProviders: authorizedCredentialBindingProviders(
-        merged.source,
+        boundSource,
         input.replacementPolicy,
-        input.authorizedCredentialBindingProviders ?? [],
+        handoffAuthorizedProviders(input),
       ),
-      sourceBytes: Buffer.from(merged.source),
+      sourceBytes: Buffer.from(boundSource),
       cleanup,
       cleanupExact: cleanup,
     };

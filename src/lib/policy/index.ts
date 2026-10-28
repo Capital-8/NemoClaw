@@ -79,6 +79,9 @@ import {
   type PolicyObject,
   type PolicyValue,
   parseNetworkPolicies,
+  applyWebSearchCredentialBinding,
+  isWebSearchPolicyPreset,
+  resolveWebSearchCredentialProvider,
 } from "./preset-parsing";
 import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
 import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
@@ -413,6 +416,39 @@ function loadAgentPresetContent(
 }
 
 /**
+ * Providers the sandbox create plan attaches. A credential binding that names
+ * any other provider fails the create-time provider check, so web-search
+ * presets bind only a provider recorded here.
+ */
+function recordedWebSearchProviders(): Set<string> {
+  try {
+    return new Set(registry.listExtraProviders());
+  } catch {
+    // Preset loading must not fail on an unreadable extra-provider registry.
+    return new Set();
+  }
+}
+
+function bindWebSearchPreset(
+  content: string,
+  presetName: string,
+  sandboxName: string,
+  agentName: string | null,
+): string {
+  if (!isWebSearchPolicyPreset(presetName)) return content;
+  return applyWebSearchCredentialBinding(
+    content,
+    presetName,
+    resolveWebSearchCredentialProvider({
+      presetName,
+      sandboxName,
+      agentName,
+      availableProviders: recordedWebSearchProviders(),
+    }),
+  );
+}
+
+/**
  * Resolve a preset across messaging, central or agent, and live custom sources.
  * Source misses stay silent so callers report only after the composite lookup fails.
  */
@@ -465,11 +501,17 @@ async function loadPresetForSandbox(
   const resolvedPresetContent =
     loadAgentPresetContent(sandboxName, presetName, builtinPresetContent, options.sandbox) ||
     builtinPresetContent;
+  const boundPresetContent = bindWebSearchPreset(
+    resolvedPresetContent,
+    presetName,
+    sandboxName,
+    sandboxAgent,
+  );
   return presetName === "outlook" &&
     sandboxAgent !== "hermes" &&
     configuredMessagingChannels.includes("teams")
-    ? reconcileTeamsOutlookLoginCredentialBinding(resolvedPresetContent, sandboxName, true)
-    : resolvedPresetContent;
+    ? reconcileTeamsOutlookLoginCredentialBinding(boundPresetContent, sandboxName, true)
+    : boundPresetContent;
 }
 
 /**
