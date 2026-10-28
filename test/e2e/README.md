@@ -5,6 +5,15 @@
 
 Direct E2E coverage runs through Vitest.
 
+The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
+contract. It checks the shipped files and root ownership, proves the healthy supervised
+gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
+native loading and cleanup on the image's architecture. It does not install routing
+configuration or qualify provider routing. `test/agents/hermes/hermes-switchyard-package.test.ts`
+owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
+Both amd64 and arm64 image runs are required for Switchyard release qualification; one
+architecture's startup result does not qualify the other.
+
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
 Changes to the OpenClaw scope patch select the compatible-endpoint, latency, skill-lifecycle, inference-switch, and full OpenClaw targets on both runtimes, plus the Docker llama.cpp GPU target. The compatible-endpoint case owns the native in-sandbox CLI-to-gateway consumer proof before admin approval: it checks command success, the model reply, and newly observed mock-provider traffic separately.
