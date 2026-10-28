@@ -8,7 +8,7 @@ NemoClaw either installs a development OpenShell gateway in a namespace it creat
 The same agent images serve Docker, Podman, Kubernetes and OpenShift.
 
 The managed gateway authenticates users through a development issuer it runs, or through [an existing OIDC issuer](#authenticate-through-an-existing-oidc-issuer).
-CI runs the managed lifecycle on kind (Kubernetes 1.37, Agent Sandbox 0.5.0).
+CI runs the managed lifecycle on kind (Kubernetes 1.37, Agent Sandbox 1.0.3, the version the pinned OpenShell's Kubernetes tests use).
 OpenShift was qualified by hand on one OpenShift Local 4.22.14 node (linux/arm64) at revision `62f994bf88` ([#12733](https://github.com/NVIDIA/NemoClaw/issues/12733)): the gateway and issuer ran under `restricted-v2`, and agents replied through a managed gateway, one authenticating through OIDC, and an existing gateway.
 No automated run covers OpenShift, and other clusters are untested; [current limits](limits.md#platforms-models-and-placement) lists what else is untested.
 
@@ -16,13 +16,13 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
-- **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, Services, Deployments, StatefulSets and NetworkPolicies.
+- **Cluster access:** a kubeconfig file and an exact context that can create a namespace and, inside it, Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets and NetworkPolicies, and can port-forward to its pods (`pods/portforward`).
   The SDK reads the cluster's CustomResourceDefinitions, StorageClasses and namespaces.
   The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
   OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list.
 - **Cluster setup, done by the platform operator:**
-  - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 0.5.0.
+  - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 1.0.3.
   - Exactly one default StorageClass.
 - **Agent images:** pushed to a registry the cluster can pull from, and referenced by digest.
 - **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
@@ -121,7 +121,7 @@ spec:
         user_role: openshell-users
 ```
 
-- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
+- `openshell.gateway.oidc` in [`spec.gateway.config`](usage.md#configure-a-managed-gateway) holds OpenShell's OIDC settings in OpenShell's names, as its [gateway authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx#oidc) describes for Helm deployments. OpenShell validates every request's bearer token against the issuer and audience, and maps the token's roles to administrator and user access; omitted settings take OpenShell's defaults. The `oidc` profile requires the table; under `development`, NemoClaw writes it for its own issuer.
 - `caConfigMap` names a ConfigMap in the deployment's namespace whose `ca.crt` verifies the issuer's certificate. Omit it for a publicly trusted issuer. Like registry Secrets, create it after NemoClaw creates the namespace, then rerun apply with the same state directory.
 - `token.env` names the variable holding the bearer token NemoClaw sends to the gateway.
 
@@ -186,7 +186,7 @@ openshell status
 `openshell status` reports the gateway as connected and authenticated.
 Then [select the gateway and workspace](interfaces.md#select-the-gateway-and-workspace) with `OPENSHELL_GATEWAY=$gateway_name`.
 The client certificate's key grants transport access to the gateway; keep it private and delete the `mtls` directory when you no longer need access.
-See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
+See [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx#oidc) for token refresh and sign-out.
 
 ### Reference Registry Credentials
 
@@ -224,7 +224,7 @@ nemoclaw apply --state-dir .local/kubernetes deployment.yaml
 Use the deployment's context and namespace, and keep that credential file out of source control and shared diagnostics.
 Check the pod events if a pull still fails; a configured reference does not establish registry access.
 Retire upstream registry credentials separately; destroy retains the namespace and caller-managed Secrets.
-Docker/Podman credential delivery and private-registry qualification across all runtimes remain tracked in [#12709](https://github.com/NVIDIA/NemoClaw/issues/12709).
+Docker and Podman gateways pull private images with Docker logins instead; see [Pull from Private Registries](usage.md#pull-from-private-registries).
 
 ## Deploy to OpenShift
 
@@ -250,7 +250,7 @@ Sandboxes still need `image.metadata`.
 
 Sandboxes can use a model server that you run in the gateway's cluster.
 NemoClaw creates nothing for it: you deploy the server with your platform's own tools, and the sandboxes reach it through its Service.
-This has been tried on one kind cluster; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
+This has been tried on one kind cluster and one OpenShift Local node; [current limits](limits.md#platforms-models-and-placement) lists what is untested.
 Name the Service by its cluster DNS name and port:
 
 ```yaml

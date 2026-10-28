@@ -75,7 +75,7 @@ Podman's changing compatibility `/info.ID` is not a durable identity.
 Gateway bindings use the retained owned network UUID, volume creation identity, container ID, and persisted signing keys.
 A missing or replaced bound network is a conflict, not permission to recreate it.
 Destroy retains that network and gateway storage.
-Removing them from Podman is not covered yet ([#12640](https://github.com/NVIDIA/NemoClaw/issues/12640)).
+To remove them, follow [Remove Retained Resources](#remove-retained-resources) for Podman.
 
 ## Agent Runtimes During Apply
 
@@ -117,7 +117,7 @@ The typed `ollama` and `vllm` kinds retain their current policies and use this s
 ### Configure a Managed Gateway
 
 `spec.gateway.config` passes OpenShell gateway settings to a managed gateway in the format of the OpenShell Helm chart's `gatewayConfig` value.
-Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
+Each key names a table of OpenShell's [gateway configuration](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/configuration.mdx) and holds that table's fields; nested maps become inline tables, and a list of maps becomes an array of tables.
 
 ```yaml
 gateway:
@@ -132,11 +132,11 @@ gateway:
 ```
 
 Docker and Podman gateways write these tables into their configuration file beside the keys NemoClaw sets.
-Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/5a7728c304b5528e954e9ae900cf21f84e1a12b1/docs/kubernetes/migrate-gateway-config.mdx).
+Kubernetes and OpenShift gateways pass them to the chart's `gatewayConfig`, where they can override NemoClaw's `workspace_mode` and `workspace_default_storage_size` defaults, and the chart keeps the settings it derives from Kubernetes resources; see OpenShell's [chart configuration guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/kubernetes/migrate-gateway-config.mdx).
 Plan rejects a setting that replaces a key NemoClaw manages, such as the gateway's authentication, signing paths, or the driver's images.
 OpenShell validates the rest when the gateway starts: an unknown or misplaced field in the selected driver's table stops the gateway, and tables for other drivers are ignored.
 A change replaces a Docker or Podman gateway's container, which receives the new file and keeps the gateway's data, and upgrades a Kubernetes gateway's chart release.
-The restarted gateway restarts its sandboxes, and Fabric agents don't start again in a restarted sandbox, so the next plan replaces them, deleting their files and conversation history; see [replacing workloads](#replace-workloads-after-an-unusable-runtime).
+The restarted gateway restarts its sandboxes but not their Fabric agents, and neither plan nor apply notices: invoking an agent fails with `runtime_unavailable` until you [replace its sandbox](#replace-workloads-after-an-unusable-runtime), which deletes its files and conversation history ([#13870](https://github.com/NVIDIA/NemoClaw/issues/13870)).
 Do not put secrets in it: plans and state show it.
 An external gateway takes no `config`; its operator configures it.
 
@@ -164,7 +164,7 @@ The SDK and provider child process need access to referenced credentials during 
 Remove caller-owned environment values and TLS files when no longer needed.
 Destroy removes the owned provider registration, but retained gateway storage remains; revoke upstream credentials separately when retiring them.
 
-Caller-supplied inference credentials require HTTPS.
+Prefer HTTPS for a caller-supplied inference credential: over plain HTTP, the key crosses the network unencrypted.
 The managed Ollama proxy uses its private HTTP endpoint and a deployment-generated bearer key.
 OpenShell decides which inference destinations a sandbox can reach; plaintext gateway addresses must be loopback.
 The isolated policy permits inference routing without general egress and uses `best_effort` Landlock; unavailable kernel restrictions are not enforced.
@@ -407,11 +407,11 @@ Destroy uses native provider compute/cache state and separately verified credent
 
 ### Replace Workloads After an Unusable Runtime
 
-When OpenShell reports that a sandbox exited, for example after its gateway restarted, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
+When OpenShell reports that a sandbox exited, `nemoclaw plan` replaces that sandbox and says why, such as `sandbox exited: SANDBOX_PHASE_ERROR, reason ContainerExited, exit code 1`.
 Read why it exited with `openshell logs SANDBOX --source sandbox` before applying; see [native logs](troubleshooting.md#read-native-service-logs).
 **The replacement deletes that sandbox's files and conversation history.**
 
-Use the rest of this path when an agent runtime is unusable after an invocation failure while its sandbox still runs, and you choose to replace it.
+Use the rest of this path when an agent runtime is unusable after an invocation failure while its sandbox still runs, as after a gateway restart, and you choose to replace it.
 The CLI has no targeted sandbox replacement or runtime-reset command.
 Its supported replacement path is whole-deployment destroy followed by reapplying the original configuration.
 

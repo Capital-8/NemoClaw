@@ -783,6 +783,241 @@ fn sparse_journey_follows_nested_fabric_conditionals() {
     );
 }
 
+fn conditional_settings_schema() -> serde_json::Value {
+    json!({
+        "type":"object",
+        "properties":{
+            "api_key":{"type":"string","minLength":1},
+            "mode":{"type":"string","enum":["basic","remote"]}
+        },
+        "required":["mode"],
+        "if":{"properties":{"mode":{"const":"remote"}},"required":["mode"]},
+        "then":{"required":["api_key"]}
+    })
+}
+
+fn conditional_adapter_journey() -> (Capabilities, nemoclaw_authoring::JourneyState) {
+    let mut catalog = FabricCatalog::bundled();
+    catalog.adapters.truncate(1);
+    catalog.adapters[0].descriptor["adapter_id"] = json!("fixture.conditional");
+    catalog.adapters[0].descriptor["settings_schema"] = conditional_settings_schema();
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["spec"]["sandboxes"]["assistant"]["harness"] =
+        json!({"kind":"fixture.conditional","settings":{}});
+    let state = JourneyDefinition::new(
+        "conditional-settings",
+        PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
+    )
+    .start(&capabilities)
+    .unwrap();
+    (capabilities, state)
+}
+
+#[test]
+fn conditional_settings_ask_the_controller_before_its_dependent() {
+    let (capabilities, state) = conditional_adapter_journey();
+    let resolution = state.resolve(&capabilities).unwrap();
+    let settings = resolution
+        .questions()
+        .iter()
+        .filter(|question| question.id().starts_with("adapter:fixture.conditional:"))
+        .map(|question| question.id())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        settings,
+        [
+            "adapter:fixture.conditional:/mode",
+            "adapter:fixture.conditional:/api_key"
+        ]
+    );
+}
+
+#[test]
+fn conditional_settings_reopen_an_omitted_adapter_setting_after_an_edit() {
+    let (capabilities, mut state) = conditional_adapter_journey();
+    let mode = "adapter:fixture.conditional:/mode";
+    let key = "adapter:fixture.conditional:/api_key";
+    state
+        .answer(&capabilities, mode, Some(json!("basic")))
+        .unwrap();
+    state.answer(&capabilities, key, None).unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+
+    state
+        .answer(&capabilities, mode, Some(json!("remote")))
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    let question = resolution.question(key).expect("required setting reopens");
+    assert!(question.required());
+    assert_eq!(question.reopened_because(), Some(mode));
+    assert_eq!(
+        state.decision_status(key),
+        DecisionStatus::Reopened {
+            because: mode.into()
+        }
+    );
+    assert!(!resolution.omitted().contains(&key.to_owned()));
+    assert!(resolution.materialized_document().is_none());
+    assert!(state.answer(&capabilities, key, None).is_err());
+    state
+        .answer(&capabilities, key, Some(json!("fixture-value")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+    assert_eq!(state.decision_status(key), DecisionStatus::Accepted);
+}
+
+#[test]
+fn conditional_settings_keep_controllers_first_with_exact_ask_guidance() {
+    let (capabilities, initial) = conditional_adapter_journey();
+    let mode = "adapter:fixture.conditional:/mode";
+    let key = "adapter:fixture.conditional:/api_key";
+    for guidance in [vec![key], vec![key, mode]] {
+        let state = JourneyDefinition::new(
+            "conditional-guidance",
+            PartialDocument::from_yaml(initial.values().to_string().as_bytes()).unwrap(),
+        )
+        .ask(guidance)
+        .start(&capabilities)
+        .unwrap();
+        let resolution = state.resolve(&capabilities).unwrap();
+        let position = |id| {
+            resolution
+                .questions()
+                .iter()
+                .position(|q| q.id() == id)
+                .unwrap()
+        };
+        assert!(position(mode) < position(key));
+    }
+}
+
+fn conditional_native_journey(model: bool) -> (Capabilities, nemoclaw_authoring::JourneyState) {
+    let mut catalog = FabricCatalog::bundled();
+    catalog.adapters.truncate(1);
+    let adapter = &mut catalog.adapters[0];
+    adapter.descriptor["adapter_id"] = json!("fixture.conditional");
+    adapter.descriptor["settings_schema"] = json!({"type":"object","properties":{}});
+    let mut base: serde_json::Value =
+        serde_saphyr::from_slice(include_bytes!("../../../examples/onboarding/openclaw.yaml"))
+            .unwrap();
+    base["spec"]["sandboxes"]["assistant"]["harness"] = json!({"kind":"fixture.conditional"});
+    if model {
+        adapter.descriptor["model_schema"] = json!({
+            "type":"object", "properties":{"settings":conditional_settings_schema()},
+            "required":["settings"]
+        });
+    } else {
+        adapter.descriptor["config"]["schema"] = json!({"type":"object","required":["workflow"]});
+        base["spec"]["sandboxes"]["assistant"]["harness"]["config"] =
+            json!({"workflow":{"target_id":"fixture.target","settings":{}}});
+        catalog.targets = vec![json!({"descriptor":{
+            "type":"workflow", "id":"fixture.target", "adapter_id":"fixture.conditional",
+            "spec":{"settings_schema":conditional_settings_schema()}
+        },"provenance":[]})];
+    }
+    let capabilities = Capabilities::from_catalog(&catalog);
+    let state = JourneyDefinition::new(
+        "conditional-native",
+        PartialDocument::from_yaml(base.to_string().as_bytes()).unwrap(),
+    )
+    .ask([JourneyScope::NativeSettings])
+    .ask([if model {
+        "model:/api_key"
+    } else {
+        "workflow:/settings/api_key"
+    }])
+    .start(&capabilities)
+    .unwrap();
+    (capabilities, state)
+}
+
+fn check_native_omission_reopens(model: bool) {
+    let (capabilities, mut state) = conditional_native_journey(model);
+    let prefix = if model {
+        "model:"
+    } else {
+        "workflow:/settings"
+    };
+    let mode = format!("{prefix}/mode");
+    let key = format!("{prefix}/api_key");
+    let initial = state.resolve(&capabilities).unwrap();
+    let position = |id| {
+        initial
+            .questions()
+            .iter()
+            .position(|q| q.id() == id)
+            .unwrap()
+    };
+    assert!(position(&mode) < position(&key));
+    if !model {
+        state
+            .answer(
+                &capabilities,
+                "workflow:/target_id",
+                Some(json!("fixture.target")),
+            )
+            .unwrap();
+    }
+    state
+        .answer(&capabilities, &mode, Some(json!("basic")))
+        .unwrap();
+    state.answer(&capabilities, &key, None).unwrap();
+    assert_eq!(state.decision_status(&key), DecisionStatus::Omitted);
+    state
+        .answer(&capabilities, &mode, Some(json!("remote")))
+        .unwrap();
+    let resolution = state.resolve(&capabilities).unwrap();
+    let question = resolution
+        .question(&key)
+        .expect("required native setting reopens");
+    assert!(question.required());
+    assert_eq!(question.reopened_because(), Some(mode.as_str()));
+    assert_eq!(
+        state.decision_status(&key),
+        DecisionStatus::Reopened {
+            because: mode.clone()
+        }
+    );
+    assert!(!resolution.omitted().contains(&key));
+    assert!(resolution.materialized_document().is_none());
+    assert!(state.answer(&capabilities, &key, None).is_err());
+    state
+        .answer(&capabilities, &key, Some(json!("fixture-value")))
+        .unwrap();
+    assert!(
+        state
+            .resolve(&capabilities)
+            .unwrap()
+            .materialized_document()
+            .is_some()
+    );
+}
+
+#[test]
+fn conditional_settings_reopen_an_omitted_workflow_setting_after_an_edit() {
+    check_native_omission_reopens(false);
+}
+
+#[test]
+fn conditional_settings_reopen_an_omitted_model_setting_after_an_edit() {
+    check_native_omission_reopens(true);
+}
+
 #[test]
 fn nested_adapter_guidance_asks_omits_and_warns_from_the_active_schema() {
     let mut catalog = FabricCatalog::bundled();
@@ -2005,10 +2240,14 @@ fn delegation_accepts_when_a_credential_was_never_observed() {
 }
 
 #[test]
-fn missing_credentials_are_informational_and_do_not_block_delegation() {
+fn credential_availability_names_each_observed_state_without_blocking_delegation() {
     use nemoclaw_sdk::discovery::ObservationStatus;
     let capabilities = Capabilities::available();
-    for status in [ObservationStatus::Unavailable, ObservationStatus::Unknown] {
+    for (status, says, plan_guidance) in [
+        (ObservationStatus::Available, "is set", false),
+        (ObservationStatus::Unavailable, "is not set", true),
+        (ObservationStatus::Unknown, "could not be read", true),
+    ] {
         let mut facts = delegation_facts(&capabilities);
         facts.credentials[0].status = status;
         facts.credentials[0].reason = Some("PRIVATE_SENTINEL".into());
@@ -2017,23 +2256,33 @@ fn missing_credentials_are_informational_and_do_not_block_delegation() {
             .state
             .resolve_with_observations(&capabilities, &facts.observations())
             .unwrap();
-        let note = resolution.information().join(" ");
-        assert!(note.contains(&facts.credentials[0].reference), "{note}");
-        assert!(
+        let reference = &facts.credentials[0].reference;
+        let note = resolution.credentials().join(" ");
+        assert!(note.contains(&format!("{reference} {says}")), "{note}");
+        assert_eq!(
             note.contains("plan") && note.contains("non-interactive"),
+            plan_guidance,
             "{note}"
         );
         assert!(!note.contains("PRIVATE_SENTINEL"));
+        assert!(
+            !resolution.information().join(" ").contains(reference),
+            "credential availability is not a note for every question"
+        );
     }
-    let facts = delegation_facts(&capabilities);
-    assert!(
-        facts
-            .state
-            .resolve_with_observations(&capabilities, &facts.observations())
-            .unwrap()
-            .information()
-            .is_empty()
-    );
+}
+
+#[test]
+fn a_credential_never_checked_says_nothing_about_its_availability() {
+    let capabilities = Capabilities::available();
+    let mut facts = delegation_facts(&capabilities);
+    facts.credentials.clear();
+    let resolution = facts
+        .state
+        .resolve_with_observations(&capabilities, &facts.observations())
+        .unwrap();
+    assert!(resolution.credentials().is_empty());
+    assert!(resolution.information().is_empty());
 }
 
 #[test]

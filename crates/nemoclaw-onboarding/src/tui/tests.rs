@@ -5,7 +5,7 @@ use super::{
     app::JourneyWizard,
     labels::{label, terminal_text},
     logo::BrandImage,
-    terminal::{ask_target, local_engine_probe, model_catalog_probe},
+    terminal::{ask_target, credential_probe, local_engine_probe, model_catalog_probe},
 };
 use crate::{Source, load_journey};
 use nemoclaw_authoring::{
@@ -16,8 +16,11 @@ use nemoclaw_sdk::discovery::DiscoveryObservations;
 use nemoclaw_sdk::{
     CancellationToken, Error,
     config::{ComputeDriver, Document},
-    discovery::{DiscoveryObservation, DiscoveryQuery, DiscoveryRequest, EngineObservation},
-    inference_discovery::EndpointObservation,
+    discovery::{
+        CredentialRequest, DiscoveryObservation, DiscoveryQuery, DiscoveryRequest,
+        EngineObservation, ObservationStatus,
+    },
+    inference_discovery::{CredentialObservation, EndpointObservation},
 };
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::Value;
@@ -407,7 +410,7 @@ fn questions_until_review(wizard: &mut JourneyWizard) -> Vec<String> {
 }
 
 #[test]
-fn default_journey_asks_route_choices_and_leaves_tuning_settings_at_their_defaults() {
+fn default_journey_asks_route_choices_and_leaves_adapter_settings_at_their_defaults() {
     let capabilities = Capabilities::available();
     let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
@@ -418,7 +421,6 @@ fn default_journey_asks_route_choices_and_leaves_tuning_settings_at_their_defaul
             "/spec/sandboxes/assistant/harness/kind",
             "/spec/gateway/runtime/provider",
             "inference:preset",
-            "adapter:nvidia.fabric.openclaw:/channel_config",
             "/spec/inferenceProviders/nvidia-prod/api",
             "/spec/sandboxes/assistant/agent/inference/routes/0/overrides/model",
             "/spec/gateway/engine",
@@ -968,6 +970,13 @@ async fn unreachable(
             DiscoveryQuery::Inference(_) => {
                 DiscoveryObservation::Inference(EndpointObservation::unknown("unreachable"))
             }
+            DiscoveryQuery::Credential(request) => {
+                DiscoveryObservation::Credential(CredentialObservation {
+                    reference: request.reference.clone(),
+                    status: ObservationStatus::Unknown,
+                    reason: Some("unreachable".into()),
+                })
+            }
             other => panic!("unexpected read {other:?}"),
         };
         observed.record(query, observation);
@@ -1060,30 +1069,82 @@ async fn the_model_catalog_is_asked_when_the_model_question_comes_and_only_once(
     assert!(wizard.observations().get(&request).is_some());
 }
 
+#[tokio::test]
+async fn credentials_are_checked_when_review_opens_and_only_once() {
+    let mut wizard = reviewing_wizard(unverified_engine());
+    let asked = vec![DiscoveryQuery::Credential(CredentialRequest {
+        reference: "NVIDIA_API_KEY".into(),
+    })];
+    assert_eq!(credential_probe(&wizard), asked);
+
+    assert!(ask(&mut wizard, asked).await);
+
+    assert!(credential_probe(&wizard).is_empty(), "each is checked once");
+    assert!(
+        flat(&screen(&wizard, 100, 40))
+            .contains("NVIDIA_API_KEY could not be read in this environment.")
+    );
+}
+
 #[test]
-fn credential_information_keeps_controls_and_real_errors_visible() {
+fn questions_do_not_check_credentials() {
     let capabilities = Capabilities::available();
-    let base = PartialDocument::from_yaml(include_bytes!(
-        "../../../../examples/onboarding/openclaw.yaml"
-    ))
-    .unwrap();
-    let state = JourneyDefinition::new("credential-note", base)
-        .ask(["/metadata/name"])
-        .start(&capabilities)
-        .unwrap();
+    let state = load_journey(Source::Defaults, &capabilities).unwrap();
     let mut wizard = JourneyWizard::new(capabilities, state);
     wizard.started = true;
-    wizard.error = Some("Actual engine failure".into());
-    for (width, height) in [(160, 35), (72, 24)] {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| wizard.render(frame)).unwrap();
-        let screen = terminal.backend().to_string();
-        assert!(screen.contains("NVIDIA_API_KEY"), "{screen}");
-        assert!(screen.contains("plan"), "{screen}");
-        assert!(screen.contains("Actual engine failure"), "{screen}");
-        assert!(screen.contains("Ctrl+D"), "{screen}");
+    for _ in 0..40 {
+        if wizard.question().unwrap().is_none() {
+            return;
+        }
+        assert!(credential_probe(&wizard).is_empty());
+        wizard.advance();
     }
-    assert_eq!(wizard.error.as_deref(), Some("Actual engine failure"));
+    panic!("the journey did not reach review");
+}
+
+#[test]
+fn credential_availability_appears_on_review_and_not_on_questions() {
+    for (status, expected) in [
+        (
+            ObservationStatus::Available,
+            "NVIDIA_API_KEY is set in this environment.",
+        ),
+        (
+            ObservationStatus::Unavailable,
+            "NVIDIA_API_KEY is not set in this environment.",
+        ),
+    ] {
+        let capabilities = Capabilities::available();
+        let state = load_journey(Source::Defaults, &capabilities).unwrap();
+        let mut wizard =
+            JourneyWizard::new(capabilities, state).with_local_engine_candidates(vec![]);
+        wizard.record(
+            DiscoveryQuery::Credential(CredentialRequest {
+                reference: "NVIDIA_API_KEY".into(),
+            }),
+            DiscoveryObservation::Credential(CredentialObservation {
+                reference: "NVIDIA_API_KEY".into(),
+                status,
+                reason: None,
+            }),
+        );
+        wizard.started = true;
+        for _ in 0..40 {
+            if wizard.question().unwrap().is_none() {
+                break;
+            }
+            for (width, height) in [(160, 35), (72, 24)] {
+                let text = flat(&screen(&wizard, width, height));
+                assert!(!text.contains("in this environment"), "{text}");
+            }
+            wizard.advance();
+        }
+        assert!(wizard.question().unwrap().is_none(), "review");
+        for (width, height) in [(160, 35), (72, 24)] {
+            let text = flat(&screen(&wizard, width, height));
+            assert!(text.contains(expected), "{width}x{height}: {text}");
+        }
+    }
 }
 
 #[test]
