@@ -827,6 +827,7 @@ class HooksManager:
 from __future__ import annotations
 
 import logging
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -836,8 +837,11 @@ def _resolve_shell_allow_list():
 
 
 class _Console:
-    def print(self, message):
-        print(message)
+    def __init__(self, stderr=False):
+        self.file = sys.stderr if stderr else sys.stdout
+
+    def print(self, message, **kwargs):
+        print(message, file=self.file)
 
 
 def escape_markup(value):
@@ -846,6 +850,10 @@ def escape_markup(value):
 
 def generate_thread_id():
     return "thread-1"
+
+
+def _workspace_conflict_text(exc):
+    return None
 
 
 def _write_text(text):
@@ -871,8 +879,9 @@ async def _run_agent_loop(*args, **kwargs):
 
 
 async def run_non_interactive(*args, **kwargs):
-    console = _Console()
+    console = _Console(stderr=kwargs.get("quiet", False))
     thread_id = generate_thread_id()
+    resume = kwargs.get("resume")
     try:
         result = await _run_agent_loop(*args, **kwargs)
         return result

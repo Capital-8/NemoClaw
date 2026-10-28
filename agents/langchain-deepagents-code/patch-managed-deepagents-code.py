@@ -10,7 +10,7 @@
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
 # posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.71 has no single managed-runtime hook that can
+# whyNotSourceFix: upstream 0.1.87 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, while hostile analytics values exercise patched entrypoints and
@@ -455,7 +455,7 @@ def _tracing_enabled() -> bool:
     return False
 
 
-# Deep Agents Code 0.1.71 enables OpenAI prompt-cache affinity for every
+# Deep Agents Code 0.1.87 enables OpenAI prompt-cache affinity for every
 # ChatOpenAI-compatible endpoint. NVIDIA Endpoints rejects that OpenAI-specific
 # request field. Disable its dynamic injection at the final config boundary so
 # managed non-interactive calls retain only supported request fields (#10549).
@@ -518,7 +518,7 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     return kwargs
 '''
 
-# Source-of-truth boundary: upstream Deep Agents Code 0.1.71 resolves and pins
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.87 resolves and pins
 # destination DNS locally, then disables environment proxies. That is a sound
 # standalone SSRF defense but cannot operate in OpenShell's proxy-only network
 # namespace, where direct DNS and direct target connections are rejected. The
@@ -558,7 +558,7 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.71 cannot inject
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.87 cannot inject
 # managed progressive-disclosure or Relay middleware into both main and subagent
 # graphs, nor attach a metadata-only callback to the compiled graph. Without this
 # root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo
@@ -658,7 +658,7 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         kwargs.get("mcp_server_info"),
         kwargs.get("mcp_tools"),
     )
-    # Deep Agents Code 0.1.71 passes the exact loaded MCP tool objects
+    # Deep Agents Code 0.1.87 passes the exact loaded MCP tool objects
     # separately from the status-oriented server metadata. The metadata can be
     # empty or lag the executable catalog, so it must not decide whether the
     # progressive middleware is installed.
@@ -785,7 +785,14 @@ NON_INTERACTIVE_ERROR_MARKER = '''    except Exception as e:
         return 1
 '''
 
-NON_INTERACTIVE_ERROR_PATCH = '''    except Exception:
+NON_INTERACTIVE_ERROR_PATCH = '''    except Exception as e:
+        # Upstream emits only fixed recovery text and allowlisted setting names.
+        # It never includes the exception message or workspace setting values.
+        if resume is not None and (conflict := _workspace_conflict_text(e)):
+            console.print(
+                f"\\n[red]Error: {escape_markup(conflict)}[/red]", soft_wrap=True
+            )
+            return 1
         _nemoclaw_report_non_interactive_error(thread_id, console)
         return 1
 '''

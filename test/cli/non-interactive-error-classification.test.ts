@@ -122,7 +122,41 @@ os.unlink(db_path)
 `;
 }
 
+function resumeConflictScript(format: "text" | "json"): string {
+  return `
+${runtimePreamble}
+conflict = RuntimeError("private-model-message")
+diagnostic = "Rerun from the same directory with the same flags. Changed: no_mcp."
+target._workspace_conflict_text = lambda error: diagnostic if error is conflict else None
+async def fail(*args, **kwargs):
+    raise conflict
+target._run_non_interactive_impl = fail
+assert asyncio.run(target.run_non_interactive("task", resume="thread-1", output_format="${format}")) == 1
+`;
+}
+
 describe("managed non-interactive error reporting", () => {
+  it("preserves safe resume conflict recovery in text output", () => {
+    const result = runPatchedNonInteractive(resumeConflictScript("text"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Rerun from the same directory with the same flags");
+    expect(result.stdout).toContain("Changed: no_mcp");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+  });
+
+  it("keeps resume recovery on stderr beside a valid JSON failure envelope", () => {
+    const result = runPatchedNonInteractive(resumeConflictScript("json"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("Rerun from the same directory with the same flags");
+    expect(result.stderr).toContain("Changed: no_mcp");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+    expect(JSON.parse(result.stdout).data).toMatchObject({
+      status: "agent_failure",
+      exit_code: 1,
+      response: null,
+    });
+  });
+
   it("disables unsupported OpenAI prompt cache affinity (#10549)", () => {
     const result = runPatchedNonInteractive(`
 from deepagents_code import config
