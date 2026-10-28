@@ -46,6 +46,7 @@ export type OpenshellAsyncCaptureLifecycleOptions = Readonly<{
   killGraceMs?: number;
   outputLimitBytes?: number;
   signalSource?: OpenshellAsyncCaptureSignalSource;
+  forceKillOnInterrupt?: boolean;
   spawnImpl?: OpenshellSpawn;
   timeoutKillSignal?: "SIGTERM" | "SIGKILL";
   timeoutMilliseconds?: number;
@@ -98,6 +99,7 @@ export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
 
 export interface CaptureOpenshellAsyncOptions extends Omit<CaptureOpenshellOptions, "maxBuffer"> {
   signalSource?: OpenshellAsyncCaptureSignalSource;
+  forceKillOnInterrupt?: boolean;
   outputLimitBytes?: number;
   killGraceMs?: number;
   spawnImpl?: OpenshellSpawn;
@@ -312,6 +314,7 @@ export function captureOpenshellCommandAsync(
     timeoutMilliseconds: opts.timeout,
     outputLimitBytes: opts.outputLimitBytes,
     signalSource: opts.signalSource,
+    forceKillOnInterrupt: opts.forceKillOnInterrupt,
   }).then((result) => ({
     status: result.status ?? (result.timedOut ? null : 1),
     output: `${result.stdout}${shouldIncludeStderr(opts) ? result.stderr : ""}`.trim(),
@@ -412,6 +415,9 @@ export function captureOpenshellCommandAsyncResult(
       releaseSignals();
       if (timeoutHandle) clearTimeout(timeoutHandle);
       signalProcessTree(child, signal);
+      // Policy submission may re-raise the signal on the next turn, before
+      // this process can run its grace timer. Reap that owned child now.
+      if (opts.forceKillOnInterrupt) signalProcessTree(child, "SIGKILL");
       killHandle = setTimeout(() => {
         signalProcessTree(child, "SIGKILL");
         forceHandle = setTimeout(() => {

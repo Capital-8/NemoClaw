@@ -422,6 +422,7 @@ setInterval(() => {}, 1_000);
         `#!${process.execPath}
 const fs = require("node:fs");
 const path = require("node:path");
+process.on("SIGINT", () => {});
 const policyIdx = process.argv.indexOf("--policy");
 const policyPath = policyIdx >= 0 ? process.argv[policyIdx + 1] : null;
 fs.writeFileSync(
@@ -525,6 +526,9 @@ registerIncompleteOnboardExitFailureHandler(
         expect(stdout).not.toContain("OpenClaw is ready");
         expect(fs.existsSync(lockFile)).toBe(false);
         expect(fs.existsSync(policyDir)).toBe(false);
+        await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), {
+          timeout: 2_000,
+        });
         const savedSession = JSON.parse(
           fs.readFileSync(path.join(childDir, ".nemoclaw", "onboard-session.json"), "utf8"),
         ) as {
@@ -558,5 +562,6 @@ registerIncompleteOnboardExitFailureHandler(
         fs.rmSync(childDir, { recursive: true, force: true });
       }
     },
+    20_000,
   );
 });

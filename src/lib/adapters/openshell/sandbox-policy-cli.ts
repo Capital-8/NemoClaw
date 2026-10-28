@@ -59,6 +59,7 @@ export { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary };
 
 type CapturePolicyOptions = Omit<Parameters<CaptureOpenShellCommand>[1], "maxBuffer"> & {
   readonly outputLimitBytes: number;
+  readonly forceKillOnInterrupt?: boolean;
 };
 type CapturePolicyCommand = (
   args: string[],
@@ -316,10 +317,13 @@ export function createCliOpenShellSandboxPolicyWriter(
       try {
         const policyPath = path.join(directory, "policy.yaml");
         fs.writeFileSync(policyPath, request.document, { encoding: "utf-8", mode: 0o600 });
-        const captured = deps.capture(
-          policySetArgs(request, policyPath),
-          captureOptions(request, deps.defaultTimeoutMs ?? OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS),
-        );
+        const captured = deps.capture(policySetArgs(request, policyPath), {
+          ...captureOptions(
+            request,
+            deps.defaultTimeoutMs ?? OPENSHELL_POLICY_ACTIVATION_TIMEOUT_MS,
+          ),
+          forceKillOnInterrupt: true,
+        });
         const removeDirectoryOnInterrupt = () => {
           releaseCleanupListeners();
           try {
