@@ -3782,7 +3782,7 @@ run_preupgrade_backup() {
 force_fresh_install_has_existing_state() {
   local container_id container_image container_inventory container_label_inventory container_name container_row
   local receipt_volume_inventory user_bin volume_name volume_suffix
-  local existing_state=0 docker_inventory_row_pattern='^[0-9a-f]+[|][^|]*[|][^|]*$'
+  local existing_state=0 docker_inventory_row_pattern='^[0-9a-f]+[|][^|[:space:]]*[|][^|[:space:]]*$'
   _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER=""
   _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME=""
   user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"

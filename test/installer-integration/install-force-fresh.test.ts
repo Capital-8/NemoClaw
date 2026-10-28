@@ -280,6 +280,8 @@ esac
 it.each([
   ["a row missing the final name separator", "fedcba987654|nemoclaw-sandbox-local:build-1"],
   ["a space-separated row", "fedcba987654 redis:7 openshell-orphan"],
+  ["whitespace in the image field", "fedcba987654|redis: 7|ordinary-container"],
+  ["whitespace in the name field", "fedcba987654|redis:7| openshell-orphan"],
 ])(
   "stops before cleanup when the Docker container inventory contains %s",
   (_kind, containerRow) => {
