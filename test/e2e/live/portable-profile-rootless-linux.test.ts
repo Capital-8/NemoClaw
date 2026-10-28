@@ -81,7 +81,7 @@ import {
 } from "../fixtures/portable-profile-rootless-finalization-helpers.ts";
 import {
   PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
-  portableSandboxImageBuilder,
+  portableSandboxImageBuilder as buildImageFixture,
   publishPortableSandboxImage as publishImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -1036,7 +1036,7 @@ async function main(
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
-    const buildImage = portableSandboxImageBuilder(artifacts, progress, verifiedPodmanUrl);
+    const buildImage = buildImageFixture(artifacts, progress, verifiedPodmanUrl, BASE_IMAGE);
     await waitForRegistry(artifacts, shellProbe);
     process.env.E2E_TARGET_ID === "portable-hermes-finalization" &&
       (await capturePortableRegistryProcessBoundary({

@@ -5,6 +5,7 @@ import type { ArtifactSink } from "./artifacts.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { superviseChild } from "../../helpers/process-supervisor.ts";
 import { spawnObservedChild } from "./observed-child-process.ts";
 import type { TestProgress } from "./progress.ts";
@@ -26,6 +27,8 @@ export const PORTABLE_PROFILE_LIVE_TIMEOUT_MS =
   PORTABLE_ASSERTION_CLEANUP_RESERVE_MS;
 const DIAGNOSTIC_TAIL_CHARS = 8_192;
 const POST_KILL_OUTPUT_DRAIN_MS = 1_000;
+const OCI_PROBE_TIMEOUT_MS = 30_000;
+const OCI_PROBE_CLEANUP_TIMEOUT_MS = 15_000;
 const SAFE_ERROR_CODES = new Set(["EACCES", "ENOENT", "EPERM", "ETIMEDOUT", "EUNRECONCILED"]);
 type BuildResult = {
   status: number | null;
@@ -43,7 +46,7 @@ type ImageCommandRunner = (
   progress: TestProgress,
 ) => Promise<BuildResult>;
 
-type StoreIdentity = { graphRoot: string; runRoot: string };
+type StoreIdentity = { graphRoot: string; runRoot: string; ociRuntimePath: string };
 type StoreProbe = (env: NodeJS.ProcessEnv, selectedUrl?: string) => StoreIdentity;
 
 function alignPrivatePodmanStorage(configHome: string, env: NodeJS.ProcessEnv): boolean {
@@ -126,19 +129,27 @@ export function probePodmanStore(
   } catch {
     throw new Error("parse");
   }
-  const store = (parsed as { store?: Partial<StoreIdentity> })?.store;
+  const info = parsed as {
+    store?: Partial<StoreIdentity>;
+    host?: { ociRuntime?: { path?: unknown } };
+    Host?: { OCIRuntime?: { Path?: unknown } };
+  };
+  const store = info?.store;
+  const ociRuntimePath = info?.host?.ociRuntime?.path ?? info?.Host?.OCIRuntime?.Path;
   if (
     typeof store?.graphRoot !== "string" ||
     !store.graphRoot ||
     typeof store.runRoot !== "string" ||
-    !store.runRoot
+    !store.runRoot ||
+    typeof ociRuntimePath !== "string" ||
+    !ociRuntimePath
   ) {
     throw new Error("missing-field");
   }
-  return { graphRoot: store.graphRoot, runRoot: store.runRoot };
+  return { graphRoot: store.graphRoot, runRoot: store.runRoot, ociRuntimePath };
 }
 
-/** Compare only fixed store fields; never publish Podman paths or command output. */
+/** Compare fixed store and runtime authority; never publish Podman paths or command output. */
 export async function verifyPortablePodmanStoreAuthority(
   childEnv: NodeJS.ProcessEnv,
   fullEnv: NodeJS.ProcessEnv,
@@ -155,6 +166,8 @@ export async function verifyPortablePodmanStoreAuthority(
   let category = "match";
   let childMatchesHost: boolean | null = null;
   let hostMatchesService: boolean | null = null;
+  let childMatchesHostRuntime: boolean | null = null;
+  let hostMatchesServiceRuntime: boolean | null = null;
   try {
     if (!selectedUrl.startsWith("unix:///")) throw new Error("probe");
     const child = probe(childEnv);
@@ -162,7 +175,15 @@ export async function verifyPortablePodmanStoreAuthority(
     const service = probe(fullEnv, selectedUrl);
     childMatchesHost = child.graphRoot === host.graphRoot && child.runRoot === host.runRoot;
     hostMatchesService = host.graphRoot === service.graphRoot && host.runRoot === service.runRoot;
-    if (!childMatchesHost || !hostMatchesService) throw new Error("mismatch");
+    childMatchesHostRuntime = child.ociRuntimePath === host.ociRuntimePath;
+    hostMatchesServiceRuntime = host.ociRuntimePath === service.ociRuntimePath;
+    if (
+      !childMatchesHost ||
+      !hostMatchesService ||
+      !childMatchesHostRuntime ||
+      !hostMatchesServiceRuntime
+    )
+      throw new Error("mismatch");
   } catch (cause) {
     category = ["probe", "parse", "missing-field", "mismatch"].includes((cause as Error).message)
       ? (cause as Error).message
@@ -173,6 +194,8 @@ export async function verifyPortablePodmanStoreAuthority(
     category,
     childMatchesHost,
     hostMatchesService,
+    childMatchesHostRuntime,
+    hostMatchesServiceRuntime,
   });
   if (category !== "match") throw new Error(`Portable Podman store authority ${category}`);
 }
@@ -189,7 +212,9 @@ async function runPodmanBuild(
       activityLabel:
         args[0] === "push"
           ? "command: portable-sandbox-image-publish"
-          : "command: portable-sandbox-image-build",
+          : args[0] === "build"
+            ? "command: portable-sandbox-image-build"
+            : "command: portable-sandbox-oci-diagnostic",
       progress,
       spawn: { env, stdio: ["ignore", "pipe", "pipe"], shell: false, detached: true },
     });
@@ -334,11 +359,93 @@ export async function buildPortableSandboxImageWithEvidence(
   return result.error ? null : result.status;
 }
 
+async function diagnosticCommand(
+  runCommand: ImageCommandRunner,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+  progress: TestProgress,
+): Promise<BuildResult> {
+  try {
+    return await runCommand(args, env, timeoutMs, progress);
+  } catch {
+    return { status: null, signal: null, diagnostic: "", error: new Error("diagnostic failed") };
+  }
+}
+
+/** Distinguish local OCI execution from build failure without publishing child output. */
+export async function probePortableSandboxOciAfterBuildFailure(
+  baseImage: string,
+  env: NodeJS.ProcessEnv,
+  artifacts: ArtifactSink,
+  progress: TestProgress,
+  runCommand: ImageCommandRunner = runPodmanBuild,
+): Promise<void> {
+  const cached = await diagnosticCommand(
+    runCommand,
+    ["image", "exists", baseImage],
+    env,
+    OCI_PROBE_CLEANUP_TIMEOUT_MS,
+    progress,
+  );
+  if (cached.status !== 0 || cached.error) {
+    const unreconciled =
+      (cached.error as NodeJS.ErrnoException | undefined)?.code === "EUNRECONCILED";
+    await artifacts.writeJson("portable-sandbox-oci-probe.json", {
+      schemaVersion: 1,
+      category: unreconciled
+        ? "cleanup-unproved"
+        : cached.status === 1 && !cached.error
+          ? "base-image-absent"
+          : "image-query-failed",
+      baseImageCached: cached.status === 1 && !cached.error ? false : null,
+      runStatus: null,
+      cleanupSucceeded: unreconciled ? false : null,
+    });
+    if (unreconciled) throw new Error("Portable sandbox OCI probe cleanup unproved");
+    return;
+  }
+  const name = `nemoclaw-prebuild-probe-${randomUUID()}`;
+  const run = await diagnosticCommand(
+    runCommand,
+    ["run", "--rm", "--pull=never", "--network=none", "--name", name, baseImage, "/bin/true"],
+    env,
+    OCI_PROBE_TIMEOUT_MS,
+    progress,
+  );
+  const cleanup = await diagnosticCommand(
+    runCommand,
+    ["rm", "--force", "--ignore", name],
+    env,
+    OCI_PROBE_CLEANUP_TIMEOUT_MS,
+    progress,
+  );
+  const unreconciled = (run.error as NodeJS.ErrnoException | undefined)?.code === "EUNRECONCILED";
+  const cleanupSucceeded = cleanup.status === 0 && !cleanup.error && !unreconciled;
+  const category = !cleanupSucceeded
+    ? "cleanup-unproved"
+    : run.status === 0 && !run.error
+      ? "oci-execution-passed"
+      : (run.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"
+        ? "oci-execution-timeout"
+        : "oci-execution-failed";
+  await artifacts.writeJson("portable-sandbox-oci-probe.json", {
+    schemaVersion: 1,
+    category,
+    baseImageCached: true,
+    runStatus: run.status,
+    cleanupSucceeded,
+  });
+  if (category === "cleanup-unproved")
+    throw new Error("Portable sandbox OCI probe cleanup unproved");
+}
+
 /** Use the exact filtered child environment passed by the production prebuild callback. */
 export function portableSandboxImageBuilder(
   artifacts: ArtifactSink,
   progress: TestProgress,
   selectedUrl: string,
+  sandboxBaseImage: string,
 ) {
   return (label: "sandbox" | "hermes") =>
     async (args: readonly string[], options: { env: NodeJS.ProcessEnv; stdio: "inherit" }) => {
@@ -350,7 +457,21 @@ export function portableSandboxImageBuilder(
         `portable-podman-store-${label}.json`,
         artifacts,
       );
-      return buildPortableSandboxImageWithEvidence(args, options, artifacts, progress);
+      const status = await buildPortableSandboxImageWithEvidence(
+        args,
+        options,
+        artifacts,
+        progress,
+      );
+      if (label === "sandbox" && typeof status === "number" && status !== 0) {
+        await probePortableSandboxOciAfterBuildFailure(
+          sandboxBaseImage,
+          options.env,
+          artifacts,
+          progress,
+        );
+      }
+      return status;
     };
 }
 

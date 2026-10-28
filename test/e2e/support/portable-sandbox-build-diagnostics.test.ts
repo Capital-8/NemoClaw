@@ -19,6 +19,7 @@ import {
   PORTABLE_SANDBOX_CREATE_BUDGET_MS,
   PORTABLE_SANDBOX_DELETE_BUDGET_MS,
   buildPortableSandboxImageWithEvidence,
+  probePortableSandboxOciAfterBuildFailure,
   probePodmanStore,
   publishPortableSandboxImage,
   verifyPortablePodmanStoreAuthority,
@@ -29,11 +30,15 @@ it("parses only the fixed Podman store fields from the selected service", () => 
   const env = { XDG_CONFIG_HOME: "/private/config" };
   const runInfo = vi.fn(() => ({
     status: 0,
-    stdout: JSON.stringify({ store: { graphRoot: "/private/graph", runRoot: "/private/run" } }),
+    stdout: JSON.stringify({
+      store: { graphRoot: "/private/graph", runRoot: "/private/run" },
+      host: { ociRuntime: { path: "/private/crun" } },
+    }),
   }));
   expect(probePodmanStore(env, "unix:///run/user/1001/podman/podman.sock", runInfo)).toEqual({
     graphRoot: "/private/graph",
     runRoot: "/private/run",
+    ociRuntimePath: "/private/crun",
   });
   expect(runInfo).toHaveBeenCalledWith(
     ["--url", "unix:///run/user/1001/podman/podman.sock", "info", "--format", "json"],
@@ -59,7 +64,11 @@ it("aligns only a trusted selected storage config and records fixed equality evi
     const artifacts = new ArtifactSink(path.join(root, "artifacts"));
     const fullEnv = { CONTAINERS_STORAGE_CONF: source };
     const childEnv = { XDG_CONFIG_HOME: configHome };
-    const probe = vi.fn(() => ({ graphRoot: "/private/graph", runRoot: "/private/run" }));
+    const probe = vi.fn(() => ({
+      graphRoot: "/private/graph",
+      runRoot: "/private/run",
+      ociRuntimePath: "/private/crun",
+    }));
     const selectedUrl = "unix:///run/user/1001/podman/podman.sock";
     await verifyPortablePodmanStoreAuthority(
       childEnv,
@@ -92,6 +101,8 @@ it("aligns only a trusted selected storage config and records fixed equality evi
       category: "match",
       childMatchesHost: true,
       hostMatchesService: true,
+      childMatchesHostRuntime: true,
+      hostMatchesServiceRuntime: true,
     });
     expect(evidence).not.toContain("/private/graph");
     fs.writeFileSync(source, "changed");
@@ -117,7 +128,11 @@ it("keeps the automatic lane unchanged and rejects mismatched or linked storage"
     const configHome = path.join(root, "config");
     const artifacts = new ArtifactSink(path.join(root, "artifacts"));
     const selectedUrl = "unix:///run/user/1001/podman/podman.sock";
-    const probe = vi.fn(() => ({ graphRoot: "/private/graph", runRoot: "/private/run" }));
+    const probe = vi.fn(() => ({
+      graphRoot: "/private/graph",
+      runRoot: "/private/run",
+      ociRuntimePath: "/private/crun",
+    }));
     await verifyPortablePodmanStoreAuthority(
       {},
       {},
@@ -146,8 +161,16 @@ it("keeps the automatic lane unchanged and rejects mismatched or linked storage"
     ).rejects.toThrow("Portable Podman storage config alignment failed");
     const mismatched = vi
       .fn()
-      .mockReturnValueOnce({ graphRoot: "/private/other", runRoot: "/private/run" })
-      .mockReturnValue({ graphRoot: "/private/graph", runRoot: "/private/run" });
+      .mockReturnValueOnce({
+        graphRoot: "/private/other",
+        runRoot: "/private/run",
+        ociRuntimePath: "/private/crun",
+      })
+      .mockReturnValue({
+        graphRoot: "/private/graph",
+        runRoot: "/private/run",
+        ociRuntimePath: "/private/crun",
+      });
     await expect(
       verifyPortablePodmanStoreAuthority(
         { XDG_CONFIG_HOME: configHome },
@@ -162,6 +185,36 @@ it("keeps the automatic lane unchanged and rejects mismatched or linked storage"
     const evidence = fs.readFileSync(artifacts.pathFor("store-mismatch.json"), "utf8");
     expect(JSON.parse(evidence)).toMatchObject({ category: "mismatch", childMatchesHost: false });
     expect(evidence).not.toContain("/private/other");
+    const runtimeMismatch = vi
+      .fn()
+      .mockReturnValueOnce({
+        graphRoot: "/private/graph",
+        runRoot: "/private/run",
+        ociRuntimePath: "/private/other-runtime",
+      })
+      .mockReturnValue({
+        graphRoot: "/private/graph",
+        runRoot: "/private/run",
+        ociRuntimePath: "/private/crun",
+      });
+    await expect(
+      verifyPortablePodmanStoreAuthority(
+        { XDG_CONFIG_HOME: configHome },
+        { CONTAINERS_STORAGE_CONF: source },
+        selectedUrl,
+        configHome,
+        "runtime-mismatch.json",
+        artifacts,
+        runtimeMismatch,
+      ),
+    ).rejects.toThrow("Portable Podman store authority mismatch");
+    const runtimeEvidence = fs.readFileSync(artifacts.pathFor("runtime-mismatch.json"), "utf8");
+    expect(JSON.parse(runtimeEvidence)).toMatchObject({
+      category: "mismatch",
+      childMatchesHost: true,
+      childMatchesHostRuntime: false,
+    });
+    expect(runtimeEvidence).not.toContain("/private/other-runtime");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -367,6 +420,206 @@ it("retains fixed build error signals without Dockerfile output or credentials (
     });
     expect(diagnostic).not.toContain("private-token");
     expect(diagnostic).not.toContain("private-base");
+  } finally {
+    progress.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("probes only a cached base with no pull or network and redacts child output (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oci-probe-"));
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const progress = startTestProgress("portable OCI probe", ["prepare", "diagnose"], {
+    logLine: () => undefined,
+  });
+  const result = (status: number, diagnostic = "") => ({ status, signal: null, diagnostic });
+  const runCommand = vi
+    .fn()
+    .mockResolvedValueOnce(result(0))
+    .mockResolvedValueOnce(result(1, "credential=private-token"))
+    .mockResolvedValueOnce(result(0));
+  try {
+    await probePortableSandboxOciAfterBuildFailure(
+      "docker.io/library/ubuntu@sha256:fixed",
+      { XDG_CONFIG_HOME: "/private/config", API_KEY: "private-token" },
+      artifacts,
+      progress,
+      runCommand,
+    );
+    expect(runCommand).toHaveBeenCalledTimes(3);
+    expect(runCommand.mock.calls[0]?.[0]).toEqual([
+      "image",
+      "exists",
+      "docker.io/library/ubuntu@sha256:fixed",
+    ]);
+    const runArgs = runCommand.mock.calls[1]?.[0] as string[];
+    expect(runArgs.slice(0, 5)).toEqual([
+      "run",
+      "--rm",
+      "--pull=never",
+      "--network=none",
+      "--name",
+    ]);
+    expect(runArgs.slice(6)).toEqual(["docker.io/library/ubuntu@sha256:fixed", "/bin/true"]);
+    expect(runCommand.mock.calls[2]?.[0]).toEqual(["rm", "--force", "--ignore", runArgs[5]]);
+    expect(runCommand.mock.calls.map((call) => call[1])).toEqual([
+      { XDG_CONFIG_HOME: "/private/config", API_KEY: "private-token" },
+      { XDG_CONFIG_HOME: "/private/config", API_KEY: "private-token" },
+      { XDG_CONFIG_HOME: "/private/config", API_KEY: "private-token" },
+    ]);
+    const evidence = fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8");
+    expect(JSON.parse(evidence)).toEqual({
+      schemaVersion: 1,
+      category: "oci-execution-failed",
+      baseImageCached: true,
+      runStatus: 1,
+      cleanupSucceeded: true,
+    });
+    expect(evidence).not.toContain("private-token");
+    expect(evidence).not.toContain("/private/config");
+  } finally {
+    progress.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("skips OCI execution when the pinned base is absent (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oci-absent-"));
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const progress = startTestProgress("portable OCI probe", ["prepare", "diagnose"], {
+    logLine: () => undefined,
+  });
+  const runCommand = vi.fn().mockResolvedValue({ status: 1, signal: null, diagnostic: "" });
+  try {
+    await probePortableSandboxOciAfterBuildFailure(
+      "pinned-base",
+      {},
+      artifacts,
+      progress,
+      runCommand,
+    );
+    expect(runCommand).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
+    ).toMatchObject({ category: "base-image-absent", baseImageCached: false, runStatus: null });
+    const queryFailed = vi.fn().mockResolvedValue({ status: 125, signal: null, diagnostic: "" });
+    await probePortableSandboxOciAfterBuildFailure(
+      "pinned-base",
+      {},
+      artifacts,
+      progress,
+      queryFailed,
+    );
+    expect(queryFailed).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
+    ).toMatchObject({ category: "image-query-failed", baseImageCached: null, runStatus: null });
+  } finally {
+    progress.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("records a passing OCI probe and fails closed when exact cleanup is unproved (#13482)", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oci-cleanup-"));
+  const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
+  const progress = startTestProgress("portable OCI probe", ["prepare", "diagnose"], {
+    logLine: () => undefined,
+  });
+  const result = (status: number) => ({ status, signal: null, diagnostic: "" });
+  try {
+    const passing = vi
+      .fn()
+      .mockResolvedValueOnce(result(0))
+      .mockResolvedValueOnce(result(0))
+      .mockResolvedValueOnce(result(0));
+    await probePortableSandboxOciAfterBuildFailure("pinned-base", {}, artifacts, progress, passing);
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
+    ).toMatchObject({ category: "oci-execution-passed", cleanupSucceeded: true });
+
+    const cleanupFailed = vi
+      .fn()
+      .mockResolvedValueOnce(result(0))
+      .mockResolvedValueOnce(result(1))
+      .mockResolvedValueOnce(result(125));
+    await expect(
+      probePortableSandboxOciAfterBuildFailure(
+        "pinned-base",
+        {},
+        artifacts,
+        progress,
+        cleanupFailed,
+      ),
+    ).rejects.toThrow("Portable sandbox OCI probe cleanup unproved");
+    expect(cleanupFailed).toHaveBeenCalledTimes(3);
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
+    ).toMatchObject({ category: "cleanup-unproved", cleanupSucceeded: false });
+
+    const timedOut = vi
+      .fn()
+      .mockResolvedValueOnce(result(0))
+      .mockResolvedValueOnce({
+        status: null,
+        signal: "SIGKILL",
+        diagnostic: "credential=private-token",
+        error: Object.assign(new Error("private timeout"), { code: "ETIMEDOUT" }),
+      })
+      .mockResolvedValueOnce(result(0));
+    await probePortableSandboxOciAfterBuildFailure(
+      "pinned-base",
+      {},
+      artifacts,
+      progress,
+      timedOut,
+    );
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
+    ).toMatchObject({ category: "oci-execution-timeout", cleanupSucceeded: true });
+    expect(
+      fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8"),
+    ).not.toContain("private-token");
+
+    const unreconciled = {
+      status: null,
+      signal: "SIGKILL",
+      diagnostic: "credential=private-token",
+      error: Object.assign(new Error("private child survived"), { code: "EUNRECONCILED" }),
+    };
+    const queryUnreconciled = vi.fn().mockResolvedValue(unreconciled);
+    await expect(
+      probePortableSandboxOciAfterBuildFailure(
+        "pinned-base",
+        {},
+        artifacts,
+        progress,
+        queryUnreconciled,
+      ),
+    ).rejects.toThrow("Portable sandbox OCI probe cleanup unproved");
+    expect(queryUnreconciled).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
+    ).toMatchObject({ category: "cleanup-unproved", cleanupSucceeded: false });
+
+    const runUnreconciled = vi
+      .fn()
+      .mockResolvedValueOnce(result(0))
+      .mockResolvedValueOnce(unreconciled)
+      .mockResolvedValueOnce(result(0));
+    await expect(
+      probePortableSandboxOciAfterBuildFailure(
+        "pinned-base",
+        {},
+        artifacts,
+        progress,
+        runUnreconciled,
+      ),
+    ).rejects.toThrow("Portable sandbox OCI probe cleanup unproved");
+    expect(runUnreconciled).toHaveBeenCalledTimes(3);
+    expect(
+      JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
+    ).toMatchObject({ category: "cleanup-unproved", cleanupSucceeded: false });
   } finally {
     progress.stop();
     fs.rmSync(directory, { recursive: true, force: true });
