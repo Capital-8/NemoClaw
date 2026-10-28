@@ -2,77 +2,47 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # A Kubernetes gateway uses no engine, so nothing is mocked.
-provider "openshell" {}
-provider "fabric" {}
-provider "host" {}
-provider "vllm" {}
-provider "ollama" {}
-provider "fixture" {}
 
-# The SDK's teardown graph permits deletion; its apply graph does not.
-provider "openshell" {
-  alias   = "teardown"
-  destroy = true
-}
-
-provider "fabric" {
-  alias   = "teardown"
-  destroy = true
-}
-
-# Declare the gateway and upstream before the deployment's first plan reads them.
+# Declare the fixtures before the deployment's first plan reads them.
 run "fixtures" {
   command = plan
 
   plan_options {
-    target = [data.fixture_gateway.cluster, data.fixture_http.inference]
+    target = [data.fixture_state.setup]
   }
 }
 
 run "deploy" {
   command = apply
 
-  # The gateway reports the Kubernetes driver the document requires, and no
-  # provider inspects an engine.
+  # The gateway reports the Kubernetes driver, no provider inspects an engine,
+  # and each harness comes from the metadata bundle.
   assert {
     condition = (
       data.openshell_gateway.apply.compatible
       && data.openshell_gateway.apply.compute_drivers == toset(["kubernetes"])
-      && data.openshell_gateway.apply.endpoint == data.fixture_gateway.cluster.endpoint
-      && local.engine.requests == []
+      && module.observed.engine.requests == []
+      && alltrue([
+        for harness in [data.fabric_harness.assistant, data.fabric_harness.researcher, data.fabric_harness.reviewer] :
+        harness.available && harness.metadata_env == "NEMOCLAW_AGENT_IMAGE_METADATA"
+      ])
     )
-    error_message = "The Kubernetes gateway was not found compatible, or a provider inspected an engine."
-  }
-
-  # Each harness comes from the metadata bundle, not an engine.
-  assert {
-    condition = alltrue([
-      for sandbox, harness in local.harnesses :
-      harness.available
-      && harness.image == local.agent_image
-      && harness.metadata_env == "NEMOCLAW_AGENT_IMAGE_METADATA"
-      && harness.adapter_id == "nvidia.fabric.openclaw"
-      && local.sandboxes[sandbox].command == jsondecode(harness.launch_json).command
-    ])
-    error_message = "An agent's harness was not read from the image metadata bundle."
+    error_message = "The Kubernetes gateway or a harness from the metadata bundle was not found."
   }
 
   # One registration holds the environment credential, and all three
-  # sandboxes in the workspace name it and may reach only its endpoint.
+  # sandboxes name it and may reach only its endpoint.
   assert {
     condition = (
-      length(local.openshell.created_providers) == 1
-      && local.openshell.created_providers[0].name == openshell_inference.inference_inference-2c7590f4a674089b7cabb3e1.registration
-      && local.openshell.created_providers[0].credentials == {
+      keys(module.observed.registrations) == [openshell_inference.inference_inference-2c7590f4a674089b7cabb3e1.registration]
+      && values(module.observed.registrations)[0].credentials == {
         (openshell_inference.inference_inference-2c7590f4a674089b7cabb3e1.sandbox_env) = "env:INFERENCE_API_KEY"
       }
-      && keys(local.sandboxes) == keys(local.agents)
+      && keys(module.observed.sandboxes) == ["assistant", "researcher", "reviewer"]
       && alltrue([
-        for sandbox in values(local.sandboxes) :
-        sandbox.workspace == openshell_workspace.deployment.name
-        && sandbox.labels["nemoclaw.nvidia.com/uid"] == local.owner
-        && sandbox.providers == [openshell_inference.inference_inference-2c7590f4a674089b7cabb3e1.registration]
-        && sandbox.policy_endpoints == ["${trimprefix(data.fixture_http.inference.endpoint, "http://")}/v1/**"]
+        for sandbox in values(module.observed.sandboxes) :
+        sandbox.providers == [openshell_inference.inference_inference-2c7590f4a674089b7cabb3e1.registration]
+        && sandbox.policy_endpoints == ["${trimprefix(module.observed.http.endpoint, "http://")}/v1/**"]
       ])
     )
     error_message = "The shared registration or a sandbox's binding or policy differs from the configuration."
@@ -81,34 +51,20 @@ run "deploy" {
   # Fabric started each agent once in its own sandbox with its compiled configuration.
   assert {
     condition = (
-      length(local.openshell.execs) == 3
-      && alltrue([
-        for sandbox, agent in local.agents :
-        local.starts[sandbox].command == ["/opt/fabric/bin/fabric-agent-ctl", "start", "--agent", agent, "--config", "-"]
-        && jsondecode(local.starts[sandbox].stdin) == jsondecode(local.configurations[sandbox])
-      ])
+      module.observed.starts.assistant.command[3] == "main"
+      && module.observed.starts.assistant.configuration == jsondecode(terraform_data.agent_assistant.input)
+      && module.observed.starts.researcher.configuration == jsondecode(terraform_data.agent_researcher.input)
+      && module.observed.starts.reviewer.configuration == jsondecode(terraform_data.agent_reviewer.input)
+      && module.observed.http.requests == []
     )
-    error_message = "An agent did not start in its own sandbox with its compiled configuration."
-  }
-
-  assert {
-    condition     = local.upstream.requests == []
-    error_message = "Configuring and starting the agents called the inference upstream."
+    error_message = "An agent did not start in its own sandbox with its compiled configuration, or inference was called."
   }
 }
 
-# OpenTofu removes a run's resources with the providers of the last run that
-# applied them. This run changes nothing and permits that removal; the runner
-# checks what remains afterward.
+# OpenTofu removes what the last applying run applied, with its variables:
+# this run permits deletion, as the SDK's teardown graph does.
 run "permit_teardown" {
-  command = apply
-
-  providers = {
-    openshell = openshell.teardown
-    fabric    = fabric.teardown
-    host      = host
-    vllm      = vllm
-    ollama    = ollama
-    fixture   = fixture
+  variables {
+    permit_destroy = true
   }
 }

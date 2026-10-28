@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# What a mocked Docker provider would leave on the engine for a document with a
+# managed Docker gateway: the pulled images, the running gateway container,
+# and each managed service's running container, whose runtime reports ready
+# and, with bearer authentication, holds its generated key. Test files give
+# the mocked resources the same IDs:
+#
+#   gateway image sha256:0...01, sandbox image sha256:0...02, the Nth service
+#   image sha256:0...(N+3); gateway container fixture-gateway-container, and
+#   each service's container fixture-SERVICE-container.
+
+variable "document" {
+  description = "Path of the case's nemoclaw.yaml."
+  type        = string
+}
+
+locals {
+  spec   = yamldecode(file(var.document)).spec
+  owner  = yamldecode(file(var.document)).metadata.uid
+  prefix = "nc-${substr(sha256(local.owner), 0, 16)}"
+  # The SDK's default when a sandbox names no image.
+  sandbox_images = distinct([
+    for sandbox in values(local.spec.sandboxes) :
+    try(sandbox.image.ref, "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e")
+  ])
+  services = {
+    for index, name in sort(keys(try(local.spec.services, {}))) : name => {
+      service       = local.spec.services[name]
+      image_id      = format("sha256:%064d", index + 3)
+      container_id  = "fixture-${name}-container"
+      container     = local.spec.services[name].kind == "vllm" ? "${local.prefix}-inference-${name}" : "${local.prefix}-ollama-${name}"
+      authenticated = try(local.spec.services[name].authentication, "") == "bearer"
+    }
+  }
+  key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+
+output "owner" {
+  value = local.owner
+}
+
+output "prefix" {
+  description = "The prefix of the deployment's engine object names."
+  value       = local.prefix
+}
+
+output "services" {
+  description = "Each service's container name and ID, by service."
+  value       = { for name, service in local.services : name => { name = service.container, id = service.container_id } }
+}
+
+output "declare" {
+  description = "The declaration for a fixture_state data source."
+  value = jsonencode({
+    images = concat(
+      [for reference in local.sandbox_images : { reference = reference, id = format("sha256:%064d", 2), fabric_catalog = true }],
+      [for name, service in local.services : {
+        reference = service.service.image
+        id        = service.image_id
+        labels = merge(
+          { "org.nemoclaw.backend" = service.service.kind },
+          service.authenticated ? {
+            "org.nemoclaw.inference.authentication" = "bearer-v1"
+            "org.nemoclaw.inference.routes"         = "openai-v2"
+          } : {}
+        )
+      }],
+    )
+    containers = concat(
+      [{
+        id      = "fixture-gateway-container"
+        name    = "${local.prefix}-gateway"
+        image   = format("sha256:%064d", 1)
+        labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
+        running = true
+      }],
+      [for name, service in local.services : {
+        id      = service.container_id
+        name    = service.container
+        image   = service.image_id
+        labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
+        running = true
+        # OpenShell finds an authenticated service by name for its key.
+        by_name    = service.authenticated
+        started_at = "2026-01-01T00:00:00Z"
+        mounts = merge(
+          { "/data" = "${service.container}-data" },
+          service.authenticated ? { "/credentials" = "${service.container}-auth" } : {}
+        )
+        files = merge(
+          { "/data/status.json" = jsonencode({ phase = "ready", updated = "2026-01-01T00:00:05Z", detail = "serving", pid = 7 }) },
+          service.authenticated ? { "/credentials/inference-key" = local.key } : {}
+        )
+      }],
+    )
+  })
+}

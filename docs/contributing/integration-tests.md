@@ -166,30 +166,27 @@ A case holds three files:
 
 | File | Contents |
 |---|---|
-| `nemoclaw.yaml` | The NemoClaw document. The runner points its gateway, any engine it names, and inference endpoints at the fixtures, keeps inference paths, and compiles it with the SDK into `nemoclaw.tf.json` beside the case's files. An external gateway loses its credential and TLS references, because the fixture gateway serves plaintext gRPC without a bearer. Each sandbox `image.metadata` variable names the runner's metadata bundle, which describes `fixture/agent@sha256:e5dee78a2d23235e73acb1f7aa4cba799df73c1a149f730b4ce0ebb598358d32` with the Fabric catalog; such a sandbox uses that image. |
-| `main.tf` | Fixture declarations and observations, through the `fixture` provider. |
+| `nemoclaw.yaml` | The NemoClaw document. The runner compiles it with the SDK into `nemoclaw.tf.json` beside the case's files, with its gateway, any engine it names, and inference endpoints pointed at the fixtures. An external gateway loses its credential and TLS, because the fixture gateway serves plaintext gRPC. Each sandbox `image.metadata` variable names the fixture image's metadata bundle, `fixture/agent@sha256:e5dee78a2d23235e73acb1f7aa4cba799df73c1a149f730b4ce0ebb598358d32`. |
+| `main.tf` | A `fixture_state` data source named `setup` that declares the fixtures, and the shared modules the case uses. |
 | `integration.tftest.hcl` | Provider mocks, run blocks, and assertions. |
 
-The `fixture` provider, `nemoclaw-fixture-control` in `nemoclaw-test-fixtures`, connects HCL to the runner's fixtures:
+The `fixture` provider, `nemoclaw-fixture-control`, has one data source, `fixture_state`. Its optional `declare` JSON sets the images and containers the fake engine reports and the gateway's `compute_driver`; its `observations` JSON returns what the fixtures recorded. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`.
 
-| Data source | Purpose |
+Shared modules in `crates/nemoclaw-e2e/hcl/integration/shared`:
+
+| Module | Purpose |
 |---|---|
-| `fixture_gateway` | Declares the compute driver the OpenShell gateway reports, such as `kubernetes`; Docker when unset. Returns the gateway endpoint. |
-| `fixture_engine` | Declares images and containers that the fake engine reports, such as those a mocked Docker resource would create. A container is found by ID, and by name when `by_name` is set; leave it unset for a container that providers must not find before Docker would create it, such as the managed gateway. A container can declare `started_at`, volume `mounts` by destination, and `files` by path, which archive reads and file metadata return with mode 0600. Returns the engine endpoint. |
-| `fixture_http` | Declares the inference upstream's replies by `METHOD /path`; other requests receive 404. Returns the upstream endpoint. |
-| `fixture_observations` | Returns recorded facts as JSON: OpenShell RPCs, created registrations and sandboxes, sandbox execs, current objects, engine requests and storage, and upstream requests. Credential values are reported only by their source: `env:NAME` for a fixture credential, or `file:CONTAINER:PATH` for a declared container file such as a service's generated key. |
+| `docker` | From `nemoclaw.yaml`, the declaration of what a mocked Docker provider would leave on the engine: images, the gateway container, and each service's ready container with its generated key. It outputs the owner, the engine object prefix, and each service's container. |
+| `observed` | Reads `observations` when its `depends_on` has applied, and outputs them with registrations, sandboxes, and Fabric starts keyed by name. |
 
-Read the declarations in a first run that targets them, before the deployment's first plan reads the gateway or the engine.
-Locals are not evaluated in a targeted plan, so a targeted run decodes observations in its assertions.
-A case with a run that is expected to fail lists the failing checkable object in `expect_failures`; the runner requires at least one run and no failed run.
-The engine is a fixed socket, `/tmp/nemoclaw-integration/CASE.sock`, so the generated Docker provider alias and image addresses that `mock_provider` and `override_resource` name do not change between runs.
-OpenTofu removes resources with the providers of the last run that applied them; end with a run that applies the `openshell` and `fabric` providers with `destroy = true`, as the SDK's teardown graph does.
+Each test file starts with a run that targets `data.fixture_state.setup`, so the fixtures exist before the deployment's first plan.
+Docker cases mock the Docker provider by its generated alias and give mocked resources the IDs the `docker` module declares; the fixed engine socket, `/tmp/nemoclaw-integration/CASE.sock`, keeps those addresses stable.
+The runner sets the `openshell` and `fabric` providers' `destroy` from `var.permit_destroy`, so a case's last applying run sets it to `true`, as the SDK's teardown graph does.
+A run expected to fail lists the checkable object in `expect_failures`; locals are not evaluated in a targeted plan.
 
-After `tofu test`, the runner checks what no run block can observe: teardown left only storage that the SDK's teardown retains and what that storage depends on through `depends_on`, references, and data sources; the gateway holds no objects or Fabric runtimes; the engine received no storage deletion or unrecognized request; and no fixture credential appears in OpenTofu output or provider diagnostics.
-When a case fails, the runner keeps its directory and prints the path of redacted evidence: OpenTofu output, fixture observations, and any state OpenTofu left.
-
-A case that needs an upstream operation the fixtures cannot simulate needs that fixture support once, in the runner and the `fixture` provider.
-A provider error that stops a run, rather than a failed assertion, fails the case.
+After `tofu test`, the runner checks that at least one run passed, teardown failed only on storage that NemoClaw retains, the gateway holds no objects or Fabric runtimes, the engine deleted no storage and received no unrecognized request, and no fixture credential appears in output or diagnostics.
+When a case fails, the runner keeps its directory with redacted OpenTofu output and observations.
+An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/hcl_integration/fixtures.rs`.
 Each case runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies. Kubernetes and OpenShift cases use an external gateway with no engine, so nothing is mocked:
 
 | Case | Checks |

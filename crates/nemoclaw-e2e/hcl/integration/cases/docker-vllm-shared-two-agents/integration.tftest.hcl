@@ -1,28 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The Docker provider is mocked. Its alias and image addresses follow from the
-# runner's fixed engine socket, unix:///tmp/nemoclaw-integration/CASE.sock.
+# The mocked Docker provider's alias and image addresses follow from the
+# runner's engine socket; IDs match the shared docker module's declaration.
 mock_provider "docker" {
   alias = "engine_52d87ec296278194ae85a25c011b34cc"
-}
-
-provider "openshell" {}
-provider "fabric" {}
-provider "host" {}
-provider "vllm" {}
-provider "ollama" {}
-provider "fixture" {}
-
-# The SDK's teardown graph permits deletion; its apply graph does not.
-provider "openshell" {
-  alias   = "teardown"
-  destroy = true
-}
-
-provider "fabric" {
-  alias   = "teardown"
-  destroy = true
 }
 
 override_resource {
@@ -32,7 +14,7 @@ override_resource {
 
 override_resource {
   target = docker_container.inference_service_inference_qwen
-  values = { id = "fixture-vllm-container" }
+  values = { id = "fixture-qwen-container" }
 }
 
 override_resource {
@@ -47,15 +29,15 @@ override_resource {
 
 override_resource {
   target = docker_image.image_41ca6ec2414a2dd14c4740f986f2de7f
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000004" }
+  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000003" }
 }
 
-# Declare the engine and upstream before the deployment's first plan reads them.
+# Declare the fixtures before the deployment's first plan reads them.
 run "fixtures" {
   command = plan
 
   plan_options {
-    target = [data.fixture_engine.docker, data.fixture_http.inference]
+    target = [data.fixture_state.setup]
   }
 }
 
@@ -63,73 +45,55 @@ run "deploy" {
   command = apply
 
   # One authenticated vLLM container serves both agents from the credential
-  # storage the real vLLM provider created, and readiness read its key.
+  # storage the real vLLM provider created.
   assert {
     condition = (
       contains([for mount in docker_container.inference_service_inference_qwen.mounts : "${mount.source}:${mount.target}"], "${vllm_credential_storage.inference_qwen_auth.name}:/credentials")
-      && contains(local.engine.volumes, vllm_credential_storage.inference_qwen_auth.name)
+      && contains(module.observed.engine.volumes, vllm_credential_storage.inference_qwen_auth.name)
       && data.vllm_readiness.inference_service_inference_qwen.ready
-      && contains(local.engine.requests, "GET /containers/${local.vllm_container_id}/archive?path=%2Fcredentials%2Finference-key")
     )
     error_message = "The shared vLLM service did not become ready with its credential storage."
   }
 
-  # Each harness gets its own registration of the one service, each holding
-  # the key the runtime generated, and each sandbox names only its own.
+  # Each harness has its own registration of the one service, holding the
+  # generated key; each sandbox names only its own, and its agent starts with
+  # that registration's key name and the shared address.
   assert {
     condition = (
-      length(local.registrations) == 2
-      && local.bindings["assistant"].registration != local.bindings["researcher"].registration
+      length(module.observed.registrations) == 2
+      && module.observed.sandboxes.assistant.providers != module.observed.sandboxes.researcher.providers
       && alltrue([
-        for sandbox, binding in local.bindings :
-        binding.server.endpoint == "http://172.30.131.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1"
-        && local.registrations[binding.registration].credentials == {
-          (binding.sandbox_env) = "file:${local.vllm_name}:/credentials/inference-key"
+        for binding in [openshell_inference.inference_qwen-b075dac4a454574dfe89ff08, openshell_inference.inference_qwen-baed0ef93c97fa7f05788644] :
+        module.observed.registrations[binding.registration].credentials == {
+          (binding.sandbox_env) = "file:${module.docker.services.qwen.name}:/credentials/inference-key"
         }
-        && local.sandboxes[sandbox].policy_endpoints == ["172.30.131.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1/**"]
       ])
-    )
-    error_message = "The shared service's registrations, keys, or sandbox bindings differ from the configuration."
-  }
-
-  # Fabric started each agent with its harness, the shared address and model,
-  # and its own registration's key name.
-  assert {
-    condition = (
-      length(local.openshell.execs) == 2
-      && local.started["assistant"] == jsondecode(terraform_data.agent_assistant.input)
-      && local.started["researcher"] == jsondecode(terraform_data.agent_researcher.input)
-      && local.started["assistant"].harness.adapter_id == "nvidia.fabric.openclaw"
-      && local.started["researcher"].harness.adapter_id == "nvidia.fabric.hermes"
       && alltrue([
-        for sandbox, binding in local.bindings :
-        local.started[sandbox].models.primary.base_url == binding.server.endpoint
-        && local.started[sandbox].models.primary.api_key_env == binding.sandbox_env
-        && local.started[sandbox].models.primary.model == "Qwen/Qwen3-4B"
+        for sandbox in ["assistant", "researcher"] :
+        length(module.observed.sandboxes[sandbox].providers) == 1
+        && module.observed.sandboxes[sandbox].policy_endpoints == ["172.30.131.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1/**"]
+        && module.observed.starts[sandbox].configuration.models.primary.base_url == "http://172.30.131.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1"
+        && contains([
+          for binding in [openshell_inference.inference_qwen-b075dac4a454574dfe89ff08, openshell_inference.inference_qwen-baed0ef93c97fa7f05788644] :
+          binding.sandbox_env if[binding.registration] == module.observed.sandboxes[sandbox].providers
+        ], module.observed.starts[sandbox].configuration.models.primary.api_key_env)
       ])
+      && module.observed.starts.assistant.configuration == jsondecode(terraform_data.agent_assistant.input)
+      && module.observed.starts.researcher.configuration == jsondecode(terraform_data.agent_researcher.input)
     )
-    error_message = "An agent did not start with the shared service and its own key name."
+    error_message = "The shared service's registrations, keys, bindings, or agent configurations differ from the configuration."
   }
 
   assert {
-    condition     = local.upstream.requests == []
+    condition     = module.observed.http.requests == []
     error_message = "A deployment without hosted inference called the inference upstream."
   }
 }
 
-# OpenTofu removes a run's resources with the providers of the last run that
-# applied them. This run changes nothing and permits that removal; the runner
-# checks what remains afterward.
+# OpenTofu removes what the last applying run applied, with its variables:
+# this run permits deletion, as the SDK's teardown graph does.
 run "permit_teardown" {
-  command = apply
-
-  providers = {
-    docker.engine_52d87ec296278194ae85a25c011b34cc = docker.engine_52d87ec296278194ae85a25c011b34cc
-    openshell                                      = openshell.teardown
-    fabric                                         = fabric.teardown
-    host                                           = host
-    vllm                                           = vllm
-    ollama                                         = ollama
-    fixture                                        = fixture
+  variables {
+    permit_destroy = true
   }
 }

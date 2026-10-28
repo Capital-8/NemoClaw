@@ -36,7 +36,7 @@ mod helm_recovery;
 // Managed gateway storage takes only a local engine socket, which only Unix
 // clients reach.
 #[cfg(unix)]
-#[path = "hcl_integration.rs"]
+#[path = "hcl_integration/mod.rs"]
 mod hcl_integration;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;

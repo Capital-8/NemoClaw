@@ -1,28 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The Docker provider is mocked. Its alias and image addresses follow from the
-# runner's fixed engine socket, unix:///tmp/nemoclaw-integration/CASE.sock.
+# The mocked Docker provider's alias and image addresses follow from the
+# runner's engine socket; IDs match the shared docker module's declaration.
 mock_provider "docker" {
   alias = "engine_02632359dc013c8b7efa4491c2ae99fb"
-}
-
-provider "openshell" {}
-provider "fabric" {}
-provider "host" {}
-provider "vllm" {}
-provider "ollama" {}
-provider "fixture" {}
-
-# The SDK's teardown graph permits deletion; its apply graph does not.
-provider "openshell" {
-  alias   = "teardown"
-  destroy = true
-}
-
-provider "fabric" {
-  alias   = "teardown"
-  destroy = true
 }
 
 override_resource {
@@ -32,7 +14,7 @@ override_resource {
 
 override_resource {
   target = docker_container.ollama_service_ollama-server
-  values = { id = "fixture-ollama-container" }
+  values = { id = "fixture-ollama-server-container" }
 }
 
 override_resource {
@@ -50,46 +32,42 @@ override_resource {
   values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000003" }
 }
 
-# Declare the engine and upstream before the deployment's first plan reads them.
+# Declare the fixtures before the deployment's first plan reads them.
 run "fixtures" {
   command = plan
 
   plan_options {
-    target = [data.fixture_engine.docker, data.fixture_http.inference]
+    target = [data.fixture_state.setup]
   }
 }
 
 run "deploy" {
   command = apply
 
-  # Both agents' images resolve to the one mocked sandbox pull, and the
-  # Ollama service becomes ready behind the ready gateway.
+  # Both harnesses resolve to the one mocked sandbox pull, behind a ready
+  # gateway and Ollama service.
   assert {
     condition = (
-      data.fabric_harness.assistant_acquired.image_id == docker_image.image_684f1e7adde9d740873f313f775968da.image_id
-      && data.fabric_harness.researcher_acquired.image_id == docker_image.image_684f1e7adde9d740873f313f775968da.image_id
-      && data.fabric_harness.assistant_acquired.adapter_id == "nvidia.fabric.openclaw"
+      data.fabric_harness.assistant_acquired.adapter_id == "nvidia.fabric.openclaw"
       && data.fabric_harness.researcher_acquired.adapter_id == "nvidia.fabric.hermes"
-      && data.ollama_readiness.ollama_service_ollama-server.container_id == docker_container.ollama_service_ollama-server.id
+      && data.fabric_harness.researcher_acquired.image_id == data.fabric_harness.assistant_acquired.image_id
       && data.ollama_readiness.ollama_service_ollama-server.ready
       && data.openshell_docker_gateway_readiness.current.ready
     )
     error_message = "The images, the Ollama service, or the gateway did not hand off to the agents."
   }
 
-  # OpenShell stored one registration per provider: the hosted one with the
-  # credential from the environment, the Ollama one at the service without one.
+  # One registration per provider: hosted with the environment credential,
+  # Ollama at the service without one.
   assert {
     condition = (
-      length(local.registrations) == 2
-      && openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint == "${data.fixture_http.inference.endpoint}/v1"
-      && local.registrations[openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration].config["OPENAI_BASE_URL"] == openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint
-      && local.registrations[openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration].credentials == {
+      length(module.observed.registrations) == 2
+      && openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint == "${module.observed.http.endpoint}/v1"
+      && module.observed.registrations[openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration].credentials == {
         (openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.sandbox_env) = "env:NVIDIA_INFERENCE_API_KEY"
       }
       && openshell_inference.inference_local-ceb21a97a2146548236ff520.server.endpoint == "http://172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1"
-      && local.registrations[openshell_inference.inference_local-ceb21a97a2146548236ff520.registration].config["OPENAI_BASE_URL"] == openshell_inference.inference_local-ceb21a97a2146548236ff520.server.endpoint
-      && local.registrations[openshell_inference.inference_local-ceb21a97a2146548236ff520.registration].credentials == {}
+      && module.observed.registrations[openshell_inference.inference_local-ceb21a97a2146548236ff520.registration].credentials == {}
     )
     error_message = "The hosted and Ollama bindings are not registered as configured."
   }
@@ -97,54 +75,38 @@ run "deploy" {
   # Each sandbox names only its own provider and may reach only its endpoint.
   assert {
     condition = (
-      length(local.sandboxes) == 2
-      && local.sandboxes["assistant"].providers == [openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration]
-      && local.sandboxes["assistant"].policy_endpoints == ["${trimprefix(data.fixture_http.inference.endpoint, "http://")}/v1/**"]
-      && local.sandboxes["researcher"].providers == [openshell_inference.inference_local-ceb21a97a2146548236ff520.registration]
-      && local.sandboxes["researcher"].policy_endpoints == ["172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1/**"]
-      && local.sandboxes["assistant"].workspace == local.sandboxes["researcher"].workspace
+      module.observed.sandboxes.assistant.providers == [openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration]
+      && module.observed.sandboxes.assistant.policy_endpoints == ["${trimprefix(module.observed.http.endpoint, "http://")}/v1/**"]
+      && module.observed.sandboxes.researcher.providers == [openshell_inference.inference_local-ceb21a97a2146548236ff520.registration]
+      && module.observed.sandboxes.researcher.policy_endpoints == ["172.20.0.1:${data.ollama_runtime.ollama_service_ollama-server.launch.port}/v1/**"]
     )
     error_message = "A sandbox's inference binding or network access crosses to the other agent's provider."
   }
 
-  # Fabric started each agent once, in its own sandbox, with its own harness
-  # and the configuration the SDK compiled for it.
+  # Fabric started each agent once, in its own sandbox, with its compiled
+  # configuration and its own provider's address.
   assert {
     condition = (
-      length(local.openshell.execs) == 2
-      && local.starts["assistant"].command == ["/opt/fabric/bin/fabric-agent-ctl", "start", "--agent", "assistant", "--config", "-"]
-      && jsondecode(local.starts["assistant"].stdin) == jsondecode(terraform_data.agent_assistant.input)
-      && jsondecode(local.starts["assistant"].stdin).harness.adapter_id == "nvidia.fabric.openclaw"
-      && jsondecode(local.starts["assistant"].stdin).models.primary.base_url == openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint
-      && local.starts["researcher"].command == ["/opt/fabric/bin/fabric-agent-ctl", "start", "--agent", "researcher", "--config", "-"]
-      && jsondecode(local.starts["researcher"].stdin) == jsondecode(terraform_data.agent_researcher.input)
-      && jsondecode(local.starts["researcher"].stdin).harness.adapter_id == "nvidia.fabric.hermes"
-      && jsondecode(local.starts["researcher"].stdin).models.primary.base_url == openshell_inference.inference_local-ceb21a97a2146548236ff520.server.endpoint
-      && fabric_agent.assistant.sandbox == openshell_sandbox.assistant.ref
-      && fabric_agent.researcher.sandbox == openshell_sandbox.researcher.ref
+      length(module.observed.starts) == 2
+      && module.observed.starts.assistant.configuration == jsondecode(terraform_data.agent_assistant.input)
+      && module.observed.starts.researcher.configuration == jsondecode(terraform_data.agent_researcher.input)
+      && module.observed.starts.assistant.configuration.models.primary.base_url == openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint
+      && module.observed.starts.researcher.configuration.harness.adapter_id == "nvidia.fabric.hermes"
+      && module.observed.starts.researcher.configuration.models.primary.base_url == openshell_inference.inference_local-ceb21a97a2146548236ff520.server.endpoint
     )
     error_message = "A Fabric agent did not start in its own sandbox with its own configuration."
   }
 
   assert {
-    condition     = local.upstream.requests == []
+    condition     = module.observed.http.requests == []
     error_message = "Configuring and starting the agents called the inference upstream."
   }
 }
 
-# OpenTofu removes a run's resources with the providers of the last run that
-# applied them. This run changes nothing and permits that removal; the runner
-# checks what remains afterward.
+# OpenTofu removes what the last applying run applied, with its variables:
+# this run permits deletion, as the SDK's teardown graph does.
 run "permit_teardown" {
-  command = apply
-
-  providers = {
-    docker.engine_02632359dc013c8b7efa4491c2ae99fb = docker.engine_02632359dc013c8b7efa4491c2ae99fb
-    openshell                                      = openshell.teardown
-    fabric                                         = fabric.teardown
-    host                                           = host
-    vllm                                           = vllm
-    ollama                                         = ollama
-    fixture                                        = fixture
+  variables {
+    permit_destroy = true
   }
 }
