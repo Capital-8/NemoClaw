@@ -297,6 +297,12 @@ export interface BackupResult {
   // sandbox (see isSshTransportFailure), as opposed to an audit rejection or
   // a partial tar read error.
   unreachable?: boolean;
+  // Set when a live SSH native-state capture fails because the sandbox's
+  // same-UID process set kept changing while it was quiesced (the capture
+  // script exits 21). A freshly started sandbox is still booting when its SSH
+  // transport first answers, so retrying after the boot settles can succeed
+  // (#12867). Absent on stopped-state sources and on audit rejections.
+  nativeChurn?: boolean;
 }
 
 export interface RestoreResult {
@@ -950,7 +956,7 @@ function validateSnapshotPublication(
     }
   }
 }
-function nativeStateFailure(error: string, unreachable = false): BackupResult {
+function nativeStateFailure(error: string, unreachable = false, nativeChurn = false): BackupResult {
   return {
     success: false,
     backedUpDirs: [],
@@ -959,6 +965,7 @@ function nativeStateFailure(error: string, unreachable = false): BackupResult {
     failedFiles: [],
     error,
     ...(unreachable ? { unreachable: true } : {}),
+    ...(nativeChurn ? { nativeChurn: true } : {}),
   };
 }
 
@@ -2334,6 +2341,8 @@ function withSshCleanupResult<T extends BackupResult | RestoreResult>({
         ...result,
         success: false,
         ...("unreachable" in result ? { unreachable: false } : {}),
+        // A failed SSH cleanup must be repaired before another capture attempt.
+        ...("nativeChurn" in result ? { nativeChurn: false } : {}),
         error: [result.error, `${cleanupError.message}. Remove that directory before retrying.`]
           .filter(Boolean)
           .join(" "),
@@ -2535,11 +2544,18 @@ function backupNativeSandboxState(
         !options.nativeStateSource &&
         result.status === 1 &&
         /file changed as we read it/iu.test(result.stderr?.toString() ?? "");
+      // Exit 21 is the quiesce guard: the booting sandbox kept spawning or
+      // forking same-UID processes while the capture froze the tree, so no
+      // consistent filesystem boundary existed to archive. This is a transient
+      // boot condition, not a transport failure or an audit rejection, so it is
+      // surfaced separately for the stopped-sandbox backup flow to retry.
+      const nativeChurn = !options.nativeStateSource && result.status === 21 && !result.signal;
       return nativeStateFailure(
         changedDuringRead
           ? "Native home/workspace capture changed while it was read after quiescing; no backup was published. Retry after stopping the sandbox."
           : `Native home/workspace capture failed: ${detail.substring(0, 240)}`,
         !options.nativeStateSource && isSshTransportFailure(result),
+        nativeChurn,
       );
     }
     if (backupDeadlineExpired(options.deadlineMs)) {

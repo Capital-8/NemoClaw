@@ -816,6 +816,8 @@ or exactly one thread whose recorded cwd matches. Ambiguous results fail cleanup
 thread. Listing, deletion, and removal of the private directory each use a 30-second host timeout with
 a five-second kill grace. A failed command or timeout marks cleanup as failed, retains the private
 directory and recovery instructions, and allows policy and capture cleanup to continue.
+The same target writes an npm cache marker under the DCode native home before its existing rebuild.
+After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
