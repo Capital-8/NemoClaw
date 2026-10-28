@@ -3,6 +3,7 @@
 
 import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
 import { getVersion } from "../../../../core/version";
+import { cliName } from "../../../../onboard/branding";
 
 export const DISCORD_AUTHENTICATION_HOOK_HANDLER_ID = "discord.authentication";
 const IDENTITY_URL = "https://discord.com/api/v10/users/@me";
@@ -35,7 +36,7 @@ export function createDiscordAuthenticationHook(
         : result === "rate_limited"
           ? "Discord rate-limited token verification. Wait before retrying."
           : "Discord authentication could not be verified. Check access to discord.com and retry.";
-    const message = `Discord remains inactive. ${reason} Run channels add discord to retry enrollment.`;
+    const message = `Discord remains inactive. ${reason} Run ${cliName()} <sandbox-name> channels add discord to retry enrollment.`;
     log(`  ⚠ ${message}`);
     throw new Error(message);
   };

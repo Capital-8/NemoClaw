@@ -61,6 +61,24 @@ describe("Discord authentication", () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain(context.inputs.botToken);
   });
 
+  it.each(["nemoclaw", "nemohermes"])(
+    "gives a complete %s recovery command after token rejection (#13809)",
+    async (cli) => {
+      vi.stubEnv("NEMOCLAW_INVOKED_AS", cli);
+      try {
+        const hook = createDiscordAuthenticationHook({
+          fetch: async () => new Response("Unauthorized", { status: 401 }),
+          log: () => {},
+        });
+        await expect(hook(context)).rejects.toThrow(
+          `Run ${cli} <sandbox-name> channels add discord`,
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it.each([401, 403, 429, 500, 302])(
     "leaves enrollment inactive after HTTP %s (#13809)",
     async (status) => {

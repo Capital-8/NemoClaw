@@ -13,6 +13,7 @@ import {
   MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
 } from "../../channel-health";
 import { HERMES_DISCORD_STATUS_PROBE } from "./hermes-status-probe";
+import { cliName } from "../../../../onboard/branding";
 
 export const DISCORD_STATUS_HEALTH_HOOK_HANDLER_ID = "discord.statusHealth";
 
@@ -108,12 +109,17 @@ function healthReport(inputs: MessagingHookInputMap, state: string): ChannelHeal
         : verdict === "inactive"
           ? "The Hermes Discord adapter is not connected."
           : "Discord authentication is unverified; configuration and policy do not establish a connection.";
+  const sandbox =
+    typeof inputs.currentSandbox === "string" && inputs.currentSandbox
+      ? `'${inputs.currentSandbox.replace(/'/g, "'\\''")}'`
+      : "<sandbox-name>";
+  const command = `${cliName()} ${sandbox}`;
   const hint =
     verdict === "credential_rejected"
-      ? "Replace DISCORD_BOT_TOKEN with a bot token from the Discord Developer Portal, then run channels add discord."
+      ? `Replace DISCORD_BOT_TOKEN with a bot token from the Discord Developer Portal, then run ${command} channels add discord.`
       : verdict === "healthy"
         ? undefined
-        : "Inspect Hermes gateway status and logs, then retry channels status --channel discord.";
+        : `Inspect Hermes gateway status and logs, then retry ${command} channels status --channel discord.`;
   return {
     schemaVersion: 1,
     channel: "discord",
