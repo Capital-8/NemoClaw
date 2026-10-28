@@ -9,6 +9,7 @@ on:
     types: [opened, reopened, synchronize]
     paths:
       - "**/*.md"
+      - "**/*.mdx"
       - ".github/workflows/docs-links-pr.yaml"
       - "test/e2e/e2e-cloud-experimental/check-docs.sh"
 
@@ -35,10 +36,11 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
           mapfile -t doc_files < <(
-            # Fern preview validates MDX routes after building variant navigation.
-            # This raw Markdown checker only verifies repository-local .md links.
+            # Fern pages are MDX, so both extensions must reach this checker.
+            # Selecting only *.md silently skipped every docs/ page.
             git diff --name-only --diff-filter=ACMR "$base" "$head" -- \
               '*.md' \
+              '*.mdx' \
               ':(exclude)node_modules/**' \
               ':(exclude)dist/**' \
               ':(exclude)vendor/**' \
@@ -64,4 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t doc_files <<< "${{ steps.changed.outputs.files }}"
-          bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links --local-only "${doc_files[@]}"
+          # Probe the http(s) targets of changed pages so a retired route fails
+          # here instead of shipping to the published site. The checker keeps a
+          # built-in skip list for bot-walled and flaky hosts.
+          bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links "${doc_files[@]}"

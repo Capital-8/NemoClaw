@@ -24,6 +24,28 @@ const INTEGRATION_POLICY_SOURCE = "network-policy/integration-policy-examples.md
 const GMAIL_SOURCE = "network-policy/set-up-gmail-with-an-app-password.mdx";
 const APPROVAL_LINK_TEXT = "Approve or Deny Agent Network Requests";
 const GMAIL_LINK_TEXT = "Set Up Gmail With an App Password";
+// The guide variants that publish the Network Policy pages in docs/index.yml.
+const PUBLISHED_POLICY_VARIANTS = ["openclaw", "hermes", "deepagents"] as const;
+const OPENSHELL_DOCS_ORIGIN = "https://docs.nvidia.com/openshell/";
+const VERSIONED_OPENSHELL_ROUTE =
+  /^https:\/\/docs\.nvidia\.com\/openshell\/latest\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/;
+const INLINE_SEPARATOR_JOIN = /\]\([^)\n]*\)[^\n]*[^\S\n]-[^\S\n]\[/;
+const OPENSHELL_SCHEMA_ROUTE =
+  "https://docs.nvidia.com/openshell/latest/how-it-works/policies/schema";
+const OPENSHELL_MANAGE_POLICIES_ROUTE =
+  "https://docs.nvidia.com/openshell/latest/how-it-works/policies/manage-policies";
+const RETIRED_OPENSHELL_ROUTES = [
+  "https://docs.nvidia.com/openshell/latest/reference/policy-schema.html",
+  "https://docs.nvidia.com/openshell/latest/sandboxes/policies.html",
+] as const;
+const POLICY_PAGE_SOURCES = [
+  CUSTOMIZE_POLICY_SOURCE,
+  RAW_TLS_SOURCE,
+  BASELINE_POLICY_SOURCE,
+] as const;
+const RENDERED_POLICY_CASES = PUBLISHED_POLICY_VARIANTS.flatMap((variant) =>
+  POLICY_PAGE_SOURCES.map((source) => [variant, source] as const),
+);
 const CUSTOMIZE_SHARED_WORKFLOWS = [
   "Change the Baseline Network Policy",
   "Apply Policy Presets",
@@ -96,6 +118,18 @@ const LEGACY_CUSTOMIZE_POLICY_POINTERS = [
 
 function readDoc(source: string): string {
   return readFileSync(path.join(process.cwd(), "docs", source), "utf8");
+}
+
+// Count link targets directly instead of through the line-oriented link
+// extractor, so a reference whose text wraps across lines is still counted.
+function linkTargets(markdown: string): string[] {
+  return [...markdown.matchAll(/\]\(([^)\s]+)\)/g)].map((match) => match[1]);
+}
+
+function relatedTopicsSection(markdown: string): string {
+  const start = markdown.indexOf("## Related Topics");
+  expect(start).toBeGreaterThan(-1);
+  return markdown.slice(start);
 }
 
 function expectUniqueAnchorsBeforePointer(
@@ -306,5 +340,76 @@ describe("shared Network Policies published routes", () => {
   it("preserves retained policy sections (#7495)", () => {
     expect(readDoc(CUSTOMIZE_POLICY_SOURCE)).toContain("## Custom Preset Files");
     expect(readDoc(INTEGRATION_POLICY_SOURCE)).toContain("## Gmail With an App Password");
+  });
+});
+
+describe("Network Policy pages use versioned OpenShell routes (#13842)", () => {
+  it.each(RENDERED_POLICY_CASES)(
+    "renders no retired OpenShell route in the %s variant of %s (#13842)",
+    (variant, source) => {
+      const rendered = renderAgentVariantPage(readDoc(source), variant);
+
+      expect(RETIRED_OPENSHELL_ROUTES.filter((retired) => rendered.includes(retired))).toEqual([]);
+    },
+  );
+
+  it.each(RENDERED_POLICY_CASES)(
+    "keeps every OpenShell link on a versioned canonical route in the %s variant of %s (#13842)",
+    (variant, source) => {
+      const rendered = renderAgentVariantPage(readDoc(source), variant);
+      const targets = linkTargets(rendered).filter((target) =>
+        target.startsWith(OPENSHELL_DOCS_ORIGIN),
+      );
+
+      expect(targets.length).toBeGreaterThan(0);
+      expect(targets.filter((target) => !VERSIONED_OPENSHELL_ROUTE.test(target))).toEqual([]);
+    },
+  );
+
+  it.each(PUBLISHED_POLICY_VARIANTS)(
+    "links the schema and policy-iteration pages from Customize Related Topics in the %s variant (#13842)",
+    (variant) => {
+      const related = relatedTopicsSection(
+        renderAgentVariantPage(readDoc(CUSTOMIZE_POLICY_SOURCE), variant),
+      );
+
+      expect(related).toContain(OPENSHELL_SCHEMA_ROUTE);
+      expect(related).toContain(OPENSHELL_MANAGE_POLICIES_ROUTE);
+    },
+  );
+
+  it.each(PUBLISHED_POLICY_VARIANTS)(
+    "gives each Customize Related Topics reference its own list item in the %s variant (#13842)",
+    (variant) => {
+      const related = relatedTopicsSection(
+        renderAgentVariantPage(readDoc(CUSTOMIZE_POLICY_SOURCE), variant),
+      );
+
+      // A collapsed list keeps every reference but drops the list-item markers,
+      // so the reference count exceeds the list-item count.
+      expect(linkTargets(related).length).toBeGreaterThan(1);
+      expect(related.split("\n").filter((line) => line.trimStart().startsWith("- "))).toHaveLength(
+        linkTargets(related).length,
+      );
+    },
+  );
+
+  it.each(PUBLISHED_POLICY_VARIANTS)(
+    "does not join Customize Related Topics references with inline separators in the %s variant (#13842)",
+    (variant) => {
+      const related = relatedTopicsSection(
+        renderAgentVariantPage(readDoc(CUSTOMIZE_POLICY_SOURCE), variant),
+      );
+
+      expect(related).not.toMatch(INLINE_SEPARATOR_JOIN);
+    },
+  );
+
+  it("keeps the retired OpenShell routes out of the policy sources (#13842)", () => {
+    expect(
+      POLICY_PAGE_SOURCES.filter((source) =>
+        RETIRED_OPENSHELL_ROUTES.some((retired) => readDoc(source).includes(retired)),
+      ),
+    ).toEqual([]);
   });
 });
