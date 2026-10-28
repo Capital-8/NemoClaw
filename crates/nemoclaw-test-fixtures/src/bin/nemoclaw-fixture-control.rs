@@ -116,7 +116,7 @@ impl DataSource for Engine {
             (
                 "containers_json",
                 Optional,
-                "JSON list of containers, found by ID: id, name, image, labels, and running.",
+                "JSON list of containers: id, name, image, labels, running, started_at, mounts (destination to volume), files (path to content, mode 0600), and by_name. Found by ID, and by name when by_name is true.",
             ),
             ("endpoint", Computed, "The fake engine's endpoint."),
         ]))

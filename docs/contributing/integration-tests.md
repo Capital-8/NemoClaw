@@ -174,21 +174,29 @@ The `fixture` provider, `nemoclaw-fixture-control` in `nemoclaw-test-fixtures`, 
 
 | Data source | Purpose |
 |---|---|
-| `fixture_engine` | Declares images and containers that the fake engine reports, such as those a mocked Docker resource would create; containers are found by ID. Returns the engine endpoint. |
+| `fixture_engine` | Declares images and containers that the fake engine reports, such as those a mocked Docker resource would create. A container is found by ID, and by name when `by_name` is set; leave it unset for a container that providers must not find before Docker would create it, such as the managed gateway. A container can declare `started_at`, volume `mounts` by destination, and `files` by path, which archive reads and file metadata return with mode 0600. Returns the engine endpoint. |
 | `fixture_http` | Declares the inference upstream's replies by `METHOD /path`; other requests receive 404. Returns the upstream endpoint. |
-| `fixture_observations` | Returns recorded facts as JSON: OpenShell RPCs, created registrations and sandboxes, sandbox execs, current objects, engine requests and storage, and upstream requests. Credential values are reported only as the environment variable that supplied them. |
+| `fixture_observations` | Returns recorded facts as JSON: OpenShell RPCs, created registrations and sandboxes, sandbox execs, current objects, engine requests and storage, and upstream requests. Credential values are reported only by their source: `env:NAME` for a fixture credential, or `file:CONTAINER:PATH` for a declared container file such as a service's generated key. |
 
 Read the declarations in a first run that targets them, before the deployment's first plan reads the engine.
 The engine is a fixed socket, `/tmp/nemoclaw-integration/CASE.sock`, so the generated Docker provider alias and image addresses that `mock_provider` and `override_resource` name do not change between runs.
 OpenTofu removes resources with the providers of the last run that applied them; end with a run that applies the `openshell` and `fabric` providers with `destroy = true`, as the SDK's teardown graph does.
 
-After `tofu test`, the runner checks what no run block can observe: teardown left only storage that the SDK's teardown retains and what it depends on, the gateway holds no objects or Fabric runtimes, the engine received no storage deletion or unrecognized request, and no fixture credential appears in OpenTofu output or provider diagnostics.
+After `tofu test`, the runner checks what no run block can observe: teardown left only storage that the SDK's teardown retains and what that storage depends on through `depends_on`, references, and data sources; the gateway holds no objects or Fabric runtimes; the engine received no storage deletion or unrecognized request; and no fixture credential appears in OpenTofu output or provider diagnostics.
 When a case fails, the runner keeps its directory and prints the path of redacted evidence: OpenTofu output, fixture observations, and any state OpenTofu left.
 
 A case that needs an upstream operation the fixtures cannot simulate needs that fixture support once, in the runner and the `fixture` provider.
 A provider error that stops a run, rather than a failed assertion, fails the case.
-`docker-openclaw-hosted` is the Docker, OpenClaw, and NVIDIA hosted inference case with one agent: real OpenShell, Fabric, and host providers initialize gateway storage on the fake engine, read the mocked gateway container and sandbox image, register the inference binding, create the sandbox, and start the agent through `ExecSandbox`; the upstream receives no request.
-It does not invoke the agent or perform inference.
+Each case runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies:
+
+| Case | Checks |
+|---|---|
+| `docker-openclaw-hosted` | One OpenClaw agent on NVIDIA hosted inference: gateway storage on the fake engine, the mocked gateway container and sandbox image read by ID, the registration with the fixture credential, the sandbox's binding and policy, and the agent started through `ExecSandbox` with the compiled configuration. |
+| `docker-openclaw-ollama` | A managed Ollama service: the container's Docker inputs from the Ollama runtime launch, the runtime image found on the engine, readiness from the container's status file, a registration at the service address without a credential, the sandbox's policy for that address, and the agent's model and address. |
+| `docker-openclaw-vllm` | A managed vLLM service with bearer authentication: credential storage created on the engine and mounted by the container, readiness from its status file and generated key, the registration holding that key under the sandbox's name for it, and the agent's model, address, and key name. |
+| `docker-hosted-ollama-two-agents` | An OpenClaw agent on hosted inference and a Hermes agent on Ollama: two registrations, each sandbox bound to and allowed to reach only its own provider, and each agent started once in its own sandbox with its own harness and configuration. |
+
+In every case, the inference upstream receives no request. The cases do not invoke agents or perform inference, and the vLLM and Ollama runtimes are represented by declared containers and files, not run.
 
 ### Helm Release Recovery
 

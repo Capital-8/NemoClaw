@@ -109,17 +109,40 @@ impl Shared {
                     None => (404, br#"{"message":"No such image"}"#.to_vec()),
                 };
             }
-            if let Some(id) = path
+            // Declared containers answer inspection and file reads by ID.
+            if let Some((id, operation)) = path
                 .strip_prefix("/containers/")
-                .and_then(|rest| rest.strip_suffix("/json"))
+                .and_then(|rest| rest.split_once('/'))
                 && let Some(container) = self
                     .containers
                     .lock()
                     .unwrap()
                     .iter()
-                    .find(|container| container["id"] == id)
+                    .find(|container| declared(container, id))
             {
-                return reply(container_inspect(container));
+                match operation {
+                    "json" => return reply(container_inspect(container)),
+                    "archive" => {
+                        let url =
+                            url::Url::parse(&format!("http://engine{}", request.path)).unwrap();
+                        let file = url
+                            .query_pairs()
+                            .find(|(key, _)| key == "path")
+                            .map(|(_, value)| value.into_owned())
+                            .unwrap_or_default();
+                        return match container["files"][&file].as_str() {
+                            Some(content) => (
+                                200,
+                                docker_engine::tar_entry(
+                                    file.rsplit('/').next().unwrap_or_default(),
+                                    content.as_bytes(),
+                                ),
+                            ),
+                            None => (404, br#"{"message":"No such file"}"#.to_vec()),
+                        };
+                    }
+                    _ => {}
+                }
             }
         }
         let mut engine = self.engine.lock().unwrap();
@@ -132,6 +155,45 @@ impl Shared {
                 .push(format!("UNEXPECTED {} {}", request.method, request.path));
             (500, br#"{"message":"unexpected fixture request"}"#.to_vec())
         })
+    }
+
+    /// Docker's file metadata for a declared container's file, which a
+    /// `HEAD` on its archive returns in a header. Declared files have mode 0600.
+    fn engine_stat(&self, request: &http_fixture::Request) -> Option<http_fixture::Reply> {
+        if request.method != "HEAD" {
+            return None;
+        }
+        let url = url::Url::parse(&format!("http://engine{}", request.path)).ok()?;
+        let id = url
+            .path()
+            .strip_prefix("/containers/")?
+            .strip_suffix("/archive")?;
+        let file = url
+            .query_pairs()
+            .find(|(key, _)| key == "path")
+            .map(|(_, value)| value.into_owned())?;
+        let containers = self.containers.lock().unwrap();
+        let container = containers
+            .iter()
+            .find(|container| declared(container, id))?;
+        self.engine_requests
+            .lock()
+            .unwrap()
+            .push(format!("{} {}", request.method, request.path));
+        let Some(content) = container["files"][&file].as_str() else {
+            return Some((404, Vec::new(), Vec::new()));
+        };
+        use base64::Engine as _;
+        let stat = json!({"name": file.rsplit('/').next(), "size": content.len(),
+            "mode": 0o600, "mtime": "2026-01-01T00:00:00Z", "linkTarget": ""});
+        Some((
+            200,
+            vec![(
+                "X-Docker-Container-Path-Stat".into(),
+                base64::engine::general_purpose::STANDARD.encode(stat.to_string()),
+            )],
+            Vec::new(),
+        ))
     }
 
     fn upstream_reply(&self, request: &http_fixture::Request) -> (u16, Vec<u8>) {
@@ -175,15 +237,36 @@ impl Shared {
         }
     }
 
-    /// Facts recorded by the fixtures, with credential values replaced by the
-    /// environment variable that supplied them.
+    /// Facts recorded by the fixtures. Credential values are replaced by their
+    /// source: the environment variable or declared container file.
     fn observations(&self) -> Value {
         let state = self.gateway.lock().unwrap();
+        let containers = self.containers.lock().unwrap().clone();
         let provenance = |value: &String| {
-            self.credentials
+            let from_environment = self
+                .credentials
                 .iter()
                 .find(|(_, supplied)| *supplied == value)
-                .map_or("unrecognized".to_owned(), |(name, _)| format!("env:{name}"))
+                .map(|(name, _)| format!("env:{name}"));
+            // A declared container file, such as a service's generated key.
+            let from_file = || {
+                containers.iter().find_map(|container| {
+                    container["files"]
+                        .as_object()?
+                        .iter()
+                        .find_map(|(path, content)| {
+                            (content == value).then(|| {
+                                format!(
+                                    "file:{}:{path}",
+                                    container["name"].as_str().unwrap_or_default()
+                                )
+                            })
+                        })
+                })
+            };
+            from_environment
+                .or_else(from_file)
+                .unwrap_or_else(|| "unrecognized".to_owned())
         };
         let keys = |map: Vec<&String>| {
             let mut keys: Vec<&String> = map;
@@ -296,17 +379,37 @@ fn image_inspect(image: &Value) -> Value {
     })
 }
 
+/// Whether `reference` names a declared container: by ID, as a mocked Docker
+/// resource reports it, or by name when the declaration sets `by_name`.
+/// A container that providers must not find before Docker would create it,
+/// such as the managed gateway, leaves `by_name` unset.
+fn declared(container: &Value, reference: &str) -> bool {
+    container["id"] == reference || (container["by_name"] == true && container["name"] == reference)
+}
+
 /// Docker's inspection of a declared container, which a mocked Docker
-/// resource reports by ID.
+/// resource reports by ID. Declared mounts are volumes, by destination.
 fn container_inspect(container: &Value) -> Value {
     let running = container["running"] != false;
+    let mounts: Vec<Value> = container["mounts"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(destination, volume)| {
+            json!({"Type": "volume", "Name": volume, "Source": volume,
+                "Destination": destination, "RW": true})
+        })
+        .collect();
     json!({
         "Id": container["id"],
         "Name": format!("/{}", container["name"].as_str().unwrap_or_default()),
         "Image": container["image"],
         "Config": {"Image": container["image"], "Labels": container["labels"]},
+        "Mounts": mounts,
         "State": {"Status": if running { "running" } else { "exited" },
-            "Running": running, "ExitCode": 0},
+            "Running": running, "ExitCode": 0,
+            "StartedAt": container.get("started_at").cloned()
+                .unwrap_or(json!("2026-01-01T00:00:00Z"))},
     })
 }
 
@@ -348,8 +451,11 @@ impl Fixtures {
             ..Default::default()
         });
         let serving = shared.clone();
-        let engine = http_fixture::Fixture::start_at(&socket, move |request| {
-            Some(serving.engine_reply(&request))
+        let engine = http_fixture::Fixture::start_at_with_headers(&socket, move |request| {
+            Some(serving.engine_stat(&request).unwrap_or_else(|| {
+                let (status, body) = serving.engine_reply(&request);
+                (status, Vec::new(), body)
+            }))
         })
         .await;
         let serving = shared.clone();
@@ -387,6 +493,10 @@ impl Fixtures {
         }
         let upstream = self.shared.upstream_endpoint.lock().unwrap().clone();
         for provider in document.spec.inference_providers.values_mut() {
+            // Providers of managed services take their endpoint from the service.
+            if provider.endpoint.is_empty() {
+                continue;
+            }
             let path = url::Url::parse(&provider.endpoint)
                 .unwrap()
                 .path()
@@ -521,22 +631,51 @@ fn addresses(graph: &Value) -> BTreeSet<String> {
         .collect()
 }
 
-/// `retained` and every resource they depend on, which OpenTofu cannot
-/// remove while they remain.
+/// `retained` and every resource they depend on, through `depends_on`,
+/// references, and the data sources between them. OpenTofu's teardown stops
+/// when it reaches retained storage, so any of them may remain.
 fn with_dependencies(graph: &Value, retained: &BTreeSet<String>) -> BTreeSet<String> {
+    let blocks: BTreeMap<String, String> = ["resource", "data"]
+        .into_iter()
+        .flat_map(|mode| {
+            graph[mode]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .flat_map(move |(kind, blocks)| {
+                    blocks
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .map(move |(name, block)| {
+                            let address = if mode == "data" {
+                                format!("data.{kind}.{name}")
+                            } else {
+                                format!("{kind}.{name}")
+                            };
+                            (address, block.to_string())
+                        })
+                })
+        })
+        .collect();
+    let refers = |text: &str, address: &str| {
+        text.match_indices(address).any(|(start, _)| {
+            let before = text[..start].chars().next_back();
+            let after = text[start + address.len()..].chars().next();
+            !before.is_some_and(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+                && !after.is_some_and(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
+        })
+    };
     let mut kept = retained.clone();
     let mut pending: Vec<String> = retained.iter().cloned().collect();
     while let Some(address) = pending.pop() {
-        let (kind, name) = address.split_once('.').unwrap();
-        for dependency in graph["resource"][kind][name]["depends_on"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .filter(|dependency| !dependency.starts_with("data."))
-        {
-            if kept.insert(dependency.to_owned()) {
-                pending.push(dependency.to_owned());
+        let Some(text) = blocks.get(&address) else {
+            continue;
+        };
+        for dependency in blocks.keys() {
+            if dependency != &address && refers(text, dependency) && kept.insert(dependency.clone())
+            {
+                pending.push(dependency.clone());
             }
         }
     }
