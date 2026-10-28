@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDestroyHarness,
   resetDestroyModuleCache,
+  sandboxListJson,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
 
@@ -34,6 +35,25 @@ function writeGatewayRegistry(home: string, port: number, name: string): void {
       },
     }),
   );
+}
+
+function keepSiblingVisibleAfterDelete(harness: ReturnType<typeof createDestroyHarness>): void {
+  const runOpenshell = harness.runOpenshellSpy.getMockImplementation();
+  let betaDeleted = false;
+  harness.runOpenshellSpy.mockImplementation((args: unknown, options: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    if (betaDeleted && argv[0] === "sandbox" && argv[1] === "list") {
+      return { status: 0, stdout: sandboxListJson(["alpha"]), stderr: "" };
+    }
+    if (betaDeleted && argv[0] === "sandbox" && argv[1] === "get" && argv.at(-1) === "beta") {
+      return { status: 1, stdout: "", stderr: "Error: sandbox beta not found" };
+    }
+    const result = runOpenshell?.(args, options) ?? { status: 0, stdout: "", stderr: "" };
+    if (argv[0] === "sandbox" && argv[1] === "delete" && argv.at(-1) === "beta") {
+      betaDeleted = true;
+    }
+    return result;
+  });
 }
 
 describe("destroySandbox cross-root registry authority", () => {
@@ -96,7 +116,14 @@ describe("destroySandbox cross-root registry authority", () => {
   it("cleans up the destroyed gateway while preserving a sandbox on another gateway", async () => {
     writeGatewayRegistry(home, 8244, "alpha");
     writeGatewayRegistry(home, 8245, "beta");
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({
+      sandboxListResult: {
+        status: 0,
+        stdout: "NAME PHASE\nalpha Ready\nbeta Ready",
+        stderr: "",
+      },
+    });
+    keepSiblingVisibleAfterDelete(harness);
 
     await expect(
       harness.destroySandbox("beta", { yes: true, cleanupGateway: true }),
@@ -120,7 +147,14 @@ describe("destroySandbox cross-root registry authority", () => {
     writeGatewayRegistry(home, 8244, "alpha");
     writeGatewayRegistry(home, 8245, "beta");
     const betaRegistryFile = path.join(home, ".nemoclaw", "gateways", "8245", "sandboxes.json");
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({
+      sandboxListResult: {
+        status: 0,
+        stdout: "NAME PHASE\nalpha Ready\nbeta Ready",
+        stderr: "",
+      },
+    });
+    keepSiblingVisibleAfterDelete(harness);
     harness.withGatewayRouteMutationLockSpy
       .mockImplementationOnce(async (_gatewayName: unknown, operation: unknown) =>
         (operation as () => Promise<unknown>)(),
