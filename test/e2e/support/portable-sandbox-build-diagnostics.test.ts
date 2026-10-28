@@ -21,6 +21,7 @@ import {
   PORTABLE_SANDBOX_DELETE_BUDGET_MS,
   buildPortableSandboxImageWithEvidence,
   cleanupPortablePodmanResources,
+  createPodmanGroupReconciliationTracker,
   portableSandboxImageBuilder,
   probePortableSandboxOciAfterBuildFailure,
   probePodmanStore,
@@ -589,6 +590,7 @@ it("records a passing OCI probe and fails closed when exact cleanup is unproved 
       signal: "SIGKILL",
       diagnostic: "credential=private-token",
       error: Object.assign(new Error("private child survived"), { code: "EUNRECONCILED" }),
+      unreconciledGroupId: 123,
     };
     const queryUnreconciled = vi.fn().mockResolvedValue(unreconciled);
     await expect(
@@ -622,6 +624,7 @@ it("records a passing OCI probe and fails closed when exact cleanup is unproved 
     ).rejects.toThrow("Portable sandbox OCI probe cleanup unproved");
     expect(runUnreconciled).toHaveBeenCalledTimes(2);
     expect(onUnreconciled).toHaveBeenCalledOnce();
+    expect(onUnreconciled).toHaveBeenCalledWith(123);
     expect(
       JSON.parse(fs.readFileSync(artifacts.pathFor("portable-sandbox-oci-probe.json"), "utf8")),
     ).toMatchObject({ category: "cleanup-unproved", cleanupSucceeded: false });
@@ -646,13 +649,28 @@ it("records a passing OCI probe and fails closed when exact cleanup is unproved 
   }
 });
 
-it("skips every live Podman cleanup command after an unreconciled group (#13482)", async () => {
+it("fails closed when a Podman group identity is missing or changes (#13482)", () => {
+  const group = createPodmanGroupReconciliationTracker();
+  expect(group.recoveryState()).toEqual({ unreconciled: false, unreconciledGroupId: undefined });
+  group.mark(123);
+  expect(group.recoveryState()).toEqual({ unreconciled: true, unreconciledGroupId: 123 });
+  group.mark(124);
+  expect(group.recoveryState()).toEqual({ unreconciled: true, unreconciledGroupId: undefined });
+  group.mark(123);
+  expect(group.recoveryState()).toEqual({ unreconciled: true, unreconciledGroupId: undefined });
+  const unknown = createPodmanGroupReconciliationTracker();
+  unknown.mark();
+  expect(unknown.recoveryState()).toEqual({ unreconciled: true, unreconciledGroupId: undefined });
+});
+
+it("reconciles the exact supervised group before test-owned Podman cleanup (#13482)", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-state-"));
   const artifacts = new ArtifactSink(path.join(directory, "artifacts"));
   const runCommand = vi.fn();
   const input = {
     artifacts,
     unreconciled: true,
+    unreconciledGroupId: 123,
     disposableNetworkCreated: true,
     disposableNetworkId: "a".repeat(64),
     disposableNetworkName: "nemoclaw-portable-id-proof-123",
@@ -661,7 +679,11 @@ it("skips every live Podman cleanup command after an unreconciled group (#13482)
     env: {},
   };
   try {
-    await cleanupPortablePodmanResources(input, runCommand);
+    const stillPresent = vi.fn(async () => false);
+    await expect(cleanupPortablePodmanResources(input, runCommand, stillPresent)).rejects.toThrow(
+      "Portable Podman cleanup process group exit unproved",
+    );
+    expect(stillPresent).toHaveBeenCalledWith(123, 5_000);
     expect(runCommand).not.toHaveBeenCalled();
     expect(
       JSON.parse(fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-state.json"), "utf8")),
@@ -677,18 +699,37 @@ it("skips every live Podman cleanup command after an unreconciled group (#13482)
         podmanSystemReset: true,
       },
     });
-    await cleanupPortablePodmanResources({ ...input, disposableNetworkId: null }, runCommand);
+    await expect(
+      cleanupPortablePodmanResources(
+        { ...input, disposableNetworkId: null, unreconciledGroupId: undefined },
+        runCommand,
+        vi.fn(async () => true),
+      ),
+    ).rejects.toThrow("Portable Podman cleanup recovery identity unproved");
     expect(
       JSON.parse(fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-state.json"), "utf8")),
     ).toMatchObject({ skippedTargets: { network: "nemoclaw-portable-id-proof-123" } });
     expect(runCommand).not.toHaveBeenCalled();
-    await cleanupPortablePodmanResources({ ...input, unreconciled: false }, runCommand);
+    let releaseProof: (value: boolean) => void = () => undefined;
+    const proof = new Promise<boolean>((resolve) => {
+      releaseProof = resolve;
+    });
+    const cleanup = cleanupPortablePodmanResources(input, runCommand, () => proof);
+    await Promise.resolve();
+    expect(runCommand).not.toHaveBeenCalled();
+    releaseProof(true);
+    await cleanup;
     expect(runCommand.mock.calls.map(([args]) => args)).toEqual([
       ["--url", "unix:///run/user/1001/podman/podman.sock", "network", "rm", "a".repeat(64)],
       ["rm", "--force", "nemoclaw-portable-registry"],
       ["image", "rm", "--force", "127.0.0.1:5000/nemoclaw-sandbox-local:hermes-fixed"],
       ["system", "reset", "--force"],
     ]);
+    expect(
+      JSON.parse(
+        fs.readFileSync(artifacts.pathFor("portable-podman-cleanup-reconciliation.json"), "utf8"),
+      ),
+    ).toEqual({ schemaVersion: 1, status: "reconciled-cleanup-attempted" });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -894,10 +935,11 @@ it("retains a build signal and allowlisted error code without error text (#13482
         signal: "SIGKILL" as const,
         diagnostic: "credential=private-build-token",
         error: Object.assign(new Error("private error text"), { code: "EUNRECONCILED" }),
+        unreconciledGroupId: 456,
       })),
       unreconciledSignal,
     );
-    expect(unreconciledSignal).toHaveBeenCalledWith(false);
+    expect(unreconciledSignal).toHaveBeenCalledWith(false, 456);
     const unreconciled = fs.readFileSync(
       artifacts.pathFor("portable-sandbox-image-build-failure.json"),
       "utf8",
@@ -1007,6 +1049,7 @@ it("stops live Podman cleanup after an unreconciled registry publish (#13482)", 
   });
   const runCommand = vi.fn();
   let unreconciled = false;
+  let groupId: number | undefined;
   try {
     const status = await publishPortableSandboxImage(
       ["push", "localhost/test:fixed"],
@@ -1018,13 +1061,16 @@ it("stops live Podman cleanup after an unreconciled registry publish (#13482)", 
         signal: "SIGKILL" as const,
         diagnostic: "credential=private-push-token",
         error: Object.assign(new Error("private error text"), { code: "EUNRECONCILED" }),
+        unreconciledGroupId: 789,
       })),
-      () => {
+      (observedGroupId) => {
         unreconciled = true;
+        groupId = observedGroupId;
       },
     );
     expect(status).toBeNull();
     expect(unreconciled).toBe(true);
+    expect(groupId).toBe(789);
     const published = fs.readFileSync(
       artifacts.pathFor("portable-sandbox-image-publish-failure.json"),
       "utf8",
@@ -1035,19 +1081,23 @@ it("stops live Podman cleanup after an unreconciled registry publish (#13482)", 
     });
     expect(published).not.toContain("private-push-token");
     expect(published).not.toContain("private error text");
-    await cleanupPortablePodmanResources(
-      {
-        artifacts,
-        unreconciled,
-        disposableNetworkCreated: true,
-        disposableNetworkId: null,
-        disposableNetworkName: "credential=private-network-token",
-        runtimeDir: "/private/credential=private-socket-token",
-        hermesImageRef: "credential=private-image-token",
-        env: {},
-      },
-      runCommand,
-    );
+    await expect(
+      cleanupPortablePodmanResources(
+        {
+          artifacts,
+          unreconciled,
+          unreconciledGroupId: groupId,
+          disposableNetworkCreated: true,
+          disposableNetworkId: null,
+          disposableNetworkName: "credential=private-network-token",
+          runtimeDir: "/private/credential=private-socket-token",
+          hermesImageRef: "credential=private-image-token",
+          env: {},
+        },
+        runCommand,
+        vi.fn(async () => false),
+      ),
+    ).rejects.toThrow("Portable Podman cleanup process group exit unproved");
     expect(runCommand).not.toHaveBeenCalled();
     const cleanupState = fs.readFileSync(
       artifacts.pathFor("portable-podman-cleanup-state.json"),

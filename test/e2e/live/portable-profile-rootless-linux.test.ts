@@ -82,6 +82,7 @@ import {
 import {
   PORTABLE_PROFILE_LIVE_TIMEOUT_MS,
   cleanupPortablePodmanResources,
+  createPodmanGroupReconciliationTracker,
   portableSandboxImageBuilder as buildImageFixture,
   publishPortableSandboxImage as publishImage,
 } from "../fixtures/portable-sandbox-build-diagnostics.ts";
@@ -980,7 +981,7 @@ async function main(
   let hermesImageId: string | null = null;
   let hermesImageRef: string | null = null;
   let hermesContextRetired = false;
-  let unreconciledPodmanGroup = false;
+  const podmanGroup = createPodmanGroupReconciliationTracker();
   let hermesLifecycleEvidence: Record<string, unknown> | null = null;
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
     .split("\n")
@@ -1038,9 +1039,7 @@ async function main(
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
     const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
-    const markUnreconciled = () => {
-      unreconciledPodmanGroup = true;
-    };
+    const markUnreconciled = podmanGroup.mark;
     const buildImage = buildImageFixture(
       artifacts,
       progress,
@@ -1458,7 +1457,7 @@ async function main(
     try {
       await cleanupPortablePodmanResources({
         artifacts,
-        unreconciled: unreconciledPodmanGroup,
+        ...podmanGroup.recoveryState(),
         disposableNetworkCreated,
         disposableNetworkId,
         disposableNetworkName,

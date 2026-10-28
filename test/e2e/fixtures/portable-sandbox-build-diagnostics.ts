@@ -40,6 +40,7 @@ type BuildResult = {
   signal: NodeJS.Signals | null;
   diagnostic: string;
   error?: Error;
+  unreconciledGroupId?: number;
   stdoutObserved?: boolean;
   stderrObserved?: boolean;
 };
@@ -261,6 +262,7 @@ async function runPodmanBuild(
     signal: result.signal,
     diagnostic,
     error,
+    unreconciledGroupId: result.cleanupError ? child.pid : undefined,
     stdoutObserved,
     stderrObserved,
   };
@@ -347,7 +349,7 @@ export async function buildPortableSandboxImageWithEvidence(
   artifacts: ArtifactSink,
   progress: TestProgress,
   runBuild: ImageCommandRunner = runPodmanBuild,
-  onReconciled?: (reconciled: boolean) => void,
+  onReconciled?: (reconciled: boolean, groupId?: number) => void,
 ): Promise<number | null> {
   let result: BuildResult;
   try {
@@ -356,7 +358,9 @@ export async function buildPortableSandboxImageWithEvidence(
     onReconciled?.(false);
     throw error;
   }
-  onReconciled?.((result.error as NodeJS.ErrnoException | undefined)?.code !== "EUNRECONCILED");
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "EUNRECONCILED")
+    onReconciled?.(false, result.unreconciledGroupId);
+  else onReconciled?.(true);
   if (result.status !== 0 || result.error) {
     await artifacts.writeJson(
       "portable-sandbox-image-build-failure.json",
@@ -400,7 +404,7 @@ export async function probePortableSandboxOciAfterBuildFailure(
   artifacts: ArtifactSink,
   progress: TestProgress,
   runCommand: ImageCommandRunner = runPodmanBuild,
-  onUnreconciled?: () => void,
+  onUnreconciled?: (groupId?: number) => void,
 ): Promise<void> {
   const cached = await diagnosticCommand(
     runCommand,
@@ -412,7 +416,7 @@ export async function probePortableSandboxOciAfterBuildFailure(
   if (cached.status !== 0 || cached.error) {
     const unreconciled =
       (cached.error as NodeJS.ErrnoException | undefined)?.code === "EUNRECONCILED";
-    if (unreconciled) onUnreconciled?.();
+    if (unreconciled) onUnreconciled?.(cached.unreconciledGroupId);
     await artifacts.writeJson("portable-sandbox-oci-probe.json", {
       schemaVersion: 1,
       category: unreconciled
@@ -438,7 +442,7 @@ export async function probePortableSandboxOciAfterBuildFailure(
     progress,
   );
   const unreconciled = (run.error as NodeJS.ErrnoException | undefined)?.code === "EUNRECONCILED";
-  if (unreconciled) onUnreconciled?.();
+  if (unreconciled) onUnreconciled?.(run.unreconciledGroupId);
   const cleanup = unreconciled
     ? null
     : await diagnosticCommand(
@@ -449,7 +453,7 @@ export async function probePortableSandboxOciAfterBuildFailure(
         progress,
       );
   if ((cleanup?.error as NodeJS.ErrnoException | undefined)?.code === "EUNRECONCILED")
-    onUnreconciled?.();
+    onUnreconciled?.(cleanup?.unreconciledGroupId);
   const cleanupSucceeded = cleanup?.status === 0 && !cleanup.error && !unreconciled;
   const category = !cleanupSucceeded
     ? "cleanup-unproved"
@@ -486,7 +490,7 @@ export function portableSandboxImageBuilder(
     buildWithEvidence: buildPortableSandboxImageWithEvidence,
     probeOci: probePortableSandboxOciAfterBuildFailure,
   },
-  onUnreconciled?: () => void,
+  onUnreconciled?: (groupId?: number) => void,
 ) {
   return (label: "sandbox" | "hermes") =>
     async (args: readonly string[], options: { env: NodeJS.ProcessEnv; stdio: "inherit" }) => {
@@ -505,9 +509,9 @@ export function portableSandboxImageBuilder(
         artifacts,
         progress,
         undefined,
-        (value) => {
+        (value, groupId) => {
           reconciled = value;
-          if (!value) onUnreconciled?.();
+          if (!value) onUnreconciled?.(groupId);
         },
       );
       // A surviving build process group forbids another Podman command.
@@ -525,11 +529,54 @@ export function portableSandboxImageBuilder(
     };
 }
 
-/** Preserve fixed cleanup state without racing a surviving local Podman group. */
+async function waitForPodmanGroupExit(groupId: number, timeoutMs: number): Promise<boolean> {
+  if (!Number.isSafeInteger(groupId) || groupId <= 0) return false;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    try {
+      process.kill(-groupId, 0);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ESRCH") return true;
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+export function createPodmanGroupReconciliationTracker() {
+  let seen = false;
+  let groupId: number | undefined;
+  let identityUnproved = false;
+  return {
+    mark(observedGroupId?: number) {
+      seen = true;
+      if (
+        observedGroupId === undefined ||
+        !Number.isSafeInteger(observedGroupId) ||
+        observedGroupId <= 0 ||
+        (groupId !== undefined && groupId !== observedGroupId)
+      ) {
+        identityUnproved = true;
+      } else {
+        groupId = observedGroupId;
+      }
+    },
+    recoveryState() {
+      return {
+        unreconciled: seen,
+        unreconciledGroupId: identityUnproved ? undefined : groupId,
+      };
+    },
+  };
+}
+
+/** Reconcile the supervised group before removing test-owned Podman resources. */
 export async function cleanupPortablePodmanResources(
   input: {
     artifacts: ArtifactSink;
     unreconciled: boolean;
+    unreconciledGroupId?: number;
     disposableNetworkCreated: boolean;
     disposableNetworkId: string | null;
     disposableNetworkName: string;
@@ -545,6 +592,10 @@ export async function cleanupPortablePodmanResources(
       timeout: 15_000,
     });
   },
+  waitForGroupExit: (
+    groupId: number,
+    timeoutMs: number,
+  ) => Promise<boolean> = waitForPodmanGroupExit,
 ): Promise<void> {
   if (input.unreconciled) {
     const network = input.disposableNetworkCreated
@@ -571,7 +622,11 @@ export async function cleanupPortablePodmanResources(
         podmanSystemReset: true,
       },
     });
-    return;
+    const groupId = input.unreconciledGroupId;
+    if (groupId === undefined || !Number.isSafeInteger(groupId) || groupId <= 0)
+      throw new Error("Portable Podman cleanup recovery identity unproved");
+    if (!(await waitForGroupExit(groupId, 5_000)))
+      throw new Error("Portable Podman cleanup process group exit unproved");
   }
   if (input.disposableNetworkCreated)
     runCommand([
@@ -584,6 +639,11 @@ export async function cleanupPortablePodmanResources(
   runCommand(["rm", "--force", "nemoclaw-portable-registry"]);
   if (input.hermesImageRef) runCommand(["image", "rm", "--force", input.hermesImageRef]);
   runCommand(["system", "reset", "--force"]);
+  if (input.unreconciled)
+    await input.artifacts.writeJson("portable-podman-cleanup-reconciliation.json", {
+      schemaVersion: 1,
+      status: "reconciled-cleanup-attempted",
+    });
 }
 
 /** Keep registry publication separate from build-failure evidence. */
@@ -593,7 +653,7 @@ export async function publishPortableSandboxImage(
   artifacts: ArtifactSink,
   progress: TestProgress,
   runPublish: ImageCommandRunner = runPodmanBuild,
-  onUnreconciled?: () => void,
+  onUnreconciled?: (groupId?: number) => void,
 ): Promise<number | null> {
   let result: BuildResult;
   try {
@@ -603,7 +663,7 @@ export async function publishPortableSandboxImage(
     throw error;
   }
   if ((result.error as NodeJS.ErrnoException | undefined)?.code === "EUNRECONCILED")
-    onUnreconciled?.();
+    onUnreconciled?.(result.unreconciledGroupId);
   if (result.status !== 0 || result.error) {
     await artifacts.writeJson(
       "portable-sandbox-image-publish-failure.json",
