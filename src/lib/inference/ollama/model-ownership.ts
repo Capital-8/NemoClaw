@@ -144,7 +144,7 @@ export function loadPendingOllamaModelCleanup(
       : [];
   if (legacyModels.length > 0) {
     console.warn(
-      `  Warning: legacy pending Ollama cleanup for '${owner.name}' lists ${legacyModels.join(", ")} but has no gateway/lifecycle identity. NemoClaw left it untouched. Verify no active sandbox on any gateway uses a listed model before release; see "Recover a legacy pending Ollama cleanup" in the Set Up Ollama guide for the ownership checks, 'ollama stop <model>', and 'ollama ps' verification.`,
+      `  Warning: legacy pending Ollama cleanup for '${owner.name}' lists ${legacyModels.join(", ")} but has no gateway/lifecycle identity. NemoClaw left it untouched because these model names do not establish ownership.`,
     );
   }
   if (!identity) return [];
