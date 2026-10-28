@@ -404,10 +404,10 @@ Windows-host Ollama does not receive this Linux recovery guidance.
 
 ## Release GPU Memory
 
-When you destroy a sandbox, NemoClaw asks Ollama to unload only that sandbox's current model and any models recorded for cleanup retry. Other models resident on the shared host daemon are left alone.
-The host-service commands `nemoclaw stop` and `nemoclaw tunnel stop` run host-wide Ollama cleanup, which may unload unrelated resident models.
+When you destroy a sandbox, NemoClaw asks Ollama to unload its current model and models recorded for lifecycle-scoped cleanup retry, but only after verifying that no other active sandbox uses each model. If ownership cannot be verified, no model is unloaded. Other models resident on the shared host daemon are left alone. Legacy pending cleanup receipts require the manual recovery steps below.
+The host-service commands `$$nemoclaw stop` and `$$nemoclaw tunnel stop` run host-wide Ollama cleanup, which may unload unrelated resident models.
 When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model.
-It leaves the model loaded only when OpenShell reports that another matching Ollama-backed sandbox is active.
+It keeps the model loaded when OpenShell reports that another active sandbox uses the same local Ollama daemon and model.
 Stopped or incomplete sibling registry rows do not retain the model.
 If NemoClaw cannot verify sibling state, it does not unload the model and `stop` exits nonzero.
 When you re-onboard an Ollama-backed sandbox from the host Ollama route to a different model or provider, NemoClaw checks live ownership before releasing its previous model.
@@ -419,7 +419,7 @@ This cleanup is best-effort and does not delete downloaded model files.
 
 ### Recover a legacy pending Ollama cleanup
 
-A legacy cleanup receipt may list model names without recording the gateway and sandbox lifecycle that owned them. NemoClaw does not replay or clear those receipts because a reused sandbox name cannot establish ownership. The warning names the receipt's sandbox and each listed model; no model is unloaded automatically.
+A legacy cleanup receipt may list model names without recording the gateway and sandbox lifecycle that owned them. NemoClaw does not replay or clear those receipts because a reused sandbox name cannot establish ownership. The warning names the receipt's sandbox and each listed model; the legacy receipt itself never triggers an automatic unload.
 
 Before manually releasing a listed model, verify that no active sandbox on this host still uses it:
 
@@ -435,7 +435,7 @@ Before manually releasing a listed model, verify that no active sandbox on this 
    ollama ps
    ```
 
-   If no matching model appears in `ollama ps`, continue to step 5.
+   If `ollama ps` fails, keep the receipt and restore host Ollama access. If no matching model appears in a successful `ollama ps` result, continue to step 5.
 
 5. After the ownership checks succeed and every listed model is confirmed absent from `ollama ps`, acknowledge the completed manual recovery by removing only that sandbox's legacy receipt:
 
