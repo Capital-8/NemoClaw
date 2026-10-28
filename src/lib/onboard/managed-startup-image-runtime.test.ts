@@ -670,7 +670,7 @@ describe("managed startup image runtime", () => {
   });
 
   it.each(["EACCES", "EPERM"] as const)(
-    "removes the generated Hermes policy as the sandbox user when root unlink fails with %s",
+    "removes the Hermes managed policy source as the sandbox user when root unlink fails with %s",
     (code) => {
       const directory = temporaryPolicyDirectory();
       const shareDirectory = path.join(directory, "share");
@@ -703,7 +703,7 @@ describe("managed startup image runtime", () => {
     },
   );
 
-  it("refuses Hermes policy cleanup as the sandbox user when the source file has a different owner", () => {
+  it("refuses sandbox-user removal when the Hermes managed policy source is not owned by the sandbox account", () => {
     const directory = temporaryPolicyDirectory();
     const shareDirectory = path.join(directory, "share");
     const source = path.join(directory, "managed-policy.json");
@@ -731,29 +731,58 @@ describe("managed startup image runtime", () => {
   });
 
   it.each([
-    ["setpriv exits non-zero", 1, true],
-    ["source file remains present after setpriv", 0, false],
-  ] as const)("fails closed when %s during Hermes policy cleanup", (_label, status, removeFile) => {
-    const directory = temporaryPolicyDirectory();
-    const shareDirectory = path.join(directory, "share");
-    const source = path.join(directory, "managed-policy.json");
-    const target = path.join(shareDirectory, "hermes-managed-policy.json");
-    const policy = '{"schema_version":3}\n';
-    fs.mkdirSync(shareDirectory);
-    fs.writeFileSync(source, policy, { mode: 0o600 });
-    mockRootOwnedPolicyInstallPaths(source, shareDirectory, target);
-    const removeSource = mockRootUnlinkFailure(source, "EACCES");
-    const maybeRemoveSource = removeFile ? removeSource : () => undefined;
-    childProcessMock.spawnSync.mockImplementation((command: string, args: readonly string[]) =>
-      command === "/usr/bin/id"
-        ? { status: 0, stdout: args[0] === "-u" ? "998\n" : "999\n" }
-        : (maybeRemoveSource(), { status, stdout: "" }),
-    );
-
-    expect(() => installHermesManagedPolicy(source, target)).toThrow(
+    [
+      "setpriv exits non-zero",
+      1,
+      true,
+      false,
       /could not remove Hermes managed policy source as the sandbox user/u,
-    );
-  });
+    ],
+    [
+      "source file remains present after setpriv",
+      0,
+      false,
+      false,
+      /could not remove Hermes managed policy source as the sandbox user/u,
+    ],
+    [
+      "source removal cannot be verified after setpriv",
+      0,
+      true,
+      true,
+      /could not verify Hermes managed policy source cleanup/u,
+    ],
+  ] as const)(
+    "fails closed when %s during Hermes managed policy source cleanup",
+    (_label, status, removeFile, failPostCleanupLstat, expectedError) => {
+      const directory = temporaryPolicyDirectory();
+      const shareDirectory = path.join(directory, "share");
+      const source = path.join(directory, "managed-policy.json");
+      const target = path.join(shareDirectory, "hermes-managed-policy.json");
+      const policy = '{"schema_version":3}\n';
+      let postCleanupHook: () => void = () => undefined;
+      const failCleanupLstat = (): never => {
+        throw Object.assign(new Error(`EACCES: permission denied, lstat '${source}'`), {
+          code: "EACCES",
+        });
+      };
+      const nextCleanupHook = failPostCleanupLstat ? failCleanupLstat : () => undefined;
+      fs.mkdirSync(shareDirectory);
+      fs.writeFileSync(source, policy, { mode: 0o600 });
+      mockRootOwnedPolicyInstallPaths(source, shareDirectory, target, () => {
+        postCleanupHook();
+      });
+      const removeSource = mockRootUnlinkFailure(source, "EACCES");
+      const maybeRemoveSource = removeFile ? removeSource : () => undefined;
+      childProcessMock.spawnSync.mockImplementation((command: string, args: readonly string[]) =>
+        command === "/usr/bin/id"
+          ? { status: 0, stdout: args[0] === "-u" ? "998\n" : "999\n" }
+          : ((postCleanupHook = nextCleanupHook), maybeRemoveSource(), { status, stdout: "" }),
+      );
+
+      expect(() => installHermesManagedPolicy(source, target)).toThrow(expectedError);
+    },
+  );
 
   it("verifies a host-copied transaction only through the explicit read-only receipt mode", async () => {
     const profile = managedStartupE2eProfile("openclaw");
