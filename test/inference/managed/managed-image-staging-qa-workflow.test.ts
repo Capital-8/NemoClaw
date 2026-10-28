@@ -139,6 +139,7 @@ describe("managed-image staging QA workflow", () => {
       "scripts/security/libssh2-sftp-response-regression.c",
       "scripts/security/security-package-inventory.mts",
       "src/lib/sandbox-base-image/security-package-specs.ts",
+      "agents/langchain-deepagents-code/dependency-overrides.in",
       "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
       "scripts/security/patches/zlib-1.3.1-write-error.patch",
       "scripts/security/zlib-write-error.c",

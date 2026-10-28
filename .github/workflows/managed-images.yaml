@@ -194,6 +194,7 @@ jobs:
           done
           for support_relative in \
             agents/langchain-deepagents-code/patch-managed-deepagents-code.py \
+            agents/langchain-deepagents-code/dependency-overrides.in \
             agents/langchain-deepagents-code/validate-runtime-contract.py \
             src/lib/agent/deep-agents-code-runtime-identity.json \
             ci/reviewed-npm-audit.json \

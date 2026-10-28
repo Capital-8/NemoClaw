@@ -8,10 +8,6 @@ nemo-relay[langgraph]==0.4.0
 aiohttp==3.14.4
 # Fix the PKCS#7 EnvelopedData Bleichenbacher oracle advisory.
 cryptography==50.0.0
-# Fix the image parser advisories reported against the transitive 12.2.0 pin.
-pillow==13.0.0
-# Preserve the reviewed downstream metadata override for Deep Agents Code 0.1.87.
-filelock==4.2.1
 # Keep Host/Origin validation on the MCP major version required by Deep Agents Code.
 mcp==2.2.0
 # Fix the transitive ASN.1 decoder resource-exhaustion advisories.

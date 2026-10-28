@@ -29,6 +29,7 @@ import importlib.metadata
 import importlib.util
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -2248,19 +2249,36 @@ def main() -> None:
 
 WHEEL_SHA256 = "e3a4a9905540eaf87e4ec19b54f02cc791ba7cc02ca1af3f3173754af445e206"
 METADATA_SHA256 = "4c7c41fab50ba2c85365179990bda77dcfe663ce55f294f7234b909d2ef40d89"
-REPLACEMENTS = {
-    b"Requires-Dist: filelock<3.30,>=3.29.7\n": b"Requires-Dist: filelock==4.2.1\n",
-    b"Requires-Dist: pillow<13.0.0,>=12.3.0\n": b"Requires-Dist: pillow==13.0.0\n",
-    b"Requires-Dist: pillow<13.0.0,>=12.3.0; extra == 'media'\n": b"Requires-Dist: pillow==13.0.0; extra == 'media'\n",
-}
+
+def dependency_overrides():
+    """Read the same exact compatibility pins used to generate the lock."""
+    overrides = {}
+    for line in Path(__file__).with_name("dependency-overrides.in").read_text().splitlines():
+        pin = line.partition("#")[0].strip()
+        if not pin:
+            continue
+        name, separator, version = pin.partition("==")
+        if (name not in {"filelock", "pillow"} or not separator
+                or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or name in overrides):
+            raise RuntimeError("Invalid managed dependency override")
+        overrides[name] = version
+    if set(overrides) != {"filelock", "pillow"}:
+        raise RuntimeError("Managed dependency overrides are incomplete")
+    return overrides
 
 
 def patch_installed_dependency_metadata():
     """Patch only the reviewed wheel's two dependency ranges; preserve provenance."""
+    overrides = dependency_overrides()
+    replacements = {
+        b"Requires-Dist: filelock<3.30,>=3.29.7\n": f"Requires-Dist: filelock=={overrides['filelock']}\n".encode(),
+        b"Requires-Dist: pillow<13.0.0,>=12.3.0\n": f"Requires-Dist: pillow=={overrides['pillow']}\n".encode(),
+        b"Requires-Dist: pillow<13.0.0,>=12.3.0; extra == 'media'\n": f"Requires-Dist: pillow=={overrides['pillow']}; extra == 'media'\n".encode(),
+    }
     distribution = importlib.metadata.distribution("deepagents-code")
     if distribution.version != "0.1.87":
         raise RuntimeError("Dependency patch requires deepagents-code 0.1.87")
-    for name, expected in {"pillow": "13.0.0", "filelock": "4.2.1"}.items():
+    for name, expected in overrides.items():
         if importlib.metadata.version(name) != expected:
             raise RuntimeError(f"Dependency patch requires {name}=={expected}")
     prefix = "deepagents_code-0.1.87.dist-info/"
@@ -2275,7 +2293,7 @@ def patch_installed_dependency_metadata():
     if digest(original) != METADATA_SHA256:
         # Reverse the exact substitution to verify idempotence against upstream.
         restored = original
-        for before, after in REPLACEMENTS.items():
+        for before, after in replacements.items():
             if restored.count(after) != 1:
                 raise RuntimeError("Unreviewed downstream dependency metadata")
             restored = restored.replace(after, before)
@@ -2283,7 +2301,7 @@ def patch_installed_dependency_metadata():
             raise RuntimeError("Upstream dependency metadata differs from sealed wheel")
         original = restored
     patched = original
-    for before, after in REPLACEMENTS.items():
+    for before, after in replacements.items():
         if patched.count(before) != 1:
             raise RuntimeError("Upstream dependency requirement changed")
         patched = patched.replace(before, after)
@@ -2293,7 +2311,7 @@ def patch_installed_dependency_metadata():
         "upstreamWheelSha256": WHEEL_SHA256,
         "upstreamMetadataSha256": METADATA_SHA256,
         "patchedMetadataSha256": digest(patched),
-        "overrides": {"pillow": "13.0.0", "filelock": "4.2.1"},
+        "overrides": overrides,
     }
     receipt_bytes = (json.dumps(receipt, sort_keys=True, indent=2) + "\n").encode()
     if receipt_path.is_symlink():

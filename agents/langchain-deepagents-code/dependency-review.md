@@ -7,7 +7,7 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `af1b377a6ff38ef82afcbc41da01d5dabb4c40e532b2b44ff3c3f3ea3c1be78c`
+- Lockfile SHA-256: `1af418f0f2efffba49830e874b3f617b8bd3fac8a20433385d747795728061e4`
 - Audit command: `uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip`
 - Audit date: October 28, 2026 (UTC)
 - Targeted audit result: `aiohttp 3.14.4, cryptography 50.0.0, uv 0.13.4, langgraph-checkpoint-sqlite 3.1.2, MCP 2.2.0, Pillow 13.0.0, and pyasn1 0.6.4 have no known vulnerabilities`
@@ -47,7 +47,8 @@ branches without printing their untrusted error text.
 
 The upstream wheel requires FileLock below 3.30 and Pillow below 13.0.0.
 NemoClaw retains the sealed candidate's FileLock `4.2.1` and Pillow `13.0.0`
-overrides in `dependency-overrides.in`, which the lock regeneration command uses.
+overrides in `dependency-overrides.in`. Both lock generation and the installed-wheel
+metadata patch read these pins; `requirements.in` does not duplicate them.
 Installation requires every artifact hash and disables dependency resolution.
 The build verifies the original metadata digest, replaces only the reviewed
 requirements, updates RECORD, and writes a provenance receipt before `pip check`.
