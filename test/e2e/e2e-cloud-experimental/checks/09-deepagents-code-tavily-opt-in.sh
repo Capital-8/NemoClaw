@@ -91,8 +91,8 @@ def is_policy_denial(text):
 
 print(f'PROBE_PID:{os.getpid()}', flush=True)
 url = sys.argv[1]
-# OpenShell replaces this placeholder at egress; the sandbox never receives the key.
-payload = {'query': 'nemoclaw reachability probe', 'max_results': 1, 'api_key': 'openshell-placeholder'}
+# OpenShell replaces its resolver placeholder at egress; the sandbox never receives the key.
+payload = {'query': 'nemoclaw reachability probe', 'max_results': 1, 'api_key': os.environ.get('TAVILY_API_KEY', 'openshell-placeholder')}
 request = urllib.request.Request(
     url,
     data=json.dumps(payload).encode('utf-8'),
@@ -194,6 +194,18 @@ tavily_denied_audit() {
   '
 }
 
+# OpenShell delivers the OCSF event a few seconds after the denied request.
+# Fixture logs never change, so they are read once.
+await_tavily_denied_audit() {
+  local attempt attempts=10
+  [ -z "${NEMOCLAW_E2E_TAVILY_AUDIT_FIXTURE+x}" ] || attempts=1
+  for attempt in $(seq 1 "$attempts"); do
+    tavily_denied_audit "$1" "$2" && return 0
+    [ "$attempt" -lt "$attempts" ] && sleep 2
+  done
+  return 1
+}
+
 AUDIT_SETTING_BEFORE=""
 TAVILY_PROVIDER=""
 TAVILY_PRESET_APPLIED=0
@@ -205,7 +217,8 @@ process.stdin.on("data", chunk => input += chunk);
 process.stdin.on("end", () => {
   const settings = JSON.parse(input).settings;
   if (!settings || typeof settings !== "object") process.exit(1);
-  const value = settings.ocsf_json_enabled;
+  const entry = settings.ocsf_json_enabled;
+  const value = entry && typeof entry === "object" ? entry.value : entry;
   if (value !== undefined && !["<unset>", "true", "false"].includes(value)) process.exit(1);
   process.stdout.write(value ?? "<unset>");
 });'
@@ -258,7 +271,7 @@ restore_tavily_denial() {
       pass "managed Deep Agents Code python returns to the default Tavily denial"
       if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ]; then
         probe_pid="$(printf '%s\n' "$post_remove_probe_output" | sed -n 's/^PROBE_PID:\([0-9][0-9]*\)$/\1/p')"
-        if tavily_denied_audit "$audit_start" "$probe_pid"; then
+        if await_tavily_denied_audit "$audit_start" "$probe_pid"; then
           pass "post-removal Tavily request has DENIED audit evidence"
         else
           fail_test "post-removal Tavily DENIED audit evidence is missing"
@@ -304,7 +317,7 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "audit-cleanup" ]; then
       return 1
     fi
     case "$2" in
-      get) printf '{"settings":{"ocsf_json_enabled":"%s"}}' "$(cat "$AUDIT_FIXTURE")" ;;
+      get) printf '{"settings":{"ocsf_json_enabled":{"scope":"sandbox","value":"%s"}}}' "$(cat "$AUDIT_FIXTURE")" ;;
       set) printf '%s' "$7" >"$AUDIT_FIXTURE" ;;
       delete) printf '%s' '<unset>' >"$AUDIT_FIXTURE" ;;
       *) return 1 ;;

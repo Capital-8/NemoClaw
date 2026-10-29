@@ -594,7 +594,7 @@ const audit = path.join(root, "audit");
 const projectPython = "/sandbox/.nemoclaw-e2e-project-venv/bin/python3";
 switch (args.slice(0, 2).join(" ")) {
   case "settings get":
-    console.log(JSON.stringify({ settings: { ocsf_json_enabled: fs.readFileSync(audit, "utf8") } }));
+    console.log(JSON.stringify({ settings: { ocsf_json_enabled: { scope: "sandbox", value: fs.readFileSync(audit, "utf8") } } }));
     break;
   case "settings set":
     fs.writeFileSync(audit, args[args.indexOf("--value") + 1]);
