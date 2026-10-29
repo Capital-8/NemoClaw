@@ -10,7 +10,16 @@ vi.mock("./blueprint/state.js", () => ({
 }));
 
 import { loadState } from "./blueprint/state.js";
-import { getRuntimeSummary, registerRuntimeContext } from "./runtime-context.js";
+import {
+  getRuntimeSummary,
+  registerRuntimeContext,
+  suppliedSearchSources,
+} from "./runtime-context.js";
+
+const publicFetchPrompts = [
+  "Use the web_fetch tool to fetch exactly this URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf web_fetch is not a directly callable tool, invoke it through tool_call with id openclaw:core:web_fetch and the URL in args.url.\nYou may use tool_search and tool_describe only to discover web_fetch. Do not call an unexposed tool directly.\nAfter web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
+  "Use web_fetch to fetch exactly this public HTTPS URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.\nDo not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.\nSet web_fetch maxChars to no more than 8000.\nAfter web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
+];
 
 const mockedLoadState = vi.mocked(loadState);
 
@@ -269,6 +278,28 @@ describe("registerRuntimeContext", () => {
     "Query current stock prices.",
     "Research the build error rate in cloud software.",
     "Research shell history vulnerabilities.",
+    "Find where this function is called on the web.",
+    "Find the unit test that covers handleRequest using Tavily.",
+    "Find where this function is called online.",
+    "Find the unit test that covers handleRequest online.",
+    "Find where this function is called. Then research the official installation documentation.",
+    "Find the unit test that covers handleRequest. Then search for the latest installation documentation.",
+    "Find references to the official NemoClaw installation documentation.",
+    "Find the definition of the current Apple stock price.",
+    "Find the latest documentation for function handleRequest.",
+    "Find where handleRequest is called and fix the bug, then search the web for official installation documentation.",
+    "Find all callers of handleRequest and update them using Tavily.",
+    "Find where handleRequest is called and fix the bug using Brave.",
+    "Find all callers of handleRequest and update them from the web.",
+    "Find all callers of handleRequest and update them from online documentation.",
+    "Find all callers of handleRequest and update them, then find alternative installation guides.",
+    "Find where handleRequest is called and fix the bug and get the latest installation documentation.",
+    "Find and update all callers of handleRequest and search using Tavily.",
+    "Find and refactor the official installation documentation.",
+    "Find all callers of handleRequest and run web_search.",
+    "Find all callers of handleRequest, search the web for installation documentation.",
+    "Find all callers of handleRequest and then research the latest installation documentation.",
+    "Find all callers of handleRequest, and then look up the current Apple stock price.",
     "Look up today\u2019s weather.",
     "Find the current population of Canada.",
     "Locate current airline prices.",
@@ -335,6 +366,54 @@ describe("registerRuntimeContext", () => {
     "Find and summarize the installation instructions in README.md.",
     "Search for logs and traces in this project.",
     "Find the bug in src/index.ts and fix it.",
+    "Find where this function is called.",
+    "Find the unit test that covers handleRequest.",
+    "Find where handleRequest is defined.",
+    "Locate where this method is invoked.",
+    "Find all callers of handleRequest.",
+    "Find call sites for this function.",
+    "Search for references to handleRequest.",
+    "Look up the definition of handleRequest.",
+    "Find usages of this variable.",
+    "Find the implementation of function handleRequest.",
+    "Locate integration tests exercising handleRequest.",
+    "Find the existing unit test that exercises handleRequest.",
+    "Find which function calls handleRequest.",
+    "Find the function that calls handleRequest.",
+    "Find which unit test covers handleRequest.",
+    "Find unit tests for handleRequest.",
+    "Find test coverage for handleRequest.",
+    "Find this function's callers.",
+    "Find the class that implements Handler.",
+    "Find where handleRequest is called and fix the bug.",
+    "Find all callers of handleRequest and update them.",
+    "Find where this method is invoked, then repair it.",
+    "Find the unit test that covers handleRequest and edit it.",
+    "Locate the definition of handleRequest and inspect it.",
+    "Find references to handleRequest and replace them.",
+    "Find all callers of handleRequest and refactor them.",
+    "Find all callers of handleRequest and rename them.",
+    "Find all callers of handleRequest and modify them.",
+    "Find all callers of handleRequest and remove the unused ones.",
+    "Find all callers of handleRequest and delete the unused ones.",
+    "Find test coverage for handleRequest and add a regression test.",
+    "Find where handleRequest is called and debug the failure.",
+    "Find all callers of handleRequest and test them.",
+    "Find all callers of handleRequest and run the unit tests.",
+    "Find all callers of handleRequest and format them.",
+    "Find all callers of handleRequest and lint them.",
+    "Find all callers of handleRequest and verify them.",
+    "Find all callers of handleRequest and check them.",
+    "Find all callers of handleRequest and please update them.",
+    "Find where handleRequest is called and fix the bug, then run the unit tests.",
+    "Find and refactor all callers of handleRequest.",
+    "Find and rename all callers of handleRequest.",
+    "Find all callers of handleRequest and then update them.",
+    "Find all callers of handleRequest, update them.",
+    "Find all callers of handleRequest, and then update them.",
+    "Find and then refactor all callers of handleRequest.",
+    "Find all callers of handleRequest; update them.",
+    "Find all callers of handleRequest.\nUpdate them.",
     "Find and fix the bug in src/index.ts, then test it.",
     "Find and fix the bug in src/index.ts and do not search online.",
     "Search and read README.md and don't look up alternatives online.",
@@ -540,6 +619,10 @@ describe("registerRuntimeContext", () => {
     "Browse the web using web_fetch at this URL: https://docs.nvidia.com/nemoclaw/",
     "Please could you browse online using web_fetch for https://docs.nvidia.com/nemoclaw/?",
     "Browse the internet and fetch https://www.wikidata.org/wiki/Q30.",
+    "Browse the web, fetch https://www.wikidata.org/wiki/Q30.",
+    "Browse the web, retrieve https://docs.nvidia.com/nemoclaw/.",
+    "Browse the web, and fetch https://www.wikidata.org/wiki/Q30.",
+    "Browse the web, then retrieve https://docs.nvidia.com/nemoclaw/.",
     "Browse the web and retrieve https://docs.nvidia.com/nemoclaw/.",
     "Browse the web using web_fetch at this URL:\nhttps://docs.nvidia.com/nemoclaw/",
     "Do not browse the internet. Read /sandbox/README.md.",
@@ -597,6 +680,64 @@ describe("registerRuntimeContext", () => {
     api.config = { tools: { web: { search: { enabled: false } } } };
     registerRuntimeContext(api, defaultConfig);
 
+    expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+      "toolsAllow",
+    );
+  });
+
+  it.each(publicFetchPrompts)(
+    "preserves supplied URL retrieval with discovery instructions: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+      expect(suppliedSearchSources(prompt)).toEqual({
+        local: false,
+        urls: [
+          "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json",
+        ],
+      });
+    },
+  );
+
+  it.each(
+    publicFetchPrompts.flatMap((prompt) =>
+      [
+        "Then search the web for alternatives.",
+        "Then discover the latest installation documentation.",
+        "Then find web_fetch documentation online.",
+        "Then discover web_search.",
+        "Then discover web_fetch using Tavily.",
+      ].map((research) => `${prompt} ${research}`),
+    ),
+  )("withholds tools for supplied retrieval mixed with external research: %s", async (prompt) => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
+    expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+      "toolsAllow",
+      [],
+    );
+    expect(suppliedSearchSources(prompt)).toBeUndefined();
+  });
+
+  it.each([
+    "Discover web_fetch.",
+    "Find the web_fetch tool.",
+    "Search for the web_fetch tool.",
+    "Discover and invoke web_fetch.",
+    "Use tool_search only to discover read.",
+    "Locate the exec tool.",
+    "Find memory_search.",
+    "Discover local filesystem tools.",
+    "Discover available tools.",
+  ])("preserves local tool discovery when search is disabled: %s", async (prompt) => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
     expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
       "toolsAllow",
     );

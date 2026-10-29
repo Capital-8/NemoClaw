@@ -132,11 +132,13 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
     // Coordinated verbs share the following target: "find and fix the bug".
     // Keep the research verb so an external target still requires web search.
     .replace(
-      /\b(search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query|read|summarize)\s+(?:(?:and|then)\s+(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query|provide|show|point|give|summarize|fetch|retrieve|read|get|inspect|fix|repair|replace|edit|update|debug|test)\s+)+/giu,
+      /\b(search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query|read|summarize)\s+(?:(?:and(?:\s+then)?|then)\s+(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query|provide|show|point|give|summarize|fetch|retrieve|read|get|inspect|fix|repair|replace|edit|update|debug|test|modify|refactor|rename|remove|delete|format|lint|verify|check|run|add)\s+)+/giu,
       "$1 ",
     )
+    // A repair clause must not become part of a navigation target. Classify
+    // coordinated requests separately so external research still dominates.
     .split(
-      /(?<=[.!?])\s+|[\n;]+|,\s*(?=(?:google|bing|duckduckgo|search|research|look|find|locate|browse|investigate)\b)|\b(?:and|then|but|instead)\b(?!\s+(?:fetch|retrieve)\s+https?:\/\/)(?=\s+(?:(?:please|could|can|would|you|I|we|do|not|don't|never)\s+)*(?:use|run|ask|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|summarize|fetch|retrieve|read|get|need|want|where|which|what|who|when|how)\b)/iu,
+      /(?<=[.!?])\s+|[\n;]+|(?:,\s*(?=(?:(?:please|could|can|would|you|I|we|do|not|don't|never)\s+)*(?:google|bing|duckduckgo|search|research|look|find|locate|browse|investigate|inspect|fix|repair|replace|edit|update|debug|test|modify|refactor|rename|remove|delete|format|lint|verify|check|run|add)\b)|(?:,\s*)?\b(?:and(?:\s+then)?|then|but(?:\s+then)?|instead)\b)(?!\s*(?:fetch|retrieve)\s+https?:\/\/)(?=\s*(?:(?:please|could|can|would|you|I|we|do|not|don't|never)\s+)*(?:use|run|ask|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|summarize|fetch|retrieve|read|get|inspect|fix|repair|replace|edit|update|debug|test|modify|refactor|rename|remove|delete|format|lint|verify|check|add|need|want|where|which|what|who|when|how)\b)/iu,
     );
   const scopes = requests.map((request): ResearchRequestScope => {
     const requestUrls = Array.from(
@@ -164,7 +166,7 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       );
 
     const externalSource =
-      /^(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search)\b|\b(?:on\s+(?:the\s+)?(?:web|internet)|(?:search|research|browse|look)\s+(?:(?:the|on\s+the)\s+)?(?:web|internet|online)|(?:using|with|via)\s+(?:tavily|brave|google|bing|duckduckgo))\b/iu.test(
+      /^(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search)\b|\b(?:(?:on|from)\s+(?:the\s+)?(?:web|internet|online)|(?:search|research|browse|look)\s+(?:(?:the|on\s+the)\s+)?(?:web|internet|online)|(?:using|with|via)\s+(?:tavily|brave|google|bing|duckduckgo))\b/iu.test(
         source,
       );
     // A local source must be the action's target or an explicit source location.
@@ -173,7 +175,18 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       .slice(action?.[0].length ?? 0)
       .trimStart()
       .replace(/^(?:['’]s|is|are|was|were)\s+/iu, "");
+    const codeNavigationTarget =
+      /^(?:for\s+)?(?:(?:all|the|a|an|which)\s+)?(?:(?:current|latest|recent|existing)\s+)?(?:where\s+(.+?)\s+(?:is|are)\s+(?:called|invoked|defined|declared|implemented|imported|exported|used|referenced|tested)|(?:functions?|methods?|class(?:es)?|modules?)\s+(?:(?:that|which)\s+)?(?:calls?|invokes?|uses?|references?|imports?|exports?|implements?)\s+(.+?)|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?\s+(?:(?:that|which)\s+)?(?:covers?|covering|exercises?|exercising|calls?|calling|tests?|testing|imports?|importing)\s+(.+?)|(?:unit|integration|regression)\s+tests?(?:\s+cases?)?\s+for\s+(.+?)|(?:callers?|call\s+sites?|references?|definitions?|declarations?|implementations?|imports?|exports?|usages?|test\s+coverage)\s+(?:of|to|for)\s+(.+?)|(.+?)['’]s\s+(?:callers?|call\s+sites?))\s*[.!?]*\s*$/iu
+        .exec(subject)
+        ?.slice(1)
+        .find(Boolean);
+    const localCodeNavigation =
+      typeof codeNavigationTarget === "string" &&
+      /^(?:(?:(?:this|that|the|our|my|your)\s+)?(?:function|method|class|symbol|variable|module)(?:\s+[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)?|[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)$/iu.test(
+        codeNavigationTarget,
+      );
     const localSource =
+      localCodeNavigation ||
       /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)*\/|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
         subject,
       ) ||
@@ -192,7 +205,13 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       );
     // Local inspection does not require a supplied retrieval source. Keep it
     // separate from source grants and from requests about an external topic.
+    const localToolDiscovery =
+      /^(?:discover|find|locate|look\s+(?:up|for)|search)\b/iu.test(source) &&
+      /^(?:(?:for|and\s+(?:invoke|call|use))\s+)?(?:(?:the|a|an)\s+)?(?:web_fetch|read|edit|write|apply_patch|exec|process|memory_get|memory_search|(?:(?:available|local|filesystem|shell|memory)\s+)+tools?)(?:\s+tool)?\s*[.!?]*\s*$/iu.test(
+        subject,
+      );
     const localWork =
+      localToolDiscovery ||
       /^(?:for\s+)?(?:(?:out\s+)?(?:which|what|why|how)(?:\s+many)?\s+)?(?:of\s+)?(?:(?:all|any|some|each|every|both|many)(?:\s+of)?\s+)?(?:(?:this|these|those|the|our|my|your|a|an)\s+)?(?:(?:top\s+)?\d+\s+)?(?:(?:(?:current|high|low|excessive)\s+)?(?:disk|storage|memory|cpu)\s+(?:usage|space|pressure)|(?:(?:current|parent|child|running|active|stalled|zombie|background)\s+)?(?:process(?:es)?(?:\s+(?:ids?|identifiers?))?|pids?)|(?:(?:current|latest|recent|largest|biggest|smallest|oldest|newest|duplicate|empty|hidden|temporary|(?:recently\s+)?modified)\s+)?(?:files?|directories|folders?)|(?:file\s*system|file|directory)\s+permissions)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:is|are|was|were|has|have|owns?|uses?|using|listens?|listening|consumes?|consuming|holds?|holding|by|with|that|which|named|matching|larger|smaller|older|newer|for|to|and|then)\b|\s+of\s+(?:(?:this|the|our|my|your)\s+)?(?:shell|process|terminal|server|application|command)\b|\s+(?:in|on|under|within)\s+(?:(?:this|the|our|my|your|local|current|working)\s+)*(?:disk|file\s*system|directory|folder|machine|sandbox|workspace|repo|repository|computer|host)\b)/iu.test(
         subject,
       ) ||

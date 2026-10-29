@@ -139,6 +139,10 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "memory_search",
         "web_fetch",
       ].map((name) => ({ name }));
+      const publicFetchPrompts = [
+        "Use the web_fetch tool to fetch exactly this URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf web_fetch is not a directly callable tool, invoke it through tool_call with id openclaw:core:web_fetch and the URL in args.url.\nYou may use tool_search and tool_describe only to discover web_fetch. Do not call an unexposed tool directly.\nAfter web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
+        "Use web_fetch to fetch exactly this public HTTPS URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.\nDo not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.\nSet web_fetch maxChars to no more than 8000.\nAfter web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
+      ];
       const searchPrompt =
         "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.";
       for (const prompt of [
@@ -171,6 +175,15 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Search the latest Linux documentation for the current directory.",
         "Search for official documentation about local files.",
         "Search for best practices in code review.",
+        "Find where this function is called on the web.",
+        "Find the unit test that covers handleRequest using Tavily.",
+        "Find all callers of handleRequest and search the web for alternatives.",
+        "Find where handleRequest is called and then research online for a solution.",
+        "Find all callers of handleRequest, then use Tavily for alternative implementations.",
+        "Find all callers of handleRequest and update them using Brave.",
+        "Find all callers of handleRequest and update them from the web.",
+        "Find all callers of handleRequest and update them from online documentation.",
+        "Find and refactor official installation documentation.",
         "Search for the latest news in project management.",
         "Google the official NemoClaw installation documentation.",
         "Look up the official NemoClaw installation documentation.",
@@ -206,6 +219,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         );
       }
       for (const prompt of [
+        ...publicFetchPrompts,
         "Read /sandbox/README.md.",
         "Search Dockerfile for the base image",
         "Search Containerfile for the base image.",
@@ -230,6 +244,35 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Search the project for TODO comments.",
         "Find and fix the bug in src/index.ts.",
         "Find and fix the bug in this function.",
+        "Find where this function is called.",
+        "Find the unit test that covers handleRequest.",
+        "Find where handleRequest is defined.",
+        "Locate where this method is invoked.",
+        "Find all callers of handleRequest.",
+        "Find where handleRequest is called and fix the bug.",
+        "Find all callers of handleRequest and update them.",
+        "Find the unit test that covers handleRequest and repair it.",
+        "Find where handleRequest is defined, then refactor it.",
+        "Find all callers of handleRequest, and then update them.",
+        "Find all callers of handleRequest, update them.",
+        "Find and then refactor all callers of handleRequest.",
+        "Browse the web, fetch https://www.wikidata.org/wiki/Q30.",
+        "Browse the web, and fetch https://www.wikidata.org/wiki/Q30.",
+        "Run exactly this shell command: curl https://wttr.in/:help.\nDo not use web_fetch, web_search, or any other weather provider.",
+        "Find call sites for this function.",
+        "Search for references to handleRequest.",
+        "Look up the definition of handleRequest.",
+        "Find usages of this variable.",
+        "Find the implementation of function handleRequest.",
+        "Locate integration tests exercising handleRequest.",
+        "Find the existing unit test that exercises handleRequest.",
+        "Find which function calls handleRequest.",
+        "Find the function that calls handleRequest.",
+        "Find which unit test covers handleRequest.",
+        "Find unit tests for handleRequest.",
+        "Find test coverage for handleRequest.",
+        "Find this function's callers.",
+        "Find the class that implements Handler.",
         "Find the largest files on disk",
         "Investigate the disk usage",
         "Find the process using port 8080.",
@@ -405,7 +448,38 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "completion restores capacity without waiting for retention expiry",
       );
       for (const [prompt, tool, params] of [
+        ...publicFetchPrompts.map(
+          (prompt) =>
+            [
+              prompt,
+              "web_fetch",
+              {
+                url: "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json",
+              },
+            ] as const,
+        ),
         ["Search the project for TODO comments.", "read", { file_path: "/sandbox/README.md" }],
+        ["Find where this function is called.", "read", { file_path: "src/handler.ts" }],
+        [
+          "Find where handleRequest is called and fix the bug.",
+          "read",
+          { file_path: "src/handler.ts" },
+        ],
+        [
+          "Find all callers of handleRequest and update them.",
+          "read",
+          { file_path: "src/handler.ts" },
+        ],
+        [
+          "Find the unit test that covers handleRequest and repair it.",
+          "read",
+          { file_path: "test/handler.test.ts" },
+        ],
+        [
+          "Find the unit test that covers handleRequest.",
+          "read",
+          { file_path: "test/handler.test.ts" },
+        ],
         ["Investigate why the unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
         ["Investigate why unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
         ["Find and fix the failing unit tests.", "read", { file_path: "test/unit.test.ts" }],
