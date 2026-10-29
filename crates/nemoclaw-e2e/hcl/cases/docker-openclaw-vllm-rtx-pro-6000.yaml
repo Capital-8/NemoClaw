@@ -29,7 +29,7 @@ spec:
         toolParser: hermes
         reasoningParser: qwen3
         port: 18898
-        contextTokens: 8192
+        contextTokens: 32768
         maxSequences: 1
         batchTokens: 1024
         speculativeTokens: 0
@@ -63,4 +63,4 @@ spec:
               providerRef: qwen
               overrides:
                 model: Qwen/Qwen3-4B
-                maxTokens: 256
+                maxTokens: 16384

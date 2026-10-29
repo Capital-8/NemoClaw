@@ -58,3 +58,4 @@ spec:
               providerRef: qwen
               overrides:
                 model: Qwen/Qwen3-4B
+                maxTokens: 16384
