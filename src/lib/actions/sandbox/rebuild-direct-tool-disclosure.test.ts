@@ -11,17 +11,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
+  type RebuildFlowOverrides,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import {
   agentDefs,
+  captureResolvedRebuildFixture,
   hermesManagedRoute,
   hermesPostRestore,
   hermesProjection,
   openClawLifecycle,
+  rebuildPostRestore,
   registry,
   sanitizedCapture,
+  sourceSandboxGateway,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
+import {
+  advanceSandboxRecreateTransaction,
+  recordSandboxRecreateTargetCreated,
+} from "../../onboard/sandbox-recreate-transaction";
 import {
   createRestartFixture,
   RUNTIME_CONFIG_GUARD,
@@ -104,7 +112,7 @@ function nativeConfigFixture(
 
 function captureNativeConfigTransport(
   fixture: ReturnType<typeof nativeConfigFixture>,
-  refuseWrite = false,
+  refuseWrite: boolean | (() => boolean) = false,
   recordRead: (argv: readonly string[], options: SpawnSyncOptions) => void = () => {},
 ) {
   const observations: { argv: readonly string[]; input?: string; env?: NodeJS.ProcessEnv }[] = [];
@@ -118,14 +126,12 @@ function captureNativeConfigTransport(
   });
   const runGuardedWrite = (argv: readonly string[], options: SpawnSyncOptions) => {
     const digest = argv[argv.indexOf("--expected-config-sha256") + 1];
-    const written = runWriteConfig(
-      fixture.hermes as RestartFixture,
-      digest,
-      String(options.input),
-      {
-        restoreNativeLocalCredential: argv.includes("--restore-native-local-credential"),
-      },
-    );
+    const refused = typeof refuseWrite === "function" ? refuseWrite() : refuseWrite;
+    const written = refused
+      ? result("", 1, "private-config-fixture-value")
+      : runWriteConfig(fixture.hermes as RestartFixture, digest, String(options.input), {
+          restoreNativeLocalCredential: argv.includes("--restore-native-local-credential"),
+        });
     observations.push({ argv, input: String(options.input), env: options.env });
     return result(written.stdout, written.status ?? 1, written.stderr);
   };
@@ -141,7 +147,7 @@ function captureNativeConfigTransport(
     current.tools ??= {};
     current.tools.toolSearch = updates[0].value;
     observations.push({ argv, input: String(options.input), env: options.env });
-    return refuseWrite
+    return (typeof refuseWrite === "function" ? refuseWrite() : refuseWrite)
       ? result("", 1, "private-config-fixture-value")
       : (fs.writeFileSync(fixture.configPath, JSON.stringify(current)), result());
   };
@@ -184,10 +190,19 @@ function captureNativeConfigTransport(
   return observations;
 }
 
-function configureRebuildHarness(agent: "openclaw" | "hermes", recordedMode = "progressive") {
+function configureRebuildHarness(
+  agent: "openclaw" | "hermes",
+  recordedMode = "progressive",
+  overrides: RebuildFlowOverrides = {},
+) {
   const harness = createRebuildFlowHarness({
+    ...overrides,
     agentName: agent,
-    sandboxEntry: { agent: agent === "openclaw" ? null : agent, toolDisclosure: recordedMode },
+    sandboxEntry: {
+      agent: agent === "openclaw" ? null : agent,
+      toolDisclosure: recordedMode,
+      ...overrides.sandboxEntry,
+    },
   });
   const definition = agentDefs.loadAgent(agent);
   vi.mocked(agentDefs.loadAgent).mockReturnValue({
@@ -230,7 +245,6 @@ describe.skipIf(process.platform === "win32")("rebuild direct tool disclosure", 
   installRebuildFlowTestHooks();
 
   afterEach(() => {
-    vi.restoreAllMocks();
     roots.splice(0).forEach((root) => fs.rmSync(root, { recursive: true, force: true }));
   });
 
@@ -381,7 +395,173 @@ describe.skipIf(process.platform === "win32")("rebuild direct tool disclosure", 
     expect(harness.finishOpenClawMaintenanceWindowSpy).not.toHaveBeenCalled();
     expect(harness.restoreMcpBridgesAfterRebuildSpy).not.toHaveBeenCalled();
     expect(fs.readFileSync(fixture.configPath)).toEqual(fixture.originalBytes);
+    const { manifest } = harness.backupSandboxStateSpy.mock.results[0]!.value as {
+      manifest: { backupPath: string };
+    };
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain(manifest.backupPath);
+    expect(output).toContain("alpha rebuild --yes --tool-disclosure direct");
+    expect(fs.existsSync(path.join(manifest.backupPath, "rebuild-manifest.json"))).toBe(true);
   });
+
+  it.each([false, true])(
+    "applies frozen direct disclosure through real accepted Hermes recovery before activation: explicit retry=%s",
+    async (explicitRetry) => {
+      const fixture = nativeConfigFixture("hermes");
+      let deleted = false;
+      let targetReady = false;
+      let refuseWrite = true;
+      const targetId = "sbx-alpha-replacement";
+      const targetFingerprint = fingerprintOpenShellSandboxId(targetId);
+      const observe = (argv: string[]) =>
+        targetReady && sourceSandboxGateway(argv, "get")
+          ? {
+              status: 0,
+              output: `Name: alpha\nId: ${targetId}\nPhase: Ready\n`,
+              stdout: `Name: alpha\nId: ${targetId}\nPhase: Ready\n`,
+              stderr: "",
+            }
+          : captureResolvedRebuildFixture(argv, new Set(deleted ? ["nemoclaw"] : []));
+      let harness: ReturnType<typeof createRebuildFlowHarness>;
+      harness = configureRebuildHarness("hermes", "progressive", {
+        runOpenshell: (argv) => {
+          deleted ||= sourceSandboxGateway(argv, "delete") !== null;
+          return undefined;
+        },
+        captureOpenshell: observe,
+        captureResolvedOpenshell: observe,
+        onboard: (session, options) => {
+          const current = session as unknown as Parameters<
+            typeof advanceSandboxRecreateTransaction
+          >[0];
+          const transaction = current.checkpoint!.sandboxRecreate!;
+          targetReady = true;
+          advanceSandboxRecreateTransaction(current, transaction.id, "creating");
+          recordSandboxRecreateTargetCreated(current, transaction.id, {
+            state: "ready",
+            liveIdentityFingerprint: targetFingerprint,
+          });
+          harness.registerSandboxEntry("alpha");
+          registry.updateSandbox("alpha", {
+            toolDisclosure: options.toolDisclosure,
+            lifecycleGeneration: transaction.targetGeneration,
+            lifecycleLiveIdentityFingerprint: targetFingerprint,
+          });
+          advanceSandboxRecreateTransaction(current, transaction.id, "registry_committing");
+        },
+      });
+      captureNativeConfigTransport(fixture, () => refuseWrite);
+      vi.spyOn(hermesPostRestore, "recoverHermesCronRestore").mockReturnValue("not-required");
+      const activatedModes: unknown[] = [];
+      harness.restartSandboxGatewaySpy.mockImplementation(() => {
+        activatedModes.push((fixture.read().tools.tool_search as { enabled: string }).enabled);
+        return { ok: true, restarted: true, healthPassed: true, forwardRecovered: false };
+      });
+
+      await expect(
+        harness.rebuildSandbox(
+          "alpha",
+          { yes: true, toolDisclosure: "direct" },
+          { throwOnError: true },
+        ),
+      ).rejects.toEqual(
+        new Error("Direct tool disclosure could not be applied to the rebuilt sandbox."),
+      );
+      expect(activatedModes).toEqual([]);
+      const { manifest } = harness.backupSandboxStateSpy.mock.results[0]!.value as {
+        manifest: { backupPath: string };
+      };
+      const recoveryRecord = path.join(manifest.backupPath, ".nemoclaw-rebuild-recovery.json");
+      expect(fs.existsSync(recoveryRecord)).toBe(true);
+      const checkpoint = structuredClone(harness.session.checkpoint);
+      const registered = harness.getSandboxEntry();
+      vi.mocked(childProcess.spawnSync).mockRestore();
+      const restarted = configureRebuildHarness("hermes", "direct", {
+        sandboxEntry: { ...registered },
+        captureOpenshell: observe,
+        captureResolvedOpenshell: observe,
+      });
+      restarted.session.checkpoint = checkpoint;
+      restarted.runOpenshellSpy.mockClear();
+      restarted.onboardSpy.mockClear();
+      restarted.backupSandboxStateSpy.mockClear();
+      captureNativeConfigTransport(fixture, () => refuseWrite);
+      restarted.restartSandboxGatewaySpy.mockImplementation(() => {
+        activatedModes.push((fixture.read().tools.tool_search as { enabled: string }).enabled);
+        return { ok: true, restarted: true, healthPassed: true, forwardRecovered: false };
+      });
+      refuseWrite = false;
+
+      await restarted.rebuildSandbox(
+        "alpha",
+        explicitRetry ? ["--yes", "--tool-disclosure", "direct"] : ["--yes"],
+        { throwOnError: true },
+      );
+
+      expect(activatedModes).toEqual(["off"]);
+      expect((fixture.read().tools.tool_search as { enabled: string }).enabled).toBe("off");
+      expect(strictHashIsValid(fixture.hermes!)).toBe(true);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+      expect(restarted.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(
+        restarted.runOpenshellSpy.mock.calls.some(([argv]) => (argv as string[])[1] === "delete"),
+      ).toBe(false);
+      expect(fs.existsSync(recoveryRecord)).toBe(false);
+    },
+  );
+
+  it.each([
+    { agent: "hermes" as const, cron: true, retained: false, backup: true },
+    { agent: "hermes" as const, cron: false, retained: true, backup: true },
+    { agent: "hermes" as const, cron: false, retained: false, backup: true },
+    { agent: "openclaw" as const, cron: false, retained: false, backup: false },
+  ])(
+    "reports direct configuration failure for $agent with cron=$cron retained=$retained backup=$backup",
+    async ({ agent, cron, retained, backup }) => {
+      const fixture = nativeConfigFixture(agent);
+      const harness = configureRebuildHarness(agent);
+      captureNativeConfigTransport(fixture, true);
+      const bail = vi.fn((): never => {
+        throw new Error("exit-backed failure boundary");
+      });
+
+      await expect(
+        rebuildPostRestore.runRebuildPostRestorePhase({
+          sandboxName: "alpha",
+          targetAgentName: agent,
+          messagingPlan: null,
+          backupManifest: backup ? ({ backupPath: "/retained/alpha" } as never) : null,
+          mcpEntries: [],
+          restoreSucceeded: true,
+          forceDirectToolDisclosure: true,
+          hermesCronRestoreIdentity: cron
+            ? { pid: 41, start_time: 902, drain_token: "restore-token" }
+            : undefined,
+          preparedBackupRecovery: retained,
+          versionCheck: { expectedVersion: null } as never,
+          log: vi.fn(),
+          bail,
+        }),
+      ).rejects.toEqual(
+        new Error("Direct tool disclosure could not be applied to the rebuilt sandbox."),
+      );
+
+      const output = harness.errorSpy.mock.calls.flat().join("\n");
+      expect(output).toContain("Direct tool disclosure configuration remains incomplete");
+      expect(output).toContain("nemoclaw alpha rebuild --yes --tool-disclosure direct");
+      expect(output.includes("/retained/alpha")).toBe(backup);
+      expect(output.includes("Hermes cron dispatch remains drained")).toBe(cron);
+      expect(output.includes("nemoclaw alpha recover")).toBe(cron || retained);
+      expect(output.includes("Recovery alone does not complete direct tool disclosure")).toBe(
+        cron || retained,
+      );
+      expect(output).not.toContain("private-config-fixture-value");
+      expect(bail).not.toHaveBeenCalled();
+      expect(harness.finishOpenClawMaintenanceWindowSpy).not.toHaveBeenCalled();
+      expect(harness.restartSandboxGatewaySpy).not.toHaveBeenCalled();
+      expect(harness.restoreMcpBridgesAfterRebuildSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { agent: "openclaw" as const, parent: "tools" },

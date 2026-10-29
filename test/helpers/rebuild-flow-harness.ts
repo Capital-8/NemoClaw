@@ -61,6 +61,9 @@ export const hermesProjection = requireDist(
 export const hermesPostRestore = requireDist(
   "./rebuild-hermes-post-restore.js",
 ) as typeof import("../../src/lib/actions/sandbox/rebuild-hermes-post-restore");
+export const rebuildPostRestore = requireDist(
+  "./rebuild-post-restore-phase.js",
+) as typeof import("../../src/lib/actions/sandbox/rebuild-post-restore-phase");
 export const hermesManagedRoute: typeof import("../../src/lib/hermes-managed-route") = requireDist(
   "../../hermes-managed-route.js",
 );
