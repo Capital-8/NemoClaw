@@ -410,14 +410,15 @@ export function captureOpenshellCommandAsyncResult(
     const interruptionError = (signal: "SIGTERM" | "SIGINT") =>
       Object.assign(new Error(`OpenShell command cancelled by ${signal}`), { code: "ECANCELED" });
     const beginInterruption = (signal: "SIGTERM" | "SIGINT") => {
-      if (settled || timedOut || interruptedBy) return;
+      if (settled || interruptedBy) return;
       interruptedBy = signal;
-      releaseSignals();
       if (timeoutHandle) clearTimeout(timeoutHandle);
+      if (opts.forceKillOnInterrupt) releaseSignals();
       signalProcessTree(child, signal);
       // Policy submission may re-raise the signal on the next turn, before
       // this process can run its grace timer. Reap that owned child now.
       if (opts.forceKillOnInterrupt) signalProcessTree(child, "SIGKILL");
+      if (timedOut) return;
       killHandle = setTimeout(() => {
         signalProcessTree(child, "SIGKILL");
         forceHandle = setTimeout(() => {
