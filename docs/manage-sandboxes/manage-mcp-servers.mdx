@@ -267,6 +267,10 @@ The retry verifies that the entry is still absent and compares any remaining pol
 Provider detachment still requires an exact match with the live provider identity.
 NemoClaw preserves unproven entries and refuses removal when the same server exists in both legacy and native configuration.
 
+If you plan to add this server again, record its current `--deny-tool` selectors before removal.
+Also record its trusted-private declaration from `--trusted-private-host` or `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`.
+Removal deletes the generated policy, and NemoClaw does not retain the environment declaration after `mcp add` returns.
+
 Remove the named registration:
 
 ```bash
@@ -308,6 +312,10 @@ The replacement image must expose native MCP capability v3 before NemoClaw resto
 If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state at the path used by the surviving image. A later `mcp restart` can retry an incomplete post-rebuild restore.
 
 ## Destroy a Sandbox with MCP State
+
+Before destruction, record each server's current `--deny-tool` selectors if you plan to recreate its registration.
+Also record its trusted-private declaration from `--trusted-private-host` or `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`.
+Destroy deletes the generated policies, and NemoClaw does not retain the environment declaration after `mcp add` returns.
 
 Destroy reads the current agent and OpenShell sources before deletion but does not scrub a separate MCP registry or write destroy markers. OpenShell deletes the sandbox-scoped policy and attachments with the sandbox. NemoClaw preserves workspace-level MCP providers and prints their exact names for later inspection.
 A preserved provider blocks `mcp add` for the same server name on a recreated sandbox with the same name.

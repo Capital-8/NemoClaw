@@ -174,7 +174,11 @@ openshell sandbox provider detach -g <gateway-name> <sandbox-name> <provider-nam
 
 Inspect that sandbox's providers again.
 When no sandbox lists the provider, run `openshell provider delete -g <gateway-name> <provider-name>`.
-Export the credential under the original environment-variable name, then rerun `mcp add`.
+If you cannot establish the previous denied-tool settings and trusted-private declaration, stop before re-adding the server.
+Export the credential under the original environment-variable name.
+If the original declaration used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again instead of passing `--trusted-private-host`.
+Omit either setting only when the original registration did not use it.
+Run `mcp add` with each recorded `--deny-tool` selector and the recorded trusted-private declaration.
 Run `$$nemoclaw <sandbox> mcp status <server> --json` and confirm that `provider.credentialReady` and `adapter.registered` are both `true`.
 
 ## Add Transaction Is Incomplete
