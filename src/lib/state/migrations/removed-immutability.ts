@@ -175,7 +175,7 @@ export function assertRemovedImmutabilityRecoveryDownloadArtifactSafe(
   let inspectedEntries = 0;
   while (pending.length > 0) {
     const { entryPath, depth, checkSegmentName } = pending.pop()!;
-    inspectedEntries += 1;
+    inspectedEntries += Math.sign(depth);
     if (
       depth > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH ||
       inspectedEntries > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES

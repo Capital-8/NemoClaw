@@ -641,6 +641,17 @@ describe("downloadFromSandbox", () => {
         fs.truncateSync(destination, 16 * 1024 * 1024 + 1);
       },
     },
+    {
+      name: "staged directory entry overflow",
+      elapsedMs: 250,
+      expected: /recovery transfer could not be inspected/u,
+      prepare: (destination: string) => {
+        fs.mkdirSync(destination, { recursive: true });
+        Array.from({ length: 4_097 }, (_, index) => {
+          fs.writeFileSync(path.join(destination, `note-${index}.md`), "ok\n");
+        });
+      },
+    },
   ])(
     "stops a legacy recovery transfer on $name and removes staging",
     async ({ elapsedMs, expected, prepare }) => {
@@ -690,6 +701,89 @@ describe("downloadFromSandbox", () => {
       }
     },
   );
+
+  it("accepts a legacy recovery directory with 4,096 entries and rejects 4,097 entries", async () => {
+    vi.restoreAllMocks();
+    vi.useFakeTimers();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-download-legacy-entry-limit-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", root);
+    try {
+      fs.writeFileSync(path.join(root, "shields-alpha.json"), "{}\n");
+      captureMock.mockReturnValue({
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: "dir",
+        stderr: "",
+      });
+      let entryCount = 4_096;
+      let stagedDestination = "";
+      let started!: () => void;
+      const transferStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      runMock.mockImplementation(({ destination }: { destination: string }) => {
+        stagedDestination = destination;
+        fs.mkdirSync(destination, { recursive: true });
+        Array.from({ length: entryCount }, (_, index) => {
+          fs.writeFileSync(path.join(destination, `note-${index}.md`), "safe note\n");
+        });
+        started();
+        return new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                outcome: { kind: "completed", exitCode: 0 },
+                release: vi.fn(),
+                wasInterrupted: () => false,
+              }),
+            250,
+          );
+        });
+      });
+
+      const allowedHostDest = path.join(root, "out-allowed");
+      const allowedDownload = downloadFromSandbox({
+        sandboxName: "alpha",
+        sandboxPath: "/sandbox/.openclaw/workspace/memory",
+        hostDest: allowedHostDest,
+      });
+      await transferStarted;
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(allowedDownload).resolves.toEqual({
+        sandboxPath: "/sandbox/.openclaw/workspace/memory",
+        hostDest: allowedHostDest,
+      });
+      expect(publishMock).toHaveBeenCalledWith(stagedDestination, allowedHostDest, "dir");
+
+      publishMock.mockClear();
+      entryCount = 4_097;
+      runMock.mockImplementationOnce(async ({ destination }: { destination: string }) => {
+        fs.mkdirSync(destination, { recursive: true });
+        Array.from({ length: entryCount }, (_, index) => {
+          fs.writeFileSync(path.join(destination, `note-${index}.md`), "safe note\n");
+        });
+        return {
+          outcome: { kind: "completed", exitCode: 0 },
+          release: vi.fn(),
+          wasInterrupted: () => false,
+        };
+      });
+
+      await expect(
+        downloadFromSandbox({
+          sandboxName: "alpha",
+          sandboxPath: "/sandbox/.openclaw/workspace/memory",
+          hostDest: path.join(root, "out-rejected"),
+        }),
+      ).rejects.toThrow(
+        /Cannot download '\/sandbox\/\.openclaw\/workspace\/memory'.*directory depth or entry limit.*Do not destroy the sandbox/u,
+      );
+      expect(publishMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it.runIf(process.platform !== "win32")(
     "rejects an oversized allowlisted recovery file or directory before transfer when a legacy Shields record exists",

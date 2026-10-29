@@ -103,12 +103,12 @@ const SANDBOX_SOURCE_PROBE_SCRIPT = [
   "printf missing",
 ].join("\n");
 
-function stagedRecoveryFileExceedsLimit(directory: string, maxFileBytes: number): boolean {
-  const pending = [{ entry: directory, depth: 0 }];
+function stagedRecoveryFileExceedsLimit(stagedArtifact: string, maxFileBytes: number): boolean {
+  const pending = [{ entry: stagedArtifact, depth: 0 }];
   let inspectedEntries = 0;
   while (pending.length > 0) {
     const { entry, depth } = pending.pop()!;
-    inspectedEntries += 1;
+    inspectedEntries += Math.sign(depth);
     if (
       inspectedEntries > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES ||
       depth > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH
@@ -127,10 +127,10 @@ function stagedRecoveryFileExceedsLimit(directory: string, maxFileBytes: number)
       try {
         for (let child = children.readSync(); child !== null; child = children.readSync()) {
           if (
-            inspectedEntries + pending.length >=
-            MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES
+            depth + 1 > MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_DEPTH ||
+            inspectedEntries + pending.length >= MAX_REMOVED_IMMUTABILITY_RECOVERY_DOWNLOAD_ENTRIES
           ) {
-            throw new Error("Recovery transfer inspection exceeded its entry limit.");
+            throw new Error("Recovery transfer inspection exceeded its entry or depth limit.");
           }
           pending.push({ entry: path.join(entry, child.name), depth: depth + 1 });
         }
@@ -303,7 +303,7 @@ export async function downloadFromSandbox(
         const sizeMonitor = recoveryAbort
           ? setInterval(() => {
               try {
-                if (stagedRecoveryFileExceedsLimit(stagingDir, maxRecoveryBytes!)) {
+                if (stagedRecoveryFileExceedsLimit(stagedArtifact, maxRecoveryBytes!)) {
                   recoveryAbortReason = "oversized";
                   recoveryAbort.abort();
                 }
