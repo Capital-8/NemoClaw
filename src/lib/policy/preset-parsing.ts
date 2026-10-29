@@ -338,9 +338,11 @@ export function bindWebSearchPresetProviders(input: {
   readonly sandboxName: string;
   readonly agentName?: string | null;
   readonly availableProviders: ReadonlySet<string>;
+  readonly attachedProviders?: ReadonlySet<string> | null;
   readonly providerTypes?: Readonly<Record<string, string | null | undefined>>;
   readonly contracts?: Readonly<Record<string, WebSearchEndpointContract | null>>;
 }): string {
+  if (input.attachedProviders === null) return input.content;
   let content = input.content;
   for (const presetName of Object.keys(WEB_SEARCH_PRESET_PROVIDER_SUFFIXES)) {
     // Hermes Tavily and every Brave provider use an endpoint-bearing profile.
@@ -357,6 +359,7 @@ export function bindWebSearchPresetProviders(input: {
       sandboxName: input.sandboxName,
       agentName: input.agentName,
       availableProviders: input.availableProviders,
+      attachedProviders: input.attachedProviders,
       providerTypes: input.providerTypes,
     });
     content = applyWebSearchCredentialBinding(

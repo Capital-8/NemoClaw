@@ -17,6 +17,8 @@ import {
   mergeReplacementPolicyAccess,
   readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
+import { selectRebuildCreatePolicy } from "./orchestration";
+import { resolveRebuildWebSearchProviderTypes } from "./provider-publication";
 
 const roots: string[] = [];
 
@@ -522,6 +524,49 @@ network_policies:
     });
     expect(legacyHandoff.policyPath).toBe(livePath);
     expect(legacyHandoff.credentialBindingProviders).toEqual([]);
+
+    const messagingProviderRequests = [
+      {
+        name: "alpha-tavily-search",
+        envKey: "TAVILY_API_KEY",
+        channel: null,
+        credentialConfigured: true,
+        providerType: "tavily-policy-binding-v1",
+      },
+    ] as const;
+    return resolveRebuildWebSearchProviderTypes({
+      rebuildPolicySourcePath: livePath,
+      sandboxName: "alpha",
+      agentName: "openclaw",
+      extraProviders: [],
+      messagingProviderRequests,
+      gatewayName: "nemoclaw",
+      runOpenshell: vi.fn(),
+    }).then((providerTypes) => {
+      const openClawHandoff = selectRebuildCreatePolicy(
+        livePath,
+        { policyPath: replacementPath, appliedPresets: [] },
+        [],
+        [],
+        [],
+        "openclaw",
+        null,
+        "alpha",
+        [],
+        undefined,
+        null,
+        [...messagingProviderRequests.map((request) => request.name)],
+        providerTypes,
+      );
+      expect(openClawHandoff.credentialBindingProviders).toEqual(["alpha-tavily-search"]);
+      const openClawEndpoint = readPrivatePolicy(openClawHandoff.policyPath).policy as {
+        network_policies: { tavily: { endpoints: Array<Record<string, unknown>> } };
+      };
+      expect(openClawEndpoint.network_policies.tavily.endpoints[0]!.credential_binding).toEqual({
+        provider: "alpha-tavily-search",
+      });
+      expect(openClawHandoff.cleanup?.()).toBe(true);
+    });
   });
 
   it("leaves a substituted web-search endpoint unbound", () => {

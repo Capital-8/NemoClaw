@@ -3034,7 +3034,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicyProviderAuthority,
           rebuildPolicySource?.document,
           resolvedCreateIntent.inferenceProvider,
-          resolvedCreateIntent.extraProviders,
+          [
+            ...resolvedCreateIntent.extraProviders,
+            ...resolvedCreateIntent.messagingProviderRequests.map((request) => request.name),
+          ],
           rebuildWebSearchProviderTypes,
         )
       : materializedInitialSandboxPolicy;

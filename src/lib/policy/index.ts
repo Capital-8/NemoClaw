@@ -83,10 +83,10 @@ import {
   type PolicyObject,
   type PolicyValue,
   parseNetworkPolicies,
-  applyWebSearchCredentialBinding,
+  bindWebSearchPresetProviders,
   getWebSearchPresetContracts,
   isWebSearchPolicyPreset,
-  resolveWebSearchCredentialProvider,
+  webSearchCredentialProviderCandidates,
 } from "./preset-parsing";
 import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
 import { parseAndValidateSandboxPolicy } from "./sandbox-policy-validation";
@@ -470,38 +470,25 @@ async function observedSandboxAttachments(sandboxName: string): Promise<readonly
   }
 }
 
-function bindWebSearchPreset(
-  content: string,
-  presetName: string,
+async function observeAttachedTavilyProviderProfiles(
   sandboxName: string,
-  agentName: string | null,
-  attachedProviders: readonly string[] | null,
-  recordedProviders: readonly string[] | undefined,
-  attachedProviderProfiles?: Readonly<Record<string, string | null | undefined>>,
-): string {
-  // Hermes Tavily and every Brave provider use an endpoint-bearing profile.
-  // The pinned OpenShell release rejects a policy binding that names that
-  // provider, and the profile attachment delivers the credential itself.
-  if (
-    presetName === "brave" ||
-    (presetName === "tavily" && agentName?.trim().toLowerCase() === "hermes")
-  ) {
-    return content;
+  sandbox: registry.SandboxEntry | null,
+  attachedProviders: readonly string[],
+  recordedProviders?: readonly string[],
+  gatewayName?: string,
+): Promise<Readonly<Record<string, string | null>>> {
+  const available = new Set(recordedProviders ?? recordedWebSearchProviders(sandboxName));
+  const attached = new Set(attachedProviders);
+  const profiles: Record<string, string | null> = {};
+  for (const candidate of webSearchCredentialProviderCandidates(
+    "tavily",
+    sandboxName,
+    sandbox?.agent ?? null,
+  )) {
+    if (!available.has(candidate) || !attached.has(candidate)) continue;
+    profiles[candidate] = await readSandboxProviderProfileType(candidate, sandbox, gatewayName);
   }
-  if (!isWebSearchPolicyPreset(presetName) || attachedProviders === null) return content;
-  return applyWebSearchCredentialBinding(
-    content,
-    presetName,
-    resolveWebSearchCredentialProvider({
-      presetName,
-      sandboxName,
-      agentName,
-      availableProviders: new Set(recordedProviders ?? recordedWebSearchProviders(sandboxName)),
-      attachedProviders: new Set(attachedProviders),
-      providerTypes: attachedProviderProfiles,
-    }),
-    webSearchPresetContracts()[presetName] ?? null,
-  );
+  return profiles;
 }
 
 /**
@@ -570,30 +557,27 @@ async function loadPresetForSandbox(
     attachedProviderProfiles === undefined &&
     options.attachedProviders === undefined
   ) {
-    const candidate = resolveWebSearchCredentialProvider({
-      presetName,
+    attachedProviderProfiles = await observeAttachedTavilyProviderProfiles(
       sandboxName,
-      agentName: sandboxAgent,
-      availableProviders: new Set(
-        options.recordedProviders ?? recordedWebSearchProviders(sandboxName),
-      ),
-      attachedProviders: new Set(attachedProviders),
-    });
-    if (candidate) {
-      attachedProviderProfiles = {
-        [candidate]: await readSandboxProviderProfileType(candidate, sandbox, options.gatewayName),
-      };
-    }
+      sandbox,
+      attachedProviders,
+      options.recordedProviders,
+      options.gatewayName,
+    );
   }
-  const boundPresetContent = bindWebSearchPreset(
-    resolvedPresetContent,
-    presetName,
-    sandboxName,
-    sandboxAgent,
-    attachedProviders,
-    options.recordedProviders,
-    attachedProviderProfiles,
-  );
+  const boundPresetContent = isWebSearchPolicyPreset(presetName)
+    ? bindWebSearchPresetProviders({
+        content: resolvedPresetContent,
+        sandboxName,
+        agentName: sandboxAgent,
+        availableProviders: new Set(
+          options.recordedProviders ?? recordedWebSearchProviders(sandboxName),
+        ),
+        attachedProviders: attachedProviders === null ? null : new Set(attachedProviders),
+        providerTypes: attachedProviderProfiles,
+        contracts: webSearchPresetContracts(),
+      })
+    : resolvedPresetContent;
   return presetName === "outlook" &&
     sandboxAgent !== "hermes" &&
     configuredMessagingChannels.includes("teams")
@@ -1843,14 +1827,16 @@ function mergePresetNamesIntoPolicy(
     });
     const presetContent =
       loaded && isWebSearchPolicyPreset(presetName)
-        ? bindWebSearchPreset(
-            loaded,
-            presetName,
-            options.sandboxName ?? "",
-            options.agent ?? null,
-            planned ?? null,
-            planned,
-          )
+        ? bindWebSearchPresetProviders({
+            content: loaded,
+            sandboxName: options.sandboxName ?? "",
+            agentName: options.agent ?? null,
+            availableProviders: new Set(
+              planned ?? recordedWebSearchProviders(options.sandboxName ?? ""),
+            ),
+            attachedProviders: planned ? new Set(planned) : null,
+            contracts: webSearchPresetContracts(),
+          })
         : loaded;
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
@@ -2690,19 +2676,11 @@ async function applyPreset(
     : null;
   let attachedProviderProfiles: Readonly<Record<string, string | null | undefined>> | undefined;
   if (presetName === "tavily" && attachedProviders !== null) {
-    const sandbox = registry.getSandbox(sandboxName);
-    const candidate = resolveWebSearchCredentialProvider({
-      presetName,
+    attachedProviderProfiles = await observeAttachedTavilyProviderProfiles(
       sandboxName,
-      agentName: sandbox?.agent ?? null,
-      availableProviders: recordedWebSearchProviders(sandboxName),
-      attachedProviders: new Set(attachedProviders),
-    });
-    if (candidate) {
-      attachedProviderProfiles = {
-        [candidate]: await readSandboxProviderProfileType(candidate, sandbox),
-      };
-    }
+      registry.getSandbox(sandboxName),
+      attachedProviders,
+    );
   }
   const presetContent = await loadPresetForSandbox(sandboxName, presetName, {
     includeMessagingCredentialBindings: options.includeMessagingCredentialBindings === true,
@@ -2744,19 +2722,11 @@ async function applyPresets(sandboxName: string, presetNames: string[]): Promise
     : null;
   let attachedProviderProfiles: Readonly<Record<string, string | null | undefined>> | undefined;
   if (uniquePresetNames.includes("tavily") && attachedProviders !== null) {
-    const sandbox = registry.getSandbox(sandboxName);
-    const candidate = resolveWebSearchCredentialProvider({
-      presetName: "tavily",
+    attachedProviderProfiles = await observeAttachedTavilyProviderProfiles(
       sandboxName,
-      agentName: sandbox?.agent ?? null,
-      availableProviders: recordedWebSearchProviders(sandboxName),
-      attachedProviders: new Set(attachedProviders),
-    });
-    if (candidate) {
-      attachedProviderProfiles = {
-        [candidate]: await readSandboxProviderProfileType(candidate, sandbox),
-      };
-    }
+      registry.getSandbox(sandboxName),
+      attachedProviders,
+    );
   }
   for (const presetName of uniquePresetNames) {
     const presetContent = await loadPresetForSandbox(sandboxName, presetName, {

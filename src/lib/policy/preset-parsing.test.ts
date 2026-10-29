@@ -7,12 +7,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   listExtraProviders: vi.fn(),
+  readSandboxProviderAttachments: vi.fn(),
+  readSandboxProviderProfileType: vi.fn(),
 }));
 
 vi.mock("../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/registry")>()),
   getSandbox: mocks.getSandbox,
   listExtraProviders: mocks.listExtraProviders,
+}));
+vi.mock("../onboard/gateway-binding", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../onboard/gateway-binding")>()),
+  readSandboxProviderAttachments: mocks.readSandboxProviderAttachments,
+  readSandboxProviderProfileType: mocks.readSandboxProviderProfileType,
 }));
 
 import { loadPresetForSandbox } from "./index";
@@ -153,6 +160,28 @@ describe("web-search credential binding", () => {
     expect(parsed.tavily.endpoints[0].credential_binding).toEqual({ provider: "tavily-search" });
     expect(parsed.brave.endpoints[0].credential_binding).toBeUndefined();
     expect(parsed.weather.endpoints[0].credential_binding).toBeUndefined();
+
+    const unattached = bindWebSearchPresetProviders({
+      content: document,
+      sandboxName,
+      agentName: "langchain-deepagents-code",
+      availableProviders: new Set(["tavily-search"]),
+      attachedProviders: new Set(),
+      contracts: { tavily: tavilyContract },
+    });
+    expect(
+      YAML.parse(unattached).network_policies.tavily.endpoints[0].credential_binding,
+    ).toBeUndefined();
+    expect(
+      bindWebSearchPresetProviders({
+        content: document,
+        sandboxName,
+        agentName: "langchain-deepagents-code",
+        availableProviders: new Set(["tavily-search"]),
+        attachedProviders: null,
+        contracts: { tavily: tavilyContract },
+      }),
+    ).toBe(document);
   });
 });
 
@@ -160,6 +189,8 @@ describe("loadPresetForSandbox web-search binding", () => {
   beforeEach(() => {
     mocks.getSandbox.mockReset();
     mocks.listExtraProviders.mockReset();
+    mocks.readSandboxProviderAttachments.mockReset();
+    mocks.readSandboxProviderProfileType.mockReset();
   });
 
   it("binds the gateway-wide provider for a Deep Agents sandbox", async () => {
@@ -227,6 +258,32 @@ describe("loadPresetForSandbox web-search binding", () => {
 
     expect(tavilyEndpoints(content!)).toEqual([
       expect.not.objectContaining({ credential_binding: expect.anything() }),
+    ]);
+  });
+
+  it("inspects both Tavily candidates and selects the compatible fallback when the preferred candidate is legacy", async () => {
+    mocks.getSandbox.mockReturnValue({
+      name: sandboxName,
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw",
+    });
+    mocks.listExtraProviders.mockReturnValue(["tavily-search"]);
+    mocks.readSandboxProviderAttachments.mockResolvedValue([
+      "tavily-search",
+      `${sandboxName}-tavily-search`,
+    ]);
+    mocks.readSandboxProviderProfileType.mockImplementation(async (provider: string) =>
+      provider === "tavily-search" ? "tavily" : "tavily-policy-binding-v1",
+    );
+
+    const content = await loadPresetForSandbox(sandboxName, "tavily");
+
+    expect(mocks.readSandboxProviderProfileType.mock.calls.map(([provider]) => provider)).toEqual([
+      "tavily-search",
+      `${sandboxName}-tavily-search`,
+    ]);
+    expect(tavilyEndpoints(content!)).toEqual([
+      expect.objectContaining({ credential_binding: { provider: `${sandboxName}-tavily-search` } }),
     ]);
   });
 
