@@ -7,7 +7,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { inspectExtractedDcodeSessionsDatabase } from "./dcode-session-credential-scan.js";
+import { inspectExtractedDcodeSessionsDatabase } from "./sqlite-credential-scan.js";
 
 const fixtures: string[] = [];
 

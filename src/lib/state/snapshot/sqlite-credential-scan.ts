@@ -5,10 +5,7 @@ import { closeSync, constants, fstatSync, openSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import {
-  textContainsCredential,
-  textContainsHighConfidenceCredential,
-} from "../../security/credential-filter.js";
+import { textContainsCredential } from "../../security/credential-filter.js";
 
 function isWithinRoot(candidatePath: string, rootPath: string): boolean {
   const relative = path.relative(rootPath, candidatePath);
@@ -35,6 +32,7 @@ type InspectionFailure = "integrity-check" | "table-name" | "sqlite-query" | "fi
 function databaseContainsCredential(
   databasePath: string,
   reportFailure: (reason: InspectionFailure) => void,
+  inspectBlob: (value: Uint8Array) => boolean,
 ): boolean | null {
   let database: DatabaseSync | null = null;
   try {
@@ -49,17 +47,19 @@ function databaseContainsCredential(
       reportFailure("integrity-check");
       return null;
     }
-    const tables = database
-      .prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table'")
-      .all();
-    for (const table of tables) {
+    const schema = database.prepare("SELECT type, name, sql FROM sqlite_schema").all();
+    for (const table of schema) {
+      if (
+        (typeof table.name === "string" && textContainsCredential(table.name)) ||
+        (typeof table.sql === "string" && textContainsCredential(table.sql))
+      ) {
+        return true;
+      }
+      if (table.type !== "table") continue;
       const tableName = typeof table.name === "string" ? table.name : null;
       if (!tableName) {
         reportFailure("table-name");
         return null;
-      }
-      if (typeof table.sql === "string" && textContainsHighConfidenceCredential(table.sql)) {
-        return true;
       }
       for (const row of database
         .prepare(`SELECT * FROM ${sqliteIdentifier(tableName)}`)
@@ -67,7 +67,7 @@ function databaseContainsCredential(
         for (const value of Object.values(row)) {
           if (
             (typeof value === "string" && textContainsCredential(value)) ||
-            (value instanceof Uint8Array && sessionBlobContainsCredential(value))
+            (value instanceof Uint8Array && inspectBlob(value))
           ) {
             return true;
           }
@@ -83,10 +83,12 @@ function databaseContainsCredential(
   }
 }
 
-export function inspectExtractedDcodeSessionsDatabase(
+function inspectExtractedDatabase(
   scanRoot: string,
   entry: string,
   reportFailure: (reason: InspectionFailure) => void = () => {},
+  inspectBlob: (value: Uint8Array) => boolean = (value) =>
+    textContainsCredential(Buffer.from(value).toString("utf8")),
 ): boolean | null {
   const candidatePath = path.resolve(scanRoot, entry);
   if (!isWithinRoot(candidatePath, scanRoot)) {
@@ -106,5 +108,21 @@ export function inspectExtractedDcodeSessionsDatabase(
   } finally {
     if (descriptor !== null) closeSync(descriptor);
   }
-  return databaseContainsCredential(candidatePath, reportFailure);
+  return databaseContainsCredential(candidatePath, reportFailure, inspectBlob);
+}
+
+export function inspectExtractedDcodeSessionsDatabase(
+  scanRoot: string,
+  entry: string,
+  reportFailure: (reason: InspectionFailure) => void = () => {},
+): boolean | null {
+  return inspectExtractedDatabase(scanRoot, entry, reportFailure, sessionBlobContainsCredential);
+}
+
+export function inspectExtractedSqliteDatabase(
+  scanRoot: string,
+  entry: string,
+  reportFailure: (reason: InspectionFailure) => void = () => {},
+): boolean | null {
+  return inspectExtractedDatabase(scanRoot, entry, reportFailure);
 }

@@ -47,6 +47,117 @@ beforeEach(() => {
 
 describe("complete native OpenClaw WAL persistence", () => {
   it.each([".openclaw", ".openclaw-data"])(
+    "backs up benign %s SQLite cells without treating record framing as a credential",
+    (stateDirectory) => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-record-state-"));
+      try {
+        const nativeRoot = path.join(fixture, "native-home");
+        const databasePath = path.join(nativeRoot, stateDirectory, "state", "openclaw.sqlite");
+        fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+        const database = new DatabaseSync(databasePath);
+        database.exec("CREATE TABLE session_state (prefix TEXT, summary TEXT)");
+        database
+          .prepare("INSERT INTO session_state VALUES (?, ?)")
+          .run("ghp_", "benign-session-context-retained");
+        database.close();
+
+        const backup = sandboxState.backupSandboxState("alpha", {
+          nativeStateSource: {
+            root: "/sandbox",
+            directory: nativeRoot,
+            assertCurrent: vi.fn(),
+          },
+        });
+
+        expect(backup.success, backup.error).toBe(true);
+        sandboxState.inspectNativeSandboxState(
+          backup.manifest!.backupPath,
+          (root: string) => {
+            const archived = new DatabaseSync(
+              path.join(root, stateDirectory, "state", "openclaw.sqlite"),
+              { readOnly: true },
+            );
+            try {
+              expect(archived.prepare("SELECT * FROM session_state").get()).toEqual({
+                prefix: "ghp_",
+                summary: "benign-session-context-retained",
+              });
+            } finally {
+              archived.close();
+            }
+          },
+          `${stateDirectory}/state`,
+        );
+      } finally {
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+
+  describe.each([".openclaw", ".openclaw-data"])(
+    "%s database credential boundary",
+    (stateDirectory) => {
+      it("rejects credentials stored only in a view definition", () => {
+        const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-schema-state-"));
+        try {
+          const nativeRoot = path.join(fixture, "native-home");
+          const databasePath = path.join(nativeRoot, stateDirectory, "state", "openclaw.sqlite");
+          fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+          const database = new DatabaseSync(databasePath);
+          database.exec(`CREATE VIEW cached_secret AS SELECT 'ghp_${"0123456789abcdef"}' AS value`);
+          database.close();
+          const backup = sandboxState.backupSandboxState("alpha", {
+            nativeStateSource: { root: "/sandbox", directory: nativeRoot, assertCurrent: vi.fn() },
+          });
+          expect(backup.success).toBe(false);
+          expect(backup.error).toContain("credential-bearing or uninspectable content");
+        } finally {
+          fs.rmSync(fixture, { recursive: true, force: true });
+        }
+      });
+
+      it.each([
+        ["text credential", `ghp_${"0123456789abcdef"}`],
+        ["JSON credential", '{"API_KEY":"private-example-value"}'],
+        ["BLOB credential", Buffer.from(`ghp_${"fedcba9876543210"}`)],
+        ["DCode-only diagnostic", Buffer.from("\0unexpected token: '%.*s'\0")],
+      ])(
+        "rejects a %s without publishing a backup or changing the live source",
+        (_label, value) => {
+          const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-secret-state-"));
+          try {
+            const nativeRoot = path.join(fixture, "native-home");
+            const databasePath = path.join(nativeRoot, stateDirectory, "state", "openclaw.sqlite");
+            fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+            const database = new DatabaseSync(databasePath);
+            database.exec("CREATE TABLE session_state (content)");
+            database.prepare("INSERT INTO session_state VALUES (?)").run(value);
+            database.close();
+            const before = fs.readFileSync(databasePath);
+
+            const backup = sandboxState.backupSandboxState("alpha", {
+              nativeStateSource: {
+                root: "/sandbox",
+                directory: nativeRoot,
+                assertCurrent: vi.fn(),
+              },
+            });
+
+            expect(backup.success).toBe(false);
+            expect(backup.error).toContain("credential-bearing or uninspectable content");
+            expect(backup.error).toContain(`${stateDirectory}/state/openclaw.sqlite`);
+            expect(fs.readFileSync(databasePath)).toEqual(before);
+            const sandboxBackups = path.join(backupsRoot, "alpha");
+            expect(fs.existsSync(sandboxBackups) ? fs.readdirSync(sandboxBackups) : []).toEqual([]);
+          } finally {
+            fs.rmSync(fixture, { recursive: true, force: true });
+          }
+        },
+      );
+    },
+  );
+
+  it.each([".openclaw", ".openclaw-data"])(
     "retains committed %s WAL state through a private standalone database copy",
     (stateDirectory) => {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-wal-state-"));
