@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { createPhases, context } from "./machine/core-flow-phases-test-fixtures";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
 
 const RECEIPT = {
@@ -78,7 +79,7 @@ function harness(source: Record<string, unknown>) {
         deferPublishedRouteReservation: true,
       },
     );
-  return { run, updateSandbox, revalidateSandboxIdentity };
+  return { setupInference, run, updateSandbox, revalidateSandboxIdentity };
 }
 
 const PUBLISHED_SOURCE = {
@@ -146,6 +147,64 @@ describe("native NVIDIA recreate route reservation (#13810)", () => {
     expect(updateSandbox).toHaveBeenCalledWith(
       "journal-replace",
       expect.objectContaining({ model: "nvidia/nemotron-3-ultra-550b-a55b" }),
+    );
+  });
+
+  it("carries the real deferred route through the provider and sandbox phases", async () => {
+    const events: string[] = [];
+    const { setupInference, updateSandbox } = harness(PUBLISHED_SOURCE);
+    const checkGatewayRouteCompatibility = vi.fn(() => ({ ok: true as const }));
+    const reserveSandboxInferenceRoute = vi.fn(() => {
+      events.push("reserve");
+      return true;
+    });
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const intent = args[15] as { reservePublishedRouteAfterBackup?: () => Promise<void> };
+      events.push("backup");
+      await intent.reservePublishedRouteAfterBackup?.();
+      return "journal-replace";
+    });
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      providerDeps: {
+        setupNim: vi.fn(async () => ({
+          model: "nvidia/nemotron-3-ultra-550b-a55b",
+          provider: "nvidia-prod",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+          hermesAuthMethod: null,
+          hermesToolGateways: [],
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        })),
+        setupInference,
+      },
+      sandboxDeps: {
+        createSandbox,
+        getSandboxRegistryEntry: () => PUBLISHED_SOURCE as never,
+        checkGatewayRouteCompatibility,
+        reserveSandboxInferenceRoute,
+      },
+    });
+
+    const providerResult = await providerPhase.run(
+      context({ fresh: true, sandboxName: "journal-replace" }),
+    );
+    expect(updateSandbox).not.toHaveBeenCalled();
+    await sandboxPhase.run(providerResult.context);
+
+    expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "journal-replace" }),
+    );
+    expect(events).toEqual(["backup", "reserve"]);
+    expect(reserveSandboxInferenceRoute).toHaveBeenCalledWith(
+      "journal-replace",
+      expect.objectContaining({
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        nativeNvidiaProviderAttachment: RECEIPT,
+        reservationSessionId: providerResult.context.session?.sessionId,
+      }),
     );
   });
 });
