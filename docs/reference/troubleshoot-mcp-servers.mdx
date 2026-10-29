@@ -16,6 +16,7 @@ Use the reported status or lifecycle error to choose the matching remediation.
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
 Restart validates and reloads the current provider-backed registration; it never consumes an exported replacement credential.
 To replace the credential, first record the existing `--deny-tool` selectors and trusted-private declaration from `--trusted-private-host` or `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`.
+`mcp remove` deletes the generated policy that holds them.
 Then export the replacement value and remove the server:
 
 ```bash
@@ -26,8 +27,6 @@ $$nemoclaw <sandbox> mcp remove <server>
 If `mcp remove` reports an `MCP cleanup warning`, resolve that warning before you continue.
 If `mcp remove` reports no preserved provider, skip provider deletion and add the server again.
 If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](#add-reports-an-existing-provider) before you add the server again.
-`mcp remove` deletes the generated policy that holds them.
-If the original command used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again for the re-add.
 Add the server again with each recorded denied-tool selector and the recorded trusted-private host:
 
 ```bash
@@ -139,15 +138,18 @@ Do not run the printed `openshell provider delete` command, and do not detach th
 The provider name can belong to an unrelated provider that stores a different credential.
 Stop for any other unresolved cleanup warning before detaching or deleting the provider.
 `mcp add` for the same server name fails while that provider exists.
-If it reports an incompatible provider, stop without deleting it.
+If `mcp add` reports an incompatible provider and you did not reach this procedure from [Provider Uses the Legacy Generic Profile](#provider-uses-the-legacy-generic-profile), stop without deleting it.
 Inspect the provider before proceeding:
 
 ```bash
 openshell provider get -g <gateway-name> <provider-name>
 ```
 
-Confirm that its type is `nemoclaw-mcp-v1`, its only credential key matches the environment variable from the original MCP registration, and its identity matches a provider you know belonged to that registration.
+Confirm that its type is `nemoclaw-mcp-v1`, or `generic` when restart or rebuild reported the legacy generic profile for this server.
+Confirm that its only credential key matches the original registration's environment variable and that its identity matches a provider you know belonged to that registration.
 The name alone cannot prove ownership. If any check is uncertain, keep the provider and stop.
+If `mcp remove` reported a cleanup warning, it did not print the gateway name or delete command.
+After you resolve the warning, run `mcp add` to print the gateway name and delete command.
 Use the gateway name from the `mcp add` error or the `mcp remove` warning to list every sandbox on that gateway:
 
 ```bash
@@ -170,7 +172,8 @@ openshell sandbox provider detach -g <gateway-name> <sandbox-name> <provider-nam
 ```
 
 Inspect that sandbox's providers again.
-When no sandbox lists the provider, run the printed `openshell provider delete` command, then rerun `mcp add`.
+When no sandbox lists the provider, run the printed `openshell provider delete` command.
+Export the credential under the original environment-variable name, then rerun `mcp add`.
 
 ## Add Transaction Is Incomplete
 
@@ -514,6 +517,8 @@ Retry status after DNS recovers.
 
 If status reports `private address pins: drift`, review the endpoint address change before updating access.
 Status, restart, rebuild, and restore do not add new trusted-private addresses.
+Before you remove the server, record its `--deny-tool` selectors.
+`mcp remove` deletes the generated policy that holds them.
 Remove and re-add the server with the same trusted host to perform a new preflight and record new pins:
 
 ```bash
@@ -533,6 +538,9 @@ $$nemoclaw <sandbox> mcp add <server> \
   --trusted-private-host mcp-host.corp.example
 unset LOCAL_MCP_TOKEN
 ```
+
+If the original command used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again.
+Pass `--deny-tool` again for each recorded selector, or omit it when the original registration had none.
 
 A `CONNECT 403` after an address change can mean that OpenShell rejected a current DNS answer outside `allowed_ips`.
 Do not add a provider's complete address range or broaden the policy to bypass the denial.
