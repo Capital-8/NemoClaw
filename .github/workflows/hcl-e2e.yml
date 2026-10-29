@@ -29,11 +29,14 @@ jobs:
           - case: docker-openclaw-nvidia
             deployment: docker-openclaw-nvidia
             runner: ubuntu-24.04
+            platform: linux_amd64
+            image_platform: linux/amd64
             secret: NVIDIA_API_KEY
           - case: docker-openclaw-vllm
-            deployment: docker-openclaw-vllm-rtx-pro-6000
-            # This NVIDIA GPU runner is already used by the main E2E workflow.
-            runner: linux-amd64-gpu-rtxpro6000-latest-1
+            deployment: docker-openclaw-vllm-l4
+            runner: linux-arm64-gpu-l4-latest-1
+            platform: linux_arm64
+            image_platform: linux/arm64
             secret: ""
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
@@ -44,8 +47,8 @@ jobs:
     env:
       CASE: ${{ matrix.case }}
       DEPLOYMENT: ${{ matrix.deployment }}
-      TEST_PLATFORM: linux_amd64
-      AGENT_PLATFORM: linux/amd64
+      TEST_PLATFORM: ${{ matrix.platform }}
+      AGENT_PLATFORM: ${{ matrix.image_platform }}
       CARGO_INCREMENTAL: "0"
       E2E_RUN_NAME: hcl-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -60,7 +63,7 @@ jobs:
           rustflags: ""
       - uses: ./.github/actions/setup-rust
         with:
-          platform: linux_amd64
+          platform: ${{ matrix.platform }}
           save-cache: "false"
       - uses: ./.github/actions/containerd-store
       - name: Require the hosted inference credential

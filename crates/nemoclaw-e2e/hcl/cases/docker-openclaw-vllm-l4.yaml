@@ -18,8 +18,8 @@ spec:
     qwen:
       kind: vllm
       hardware:
-        profile: rtx-pro-6000-blackwell
-        architecture: amd64
+        profile: l4
+        architecture: arm64
       # CI replaces this placeholder with the image built from its candidate checkout.
       image: nc-prototype-vllm@sha256:0000000000000000000000000000000000000000000000000000000000000000
       model:
