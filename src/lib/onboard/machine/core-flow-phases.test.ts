@@ -313,6 +313,94 @@ describe("core onboard flow phases", () => {
     expect(createIntent).not.toHaveProperty("deferSandboxEffectsUntilIdentityVerification");
   });
 
+  it("hands a published native NVIDIA recreation route to the post-backup reservation (#13810)", async () => {
+    const events: string[] = [];
+    const nativeNvidiaProviderAttachment = {
+      schemaVersion: 1 as const,
+      profileId: "nemoclaw-nvidia-inference-v1" as const,
+      providerName: "nemoclaw-nvidia-prod-v1" as const,
+      providerId: "provider-id",
+    };
+    const preparedRoute = {
+      provider: "nvidia-prod",
+      model: "nvidia/changed",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      endpointSource: null,
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      nativeNvidiaProviderAttachment,
+    };
+    const deferredInferenceRoute = vi.fn(
+      async (reserve: (route?: typeof preparedRoute) => void) => {
+        events.push("deferred-route");
+        reserve(preparedRoute);
+      },
+    );
+    const publishedSource = {
+      name: "my-sandbox",
+      provider: "nvidia-prod",
+      model: "nvidia/original",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gpuEnabled: false,
+      nativeNvidiaProviderAttachment,
+    };
+    const checkGatewayRouteCompatibility = vi.fn(() => ({ ok: true as const }));
+    const reserveSandboxInferenceRoute = vi.fn(() => {
+      events.push("reserve");
+      return true;
+    });
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const intent = args[15] as { reservePublishedRouteAfterBackup?: () => Promise<void> };
+      events.push("backup");
+      await intent.reservePublishedRouteAfterBackup?.();
+      return "my-sandbox";
+    });
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      providerDeps: {
+        setupNim: vi.fn(async () => ({
+          model: "nvidia/changed",
+          provider: "nvidia-prod",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+          hermesAuthMethod: null,
+          hermesToolGateways: [],
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        })),
+        setupInference: vi.fn(async () => ({ ok: true as const, deferredInferenceRoute })),
+      },
+      sandboxDeps: {
+        createSandbox,
+        getSandboxRegistryEntry: () => publishedSource,
+        checkGatewayRouteCompatibility,
+        reserveSandboxInferenceRoute,
+      },
+    });
+
+    const providerResult = await providerPhase.run(context({ fresh: true }));
+    expect(providerResult.context.deferredInferenceRoute).toBe(deferredInferenceRoute);
+    await sandboxPhase.run(providerResult.context);
+
+    expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayName: "nemoclaw", sandboxName: "my-sandbox" }),
+    );
+    expect(events).toEqual(["backup", "deferred-route", "reserve"]);
+    expect(reserveSandboxInferenceRoute).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({
+        model: "nvidia/changed",
+        nativeNvidiaProviderAttachment,
+        reservationSessionId: providerResult.context.session?.sessionId,
+      }),
+    );
+  });
+
   it("carries authoritative rebuild policy into sandbox creation", async () => {
     const createSandbox = vi.fn(async () => "created-sandbox");
     const rebuildPolicySourcePath = "/tmp/current-policy.yaml";
