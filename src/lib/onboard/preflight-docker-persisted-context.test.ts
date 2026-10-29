@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenshellSpawnSync } from "../adapters/openshell/client";
 import {
   detectDockerHost,
   observeDockerAuthorityConflict,
@@ -114,6 +115,25 @@ describe("persisted Docker context authority", () => {
     expect(process.env.DOCKER_HOST).toBe(COLIMA_HOST);
     expect(buildSubprocessEnv().DOCKER_HOST).toBe(COLIMA_HOST);
     expect(buildSubprocessEnv().DOCKER_CONTEXT).toBeUndefined();
+
+    const { runOpenshellCommand } = await import("../adapters/openshell/client");
+    const spawnSyncImpl = vi.fn<OpenshellSpawnSync>(() => ({
+      pid: 1,
+      output: [],
+      stdout: "",
+      stderr: "",
+      status: 0,
+      signal: null,
+    }));
+
+    runOpenshellCommand("openshell", ["status"], { spawnSyncImpl });
+
+    expect(spawnSyncImpl).toHaveBeenCalledExactlyOnceWith(
+      "openshell",
+      ["status"],
+      expect.objectContaining({ env: expect.objectContaining({ DOCKER_HOST: COLIMA_HOST }) }),
+    );
+    expect(spawnSyncImpl.mock.calls[0]?.[2].env).not.toHaveProperty("DOCKER_CONTEXT");
   });
 
   it("keeps an explicit Docker host ahead of both context selectors", () => {
