@@ -25,14 +25,14 @@ function isolatedDashboardPort(tmpDir: string): string {
 
 describe.concurrent("Deep Agents recreation restore", () => {
   it.for([
-    { scenario: "marked", marked: true, keep: true },
-    { scenario: "unmarked", marked: false, keep: undefined },
+    { scenario: "a provider change", providerChanged: true, keep: true },
+    { scenario: "no selection change", providerChanged: false, keep: undefined },
   ])(
-    "$scenario recreation journal reaches the Deep Agents config restore option (#13897)",
+    "journals $scenario before deletion and hands it to the Deep Agents config restore (#13897)",
     {
       timeout: 60_000,
     },
-    async ({ marked, keep }, context) => {
+    async ({ providerChanged, keep }, context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dcode-recreate-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -60,8 +60,15 @@ describe.concurrent("Deep Agents recreation restore", () => {
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const processRecovery = require(${processRecoveryPath});
-// The live dcode identity probe needs a running sandbox; this test owns only the restore handoff.
-require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/dcode-selection-drift.ts"))}).createDcodeSelectionDriftReader = () => async () => ({ changed: false, providerChanged: false, modelChanged: false, unknown: false });
+// The live dcode identity probe needs a running sandbox. Report the scenario's drift for
+// the source, and a matching selection for the replacement's final validation.
+let sourceDeleted = false;
+const providerChanged = ${JSON.stringify(providerChanged)};
+require(${JSON.stringify(path.join(repoRoot, "src/lib/onboard/dcode-selection-drift.ts"))}).createDcodeSelectionDriftReader = () => async () => {
+  const drift = providerChanged && !sourceDeleted;
+  return { changed: drift, providerChanged: drift, modelChanged: false, unknown: false };
+};
+const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
@@ -90,7 +97,11 @@ runner.run = (command) => {
   const cmd = _n(command);
   const profileResult = fixtureMocks.mockProviderPreparationRun(command, "nemoclaw", "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
+    events.push({ kind: "delete", reconcile: sessions.loadSession()?.checkpoint?.sandboxRecreate?.reconcileOpenClawInference ?? null });
+    sourceDeleted = true;
+    createdSandbox.delete();
+  }
   events.push({ kind: "run", cmd });
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -177,12 +188,8 @@ const { createSandbox } = require(${onboardPath});
     [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent("langchain-deepagents-code"), null, null, null, []],
     createFixture,
   );
-  // Seed the durable checkpoint left by the interrupted invocation. The resumed
-  // request carries only its existing transaction identity, never fresh authority.
-  const sessions = require(${JSON.stringify(path.join(repoRoot, "src/lib/state/onboard-session.ts"))});
-  const interrupted = sessions.loadSession();
-  if (${JSON.stringify(marked)}) interrupted.checkpoint.sandboxRecreate.reconcileOpenClawInference = true;
-  sessions.saveSession(interrupted);
+  // The sandbox handler marks a journal it opened in this fresh, non-resumed run.
+  createArgs[15] = { ...createArgs[15], recreateTransaction: { ...createArgs[15].recreateTransaction, freshSelection: true } };
   const sandboxName = await createSandbox(...createArgs);
   console.log(JSON.stringify({ sandboxName, events, nativeConfig, registered, sourceId: sourceSandbox.lifecycleLiveIdentityFingerprint, replacementId: createdSandbox.state.sandboxId }));
 })().catch((error) => {
@@ -215,12 +222,16 @@ const { createSandbox } = require(${onboardPath});
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
-      const restore = (
-        payload.events as Array<{
-          kind: string;
-          options?: { targetAgentType?: string; keepReplacementDeepAgentsConfig?: boolean };
-        }>
-      ).find((event) => event.kind === "restore");
+      const events = payload.events as Array<{
+        kind: string;
+        reconcile?: true | null;
+        options?: { targetAgentType?: string; keepReplacementDeepAgentsConfig?: boolean };
+      }>;
+      const deleteIndex = events.findIndex((event) => event.kind === "delete");
+      const restoreIndex = events.findIndex((event) => event.kind === "restore");
+      assert.ok(deleteIndex >= 0 && restoreIndex > deleteIndex, JSON.stringify(events));
+      assert.equal(events[deleteIndex].reconcile, keep ?? null);
+      const restore = events[restoreIndex];
       assert.equal(restore?.options?.targetAgentType, "langchain-deepagents-code");
       assert.equal(restore?.options?.keepReplacementDeepAgentsConfig, keep);
     },

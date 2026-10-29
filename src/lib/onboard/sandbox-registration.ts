@@ -426,10 +426,14 @@ export function prepareCreatedSandboxRegistration(
       endpointUrl: effectiveSelection.endpointUrl,
       gatewayName: input.gatewayName,
     });
+  // A pending row can still describe the replaced source, so its native
+  // NVIDIA attachment applies only to an NVIDIA replacement (#13897).
   const pendingNativeNvidiaProviderAttachment =
     input.nativeNvidiaProviderAttachment !== undefined
       ? input.nativeNvidiaProviderAttachment
-      : pending?.nativeNvidiaProviderAttachment;
+      : effectiveSelection.provider === NVIDIA_HOSTED_LOGICAL_PROVIDER
+        ? pending?.nativeNvidiaProviderAttachment
+        : undefined;
   const pendingNativeHostedProviderAttachment =
     input.nativeHostedProviderAttachment ?? pending?.nativeHostedProviderAttachment;
   const entry = buildCreatedSandboxRegistryEntry({

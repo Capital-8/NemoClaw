@@ -913,6 +913,54 @@ describe("registerCreatedSandbox", () => {
     }
   });
 
+  it.each([
+    { provider: "nvidia-prod", retained: true },
+    { provider: "compatible-endpoint", retained: false },
+  ])(
+    "retains a pending native NVIDIA attachment only for $provider replacements (#13897)",
+    ({ provider, retained }) => {
+      const attachment = {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-nvidia-inference-v1" as const,
+        providerName: "nemoclaw-nvidia-prod-v1" as const,
+        providerId: "11111111-2222-4333-8444-555555555555",
+      };
+      const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+      const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "demo",
+        pendingRouteReservation: true,
+        provider: "nvidia-prod",
+        model: "nvidia/source",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        nativeNvidiaProviderAttachment: attachment,
+      });
+      try {
+        const entry = prepareCreatedSandboxRegistration(
+          createdRegistryEntryInput({
+            inferenceSelection: {
+              model: "nvidia/replacement",
+              provider,
+              endpointUrl: null,
+              credentialEnv: null,
+              preferredInferenceApi: null,
+              compatibleEndpointReasoning: null,
+              compatibleEndpointReasoningEffort: null,
+              nimContainer: null,
+            },
+          }),
+        );
+
+        expect(entry.nativeNvidiaProviderAttachment).toEqual(retained ? attachment : undefined);
+      } finally {
+        getSandbox.mockRestore();
+      }
+    },
+  );
+
   it("fails before registry mutation for an unknown durable provider identity", () => {
     const registerSandbox = vi.fn();
 
