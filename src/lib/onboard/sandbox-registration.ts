@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { requireHostedProviderAttachment } from "../inference/native-provider/hosted-attachment";
+import {
+  hostedNativeProviderForAttachment,
+  requireHostedProviderAttachment,
+} from "../inference/native-provider/hosted-attachment";
 
 import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
@@ -399,6 +402,17 @@ export function loadOnboardCommandResumeSession(): {
     : null;
 }
 
+// Drop only an attachment that provably belongs to another provider; any
+// other value still reaches registry validation and fails closed.
+function pendingHostedAttachmentFor(
+  pending: SandboxEntry | null | undefined,
+  provider: string | null | undefined,
+): SandboxEntry["nativeHostedProviderAttachment"] {
+  const attachment = pending?.nativeHostedProviderAttachment;
+  const owner = hostedNativeProviderForAttachment(attachment)?.logicalProvider;
+  return owner !== undefined && owner !== provider?.trim() ? undefined : attachment;
+}
+
 /** Build and validate the exact registry row without publishing it. */
 export function prepareCreatedSandboxRegistration(
   input: CreatedSandboxRegistrationInput,
@@ -434,8 +448,11 @@ export function prepareCreatedSandboxRegistration(
       : effectiveSelection.provider === NVIDIA_HOSTED_LOGICAL_PROVIDER
         ? pending?.nativeNvidiaProviderAttachment
         : undefined;
+  // The same applies to a pending hosted attachment: keep it only when it is
+  // valid for the replacement's provider.
   const pendingNativeHostedProviderAttachment =
-    input.nativeHostedProviderAttachment ?? pending?.nativeHostedProviderAttachment;
+    input.nativeHostedProviderAttachment ??
+    pendingHostedAttachmentFor(pending, effectiveSelection.provider);
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
     nativeHostedProviderAttachment: pendingNativeHostedProviderAttachment,

@@ -961,6 +961,54 @@ describe("registerCreatedSandbox", () => {
     },
   );
 
+  it.each([
+    { provider: "openai-api", retained: true },
+    { provider: "compatible-endpoint", retained: false },
+  ])(
+    "retains a pending native hosted attachment only for $provider replacements (#13897)",
+    ({ provider, retained }) => {
+      const attachment = {
+        schemaVersion: 1 as const,
+        profileId: "nemoclaw-openai-inference-v1",
+        providerName: "nemoclaw-openai-api-v1",
+        providerId: "11111111-2222-4333-8444-555555555555",
+      };
+      const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+      const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "demo",
+        pendingRouteReservation: true,
+        provider: "openai-api",
+        model: "gpt-source",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        nativeHostedProviderAttachment: attachment,
+      } as never);
+      try {
+        const entry = prepareCreatedSandboxRegistration(
+          createdRegistryEntryInput({
+            inferenceSelection: {
+              model: "replacement",
+              provider,
+              endpointUrl: null,
+              credentialEnv: null,
+              preferredInferenceApi: null,
+              compatibleEndpointReasoning: null,
+              compatibleEndpointReasoningEffort: null,
+              nimContainer: null,
+            },
+          }),
+        );
+
+        expect(entry.nativeHostedProviderAttachment).toEqual(retained ? attachment : undefined);
+      } finally {
+        getSandbox.mockRestore();
+      }
+    },
+  );
+
   it("fails before registry mutation for an unknown durable provider identity", () => {
     const registerSandbox = vi.fn();
 
