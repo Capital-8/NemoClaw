@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-use nemoclaw_e2e::{assert_same_managed_resources, http_fixture, openshell::Fixture};
+use nemoclaw_e2e::{http_fixture, openshell::Fixture};
 use nemoclaw_sdk::config::{Document, ServiceDefinition};
 use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+/// Where a bearer service's container keeps its generated key.
+const KEY: &str = "/credentials/inference-key";
 
 fn save(root: &Path, name: &str, value: &Value) {
     fs::write(root.join(name), serde_json::to_vec(value).unwrap()).unwrap();
@@ -138,8 +141,8 @@ impl Scenario {
         let mut stats = json!({});
         let bearer = "d".repeat(64);
         if authenticated {
-            files["/credentials/inference-key"] = json!({"raw":bearer});
-            stats["/credentials/inference-key"] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
+            files[KEY] = json!({"raw":bearer});
+            stats[KEY] = json!({"name":"inference-key","size":64,"mode":384,"mtime":"2026-09-15T00:00:00Z","linkTarget":""});
         }
         files["/data/status.json"] =
             json!({"phase":"ready","detail":"","updated":"2026-09-15T00:00:00Z","pid":42});
@@ -288,7 +291,6 @@ async fn managed_bearer_credentials_survive_recovery_reapply_and_replacement_out
     bearer_is_registered_once_outside_state(&s);
     let stable = recover_lost_process_and_cache(&s, &volume).await;
     export_and_reapply_are_unchanged(&s, &stable).await;
-    insecure_bearer_key_stops_apply_but_not_export(&s, &stable).await;
     assert_no_probes(&s);
     bearer_survives_compute_replacement(&s, &stable["volume"]).await;
     destroy_retains_storage(&s, &stable["volume"]).await;
@@ -574,9 +576,19 @@ async fn recover_lost_process_and_cache(s: &Scenario, volume: &Value) -> Value {
     rebuilt
 }
 
+// Export does not resolve a bearer service's key (docs/inference.md), so it
+// succeeds while the key is readable by others, which apply refuses. The
+// provider's readiness tests cover that refusal.
 async fn export_and_reapply_are_unchanged(s: &Scenario, stable: &Value) {
     let root = s.root.as_path();
+    let fixture = read(root, "fixture.json");
+    if fixture["stats"].get(KEY).is_some() {
+        let mut insecure = fixture.clone();
+        insecure["stats"][KEY]["mode"] = json!(0o644);
+        save(root, "fixture.json", &insecure);
+    }
     let exported = s.run("export", "", true).await;
+    save(root, "fixture.json", &fixture);
     assert!(!String::from_utf8_lossy(&exported).contains(&s.bearer));
     if s.check_pulls {
         let document = Document::parse(exported.as_slice()).unwrap();
@@ -723,22 +735,6 @@ async fn plans_stop_on_observation_failure(
     assert_eq!(s.runtime_state(), state);
     assert_eq!(&read(root, "engine.json"), stable);
     save(root, "control.json", &json!({}));
-}
-
-// Readiness reads the generated key on every apply and refuses one that others
-// can read. Export reads neither readiness nor the key, so it still succeeds.
-async fn insecure_bearer_key_stops_apply_but_not_export(s: &Scenario, stable: &Value) {
-    let root = s.root.as_path();
-    let state = s.runtime_state();
-    let original = read(root, "fixture.json");
-    let mut insecure = original.clone();
-    insecure["stats"]["/credentials/inference-key"]["mode"] = json!(420);
-    save(root, "fixture.json", &insecure);
-    s.run("export", "", true).await;
-    s.run("apply", "config.yaml", false).await;
-    assert_same_managed_resources(&s.runtime_state(), &state);
-    assert_eq!(&read(root, "engine.json"), stable);
-    save(root, "fixture.json", &original);
 }
 
 fn assert_no_probes(s: &Scenario) {

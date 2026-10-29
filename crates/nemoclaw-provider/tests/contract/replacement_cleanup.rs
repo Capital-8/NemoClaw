@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A container replacement whose cleanup failed, through pinned OpenTofu and
-//! the bundled Docker provider. OpenTofu and the provider own that cleanup
-//! (`docs/provider.md`); the SDK reads their plans and state. The SDK's
-//! `replacement_cleanup` test drives `Deployment` with canned copies of the
-//! shapes this test pins, so a change here must change it too.
+//! How pinned OpenTofu and the bundled Docker provider report a container
+//! replacement whose cleanup is unfinished. OpenTofu and the provider own that
+//! cleanup (`docs/provider.md`), so this test pins only the plans and state the
+//! SDK reads. The SDK's `replacement_cleanup` test drives `Deployment` with
+//! canned copies of these shapes, so a change here must change it too.
 
 use super::vllm_runtime::Workspace;
 use serde_json::{Value, json};
@@ -60,7 +60,7 @@ impl Scenario {
         self.remote.path()
     }
 
-    fn tofu(&self, args: &[&str], success: bool) -> Vec<u8> {
+    fn tofu(&self, args: &[&str]) -> Vec<u8> {
         let output = self
             .workspace
             .command()
@@ -71,9 +71,8 @@ impl Scenario {
             )
             .output()
             .unwrap();
-        assert_eq!(
+        assert!(
             output.status.success(),
-            success,
             "{args:?}\n{}\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -81,21 +80,19 @@ impl Scenario {
         output.stdout
     }
 
-    fn apply(&self, success: bool) {
-        self.tofu(
-            &["apply", "-input=false", "-auto-approve", "-no-color"],
-            success,
-        );
-    }
-
-    /// The saved plan's changes to the container, current and deposed.
+    /// The saved plan's changes to the container, current and deposed. The
+    /// SDK also reads drift, and its canned plans report none for the old
+    /// container.
     fn plan(&self) -> Vec<Value> {
-        self.tofu(
-            &["plan", "-input=false", "-no-color", "-out=cleanup.plan"],
-            true,
-        );
+        self.tofu(&["plan", "-input=false", "-no-color", "-out=cleanup.plan"]);
         let plan: Value =
-            serde_json::from_slice(&self.tofu(&["show", "-json", "cleanup.plan"], true)).unwrap();
+            serde_json::from_slice(&self.tofu(&["show", "-json", "cleanup.plan"])).unwrap();
+        let drift = plan["resource_drift"].as_array().into_iter().flatten();
+        assert!(
+            drift.clone().all(|change| change["deposed"].is_null()),
+            "{:?}",
+            drift.collect::<Vec<_>>()
+        );
         plan["resource_changes"]
             .as_array()
             .unwrap()
@@ -107,7 +104,7 @@ impl Scenario {
 
     /// The state's container objects, current and deposed.
     fn objects(&self) -> Vec<Value> {
-        let state: Value = serde_json::from_slice(&self.tofu(&["show", "-json"], true)).unwrap();
+        let state: Value = serde_json::from_slice(&self.tofu(&["show", "-json"])).unwrap();
         state["values"]["root_module"]["resources"]
             .as_array()
             .into_iter()
@@ -117,12 +114,11 @@ impl Scenario {
             .collect()
     }
 
-    /// The state a replacement leaves when it created the new container but
-    /// did not finish deleting the old one, which `present` says the engine
-    /// still runs. OpenTofu writes this state itself only for
-    /// `create_before_destroy`, which NemoClaw's graphs never set, so this
-    /// fixture writes it.
-    fn interrupt_cleanup(&self, present: bool) {
+    /// Record the old container OpenTofu keeps in state after a replacement
+    /// created the new one but did not finish deleting the old one. OpenTofu
+    /// writes such state itself only for `create_before_destroy`, which
+    /// NemoClaw's graphs never set, so this fixture writes it.
+    fn interrupt_cleanup(&self) {
         let path = self.workspace.path();
         let mut state = read(path, "terraform.tfstate");
         let resource = state["resources"]
@@ -137,6 +133,11 @@ impl Scenario {
         old["attributes"]["name"] = json!(OLD);
         resource["instances"].as_array_mut().unwrap().push(old);
         save(path, "terraform.tfstate", &state);
+    }
+
+    /// Run the old container on the engine, or remove it as a delete whose
+    /// reply was lost would.
+    fn old_container(&self, present: bool) {
         let mut engine = read(self.root(), "engine.json");
         let mut old = engine["container"].clone();
         old["Id"] = json!(OLD);
@@ -166,11 +167,11 @@ fn current(changes: &[Value]) -> &Value {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires NEMOCLAW_TEST_BUNDLE; isolated SSH fixture"]
-async fn opentofu_reports_and_finishes_unfinished_replacement_cleanup() {
+async fn unfinished_replacement_cleanup_plans_in_the_shapes_the_sdk_reads() {
     let s = Scenario::new();
-    s.apply(true);
-    let created = read(s.root(), "engine.json")["container"].clone();
-    s.interrupt_cleanup(true);
+    s.tofu(&["apply", "-input=false", "-auto-approve", "-no-color"]);
+    s.interrupt_cleanup();
+    s.old_container(true);
 
     // State keeps the old container under its deposed key, beside the current one.
     let objects = s.objects();
@@ -190,37 +191,17 @@ async fn opentofu_reports_and_finishes_unfinished_replacement_cleanup() {
     assert_eq!(cleanup["before"]["id"], OLD);
     assert!(cleanup["after"].is_null());
 
-    // A failed cleanup keeps the old container in state and on the engine.
-    save(s.root(), "control.json", &json!({"cleanup_failure":true}));
-    s.apply(false);
-    assert!(read(s.root(), "engine.json")["deposed_container"].is_object());
-    assert!(
-        s.objects()
-            .iter()
-            .any(|object| object["deposed_key"] == KEY)
-    );
-
-    // The next apply deletes it and leaves the current container alone.
-    save(s.root(), "control.json", &json!({}));
-    s.apply(true);
-    let engine = read(s.root(), "engine.json");
-    assert!(engine["deposed_container"].is_null());
-    assert_eq!(engine["container"]["Id"], created["Id"]);
-    assert_eq!(s.objects().len(), 1);
-
-    // A lost delete reply: refresh finds the old container gone, and the plan
-    // has nothing to do for it.
-    s.interrupt_cleanup(false);
+    // After a lost delete reply, refresh finds the old container gone and the
+    // plan has nothing to do for it.
+    s.old_container(false);
     let changes = s.plan();
     let cleanup = &deposed(&changes)["change"];
     assert_eq!(cleanup["actions"], json!(["no-op"]));
     assert!(cleanup["before"].is_null() && cleanup["after"].is_null());
-    s.apply(true);
-    assert_eq!(s.objects().len(), 1);
 
     // Teardown, which plans without the container's configuration, deletes
     // the current and the old container.
-    s.interrupt_cleanup(true);
+    s.old_container(true);
     fs::write(
         s.workspace.path().join("main.tf"),
         fs::read_to_string(s.workspace.path().join("main.tf"))
@@ -233,7 +214,4 @@ async fn opentofu_reports_and_finishes_unfinished_replacement_cleanup() {
     let cleanup = &deposed(&changes)["change"];
     assert_eq!(cleanup["actions"], json!(["delete"]));
     assert_eq!(cleanup["before"]["id"], OLD);
-    s.apply(true);
-    let engine = read(s.root(), "engine.json");
-    assert!(engine["container"].is_null() && engine["deposed_container"].is_null());
 }
