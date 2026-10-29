@@ -165,8 +165,7 @@ export interface ObservedExportGateway {
     componentId: string;
     schemaVersion: 1 | 2;
     registrationMatches: boolean;
-    configurationDigest: string;
-    registrationDigest: string | null;
+    evidenceDigest: string;
   }> | null;
 }
 

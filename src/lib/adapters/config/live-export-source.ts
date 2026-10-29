@@ -62,13 +62,14 @@ function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry
   } as ObservedExportRegistry;
 }
 
-function externalComponentForGateway(stateDir: string): ObservedExportGateway["externalComponent"] {
-  const configured = observeExternalComponentGatewayConfiguration(stateDir);
+function externalComponentForGateway(
+  stateDir: string,
+  openShellDriver: SandboxEntry["openshellDriver"],
+): ObservedExportGateway["externalComponent"] {
+  const configured = observeExternalComponentGatewayConfiguration(stateDir, openShellDriver);
   if (!configured) return null;
   const registration = loadExternalComponentDeclaration();
   registration?.revalidateBeforeActivation();
-  const digest = (value: unknown) =>
-    createHash("sha256").update(JSON.stringify(value)).digest("hex");
   return {
     componentId: configured.componentId,
     schemaVersion: "interceptor" in configured ? 2 : 1,
@@ -78,8 +79,14 @@ function externalComponentForGateway(stateDir: string): ObservedExportGateway["e
         configured,
         gatewayConfigurationForExternalComponent(registration.declaration),
       ),
-    configurationDigest: digest(configured),
-    registrationDigest: registration ? digest(registration.declaration) : null,
+    evidenceDigest: createHash("sha256")
+      .update(
+        JSON.stringify({
+          configuration: configured,
+          declaration: registration?.declaration ?? null,
+        }),
+      )
+      .digest("hex"),
   };
 }
 
@@ -109,7 +116,9 @@ function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
     port,
     management: stateRootOwned ? "nemoclaw" : "unknown",
     stateRootOwned,
-    externalComponent: stateRootOwned ? externalComponentForGateway(stateDir) : null,
+    externalComponent: stateRootOwned
+      ? externalComponentForGateway(stateDir, entry.openshellDriver)
+      : null,
   };
 }
 

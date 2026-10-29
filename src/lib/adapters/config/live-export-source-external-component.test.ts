@@ -61,6 +61,10 @@ describe("live external component export (#11453)", () => {
     expect(YAML.parse(exported.writeStdout.mock.calls[0]![0])).toMatchObject({
       spec: { gateway: { externalComponentRef: declaration.componentId } },
     });
+    expect(observeExternalComponentGatewayConfiguration).toHaveBeenCalledWith(
+      "/managed/gateway",
+      entry.openshellDriver,
+    );
   });
 
   it("refuses an unregistered gateway component", async () => {

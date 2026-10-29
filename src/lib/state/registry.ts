@@ -599,6 +599,15 @@ export function registerSandbox(
       pendingRouteReservation: options.pending === true ? true : undefined,
       reservationSessionId: options.pending === true ? options.reservationSessionId : undefined,
     };
+    const completedSelection = recordedEntry?.externalComponentSelection;
+    if (
+      completedSelection &&
+      registered.gatewayName === completedSelection.gatewayName &&
+      registered.lifecycleGeneration === completedSelection.lifecycleGeneration &&
+      registered.lifecycleLiveIdentityFingerprint === completedSelection.sandboxIdentityFingerprint
+    ) {
+      registered.externalComponentSelection = completedSelection;
+    }
     data.sandboxes[entry.name] = registered;
     save(
       options.pending === true

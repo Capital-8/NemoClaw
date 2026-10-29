@@ -19,8 +19,7 @@ describe("external component export (#11453)", () => {
       componentId: "policy-governance",
       schemaVersion: 1 as const,
       registrationMatches: true,
-      configurationDigest: "a".repeat(64),
-      registrationDigest: "b".repeat(64),
+      evidenceDigest: "a".repeat(64),
     },
   };
   const value = snapshot({ registry: entry({ externalComponentSelection: selection }), gateway });
