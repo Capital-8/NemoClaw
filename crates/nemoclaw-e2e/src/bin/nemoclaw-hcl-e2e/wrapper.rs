@@ -172,12 +172,13 @@ pub(super) async fn execute_with_tools(
     for name in connection
         .credential_env
         .into_iter()
-        .chain(
-            connection
-                .tls
-                .into_iter()
-                .flat_map(|tls| [tls.ca_env, tls.certificate_env, tls.key_env]),
-        )
+        .chain(connection.tls.into_iter().flat_map(|tls| {
+            std::iter::once(tls.ca_env).chain(
+                tls.identity
+                    .into_iter()
+                    .flat_map(|identity| [identity.certificate_env, identity.key_env]),
+            )
+        }))
         .filter(|name| !name.starts_with("TF_") && !name.starts_with("TOFU_"))
     {
         if let Some(value) = std::env::var_os(&name) {
