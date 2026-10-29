@@ -1276,7 +1276,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             baseProvenance: openClawBaseProvenance().replace("schema=4", "schema=3"),
           },
         ],
-      ])("falls back to the reviewed archive for %s", (_label, overrides) => {
+      ] as const)("falls back to the reviewed archive for %s", (_label, overrides) => {
         const { result, calls, provenanceExists } = runInstallBlock(
           extractRunBlock(
             DOCKERFILE,
