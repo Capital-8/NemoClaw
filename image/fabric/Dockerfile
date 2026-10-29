@@ -121,29 +121,18 @@ ARG HERMES_REVISION=4d04303818b61bf3aa09278af48356315515965b
 ARG HERMES_SHA256=147a567a05402c2832ca12d7e0a33f48fc0e7f627018687cbae1f333dafff0c2
 ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_REVISION} /sources/hermes.tar.gz
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
-# Hermes's dashboard and browser chat need its built web assets and TUI bundle.
-# Hermes's release image builds both from the same sources, so the build stops
-# if the frontend sources it built from differ from the pinned ones. They go
-# where Hermes's own packaging places them (scripts/build/agent.py).
-COPY --from=hermes-upstream /opt/hermes/web /upstream/web
-COPY --from=hermes-upstream /opt/hermes/ui-tui /upstream/ui-tui
-COPY --from=hermes-upstream /opt/hermes/apps/shared /upstream/apps/shared
-COPY --from=hermes-upstream /opt/hermes/scripts/build /upstream/scripts/build
-COPY --from=hermes-upstream /opt/hermes/package.json /opt/hermes/package-lock.json /upstream/
-COPY --from=hermes-upstream /opt/hermes/hermes_cli/web_dist /upstream/web_dist
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
-    && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md \
-    && diff -r /opt/hermes/web /upstream/web \
-    && diff -r -x dist -x .hermes-product /opt/hermes/ui-tui /upstream/ui-tui \
-    && diff -r /opt/hermes/apps/shared /upstream/apps/shared \
-    && diff -r /opt/hermes/scripts/build /upstream/scripts/build \
-    && cmp /opt/hermes/package.json /upstream/package.json \
-    && cmp /opt/hermes/package-lock.json /upstream/package-lock.json \
-    && test -f /upstream/web_dist/index.html && test -f /upstream/ui-tui/dist/entry.js \
-    && cp -R /upstream/web_dist /opt/hermes/hermes_cli/web_dist \
-    && cp -R /upstream/ui-tui/dist /opt/hermes/hermes_cli/tui_dist \
-    && cp /opt/hermes/ui-tui/package.json /opt/hermes/hermes_cli/tui_dist/package.json \
-    && rm -rf /upstream
+    && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
+# Hermes's dashboard and browser chat need its built web assets and TUI bundle,
+# which Hermes's release image builds from the same release. The build stops if
+# any file that image shares with the pinned source differs, apart from the
+# README.md its build empties. Hermes looks for both at these paths at runtime.
+RUN --mount=type=bind,from=hermes-upstream,source=/opt/hermes,target=/upstream \
+    status=0; diff -rq --no-dereference /opt/hermes /upstream > /tmp/upstream.diff || status=$?; \
+    [ "$status" -le 1 ] \
+    && ! grep -v -e '^Only in ' -e '^Files /opt/hermes/README.md and /upstream/README.md differ$' /tmp/upstream.diff \
+    && cp -R /upstream/hermes_cli/web_dist /upstream/hermes_cli/tui_dist /opt/hermes/hermes_cli/ \
+    && rm /tmp/upstream.diff
 
 FROM base AS switchyard-assets
 ARG TARGETARCH

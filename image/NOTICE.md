@@ -15,7 +15,7 @@ These images install Fabric's locally built wheels alongside the export without 
 Fabric's Hermes extra doesn't install Hermes Agent, so the Hermes image then installs Hermes Agent's own `uv.lock` with its `mcp` extra, which MCP servers configured through Fabric need, and Hermes from its release source.
 From the lock's `messaging` extra, the image installs only `aiohttp` and its dependencies, which Hermes's API server needs; it prunes the messaging platform clients.
 Hermes's lock settles the packages it shares with Fabric; [the Hermes source notice](fabric/HERMES-NOTICE.md) records the release.
-The Hermes image copies Hermes's built dashboard and TUI bundle unmodified from Hermes's published image for the same release, after checking that the frontend sources it built from match the release source.
+The Hermes image copies Hermes's built dashboard and TUI bundle unmodified from Hermes's published image for the same release, after checking that every file that image shares with the release source matches it, apart from the `README.md` its build empties.
 The Hermes image also installs the official [Switchyard Relay plugin 0.3.1](https://github.com/NVIDIA/NeMo-Relay-Plugins/releases/tag/switchyard-plugin-0.3.1) bundle for its target architecture.
 The unmodified bundle retains its licenses, notices, attributions, schema, and manifest under `/opt/nemo-relay/plugins/switchyard/`.
 
