@@ -239,14 +239,15 @@ On a managed Kubernetes or OpenShift gateway, destroy keeps these objects, all i
 
 | Object | Holds |
 |---|---|
-| The namespace itself | Everything below; NemoClaw creates it and never adopts an existing one |
+| The namespace itself | Everything below. NemoClaw creates it, or binds an existing one by UID without changing it |
 | Secret `GATEWAY-kek`, where `GATEWAY` is the gateway's release name | The gateway's key-encryption key |
 | The gateway's PersistentVolumeClaims, and the volumes bound to them | The gateway's database |
+| Secrets `GATEWAY-server-tls`, `GATEWAY-client-tls` and `GATEWAY-jwt-keys`, and the ServiceAccount, Role and RoleBinding `GATEWAY-certgen` | The chart's certificates and signing key, and the hook account that writes them; Helm doesn't remove hook objects |
 
 Volumes are cluster-wide, outside the namespace.
 Under the `Retain` reclaim policy, each destroyed sandbox's workspace volume also remains, `Released`, with a claim reference that names the namespace.
 
-The state directory keeps the cluster ownership receipt and, for the `development` authentication profile, the development issuer's keys.
+The state directory keeps the ownership receipt, which records the namespace's UID, and, for the `development` authentication profile, the development issuer's keys.
 
 ## Recovery and Transfer
 
