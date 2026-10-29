@@ -106,29 +106,30 @@ describe("managed startup OpenClaw dashboard origins (#13177)", () => {
     ).toThrow(/dashboard\.extraOrigins/);
   });
 
-  it("makes an earlier CLI refuse a profile with extra origins instead of dropping them", () => {
-    const earlierOpenClawDashboardKeys = [
+  it("makes the released OpenClaw dashboard check refuse a profile with extra origins", () => {
+    // Frozen copy of the OpenClaw dashboard key check that shipped before #13177
+    // (OPENCLAW_DASHBOARD_KEYS + rejectUnknownKeys in managed-startup/profile.ts).
+    // A CLI from before this change validates recorded profiles with it.
+    const RELEASED_OPENCLAW_DASHBOARD_KEYS = new Set([
       "agent",
       "mode",
       "url",
       "port",
       "bindAddress",
       "wslExposure",
-    ];
-    const decoded = JSON.parse(
-      Buffer.from(encodeManagedStartupProfile(profileWith(EXTRA_ORIGINS)), "base64url").toString(
-        "utf8",
-      ),
-    ) as { dashboard: Record<string, unknown> };
+    ]);
+    /** Dashboard fields the released check would refuse as unsupported. */
+    const unsupportedByReleasedCheck = (encoded: string): string[] => {
+      const { dashboard } = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
+        dashboard: Record<string, unknown>;
+      };
+      return Object.keys(dashboard).filter((key) => !RELEASED_OPENCLAW_DASHBOARD_KEYS.has(key));
+    };
 
     expect(
-      Object.keys(decoded.dashboard).filter((key) => !earlierOpenClawDashboardKeys.includes(key)),
+      unsupportedByReleasedCheck(encodeManagedStartupProfile(profileWith(EXTRA_ORIGINS))),
     ).toEqual(["extraOrigins"]);
-    expect(() =>
-      validateManagedStartupProfile(
-        withDashboard(profileWith(EXTRA_ORIGINS), { fieldFromALaterCli: true }),
-      ),
-    ).toThrow(/dashboard contains unsupported fields/);
+    expect(unsupportedByReleasedCheck(encodeManagedStartupProfile(profileWith([])))).toEqual([]);
   });
 
   it("does not let an exported NEMOCLAW_DASHBOARD_ORIGINS reach the profile builder", () => {
