@@ -42,7 +42,9 @@ describe("onboard --dashboard-origin (#13177)", () => {
     const { options, error } = resolve({ "dashboard-origin": ["http://launchpad.example.test"] });
 
     expect(options).toThrow("exit:1");
-    expect(error).toHaveBeenCalledWith(expect.stringMatching(/Dashboard origin must use https/));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/Dashboard origin 1 must use https unless its host is loopback/),
+    );
   });
 
   it.each(["hermes", "langchain-deepagents-code"])(

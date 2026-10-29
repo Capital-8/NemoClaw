@@ -48,6 +48,19 @@ describe("parseDashboardOrigins (#13177)", () => {
     expect(() => parseDashboardOrigins([origin])).toThrow(/dashboard origin/i);
   });
 
+  it.each([
+    ["a path", "https://a.example.test/s3cret-token"],
+    ["a query", "https://a.example.test?token=s3cret-token"],
+    ["a fragment", "https://a.example.test#s3cret-token"],
+    ["a non-http scheme", "ftp://s3cret-token.example.test"],
+    ["plain http for a remote host", "http://s3cret-token.example.test:8443"],
+    ["a malformed value", "s3cret-token"],
+  ])("does not echo a rejected value with %s in the error", (_case, origin) => {
+    expect(() => parseDashboardOrigins([origin])).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining("s3cret-token") }),
+    );
+  });
+
   it("does not echo user information in the error", () => {
     expect(() => parseDashboardOrigins(["https://user:secret@a.example.test"])).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining("secret") }),

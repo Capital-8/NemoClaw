@@ -149,11 +149,15 @@ export function readRecordedDashboardOrigins(value: unknown): string[] | null {
  */
 export function parseDashboardOrigins(values: readonly string[]): string[] {
   const origins: string[] = [];
+  let position = 0;
   for (const value of values) {
     for (const entry of value.split(",")) {
       const candidate = entry.trim();
       if (!candidate) continue;
-      const origin = parseDashboardOrigin(candidate);
+      position += 1;
+      // Name a rejected entry by position only: its value can carry a token or
+      // credential in a path, query, or host, so it must not reach the terminal.
+      const origin = parseDashboardOrigin(candidate, position);
       if (!origins.includes(origin)) origins.push(origin);
     }
   }
@@ -165,30 +169,29 @@ export function parseDashboardOrigins(values: readonly string[]): string[] {
   return origins;
 }
 
-function parseDashboardOrigin(candidate: string): string {
+function parseDashboardOrigin(candidate: string, position: number): string {
+  const entry = `Dashboard origin ${String(position)}`;
   if (CONTROL_CHARACTER.test(candidate) || candidate.length > 2048) {
-    throw new Error("Dashboard origin contains control characters or is too long.");
+    throw new Error(`${entry} contains control characters or is too long.`);
   }
   let url: URL;
   try {
     url = new URL(candidate);
   } catch {
-    throw new Error(
-      `Dashboard origin must be an absolute URL such as https://host:8443: ${candidate}`,
-    );
+    throw new Error(`${entry} must be an absolute URL such as https://host:8443.`);
   }
   if (url.username || url.password) {
-    throw new Error("Dashboard origin must not include user information.");
+    throw new Error(`${entry} must not include user information.`);
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error(`Dashboard origin must use http or https: ${candidate}`);
+    throw new Error(`${entry} must use http or https.`);
   }
   // URL parsing drops a bare "?" or "#", so also reject them in the raw input.
   if (url.pathname !== "/" || url.search || url.hash || /[?#]/u.test(candidate)) {
-    throw new Error(`Dashboard origin must not include a path, query, or fragment: ${candidate}`);
+    throw new Error(`${entry} must not include a path, query, or fragment.`);
   }
   if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) {
-    throw new Error(`Dashboard origin must use https unless its host is loopback: ${candidate}`);
+    throw new Error(`${entry} must use https unless its host is loopback.`);
   }
   return url.origin;
 }
