@@ -307,10 +307,14 @@ pub struct Sandbox {
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
     pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "serviceExposures",
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
     #[schemars(default)]
-    /// Loopback services in the sandbox that OpenShell's gateway makes reachable at a URL it reports. They are part of the sandbox's creation: changing them replaces the sandbox.
-    pub services: Vec<ServiceExposure>,
+    /// OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox.
+    pub service_exposures: std::collections::BTreeMap<String, ServiceExposure>,
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
     pub agent: Agent,
@@ -318,11 +322,8 @@ pub struct Sandbox {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-/// One service exposure, in OpenShell's terms: a loopback port the gateway makes reachable.
+/// One OpenShell service exposure: a loopback port the gateway makes reachable.
 pub struct ServiceExposure {
-    #[serde(rename = "name")]
-    /// Service name within the sandbox; an empty name is OpenShell's unnamed endpoint.
-    pub name: String,
     #[serde(rename = "targetPort")]
     #[schemars(range(min = 1, max = 65535))]
     /// Loopback TCP port the service listens on inside the sandbox.

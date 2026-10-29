@@ -386,7 +386,7 @@ async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn declared_services_reach_the_gateway_as_exposures_and_survive_reapply() {
+async fn declared_service_exposures_reach_the_gateway_and_survive_reapply() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
     document
@@ -394,18 +394,25 @@ async fn declared_services_reach_the_gateway_as_exposures_and_survive_reapply() 
         .sandboxes
         .get_mut("assistant")
         .unwrap()
-        .services = vec![
-        nemoclaw_sdk::config::ServiceExposure {
-            name: "dashboard".into(),
-            target_port: 18800,
-            authorization_mode: None,
-        },
-        nemoclaw_sdk::config::ServiceExposure {
-            name: "api".into(),
-            target_port: 8642,
-            authorization_mode: Some(nemoclaw_sdk::config::AuthorizationMode::BearerPassthrough),
-        },
-    ];
+        .service_exposures = [
+        (
+            "dashboard".to_owned(),
+            nemoclaw_sdk::config::ServiceExposure {
+                target_port: 18800,
+                authorization_mode: None,
+            },
+        ),
+        (
+            "api".to_owned(),
+            nemoclaw_sdk::config::ServiceExposure {
+                target_port: 8642,
+                authorization_mode: Some(
+                    nemoclaw_sdk::config::AuthorizationMode::BearerPassthrough,
+                ),
+            },
+        ),
+    ]
+    .into();
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
     let sent = lifecycle

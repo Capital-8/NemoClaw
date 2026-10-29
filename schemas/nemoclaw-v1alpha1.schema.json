@@ -2733,12 +2733,13 @@
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
         },
-        "services": {
-          "description": "Loopback services in the sandbox that OpenShell's gateway makes reachable at a URL it reports. They are part of the sandbox's creation: changing them replaces the sandbox.",
-          "items": {
+        "serviceExposures": {
+          "additionalProperties": {
             "$ref": "#/$defs/ServiceExposure"
           },
-          "type": "array"
+          "description": "OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox.",
+          "maxProperties": 32,
+          "type": "object"
         }
       },
       "required": [
@@ -3371,15 +3372,11 @@
     },
     "ServiceExposure": {
       "additionalProperties": false,
-      "description": "One service exposure, in OpenShell's terms: a loopback port the gateway makes reachable.",
+      "description": "One OpenShell service exposure: a loopback port the gateway makes reachable.",
       "properties": {
         "authorizationMode": {
           "$ref": "#/$defs/AuthorizationMode",
           "description": "How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP."
-        },
-        "name": {
-          "description": "Service name within the sandbox; an empty name is OpenShell's unnamed endpoint.",
-          "type": "string"
         },
         "targetPort": {
           "description": "Loopback TCP port the service listens on inside the sandbox.",
@@ -3390,7 +3387,6 @@
         }
       },
       "required": [
-        "name",
         "targetPort"
       ],
       "type": "object"

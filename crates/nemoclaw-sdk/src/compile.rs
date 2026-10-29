@@ -169,14 +169,15 @@ fn targets_with_plans(
                 serde_json::to_string(config).expect("driver configuration"),
             );
         }
-        if !sandbox.services.is_empty() {
-            // OpenShell's terms: snake_case names, as in the HCL service block.
+        if !sandbox.service_exposures.is_empty() {
+            // OpenShell's terms, as in the HCL service block: the map key is
+            // the service name.
             let exposures: Vec<_> = sandbox
-                .services
+                .service_exposures
                 .iter()
-                .map(|service| {
+                .map(|(name, service)| {
                     let mut exposure = serde_json::json!({
-                        "name": service.name,
+                        "name": name,
                         "target_port": service.target_port,
                     });
                     if let Some(mode) = service.authorization_mode {

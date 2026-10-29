@@ -146,11 +146,11 @@ Constraints: `"api-key"`.
 
 OpenShell's service authorization modes.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Agent interfaces](../interfaces.md#expose-a-service-through-the-gateway).
 
 Paths:
 
-- `spec.sandboxes.{key}.services[].authorizationMode`
+- `spec.sandboxes.{key}.serviceExposures.{key}.authorizationMode`
 
 Accepted input: string.
 
@@ -1135,7 +1135,7 @@ Paths:
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
-| `services` | array of [ServiceExposure](#serviceexposure) | No | — | Loopback services in the sandbox that OpenShell's gateway makes reachable at a URL it reports. They are part of the sandbox's creation: changing them replaces the sandbox. |
+| `serviceExposures` | map of [ServiceExposure](#serviceexposure) | No | — | OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox. Constraints: maximum entries 32. |
 
 ## SearchProvider
 
@@ -1294,18 +1294,17 @@ Image-owned container with explicit launch settings and bounded readiness.
 
 ## ServiceExposure
 
-One service exposure, in OpenShell's terms: a loopback port the gateway makes reachable.
+One OpenShell service exposure: a loopback port the gateway makes reachable.
 
-Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+Guide: [Agent interfaces](../interfaces.md#expose-a-service-through-the-gateway).
 
 Paths:
 
-- `spec.sandboxes.{key}.services[]`
+- `spec.sandboxes.{key}.serviceExposures.{key}`
 
 | Field | Input type | Required | Default | Description and constraints |
 |---|---|---|---|---|
 | `authorizationMode` | [AuthorizationMode](#authorizationmode) | No | — | How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP. |
-| `name` | string | Yes | — | Service name within the sandbox; an empty name is OpenShell's unnamed endpoint. |
 | `targetPort` | integer | Yes | — | Loopback TCP port the service listens on inside the sandbox. Constraints: minimum 1; maximum 65535. |
 
 ## ServiceHardware

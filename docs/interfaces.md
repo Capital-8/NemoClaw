@@ -80,24 +80,28 @@ OpenClaw's dashboard ([#13360](https://github.com/NVIDIA/NemoClaw/issues/13360))
 
 ## Expose a Service Through the Gateway
 
-To make a sandbox's loopback listener reachable at a URL that OpenShell's gateway serves, declare it under the sandbox's `services`:
+To make a sandbox's loopback listener reachable at a URL that OpenShell's gateway serves, declare it under the sandbox's `serviceExposures`, keyed by service name:
 
 ```yaml
 sandboxes:
   assistant:
-    services:
-      - name: dashboard
+    serviceExposures:
+      dashboard:
         targetPort: 18800
         authorizationMode: BEARER_PASSTHROUGH
 ```
 
-Each entry is OpenShell's service exposure, passed through unchanged: `name`, `targetPort`, and an optional `authorizationMode` (`STRIP` or `BEARER_PASSTHROUGH`).
-OpenShell applies `STRIP` when the mode is omitted, and an empty name is the unnamed endpoint.
-Exposures belong to the sandbox's creation, so adding, changing, or removing one replaces the sandbox.
+Each entry maps to an OpenShell service exposure: its key is the service name, and it takes `targetPort` and an optional `authorizationMode` (`STRIP` or `BEARER_PASSTHROUGH`).
+OpenShell applies `STRIP` when the mode is omitted, and the empty key `""` is the unnamed endpoint.
+OpenShell checks the names when it creates the sandbox; see its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
+A sandbox takes at most 32 exposures.
+Exposures belong to the sandbox's creation, so adding, changing, or removing one replaces the sandbox, deleting its files and conversations.
 In HCL, use `openshell_sandbox`'s [`service` blocks](provider.md#openshell-resources-and-data-sources).
 
-An exposure makes the port reachable; the service must still listen on loopback and authenticate its own clients.
-To list the URL the gateway reports, [select the gateway and workspace](#select-the-gateway-and-workspace) and run `openshell service list`.
+Requests to the URL skip OpenShell's gateway authentication: they use no OIDC or CLI login, and only the gateway listener's TLS, including any required client certificate, applies.
+The service must listen on loopback and authenticate its own clients.
+`BEARER_PASSTHROUGH` delivers the caller's bearer token to the service, so use it only for a service trusted with that credential.
+To list the URL the gateway reports, [select the gateway and workspace](#select-the-gateway-and-workspace) and run `openshell service list REPLACE_WITH_SANDBOX`.
 Apply output doesn't report it.
 
 ## Diagnose Failures
