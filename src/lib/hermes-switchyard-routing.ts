@@ -165,8 +165,8 @@ export function validateHermesSwitchyardRoutingIntent(
   }
   const efficient = target(routing.efficient, "routing.efficient");
   const capable = target(routing.capable, "routing.capable");
-  if (efficient.provider === capable.provider && efficient.model === capable.model) {
-    fail("efficient and capable must select different provider/model targets");
+  if (efficient.model === capable.model) {
+    fail("efficient and capable must select different model IDs");
   }
   const judge = record(routing.judge, "routing.judge");
   rejectUnknownKeys(judge, new Set(["mode", "target"]), "routing.judge");

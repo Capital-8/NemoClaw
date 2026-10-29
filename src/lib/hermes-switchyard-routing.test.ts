@@ -177,6 +177,11 @@ describe("Hermes Switchyard routing", () => {
       { provider: "openai-api", model: "gpt-5.2" },
       { provider: "openai-api", model: "gpt-5.2" },
     ],
+    [
+      "duplicate model IDs across providers",
+      { provider: "nvidia-prod", model: "shared-model" },
+      { provider: "openai-api", model: "shared-model" },
+    ],
   ])("rejects %s (#13862)", (_name, efficient, capable) => {
     expect(() => createHermesSwitchyardRoutingIntent({ efficient, capable })).toThrow(
       "Invalid Hermes Switchyard routing",
