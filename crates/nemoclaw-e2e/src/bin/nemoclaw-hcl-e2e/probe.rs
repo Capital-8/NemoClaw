@@ -71,6 +71,29 @@ fn initial_report() -> Value {
     })
 }
 
+fn invocation_failure(error: &nemoclaw_backend::Error) -> Value {
+    use nemoclaw_backend::{Error, ObservationError};
+    // These fields are fixed by the provider. Never serialize backend text or paths.
+    match error {
+        Error::Observation(ObservationError::FabricConfiguration {
+            stage,
+            code,
+            runtime_state,
+            ..
+        }) => json!({"stage": stage, "code": code, "runtime_state": runtime_state}),
+        Error::Observation(ObservationError::Rejected {
+            operation, code, ..
+        }) => {
+            json!({"operation": operation, "code": code})
+        }
+        Error::Conflict(reason) => json!({"code": "conflict", "reason": reason}),
+        Error::Observation(ObservationError::Transport) => json!({"code": "transport"}),
+        Error::Observation(ObservationError::Authentication) => json!({"code": "authentication"}),
+        Error::Observation(ObservationError::Permission) => json!({"code": "permission"}),
+        _ => json!({"code": "observation_failed"}),
+    }
+}
+
 pub(super) async fn execute(inputs: &Inputs) -> Result<(), String> {
     let report_path = &inputs.report;
     fs::OpenOptions::new()
@@ -179,8 +202,40 @@ async fn observe(inputs: &Inputs, report: &mut Value) -> Result<(), String> {
     let response = client
         .invoke_agent(&binding, runtime, &input)
         .await
-        .map_err(|_| "invocation failed")?;
+        .map_err(|error| {
+            report["failure"]["provider"] = invocation_failure(&error);
+            "invocation failed"
+        })?;
     report["response"] = super::response::observations(&response, inputs.response_contract);
     report["failure"]["code"] = json!("none");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nemoclaw_backend::{Error, ObservationError};
+
+    #[test]
+    fn invocation_evidence_keeps_safe_codes_without_private_details() {
+        let error = Error::Observation(ObservationError::FabricConfiguration {
+            stage: "invoke",
+            code: "invoke_failed",
+            runtime_state: "unknown",
+            message_file: Some("private-diagnostic-path".into()),
+        });
+        assert_eq!(
+            invocation_failure(&error),
+            json!({"stage": "invoke", "code": "invoke_failed", "runtime_state": "unknown"})
+        );
+        let error = Error::Observation(ObservationError::Rejected {
+            operation: "exec",
+            code: "rejected",
+            detail: "private-backend-detail".into(),
+        });
+        assert_eq!(
+            invocation_failure(&error),
+            json!({"operation": "exec", "code": "rejected"})
+        );
+    }
 }
