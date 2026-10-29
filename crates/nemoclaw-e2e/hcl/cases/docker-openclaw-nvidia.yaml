@@ -22,6 +22,9 @@ spec:
         env: NVIDIA_INFERENCE_API_KEY
   sandboxes:
     assistant:
+      image:
+        # CI binds this template to its candidate OpenClaw image.
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.openclaw
       network:
@@ -35,6 +38,8 @@ spec:
               overrides:
                 model: nvidia/nemotron-3.5-super-vl-120b-a12b
     researcher:
+      image:
+        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
       harness:
         kind: nvidia.fabric.openclaw
       network:
