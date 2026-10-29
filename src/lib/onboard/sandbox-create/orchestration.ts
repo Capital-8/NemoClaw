@@ -3462,6 +3462,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                           bootstrapIdentity: managedBootstrapIdentity,
                           request: managedStartupRootApplyRequest,
                           ...(expectedContainerId ? { expectedContainerId } : {}),
+                          gatewayStateDir:
+                            openshellGatewayStateDir ?? getDockerDriverGatewayStateDir(),
                         },
                         {
                           onApplied(transaction) {

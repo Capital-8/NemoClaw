@@ -256,19 +256,19 @@ describe("formatAmbiguousDestroyIdentity", () => {
 describe("observeDestroyContainerIdentity", () => {
   const OWN = "aaaa000000000000";
   const OTHER = "bbbb000000000000";
-  const dockerPs = (otherManagedBy: string) => () => ({
+  const dockerPs = (otherManagedBy: string, otherNamespace: string) => () => ({
     status: 0,
     stdout: [
-      `${OWN}\topenshell\tdefault\tsb-own`,
-      `${OTHER}\t${otherManagedBy}\tdefault\tsb-other`,
+      `${OWN}\topenshell\tdefault\tsb-own\tns-own`,
+      `${OTHER}\t${otherManagedBy}\tdefault\tsb-other\t${otherNamespace}`,
     ].join("\n"),
   });
 
   it("drops a lone container that proves another gateway namespace (#13895)", () => {
     const observation = observeDestroyContainerIdentity(
       "alpha",
-      () => ({ status: 0, stdout: `${OTHER}\topenshell\tdefault\tsb-other` }),
-      { readGatewayNamespace: () => "ns-own", readContainerNamespace: () => "ns-other" },
+      () => ({ status: 0, stdout: `${OTHER}\topenshell\tdefault\tsb-other\tns-other` }),
+      { readGatewayNamespace: () => "ns-own" },
     );
 
     expect(observation).toEqual({ status: "observed", rows: [], malformedRows: 0 });
@@ -290,9 +290,9 @@ describe("observeDestroyContainerIdentity", () => {
       ids: [OWN, OTHER],
     },
     {
-      scenario: "an unreadable container namespace",
+      scenario: "a container without a namespace label",
       gateway: "ns-own",
-      other: null,
+      other: "",
       managedBy: "openshell",
       ids: [OWN, OTHER],
     },
@@ -313,13 +313,8 @@ describe("observeDestroyContainerIdentity", () => {
   ])(
     "drops a name-labeled container only for $scenario when it is the other one (#13895)",
     ({ gateway, other, managedBy, ids }) => {
-      const namespaces = new Map([
-        [OWN, "ns-own"],
-        [OTHER, other],
-      ]);
-      const observation = observeDestroyContainerIdentity("alpha", dockerPs(managedBy), {
+      const observation = observeDestroyContainerIdentity("alpha", dockerPs(managedBy, other), {
         readGatewayNamespace: () => gateway,
-        readContainerNamespace: (id) => namespaces.get(id) ?? null,
       });
 
       expect(observation).toMatchObject({
@@ -342,8 +337,24 @@ describe("readSandboxGatewaySandboxNamespace", () => {
     expect(namespaceMocks.findSandbox).toHaveBeenLastCalledWith("alpha");
   });
 
+  it("reads the recorded custom gateway state directory before the port default (#13895)", () => {
+    namespaceMocks.findSandbox.mockReturnValueOnce({
+      entry: { name: "alpha", gatewayPort: 19841, openshellGatewayStateDir: "/srv/openshell-a" },
+      registryGatewayPort: 19841,
+    });
+
+    expect(readSandboxGatewaySandboxNamespace("alpha")).toBe("ns:/srv/openshell-a");
+  });
+
   it.each([
     { scenario: "no registry owns it", find: () => null },
+    {
+      scenario: "the recorded state directory is not normalized",
+      find: () => ({
+        entry: { name: "alpha", gatewayPort: 19841, openshellGatewayStateDir: "/srv/../a" },
+        registryGatewayPort: 19841,
+      }),
+    },
     {
       scenario: "several registries own it",
       find: () => {

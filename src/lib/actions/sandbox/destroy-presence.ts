@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
+import path from "node:path";
 
-import { dockerRun } from "../../adapters/docker/run";
 import { readStateScopedSandboxNamespace } from "../../onboard/docker-driver-gateway-config";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 import {
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
-  OPENSHELL_SANDBOX_NAMESPACE_LABEL,
   OPENSHELL_SANDBOX_WORKSPACE_LABEL,
   inspectDockerSandboxNameLabeledContainers,
   resolveOpenShellSandboxOwnershipLabel,
@@ -31,7 +30,6 @@ import {
 
 const IDENTITY_VALUE_MAX_LENGTH = 256;
 const IDENTITY_DIAGNOSTIC_MAX_LENGTH = 500;
-const NAMESPACE_INSPECT_TIMEOUT_MS = 30_000;
 const SANDBOX_NAMESPACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 
 /** One container carrying the destroy target's `sandbox-name` label. */
@@ -82,7 +80,6 @@ export type DestroyContainerIdentityProof = {
 };
 export type DestroyNamespaceScopeDeps = {
   readGatewayNamespace?: () => string | null;
-  readContainerNamespace?: (containerId: string) => string | null;
 };
 
 /**
@@ -97,31 +94,18 @@ export function readSandboxGatewaySandboxNamespace(sandboxName: string): string 
   } catch {
     return null;
   }
-  const port = hit?.registryGatewayPort ?? hit?.entry.gatewayPort;
+  if (!hit) return null;
+  // A sandbox created with a custom gateway state directory records it; the
+  // port-derived directory applies only when none is recorded.
+  const recordedStateDir = hit.entry.openshellGatewayStateDir;
+  if (typeof recordedStateDir === "string") {
+    return path.isAbsolute(recordedStateDir) && path.resolve(recordedStateDir) === recordedStateDir
+      ? readStateScopedSandboxNamespace(recordedStateDir)
+      : null;
+  }
+  const port = hit.registryGatewayPort ?? hit.entry.gatewayPort;
   return typeof port === "number"
     ? readStateScopedSandboxNamespace(resolveGatewayStateDirForPort({ home: os.homedir(), port }))
-    : null;
-}
-
-function readDockerContainerSandboxNamespace(containerId: string): string | null {
-  const result = dockerRun(
-    [
-      "inspect",
-      "--type",
-      "container",
-      "--format",
-      `{{ index .Config.Labels "${OPENSHELL_SANDBOX_NAMESPACE_LABEL}" }}`,
-      containerId,
-    ],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: NAMESPACE_INSPECT_TIMEOUT_MS,
-    },
-  );
-  const namespace = String(result.stdout ?? "").trim();
-  return Number(result.status ?? 1) === 0 && SANDBOX_NAMESPACE_PATTERN.test(namespace)
-    ? namespace
     : null;
 }
 
@@ -145,14 +129,13 @@ export function observeDestroyContainerIdentity(
     scopeDeps.readGatewayNamespace ?? (() => readSandboxGatewaySandboxNamespace(sandboxName))
   )();
   if (gatewayNamespace === null) return observation;
-  const readContainerNamespace =
-    scopeDeps.readContainerNamespace ?? readDockerContainerSandboxNamespace;
   const ownership = resolveOpenShellSandboxOwnershipLabel();
-  const rows = observation.rows.filter((row) => {
-    if (row.managedBy !== ownership.value) return true;
-    const namespace = readContainerNamespace(row.id);
-    return namespace === null || namespace === gatewayNamespace;
-  });
+  const rows = observation.rows.filter(
+    (row) =>
+      row.managedBy !== ownership.value ||
+      !SANDBOX_NAMESPACE_PATTERN.test(row.namespace ?? "") ||
+      row.namespace === gatewayNamespace,
+  );
   return { ...observation, rows };
 }
 
