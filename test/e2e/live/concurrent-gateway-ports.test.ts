@@ -387,15 +387,19 @@ async function stopStartSurvivor(
   readonly phase: string;
 }> {
   const listener = async (stage: string) => {
-    const evidence = await host.inspectOpenShellForwardListener(DASHBOARD_PORT_A, sandboxName, {
-      env: { ...openshellEnvForGateway(gatewayName), NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A },
-      artifactName: `${artifactPrefix}-${stage}-dashboard-listener`,
-    });
-    await artifacts.writeJson(`actions/${artifactPrefix}-${stage}-dashboard-listener.json`, {
-      observedAt: new Date().toISOString(),
-      valid: evidence.valid,
-      pid: evidence.pid ?? null,
-    });
+    try {
+      const evidence = await host.inspectOpenShellForwardListener(DASHBOARD_PORT_A, sandboxName, {
+        env: { ...openshellEnvForGateway(gatewayName), NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A },
+        artifactName: `${artifactPrefix}-${stage}-dashboard-listener`,
+      });
+      await artifacts.writeJson(`actions/${artifactPrefix}-${stage}-dashboard-listener.json`, {
+        observedAt: new Date().toISOString(),
+        valid: evidence.valid,
+        pid: evidence.pid ?? null,
+      });
+    } catch {
+      // Listener diagnostics must not prevent or fail the survivor restart.
+    }
   };
   await listener("before-restart");
   return observeForwardRestart({

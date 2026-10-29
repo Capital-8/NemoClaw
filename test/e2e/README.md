@@ -987,6 +987,8 @@ The probe uses a 15-second curl limit within a 20-second command limit and does 
 Its artifact records HTTP status, exit code, signal, and timeout state, or marks the probe unavailable.
 It does not retain response bodies, headers, or raw errors.
 This separate request cannot establish the original `web_fetch` response and never changes success or retry decisions.
+Diagnostic write errors after a failed turn preserve the original retry classification.
+Required evidence for a successful turn must still be saved.
 The Personal live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
 C2 retains its expected-reply and parsed-result checks; its tool-result diagnostics do not add the Personal validation contract.
 
@@ -996,6 +998,8 @@ Its diagnostics exclude raw process output and credentials.
 An unavailable forward or an unset flag does not establish the cause of an earlier dashboard failure.
 The observed forward cannot recover the original dashboard or satisfy its assertions.
 Diagnostic cleanup terminates only the separately owned forward; the target retains its existing sandbox and gateway cleanup.
+Listener inspection and diagnostic write failures do not replace the restart outcome.
+Unconfirmed observer cleanup fails an otherwise successful restart.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.

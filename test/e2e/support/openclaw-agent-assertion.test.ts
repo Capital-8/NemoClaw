@@ -206,6 +206,169 @@ describe("OpenClaw agent assertion", () => {
     }
   });
 
+  it.each([
+    ["agent-failure", 0, "valid"],
+    ["reduced", 0, "valid"],
+    ["reducer-failure", 1, ""],
+    ["reducer-failure", 0, "invalid"],
+  ])(
+    "preserves recovery when %s persistence fails (exit %s, output %s)",
+    async (suffix, exitCode, output) => {
+      const result = {
+        artifacts: { result: "", stderr: "", stdout: "" },
+        command: [],
+        durationMs: 1,
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        stdout: "",
+        timedOut: false,
+      };
+      const reduced = reduceOpenClawToolEvidence(
+        publicFetchSessionJsonLines(),
+        "",
+        PUBLIC_FETCH_EXPECTATION,
+      );
+      const writeJson = vi
+        .fn()
+        .mockImplementation((path: string) =>
+          path.endsWith(`-${suffix}.json`)
+            ? Promise.reject(new Error(SECRET_SENTINEL))
+            : Promise.resolve(),
+        );
+      const sandbox = {
+        openshell: vi.fn().mockResolvedValue({ ...result, stdout: "Host openshell-test-sandbox" }),
+        exec: vi.fn().mockResolvedValue({
+          ...result,
+          exitCode,
+          stdout:
+            output === "valid" ? "__NEMOCLAW_TOOL_EVIDENCE__=" + JSON.stringify(reduced) : output,
+        }),
+      } as unknown as SandboxClient;
+      const command = vi
+        .fn()
+        .mockResolvedValueOnce({ ...result, exitCode: 1, stderr: "scope upgrade pending approval" })
+        .mockResolvedValueOnce(result)
+        .mockResolvedValueOnce({
+          ...result,
+          stdout: JSON.stringify({
+            status: "ok",
+            result: { payloads: [{ text: "REFERENCE_AGENT_OK" }], meta: {} },
+          }),
+        });
+      vi.useFakeTimers();
+      try {
+        const assertion = runOpenClawAgentAssertion(
+          { command } as unknown as HostCliClient,
+          sandbox,
+          { writeJson } as unknown as ArtifactSink,
+          {
+            apiKey: SECRET_SENTINEL,
+            expected: "REFERENCE_AGENT_OK",
+            label: "c2",
+            prompt: "fetch",
+            sandboxName: "test-sandbox",
+            publicFetchExpectation: PUBLIC_FETCH_EXPECTATION,
+            persistCommandArtifacts: false,
+            redactOutputInFailure: true,
+          },
+        );
+        await Promise.all([
+          expect(assertion).resolves.toEqual({ reply: "REFERENCE_AGENT_OK" }),
+          vi.runAllTimersAsync(),
+        ]);
+        expect(command).toHaveBeenCalledTimes(3);
+        expect(command.mock.calls[1]?.[1]).toEqual(
+          expect.arrayContaining(["test-sandbox", "recover"]),
+        );
+        expect(writeJson).toHaveBeenCalledWith(
+          `actions/c2-attempt-1-${suffix}.json`,
+          expect.any(Object),
+        );
+        expect(writeJson).toHaveBeenCalledWith(
+          "actions/c2-agent-retry-evidence.json",
+          expect.objectContaining({
+            outcome: "passed-after-retry",
+            attempts: [
+              {
+                attempt: 1,
+                outcome: "failed",
+                failureClass: "transient-external",
+                reconciled: true,
+                retryScheduled: true,
+              },
+              { attempt: 2, outcome: "passed", retryScheduled: false },
+            ],
+          }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("rejects success when required tool evidence cannot be persisted", async () => {
+    const result = {
+      artifacts: { result: "", stderr: "", stdout: "" },
+      command: [],
+      durationMs: 1,
+      exitCode: 0,
+      signal: null,
+      stderr: "",
+      stdout: "",
+      timedOut: false,
+    };
+    const reduced = reduceOpenClawToolEvidence(
+      publicFetchSessionJsonLines(),
+      "",
+      PUBLIC_FETCH_EXPECTATION,
+    );
+    const writeJson = vi
+      .fn()
+      .mockImplementation((path: string) =>
+        path.endsWith("-reduced.json")
+          ? Promise.reject(new Error(SECRET_SENTINEL))
+          : Promise.resolve(),
+      );
+    const sandbox = {
+      openshell: vi.fn().mockResolvedValue({ ...result, stdout: "Host openshell-test-sandbox" }),
+      exec: vi.fn().mockResolvedValue({
+        ...result,
+        stdout: "__NEMOCLAW_TOOL_EVIDENCE__=" + JSON.stringify(reduced),
+      }),
+    } as unknown as SandboxClient;
+    const command = vi.fn().mockResolvedValue({
+      ...result,
+      stdout: JSON.stringify({
+        status: "ok",
+        result: { payloads: [{ text: "REFERENCE_AGENT_OK" }], meta: {} },
+      }),
+    });
+    const validator = vi.fn().mockReturnValue(true);
+    await expect(
+      runOpenClawAgentAssertion(
+        { command } as unknown as HostCliClient,
+        sandbox,
+        { writeJson } as unknown as ArtifactSink,
+        {
+          apiKey: SECRET_SENTINEL,
+          expected: "REFERENCE_AGENT_OK",
+          label: "c2",
+          prompt: "fetch",
+          sandboxName: "test-sandbox",
+          publicFetchExpectation: PUBLIC_FETCH_EXPECTATION,
+          toolEvidenceValidator: validator,
+        },
+      ),
+    ).rejects.toThrow("failed-no-retry");
+    expect(command).toHaveBeenCalledOnce();
+    expect(validator).not.toHaveBeenCalled();
+    expect(writeJson).toHaveBeenCalledWith(
+      "actions/c2-agent-retry-evidence.json",
+      expect.objectContaining({ outcome: "failed-no-retry" }),
+    );
+  });
+
   it("reports when the temporary OpenShell SSH configuration cannot be removed", async () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-cleanup-"));
     const temporaryRoot = join(fixtureRoot, "tmp");
@@ -288,6 +451,27 @@ describe("public fetch failure probe", () => {
       );
       expect(JSON.stringify(writeJson.mock.calls)).not.toContain(SECRET_SENTINEL);
       expect(JSON.stringify(writeJson.mock.calls)).not.toContain("?test=private");
+    },
+  );
+
+  it.each([false, true])(
+    "preserves the assertion when probe persistence fails (transport failure: %s)",
+    async (transportFailure) => {
+      const writeJson = vi.fn().mockRejectedValue(new Error(SECRET_SENTINEL));
+      const exec = transportFailure
+        ? vi.fn().mockRejectedValue(new Error(SECRET_SENTINEL))
+        : vi.fn().mockResolvedValue({ exitCode: 0, signal: null, timedOut: false, stdout: "503" });
+      await expect(
+        capturePublicFetchFailureProbe(
+          { exec } as unknown as SandboxClient,
+          { writeJson } as unknown as ArtifactSink,
+          "test-sandbox",
+          "c2",
+          "https://www.wikidata.org/",
+        ),
+      ).resolves.toBeUndefined();
+      expect(exec).toHaveBeenCalledOnce();
+      expect(JSON.stringify(writeJson.mock.calls)).not.toContain(SECRET_SENTINEL);
     },
   );
 

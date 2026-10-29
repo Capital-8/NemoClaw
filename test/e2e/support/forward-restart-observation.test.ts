@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { observeForwardRestart } from "../fixtures/forward-restart-observation.ts";
@@ -78,6 +80,106 @@ describe("forward restart observation", () => {
         cleanupConfirmed: true,
       }),
     );
+  });
+
+  it("preserves restart success when recording fails", async () => {
+    const record = vi.fn().mockRejectedValue(new Error("diagnostic persistence failed"));
+    const result = observeForwardRestart({
+      progress: observedProgress(),
+      executable: process.execPath,
+      args: ["-e", `${ready}setInterval(() => {}, 1000);`],
+      env: process.env,
+      record,
+      restart: async () => "original",
+    });
+    await expect(result).resolves.toBe("original");
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ cleanupConfirmed: true, signal: "SIGTERM" }),
+    );
+  });
+
+  it("preserves restart failure when recording fails", async () => {
+    const failure = new Error("original restart failure");
+    const record = vi.fn().mockRejectedValue(new Error("diagnostic persistence failed"));
+    const result = observeForwardRestart({
+      progress: observedProgress(),
+      executable: process.execPath,
+      args: ["-e", `${ready}setInterval(() => {}, 1000);`],
+      env: process.env,
+      record,
+      restart: async () => {
+        throw failure;
+      },
+    });
+    await expect(result).rejects.toBe(failure);
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ cleanupConfirmed: true, signal: "SIGTERM" }),
+    );
+  });
+
+  it("rejects restart success when cleanup is unconfirmed and recording fails", async () => {
+    const record = vi.fn().mockRejectedValue(new Error("diagnostic persistence failed"));
+    let cleanup = async () => {};
+    const kill = vi
+      .spyOn(ChildProcess.prototype, "kill")
+      .mockImplementation(function (this: ChildProcess) {
+        cleanup = async () => {
+          const closed = once(this, "close");
+          this.kill("SIGKILL");
+          await closed;
+        };
+        return false;
+      });
+    try {
+      const result = observeForwardRestart({
+        progress: observedProgress(),
+        executable: process.execPath,
+        args: ["-e", `${ready}setInterval(() => {}, 1000);`],
+        env: process.env,
+        record,
+        restart: async () => "original",
+      });
+      await expect(result).rejects.toThrow("Could not confirm diagnostic service forward cleanup");
+      expect(kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ cleanupConfirmed: false }));
+    } finally {
+      kill.mockRestore();
+      await cleanup();
+    }
+  });
+
+  it("preserves restart failure when cleanup is unconfirmed and recording fails", async () => {
+    const failure = new Error("original restart failure");
+    const record = vi.fn().mockRejectedValue(new Error("diagnostic persistence failed"));
+    let cleanup = async () => {};
+    const kill = vi
+      .spyOn(ChildProcess.prototype, "kill")
+      .mockImplementation(function (this: ChildProcess) {
+        cleanup = async () => {
+          const closed = once(this, "close");
+          this.kill("SIGKILL");
+          await closed;
+        };
+        return false;
+      });
+    try {
+      const result = observeForwardRestart({
+        progress: observedProgress(),
+        executable: process.execPath,
+        args: ["-e", `${ready}setInterval(() => {}, 1000);`],
+        env: process.env,
+        record,
+        restart: async () => {
+          throw failure;
+        },
+      });
+      await expect(result).rejects.toBe(failure);
+      expect(kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ cleanupConfirmed: false }));
+    } finally {
+      kill.mockRestore();
+      await cleanup();
+    }
   });
 
   it("confirms cleanup after its child ignores graceful termination", async () => {

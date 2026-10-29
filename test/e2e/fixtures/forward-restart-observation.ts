@@ -103,23 +103,31 @@ export async function observeForwardRestart<T>(options: {
       settleReady();
     }
   });
+  let outcome: { passed: true; value: T } | { passed: false; error: unknown };
   try {
     await within(ready, 5_000);
-    return await options.restart();
-  } finally {
-    observation.exitedBeforeCleanup = closed;
-    // Only this child is owned here. Never stop or recover the original dashboard forward.
-    if (!closed) {
-      child.kill("SIGTERM");
-      await within(exited, 2_000);
-    }
-    if (!closed) {
-      child.kill("SIGKILL");
-      await within(exited, 2_000);
-    }
-    observation.cleanupConfirmed = closed;
-    child.stderr?.destroy();
-    await options.record(observation);
-    if (!closed) throw new Error("Could not confirm diagnostic service forward cleanup");
+    outcome = { passed: true, value: await options.restart() };
+  } catch (error) {
+    outcome = { passed: false, error };
   }
+  observation.exitedBeforeCleanup = closed;
+  // Only this child is owned here. Never stop or recover the original dashboard forward.
+  if (!closed) {
+    child.kill("SIGTERM");
+    await within(exited, 2_000);
+  }
+  if (!closed) {
+    child.kill("SIGKILL");
+    await within(exited, 2_000);
+  }
+  observation.cleanupConfirmed = closed;
+  child.stderr?.destroy();
+  try {
+    await options.record(observation);
+  } catch {
+    // Diagnostic persistence must not replace the restart result or its error.
+  }
+  if (!outcome.passed) throw outcome.error;
+  if (!closed) throw new Error("Could not confirm diagnostic service forward cleanup");
+  return outcome.value;
 }

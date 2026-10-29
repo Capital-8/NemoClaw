@@ -574,6 +574,8 @@
         "test/onboarding/onboard-policy-suggestions.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
+        "test/e2e/support/common-egress-agent-retry.test.ts",
+        "test/e2e/support/openclaw-agent-assertion.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -591,9 +593,13 @@
         "src/lib/actions/uninstall/all-gateway-ports.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/openshell-sandbox-list.test.ts"
+        "test/e2e/support/openshell-sandbox-list.test.ts",
+        "test/e2e/support/forward-restart-observation.test.ts"
       ],
-      "liveSources": ["test/e2e/fixtures/openshell-sandbox-list.ts"]
+      "liveSources": [
+        "test/e2e/fixtures/openshell-sandbox-list.ts",
+        "test/e2e/fixtures/forward-restart-observation.ts"
+      ]
     },
     {
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",

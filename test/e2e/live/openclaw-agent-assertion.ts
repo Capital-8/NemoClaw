@@ -128,8 +128,14 @@ export async function runOpenClawAgentAssertion(
         reply,
         response: combined,
       });
+      const recordAttemptEvidence = async (path: string, evidence: unknown): Promise<void> => {
+        const write = artifacts.writeJson(path, evidence);
+        // Required success evidence retains its original write failure.
+        // Failed-turn diagnostics must preserve the original retry classification.
+        await (classification.passed ? write : write.catch(() => undefined));
+      };
       if (!classification.passed && args.persistCommandArtifacts === false) {
-        await artifacts.writeJson(
+        await recordAttemptEvidence(
           `actions/${args.label}-attempt-${attempt}-agent-failure.json`,
           projectOpenClawAgentFailureArtifact(attempt, classification, agent),
         );
@@ -139,13 +145,13 @@ export async function runOpenClawAgentAssertion(
         collectToolEvidence: args.publicFetchExpectation !== undefined && !classification.passed,
         label: args.label,
         recordToolEvidenceReductionFailure: async (failure) => {
-          await artifacts.writeJson(
+          await recordAttemptEvidence(
             `actions/${args.label}-attempt-${attempt}-reducer-failure.json`,
             failure,
           );
         },
         recordToolEvidence: async (toolEvidence) => {
-          await artifacts.writeJson(
+          await recordAttemptEvidence(
             `actions/${args.label}-attempt-${attempt}-reduced.json`,
             projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence),
           );
@@ -247,11 +253,15 @@ export async function capturePublicFetchFailureProbe(
         : null,
     });
   } catch {
-    await artifacts.writeJson(`actions/${label}-separate-http-probe.json`, {
-      schemaVersion: 1,
-      source: "separate-sandbox-curl-request",
-      observedAt,
-      unavailable: true,
-    });
+    try {
+      await artifacts.writeJson(`actions/${label}-separate-http-probe.json`, {
+        schemaVersion: 1,
+        source: "separate-sandbox-curl-request",
+        observedAt,
+        unavailable: true,
+      });
+    } catch {
+      // Preserve the original assertion when diagnostics cannot be saved.
+    }
   }
 }
