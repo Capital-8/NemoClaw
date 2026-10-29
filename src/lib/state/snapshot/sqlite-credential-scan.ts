@@ -27,12 +27,38 @@ function sessionBlobContainsCredential(value: Uint8Array): boolean {
 }
 
 type InspectionFailure = "integrity-check" | "table-name" | "sqlite-query" | "file-access";
+type DatabaseKind = "dcode" | "openclaw";
+
+function cellContainsCredential(
+  databaseKind: DatabaseKind,
+  tableName: string,
+  columnName: string,
+  value: unknown,
+): boolean {
+  if (value instanceof Uint8Array) {
+    return databaseKind === "dcode"
+      ? sessionBlobContainsCredential(value)
+      : textContainsCredential(Buffer.from(value).toString("utf8"));
+  }
+  if (typeof value !== "string") return false;
+  // OpenClaw 2026.9.2 records a truncated identity hash in these ledger columns.
+  // The public migration name ends in "keys", but the value is not a credential assignment.
+  if (
+    databaseKind === "openclaw" &&
+    ((tableName === "migration_runs" && columnName === "id") ||
+      (tableName === "migration_sources" && columnName === "last_run_id")) &&
+    /^legacy-main-session-keys:[a-f0-9]{24}$/u.test(value)
+  ) {
+    return false;
+  }
+  return textContainsCredential(value);
+}
 
 /** Inspect logical SQLite values so record framing cannot create token-shaped byte sequences. */
 function databaseContainsCredential(
   databasePath: string,
   reportFailure: (reason: InspectionFailure) => void,
-  inspectBlob: (value: Uint8Array) => boolean,
+  databaseKind: DatabaseKind,
 ): boolean | null {
   let database: DatabaseSync | null = null;
   try {
@@ -64,11 +90,8 @@ function databaseContainsCredential(
       for (const row of database
         .prepare(`SELECT * FROM ${sqliteIdentifier(tableName)}`)
         .iterate()) {
-        for (const value of Object.values(row)) {
-          if (
-            (typeof value === "string" && textContainsCredential(value)) ||
-            (value instanceof Uint8Array && inspectBlob(value))
-          ) {
+        for (const [columnName, value] of Object.entries(row)) {
+          if (cellContainsCredential(databaseKind, tableName, columnName, value)) {
             return true;
           }
         }
@@ -86,9 +109,8 @@ function databaseContainsCredential(
 function inspectExtractedDatabase(
   scanRoot: string,
   entry: string,
-  reportFailure: (reason: InspectionFailure) => void = () => {},
-  inspectBlob: (value: Uint8Array) => boolean = (value) =>
-    textContainsCredential(Buffer.from(value).toString("utf8")),
+  reportFailure: (reason: InspectionFailure) => void,
+  databaseKind: DatabaseKind,
 ): boolean | null {
   const candidatePath = path.resolve(scanRoot, entry);
   if (!isWithinRoot(candidatePath, scanRoot)) {
@@ -108,7 +130,7 @@ function inspectExtractedDatabase(
   } finally {
     if (descriptor !== null) closeSync(descriptor);
   }
-  return databaseContainsCredential(candidatePath, reportFailure, inspectBlob);
+  return databaseContainsCredential(candidatePath, reportFailure, databaseKind);
 }
 
 export function inspectExtractedDcodeSessionsDatabase(
@@ -116,13 +138,13 @@ export function inspectExtractedDcodeSessionsDatabase(
   entry: string,
   reportFailure: (reason: InspectionFailure) => void = () => {},
 ): boolean | null {
-  return inspectExtractedDatabase(scanRoot, entry, reportFailure, sessionBlobContainsCredential);
+  return inspectExtractedDatabase(scanRoot, entry, reportFailure, "dcode");
 }
 
-export function inspectExtractedSqliteDatabase(
+export function inspectExtractedOpenClawDatabase(
   scanRoot: string,
   entry: string,
   reportFailure: (reason: InspectionFailure) => void = () => {},
 ): boolean | null {
-  return inspectExtractedDatabase(scanRoot, entry, reportFailure);
+  return inspectExtractedDatabase(scanRoot, entry, reportFailure, "openclaw");
 }

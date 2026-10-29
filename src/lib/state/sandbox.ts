@@ -76,7 +76,7 @@ import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import {
   inspectExtractedDcodeSessionsDatabase,
-  inspectExtractedSqliteDatabase,
+  inspectExtractedOpenClawDatabase,
 } from "./snapshot/sqlite-credential-scan.js";
 import { withoutOpenClawSqliteMachineAuthority } from "./snapshot/openclaw-sqlite-sanitizer.js";
 import { nemoclawStateRoot } from "./state-root.js";
@@ -2337,7 +2337,7 @@ function nativeArchiveCredentialViolation(
         continue;
       }
       if (candidate.isOpenClawDatabase) {
-        const containsCredential = inspectExtractedSqliteDatabase(
+        const containsCredential = inspectExtractedOpenClawDatabase(
           scanRoot,
           candidate.entry,
           (reason) => console.error(`OpenClaw database inspection failed (${reason}).`),
