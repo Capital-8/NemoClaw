@@ -1,25 +1,35 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# What a mocked Docker provider would leave on the engine for a document with a
-# managed Docker gateway: the pulled images, the running gateway container,
-# and each managed service's running container, whose runtime reports ready
-# and, with bearer authentication, holds its generated key. Test files give
-# the mocked resources the same IDs:
+# The fixture declaration for a scenario's document. The gateway reports the
+# compute driver the document requires, unless compute_driver overrides it.
+# With a managed Docker gateway, the engine holds what a mocked Docker
+# provider would have created: the pulled images, the running gateway
+# container, and each managed service's running container, whose runtime
+# reports ready and, with bearer authentication, holds its generated key.
+# Test files give the mocked resources the same IDs:
 #
 #   gateway image sha256:0...01, sandbox image sha256:0...02, the Nth service
 #   image sha256:0...(N+3); gateway container fixture-gateway-container, and
 #   each service's container fixture-SERVICE-container.
 
 variable "document" {
-  description = "Path of the case's nemoclaw.yaml."
+  description = "Path of the scenario's nemoclaw.yaml."
   type        = string
+}
+
+variable "compute_driver" {
+  description = "The compute driver the gateway reports; null for the one the document requires."
+  type        = string
+  default     = null
 }
 
 locals {
   spec   = yamldecode(file(var.document)).spec
   owner  = yamldecode(file(var.document)).metadata.uid
   prefix = "nc-${substr(sha256(local.owner), 0, 16)}"
+  docker = try(local.spec.gateway.engine, "") != ""
+  driver = coalesce(var.compute_driver, local.spec.gateway.runtime.provider == "docker" ? "docker" : "kubernetes")
   # The SDK's default when a sandbox names no image.
   sandbox_images = distinct([
     for sandbox in values(local.spec.sandboxes) :
@@ -52,8 +62,9 @@ output "services" {
 }
 
 output "declare" {
-  description = "The declaration for a fixture_state data source."
-  value = jsonencode({
+  description = "The declaration for the fixture_state data source."
+  value = !local.docker ? jsonencode({ compute_driver = local.driver }) : jsonencode({
+    compute_driver = local.driver
     images = concat(
       [for reference in local.sandbox_images : { reference = reference, id = format("sha256:%064d", 2), fabric_catalog = true }],
       [for name, service in local.services : {

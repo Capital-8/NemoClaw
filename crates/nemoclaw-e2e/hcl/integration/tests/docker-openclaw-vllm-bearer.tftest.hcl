@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The mocked Docker provider's alias and image addresses follow from the
-# runner's engine socket; IDs match the shared docker module's declaration.
+# A managed vLLM service with bearer authentication and one OpenClaw agent.
+
+# Docker is mocked. Its alias and image addresses follow from the runner's
+# engine socket; the IDs match the fixtures module's declaration.
 mock_provider "docker" {
-  alias = "engine_f89fac887110ef1343c27ef101d8f0e9"
+  alias = "engine_23ddaef7520a85fde258e31aae3cf758"
 }
 
 override_resource {
@@ -18,17 +20,17 @@ override_resource {
 }
 
 override_resource {
-  target = docker_image.image_daa6d1792943cbc17fbfbacdedbb9def
+  target = docker_image.image_2cca7375931d84dde8c7697a5011510a
   values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
 }
 
 override_resource {
-  target = docker_image.image_aee9e5430d1479f6dfd173d0400547e4
+  target = docker_image.image_3293b9f826e49a048bcfc5f1293d57cc
   values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000002" }
 }
 
 override_resource {
-  target = docker_image.image_7b22b0d2475b85cddc02f4821135d50c
+  target = docker_image.image_7998830fa7e277e85b40b4df2225de1e
   values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000003" }
 }
 
@@ -36,13 +38,28 @@ override_resource {
 run "fixtures" {
   command = plan
 
+  module {
+    source = "./cases/docker-openclaw-vllm-bearer"
+  }
+
   plan_options {
     target = [data.fixture_state.setup]
   }
 }
 
 run "deploy" {
-  command = apply
+  module {
+    source = "./cases/docker-openclaw-vllm-bearer"
+  }
+}
+
+# A second apply changes nothing: it reads what deploy produced, including
+# data sources that only apply reads.
+run "verify" {
+
+  module {
+    source = "./cases/docker-openclaw-vllm-bearer"
+  }
 
   # Docker inputs: the vLLM container runs the acquired image with the
   # runtime launch the real vLLM provider computed, on its data volume and the
@@ -50,7 +67,7 @@ run "deploy" {
   # network's host address.
   assert {
     condition = (
-      docker_container.inference_service_inference_qwen.image == docker_image.image_7b22b0d2475b85cddc02f4821135d50c.image_id
+      docker_container.inference_service_inference_qwen.image == docker_image.image_7998830fa7e277e85b40b4df2225de1e.image_id
       && docker_container.inference_service_inference_qwen.env == toset(["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.inference_service_inference_qwen.spec}"])
       && toset([for mount in docker_container.inference_service_inference_qwen.mounts : "${mount.source}:${mount.target}"]) == toset([
         "${docker_volume.inference_storage_inference_qwen.name}:/data",
@@ -85,14 +102,14 @@ run "deploy" {
       && keys(module.observed.registrations) == [openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.registration]
       && values(module.observed.registrations)[0].config["OPENAI_BASE_URL"] == openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.server.endpoint
       && values(module.observed.registrations)[0].credentials == {
-        (openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.sandbox_env) = "file:${module.docker.services.qwen.name}:/credentials/inference-key"
+        (openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.sandbox_env) = "file:${module.fixtures.services.qwen.name}:/credentials/inference-key"
       }
-      && module.observed.sandboxes.assistant.providers == [openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.registration]
-      && module.observed.sandboxes.assistant.policy_endpoints == ["172.30.131.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1/**"]
-      && module.observed.starts.assistant.configuration == jsondecode(terraform_data.agent_assistant.input)
-      && module.observed.starts.assistant.configuration.models.primary.base_url == openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.server.endpoint
-      && module.observed.starts.assistant.configuration.models.primary.api_key_env == openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.sandbox_env
-      && module.observed.starts.assistant.configuration.models.primary.model == "Qwen/Qwen3-4B"
+      && module.observed.agents.assistant.providers == [openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.registration]
+      && module.observed.agents.assistant.policy_endpoints == ["172.30.131.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1/**"]
+      && module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
+      && module.observed.agents.assistant.start.configuration.models.primary.base_url == openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.server.endpoint
+      && module.observed.agents.assistant.start.configuration.models.primary.api_key_env == openshell_inference.inference_qwen-b075dac4a454574dfe89ff08.sandbox_env
+      && module.observed.agents.assistant.start.configuration.models.primary.model == "Qwen/Qwen3-4B"
     )
     error_message = "The vLLM binding, its key, the sandbox's access, or the agent's configuration differs from the service."
   }
@@ -105,7 +122,11 @@ run "deploy" {
 
 # OpenTofu removes what the last applying run applied, with its variables:
 # this run permits deletion, as the SDK's teardown graph does.
-run "permit_teardown" {
+run "teardown" {
+  module {
+    source = "./cases/docker-openclaw-vllm-bearer"
+  }
+
   variables {
     permit_destroy = true
   }

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The fixtures one case runs against: the OpenShell gRPC fixture, a fake
-//! Docker engine, an inference upstream that answers nothing, and the control
-//! endpoint of the `fixture` provider. A case declares what the engine reports
-//! and which compute driver the gateway reports, and reads what they recorded.
+//! The fixtures every scenario runs against, reset between scenarios: the
+//! OpenShell gRPC fixture, a fake Docker engine, an inference upstream that
+//! answers nothing, and the control endpoint of the `fixture` provider. A
+//! scenario declares what the engine and gateway report, and reads what they
+//! recorded.
 
 use crate::docker_engine::{self, DATA_ROOT};
 use nemoclaw_e2e::{http_fixture, openshell};
@@ -28,12 +29,12 @@ pub struct Shared {
     upstream_endpoint: OnceLock<String>,
     upstream_requests: Mutex<Vec<String>>,
     /// Fixture credential values by environment variable.
-    credentials: BTreeMap<String, String>,
+    credentials: Mutex<BTreeMap<String, String>>,
 }
 
 impl Shared {
     pub fn redact(&self, mut text: String) -> String {
-        for value in self.credentials.values() {
+        for value in self.credentials.lock().unwrap().values() {
             text = text.replace(value, "[REDACTED]");
         }
         text
@@ -80,6 +81,19 @@ impl Shared {
         }
         let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         match (read, segments.as_slice()) {
+            // Running declared containers, as a port-conflict check lists them.
+            (true, ["containers", "json"]) => {
+                let containers = self.containers.lock().unwrap();
+                let listed: Vec<Value> = containers
+                    .iter()
+                    .filter(|container| container["running"] != false)
+                    .map(|container| {
+                        json!({"Id": container["id"], "Names": [format!("/{}", container["name"].as_str().unwrap_or_default())],
+                            "Labels": container["labels"], "Ports": []})
+                    })
+                    .collect();
+                return json(json!(listed));
+            }
             (true, ["_ping"]) => return (200, Vec::new(), b"OK".to_vec()),
             (true, ["info"]) => {
                 return json(json!({"ID":"engine", "DockerRootDir":DATA_ROOT,
@@ -164,6 +178,7 @@ impl Shared {
     /// source: `env:NAME`, or `file:CONTAINER:PATH` for a declared file.
     pub fn observations(&self) -> Value {
         let containers = self.containers.lock().unwrap().clone();
+        let credentials = self.credentials.lock().unwrap().clone();
         let source = |value: &String| {
             let file = containers.iter().find_map(|container| {
                 let (path, _) = container["files"]
@@ -172,7 +187,7 @@ impl Shared {
                     .find(|(_, content)| *content == value)?;
                 Some(format!("file:{}:{path}", container["name"].as_str()?))
             });
-            self.credentials
+            credentials
                 .iter()
                 .find(|(_, supplied)| *supplied == value)
                 .map(|(name, _)| format!("env:{name}"))
@@ -281,14 +296,14 @@ impl Drop for Fixtures {
 }
 
 impl Fixtures {
-    /// The engine socket is fixed per case, so the Docker provider alias and
-    /// image addresses that cases name do not change between runs.
-    pub async fn start(case: &str, credentials: BTreeMap<String, String>) -> Self {
-        let socket = PathBuf::from(format!("/tmp/nemoclaw-integration/{case}.sock"));
+    /// One fixed engine socket gives every scenario the same Docker provider
+    /// alias and image addresses, which test files name.
+    pub async fn start() -> Self {
+        let socket = PathBuf::from("/tmp/nemoclaw-integration/engine.sock");
         std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
         assert!(
             std::os::unix::net::UnixStream::connect(&socket).is_err(),
-            "another run of {case} is active"
+            "another integration run is active"
         );
         let _ = std::fs::remove_file(&socket);
         let gateway = openshell::Fixture::start().await;
@@ -296,7 +311,6 @@ impl Fixtures {
             gateway: gateway.state.clone(),
             gateway_endpoint: gateway.endpoint.clone(),
             engine_endpoint: format!("unix://{}", socket.display()),
-            credentials,
             ..Default::default()
         });
         let serving = shared.clone();
@@ -357,24 +371,34 @@ impl Fixtures {
         }
     }
 
-    /// What OpenTofu's teardown must leave: no gateway objects or Fabric
-    /// runtimes, and engine storage never deleted or sent unknown requests.
-    pub fn assert_torn_down(&self) {
+    /// Clear every fixture for the next scenario, which supplies these credentials.
+    pub fn reset(&self, credentials: BTreeMap<String, String>) {
+        let shared = &self.shared;
+        *shared.gateway.lock().unwrap() = openshell::State::default();
+        *shared.engine.lock().unwrap() = docker_engine::Engine::default();
+        shared.engine_requests.lock().unwrap().clear();
+        shared.images.lock().unwrap().clear();
+        shared.containers.lock().unwrap().clear();
+        shared.upstream_requests.lock().unwrap().clear();
+        *shared.credentials.lock().unwrap() = credentials;
+    }
+
+    /// What OpenTofu's teardown left that it must not: gateway objects or
+    /// Fabric runtimes, deleted engine storage, or unrecognized engine requests.
+    pub fn teardown_problem(&self) -> Option<String> {
         let state = self.shared.gateway.lock().unwrap();
-        assert!(
-            state.sandboxes.is_empty()
-                && state.providers.is_empty()
-                && state.profiles.is_empty()
-                && state.workspaces.is_empty()
-                && state.fabric_runtimes.is_empty(),
-            "teardown left gateway objects or Fabric runtimes"
-        );
+        if !(state.sandboxes.is_empty()
+            && state.providers.is_empty()
+            && state.profiles.is_empty()
+            && state.workspaces.is_empty()
+            && state.fabric_runtimes.is_empty())
+        {
+            return Some("teardown left gateway objects or Fabric runtimes".into());
+        }
         let mutations = &self.shared.engine.lock().unwrap().mutations;
-        assert!(
-            !mutations
-                .iter()
-                .any(|m| m.starts_with("UNEXPECTED") || m.starts_with("DELETE /volumes")),
-            "unexpected or storage-deleting engine requests: {mutations:#?}"
-        );
+        mutations
+            .iter()
+            .any(|m| m.starts_with("UNEXPECTED") || m.starts_with("DELETE /volumes"))
+            .then(|| format!("unexpected or storage-deleting engine requests: {mutations:?}"))
     }
 }

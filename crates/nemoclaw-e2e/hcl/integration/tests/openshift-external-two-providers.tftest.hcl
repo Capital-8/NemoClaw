@@ -1,11 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# An OpenShift gateway uses no engine, so nothing is mocked.
+# An OpenShift gateway with an Anthropic Messages and an NVIDIA provider.
+# The gateway uses no engine, so nothing is mocked.
 
 # Declare the fixtures before the deployment's first plan reads them.
 run "fixtures" {
   command = plan
+
+  module {
+    source = "./cases/openshift-external-two-providers"
+  }
 
   plan_options {
     target = [data.fixture_state.setup]
@@ -13,7 +18,18 @@ run "fixtures" {
 }
 
 run "deploy" {
-  command = apply
+  module {
+    source = "./cases/openshift-external-two-providers"
+  }
+}
+
+# A second apply changes nothing: it reads what deploy produced, including
+# data sources that only apply reads.
+run "verify" {
+
+  module {
+    source = "./cases/openshift-external-two-providers"
+  }
 
   assert {
     condition = (
@@ -29,13 +45,13 @@ run "deploy" {
   assert {
     condition = alltrue([
       for binding in [
-        openshell_inference.inference_hosted-01e6599f47b4bf91f2ab7aaa,
-        openshell_inference.inference_nvidia-2cfb2cb09d105f40b4d93c7f,
-        openshell_inference.inference_nvidia-d5ac1fe153c78e2f547d31a5,
+        openshell_inference.inference_hosted-a709e032675b6402ba79e0e7,
+        openshell_inference.inference_nvidia-2406835b0b5ea2fc5d28d9fe,
+        openshell_inference.inference_nvidia-8f0a5f5bd85d88c70c88b494,
       ] :
       module.observed.registrations[binding.registration].credentials == { (binding.sandbox_env) = "env:${binding.server.credential_env}" }
       && contains(values(module.observed.registrations[binding.registration].config), binding.server.endpoint)
-    ]) && openshell_inference.inference_hosted-01e6599f47b4bf91f2ab7aaa.api == "anthropic-messages"
+    ]) && openshell_inference.inference_hosted-a709e032675b6402ba79e0e7.api == "anthropic-messages"
     error_message = "A registration's API, base URL, or credential differs from its provider."
   }
 
@@ -43,10 +59,10 @@ run "deploy" {
   # the Hermes sandbox names only its own NVIDIA binding.
   assert {
     condition = (
-      contains(module.observed.sandboxes.assistant.providers, openshell_inference.inference_hosted-01e6599f47b4bf91f2ab7aaa.registration)
-      && length(module.observed.sandboxes.assistant.providers) == 2
-      && length(module.observed.sandboxes.researcher.providers) == 1
-      && length(setintersection(module.observed.sandboxes.assistant.providers, module.observed.sandboxes.researcher.providers)) == 0
+      contains(module.observed.agents.assistant.providers, openshell_inference.inference_hosted-a709e032675b6402ba79e0e7.registration)
+      && length(module.observed.agents.assistant.providers) == 2
+      && length(module.observed.agents.researcher.providers) == 1
+      && length(setintersection(module.observed.agents.assistant.providers, module.observed.agents.researcher.providers)) == 0
     )
     error_message = "A sandbox names another agent's binding or misses its own."
   }
@@ -54,10 +70,10 @@ run "deploy" {
   # OpenClaw starts with both routes, Anthropic by default; Hermes with one.
   assert {
     condition = (
-      module.observed.starts.assistant.configuration == jsondecode(terraform_data.agent_assistant.input)
-      && module.observed.starts.researcher.configuration == jsondecode(terraform_data.agent_researcher.input)
-      && module.observed.starts.assistant.configuration.models.smart.api_key_env == openshell_inference.inference_hosted-01e6599f47b4bf91f2ab7aaa.sandbox_env
-      && module.observed.starts.assistant.configuration.models.default == module.observed.starts.assistant.configuration.models.smart
+      module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
+      && module.observed.agents.researcher.start.configuration == jsondecode(terraform_data.agent_researcher.input)
+      && module.observed.agents.assistant.start.configuration.models.smart.api_key_env == openshell_inference.inference_hosted-a709e032675b6402ba79e0e7.sandbox_env
+      && module.observed.agents.assistant.start.configuration.models.default == module.observed.agents.assistant.start.configuration.models.smart
       && module.observed.http.requests == []
     )
     error_message = "An agent did not start with its routes and key names, or inference was called."
@@ -66,7 +82,11 @@ run "deploy" {
 
 # OpenTofu removes what the last applying run applied, with its variables:
 # this run permits deletion, as the SDK's teardown graph does.
-run "permit_teardown" {
+run "teardown" {
+  module {
+    source = "./cases/openshift-external-two-providers"
+  }
+
   variables {
     permit_destroy = true
   }
