@@ -534,22 +534,37 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     },
   );
 
-  it.each(["Refactor this function.", "What time is it?", "Find unused imports."])(
-    "preserves ordinary tools at admission: %s",
-    async (prompt) => {
-      const { admission, rawHandler } = searchHook(false);
-      const context = { runId: "local-first-tool" };
-      expect(await admission({ prompt }, context)).toBeUndefined();
-      expect(
-        await rawHandler(
-          { toolName: "exec", params: { command: "rg handleRequest src/" } },
-          context,
-        ),
-      ).toBeUndefined();
-    },
-  );
+  it.each([
+    "Refactor this function.",
+    "What time is it?",
+    "Find unused imports.",
+    "Find all callers of handleRequest().",
+    "Find all callers of `handleRequest()`.",
+  ])("preserves ordinary tools at admission: %s", async (prompt) => {
+    const { admission, rawHandler } = searchHook(false);
+    const context = { runId: "local-first-tool" };
+    expect(await admission({ prompt }, context)).toBeUndefined();
+    expect(
+      await rawHandler({ toolName: "exec", params: { command: "rg handleRequest src/" } }, context),
+    ).toBeUndefined();
+  });
 
   it.each([
+    ["Find all callers of handleRequest().", "read", { file_path: "src/handler.ts" }],
+    ["Find all callers of `handleRequest()`.", "read", { file_path: "src/handler.ts" }],
+    ["Find all callers of `handleRequest`().", "read", { file_path: "src/handler.ts" }],
+    ['Find all callers of "Handler.handleRequest()".', "read", { file_path: "src/handler.ts" }],
+    ["Find all callers of 'handleRequest'().", "read", { file_path: "src/handler.ts" }],
+    [
+      "Find where handleRequest() is called and fix the bug.",
+      "read",
+      { file_path: "src/handler.ts" },
+    ],
+    [
+      "Find all callers of handleRequest() and return their file paths.",
+      "read",
+      { file_path: "src/handler.ts" },
+    ],
     ["Search the project for TODO comments.", "read", { file_path: "/sandbox/project/README.md" }],
     ["Investigate why the unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
     ["Investigate why unit tests are failing", "read", { file_path: "test/unit.test.ts" }],

@@ -223,11 +223,12 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       .slice(0, subjectWords[subjectEnd]?.index ?? rawSubject.length)
       .replace(/[\s,]+$/u, "");
     // Keep navigation identifiers even when their names are also modifiers.
+    // Empty call notation may sit inside or outside identifier quotes.
     const localCodeNavigation = [rawNavigationTarget, navigationTarget(subject)].some(
       (target) =>
         typeof target === "string" &&
         /^(?:(?:(?:this|that|the|our|my|your)\s+)?(?:function|method|class|symbol|variable|module)(?:\s+[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)?|[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)$/iu.test(
-          target,
+          target.replace(/\(\s*\)(?=[`"']?$)/u, ""),
         ),
     );
     // Code inspection targets imply local work without a path. Match the whole

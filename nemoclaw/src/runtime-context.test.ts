@@ -86,6 +86,31 @@ const localSourceAndOutputPrompts = [
   "Search auth.test.ts for failing assertions and list their line numbers.",
 ];
 
+const localCallNavigationPrompts = [
+  "Find all callers of handleRequest().",
+  "Find all callers of `handleRequest()`.",
+  "Find all callers of `handleRequest`().",
+  'Find all callers of "handleRequest()".',
+  'Find all callers of "handleRequest"().',
+  "Find all callers of 'handleRequest()'.",
+  "Find all callers of 'handleRequest'().",
+  "Find all callers of Handler.handleRequest().",
+  "Find all callers of `Handler.handleRequest()`.",
+  "Find all callers of Handler:handleRequest().",
+  "Find all callers of handleRequest( ).",
+  "Find where handleRequest() is called.",
+  "Find the function that calls `handleRequest()`.",
+  "Find the unit test that covers handleRequest().",
+  "Find unit tests for handleRequest().",
+  "Search for references to handleRequest().",
+  "Look up the definition of function handleRequest().",
+  "Find handleRequest()'s callers.",
+  "Find all callers of handleRequest() recursively, please.",
+  "Find all callers of handleRequest() and return their file paths.",
+  "Find where `handleRequest()` is called and fix the bug.",
+  "Find callers of please().",
+];
+
 const mockedLoadState = vi.mocked(loadState);
 
 const defaultConfig: NemoClawConfig = {
@@ -184,6 +209,41 @@ describe("registerRuntimeContext", () => {
     vi.clearAllMocks();
     mockedLoadState.mockReturnValue(blankState());
   });
+
+  it.each(localCallNavigationPrompts)(
+    "preserves tools and local sources for function-call navigation: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+      expect(suppliedSearchSources(prompt)).toEqual({ local: true, urls: [] });
+    },
+  );
+
+  it.each(
+    localCallNavigationPrompts.flatMap((prompt) => [
+      `${prompt.replace(/[.!?]$/u, "")} using Tavily.`,
+      `${prompt} Then search the web for solutions.`,
+      `${prompt} Then find official installation documentation.`,
+    ]),
+  )(
+    "withholds tools for function-call navigation mixed with external research: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+        "toolsAllow",
+        [],
+      );
+      expect(suppliedSearchSources(prompt)).toBeUndefined();
+    },
+  );
 
   it.each(localSourceAndOutputPrompts)(
     "preserves tools and local sources for filenames and result instructions: %s",
