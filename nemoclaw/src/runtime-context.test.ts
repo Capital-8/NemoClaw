@@ -513,6 +513,49 @@ describe("registerRuntimeContext", () => {
   );
 
   it.each([
+    "Read the current contents of README.md",
+    "Explain the latest changes to src/index.ts",
+    "Show the current text of config.json.",
+    "Summarize recent edits to src/index.ts.",
+    "Show the latest diff for src/index.ts.",
+    "Read the current contents of the file README.md.",
+    "Explain the latest changes made to `src/index.ts`, please.",
+    "Describe the current version of config.json.",
+    "Read the latest revision of main.rs.",
+    "Show the recent history of src/index.ts.",
+    "Read the current contents of data.csv.",
+    "Explain the latest changes to Dockerfile.base and return the results.",
+  ])("retains tools for explicit local file details: %s", async (prompt) => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
+    expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+      "toolsAllow",
+    );
+    expect(suppliedSearchSources(prompt)).toMatchObject({ local: true, urls: [] });
+  });
+
+  it.each([
+    "Provide today's weather in Paris.",
+    "Read the current contents of README.md, then provide today's weather in Paris.",
+    "Explain the latest changes to src/index.ts using Tavily.",
+    "Read the current contents of README.md online.",
+    "Explain the latest changes to src/index.ts and search the web for alternatives.",
+    "Explain the latest changes to the weather forecast.",
+    "Read the current contents of the latest industry reports.",
+    "Research the latest news about changes to src/index.ts.",
+  ])("rejects external research around local file details: %s", async (prompt) => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
+    expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+      "toolsAllow",
+      [],
+    );
+    expect(suppliedSearchSources(prompt)).toBeUndefined();
+  });
+
+  it.each([
     "Provide today's weather in Paris.",
     "Give me today's weather in Paris.",
     "Show today's weather in Paris.",

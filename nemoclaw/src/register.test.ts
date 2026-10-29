@@ -498,6 +498,13 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       },
     ].flatMap((event) =>
       [
+        "Read the current contents of README.md, then provide today's weather in Paris.",
+        "Explain the latest changes to src/index.ts using Tavily.",
+        "Read the current contents of README.md online.",
+        "Explain the latest changes to src/index.ts and search the web for alternatives.",
+        "Explain the latest changes to the weather forecast.",
+        "Read the current contents of the latest industry reports.",
+        "Research the latest news about changes to src/index.ts.",
         "Provide today's weather in Paris.",
         "Give me today's weather in Paris.",
         "Show today's weather in Paris.",
@@ -549,6 +556,18 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   );
 
   it.each([
+    "Read the current contents of README.md",
+    "Explain the latest changes to src/index.ts",
+    "Show the current text of config.json.",
+    "Summarize recent edits to src/index.ts.",
+    "Show the latest diff for src/index.ts.",
+    "Read the current contents of the file README.md.",
+    "Explain the latest changes made to `src/index.ts`, please.",
+    "Describe the current version of config.json.",
+    "Read the latest revision of main.rs.",
+    "Show the recent history of src/index.ts.",
+    "Read the current contents of data.csv.",
+    "Explain the latest changes to Dockerfile.base and return the results.",
     "Show me today's date.",
     "Give me the current git commit hash.",
     "Tell me the current branch name.",

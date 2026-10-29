@@ -241,11 +241,15 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       /^(?:for\s+)?(?:(?:all|any|some|the|this|these|those|our|my|your|a|an)\s+)*(?:(?:current|latest|recent|today(?:['’]s)?|unused|dead|unreachable|duplicate|missing|unresolved|undefined|deprecated|broken|failing|failed|TODO|FIXME|HACK|XXX)(?:\s+(?:and|or))?\s+)*(?:imports?|exports?|variables?|parameters?|arguments?|functions?|methods?|class(?:es)?|modules?|code|tests?|dependencies|references?|comments?|markers?|bugs?|defects?|typos?|(?:lint|type|syntax|compilation|compiler|build|test)\s+(?:errors?|warnings?|failures?))\s*[.!?]*\s*$/iu.test(
         subject,
       );
-    // Tool-call URL fields describe argument transport, not local files.
-    const localSourceSubject = subject.replace(
-      /\b(?:URL|URI)\s+in\s+(?:args|params)\.[\w.]+/giu,
-      "",
-    );
+    // File details still name a local retrieval target. Normalize only a
+    // leading detail request; a file mentioned in a research topic is no grant.
+    const localSourceSubject = subject
+      .replace(
+        /^(?:(?:the|this|these|those|our|my|your)\s+)?(?:(?:current|latest|recent|today(?:['’]s)?)\s+)*(?:contents?|text|changes?|edits?|updates?|diffs?|versions?|revisions?|history)\s+(?:(?:made|applied)\s+)?(?:of|to|in|for)\s+/iu,
+        "",
+      )
+      // Tool-call URL fields describe argument transport, not local files.
+      .replace(/\b(?:URL|URI)\s+in\s+(?:args|params)\.[\w.]+/giu, "");
     const localSource =
       localCodeNavigation ||
       localCodeInspection ||
