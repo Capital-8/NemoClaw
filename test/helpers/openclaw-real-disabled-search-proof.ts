@@ -255,6 +255,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Find and fix the bug",
         "Search auth.test.ts for failing assertions.",
         "Search main.rs for TODO comments",
+        "Find a file called config.json",
+        "Find the function named parseConfig",
         "Search main.go for TODO comments",
         "Search data.csv for missing values",
         "Find all callers of handleRequest and return their file paths.",
@@ -408,6 +410,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       }
       for (const prompt of [
         searchPrompt,
+        "Find a file called config.json online.",
+        "Find the function named parseConfig using Tavily.",
         "Search main.rs for TODO comments, then search the web for solutions.",
         "Search data.csv for missing values using Tavily.",
         "Search data.csv for missing values online.",
@@ -522,6 +526,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         ["Find and fix the bug", "read", { file_path: "src/index.ts" }],
         ["Search auth.test.ts for failing assertions.", "read", { file_path: "auth.test.ts" }],
         ["Search main.rs for TODO comments", "read", { file_path: "main.rs" }],
+        ["Find a file called config.json", "read", { file_path: "config.json" }],
+        ["Find the function named parseConfig", "read", { file_path: "src/config.ts" }],
         ["Search main.go for TODO comments", "read", { file_path: "main.go" }],
         ["Search data.csv for missing values", "read", { file_path: "data.csv" }],
         [

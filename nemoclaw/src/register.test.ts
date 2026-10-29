@@ -499,6 +499,8 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     ].flatMap((event) =>
       [
         "Find the official NemoClaw installation documentation.",
+        "Find a file called config.json online.",
+        "Find the function named parseConfig using Tavily.",
         "Search main.rs for TODO comments, then search the web for solutions.",
         "Search data.csv for missing values using Tavily.",
         "Search data.csv for missing values online.",
@@ -540,6 +542,8 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
 
   it.each([
     "Search main.rs for TODO comments",
+    "Find a file called config.json",
+    "Find the function named parseConfig",
     "Search main.go for TODO comments",
     "Search data.csv for missing values",
     "Find all files containing foo.",
@@ -562,6 +566,8 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
 
   it.each([
     ["Search main.rs for TODO comments", "read", { file_path: "main.rs" }],
+    ["Find a file called config.json", "read", { file_path: "config.json" }],
+    ["Find the function named parseConfig", "read", { file_path: "src/config.ts" }],
     ["Search main.go for TODO comments", "read", { file_path: "main.go" }],
     ["Search data.csv for missing values", "read", { file_path: "data.csv" }],
     ["Find all callers of handleRequest().", "read", { file_path: "src/handler.ts" }],

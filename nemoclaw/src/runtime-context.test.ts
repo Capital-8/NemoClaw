@@ -100,6 +100,38 @@ const localFilenamePrompts = [
   "Search for TODO comments in main.rs.",
 ];
 
+const localLookupPrompts = [
+  "Find a file called config.json",
+  "Find a file named main.rs.",
+  "Find files called data.csv.",
+  "Find a directory called src.",
+  "Find a directory named src.",
+  "Find folders called fixtures.",
+  "Find the function named parseConfig",
+  "Find our function named parseConfig.",
+  "Find all the methods called parseConfig.",
+  "Find a method named `Handler.parseConfig()`.",
+  "Find a method called parseConfig.",
+  "Find the class named Config.",
+  "Find a module named parser.",
+  "Find a symbol called parseConfig.",
+  "Find a variable named config.",
+  "Find a constant called API_KEY.",
+  "Find a type named Config.",
+  "Find a struct called Config.",
+  "Find an interface named Parser.",
+  "Find an enum named State.",
+  "Find a trait called Parse.",
+  "Find a property named enabled.",
+  "Find a namespace named config.",
+  "Find a parameter named value.",
+  "Find an argument called value.",
+  "Find the function named `parseConfig()`.",
+  "Find the function named please.",
+  "Find the function called first recursively, please.",
+  "Find a file called auth.test.ts and list matching file paths.",
+];
+
 const localCallNavigationPrompts = [
   "Find all callers of handleRequest().",
   "Find all callers of `handleRequest()`.",
@@ -234,6 +266,43 @@ describe("registerRuntimeContext", () => {
     vi.clearAllMocks();
     mockedLoadState.mockReturnValue(blankState());
   });
+
+  it.each(localLookupPrompts)(
+    "preserves tools for named or called lookups with disabled search: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+    },
+  );
+
+  it.each([
+    "Find a file called config.json online.",
+    "Find the function named parseConfig using Tavily.",
+    "Find a directory called src on the web.",
+    "Find a class named Config from the internet.",
+    "Find the function named official installation documentation.",
+    "Find the function named the current Apple stock price.",
+    "Find a file called config.json, then search the web for solutions.",
+    "Find the function named parseConfig and get the latest release notes.",
+  ])(
+    "withholds tools for named or called lookups requiring external research: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+        "toolsAllow",
+        [],
+      );
+      expect(suppliedSearchSources(prompt)).toBeUndefined();
+    },
+  );
 
   it.each(["args.url", "params.url"])(
     "does not grant local sources for supplied-URL argument instructions: %s",
