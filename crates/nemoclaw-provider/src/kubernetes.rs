@@ -182,7 +182,9 @@ pub(crate) fn definitions() -> [crate::Definition; 3] {
     use nemoclaw_tofu::shape::Shape;
     let typed = |kind| {
         crate::services::schema_definition(kind)
-            .optional(&[ENVIRONMENT_FIELD, OIDC_FIELD])
+            // Without a kubeconfig, NemoClaw uses the pod's service account
+            // and both connection fields stay empty.
+            .optional(&["kubeconfig_env", "context", ENVIRONMENT_FIELD, OIDC_FIELD])
             .structured(
                 "environment",
                 ENVIRONMENT_FIELD,
@@ -325,6 +327,67 @@ mod tests {
             for attribute in definition.attributes() {
                 assert!(observed.contains_key(attribute), "{kind}.{attribute}");
             }
+        }
+    }
+
+    /// A resource without a kubeconfig observes empty `kubeconfig_env` and
+    /// `context`; the provider's adapter still accepts the refresh.
+    #[tokio::test]
+    async fn a_resource_without_a_kubeconfig_refreshes_completely() {
+        use nemoclaw_tofu::{Backend, Mutation, ResourceAdapter};
+        use tf_provider::{
+            Diagnostics, Resource,
+            value::{Value, ValueEmpty},
+        };
+        struct Observer(Row);
+        #[async_trait::async_trait]
+        impl Backend for Observer {
+            async fn read(
+                &self,
+                _: &str,
+                _: &Row,
+                _: bool,
+            ) -> Result<Option<Row>, ObservationError> {
+                Ok(Some(self.0.clone()))
+            }
+            async fn ensure(&self, _: &str, _: &Row) -> Mutation {
+                unreachable!("a refresh does not mutate resources")
+            }
+            async fn remove(&self, _: &str, _: &Row, _: bool) -> Result<(), ObservationError> {
+                unreachable!("a refresh does not remove resources")
+            }
+        }
+        for kind in [STORAGE_KIND, AUTH_KIND, GATEWAY_KIND] {
+            let source = Spec::from_row(kind, &pod_row(kind)).unwrap();
+            let observed = row(
+                &source,
+                Response {
+                    id: Some("uid-1".into()),
+                    running: Some(true),
+                    release_present: Some(true),
+                    gateway_values: Some("{}".into()),
+                },
+            )
+            .unwrap()
+            .unwrap();
+            let state = observed
+                .iter()
+                .map(|(name, value)| (name.clone(), Value::Value(value.clone())))
+                .collect();
+            let adapter = ResourceAdapter::new(
+                crate::resource_definition(kind).unwrap(),
+                std::sync::Arc::new(Observer(observed)),
+            );
+            let mut diags = Diagnostics::default();
+            adapter
+                .read(
+                    &mut diags,
+                    state,
+                    ValueEmpty::default(),
+                    ValueEmpty::default(),
+                )
+                .await;
+            assert!(diags.errors.is_empty(), "{kind}: {diags:?}");
         }
     }
 

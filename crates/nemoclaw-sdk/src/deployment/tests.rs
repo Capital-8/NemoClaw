@@ -142,6 +142,51 @@ fn without_a_kubeconfig_providers_receive_only_the_pods_api_server_address() {
     }
 }
 
+/// Outside a pod, an ambient kubeconfig is no fallback: a target without a
+/// kubeconfig stops, naming the missing in-cluster configuration, and only
+/// the two service variables are looked up. An empty one counts as unset.
+#[test]
+fn outside_a_pod_an_ambient_kubeconfig_is_never_used() {
+    thread_local! {
+        static ASKED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    fn ambient(name: &str) -> Option<String> {
+        ASKED.with(|asked| asked.borrow_mut().push(name.into()));
+        match name {
+            "KUBECONFIG" => Some("/home/agent/.kube/config".into()),
+            "HOME" => Some("/home/agent".into()),
+            _ => None,
+        }
+    }
+    fn empty_host(name: &str) -> Option<String> {
+        match name {
+            "KUBERNETES_SERVICE_HOST" => Some(String::new()),
+            _ => pod_variables(name),
+        }
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    for lookup in [ambient as fn(&str) -> Option<String>, empty_host] {
+        let mut deployment = Deployment::new(temporary.path(), Path::new("unused-bundle"))
+            .with_secrets(Arc::new(ClusterValues));
+        deployment.pod_environment = lookup;
+        let error = deployment
+            .provider_environment(&pod_document(), temporary.path(), false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("in-cluster Kubernetes configuration is missing"),
+            "{error}"
+        );
+    }
+    let asked = ASKED.with(|asked| asked.take());
+    assert!(
+        asked
+            .iter()
+            .all(|name| name.starts_with("KUBERNETES_SERVICE_")),
+        "{asked:?}"
+    );
+}
+
 /// With a kubeconfig, providers receive its path and none of a pod's
 /// variables, even when NemoClaw itself runs in a pod.
 #[test]

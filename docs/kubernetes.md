@@ -242,10 +242,12 @@ spec:
         profile: development
 ```
 
-- NemoClaw and the providers OpenTofu runs find the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`, which Kubernetes sets in the pod, and read the service account's token and CA from `/var/run/secrets/kubernetes.io/serviceaccount/`.
-  They never read `KUBECONFIG` or `~/.kube/config`.
+- NemoClaw passes OpenTofu `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`, which Kubernetes sets in the pod, and no kubeconfig.
+  NemoClaw's providers then connect with the service account's token and CA from `/var/run/secrets/kubernetes.io/serviceaccount/`, and the Helm provider gets no kubeconfig path or context, so it falls back to the same account.
+- This hasn't been run in a pod yet ([#13826](https://github.com/NVIDIA/NemoClaw/issues/13826)): that the providers ignore `KUBECONFIG` and `~/.kube/config` and use the service account comes from reading their sources.
 - If either variable is unset, as outside a pod, plan stops before OpenTofu plans; name a kubeconfig and context there.
 - `gateway.kubernetes.environment` serves a kubeconfig's exec plugin, so it requires `kubeconfig`.
+- The `kubectl` commands on this page name a context; in the pod, omit `--context`.
 - A deployment keeps the cluster access it was first applied with: switching between a kubeconfig and the pod's service account fails planning and leaves the resources unchanged.
 
 The pod needs:

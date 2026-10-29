@@ -884,8 +884,9 @@ The three NemoClaw resources take the same cluster target and identity:
 - `name`: `nc-`, 16 lowercase hexadecimal characters, and `-gateway`.
 - `compute_driver`: `kubernetes` or `openshift`.
 - `endpoint`: the gateway's `https://127.0.0.1:PORT` loopback endpoint.
-- `kubeconfig_env`: the environment variable whose value is the kubeconfig file path, or empty to use the service account of the pod that runs OpenTofu; the provider then finds the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
-- `context` and `namespace`: the exact kubeconfig context, empty exactly when `kubeconfig_env` is, and the namespace for the gateway.
+- Optional `kubeconfig_env`: the environment variable whose value is the kubeconfig file path. Omit it to use the service account of the pod that runs OpenTofu; the provider then finds the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
+- Optional `context`: the exact kubeconfig context, set exactly when `kubeconfig_env` is.
+- `namespace`: the namespace for the gateway.
 - `authentication_profile`: `development`.
 - Optional `environment`: the names of the environment variables the kubeconfig's exec credential plugin needs; it requires `kubeconfig_env`.
 - Optional `owner` and `generation`, generated on create when omitted.
@@ -896,7 +897,8 @@ Changing any of these settings after creation fails planning and leaves the reso
 
 Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
 The SDK requires each earlier binding before it accepts a later one.
-The Helm provider receives only the authored kubeconfig path and context; without them, it receives neither, and its client uses the pod's service account.
+The Helm provider receives only the authored kubeconfig path and context; without them, it receives neither.
+That its client then uses the pod's service account comes from the Helm provider's source and hasn't been run in a pod ([#13826](https://github.com/NVIDIA/NemoClaw/issues/13826)).
 Ambient Helm and Kubernetes settings are excluded.
 
 Teardown removes the release before the issuer.
