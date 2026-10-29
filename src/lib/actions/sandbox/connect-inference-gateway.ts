@@ -18,6 +18,7 @@ import {
 } from "../../onboard/env";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
+import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { listPublishedSandboxesAcrossGatewayRoots } from "../../state/registry/cross-port";
 
 const CONNECT_ROUTE_MUTATION_TIMEOUT_MS = 30_000;
@@ -50,7 +51,8 @@ export function connectInferenceTimeoutRangeError(
   sandbox: SandboxEntry | null | undefined,
   env: Record<string, string | undefined> = process.env,
 ): string | null {
-  const provider = sandbox?.provider;
+  if (!sandbox || getSandboxEntryInference(sandbox).kind !== "configured") return null;
+  const provider = sandbox.provider;
   return provider &&
     LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS.includes(provider) &&
     !recordedNativeProviderAttachment(sandbox) &&

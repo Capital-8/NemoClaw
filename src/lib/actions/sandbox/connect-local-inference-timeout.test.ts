@@ -22,12 +22,12 @@ describe("connect local inference timeout range (#13734)", () => {
     "rejects an unsupported timeout for %s",
     (provider) => {
       expect(
-        connectInferenceTimeoutRangeError(sandbox({ provider }), {
+        connectInferenceTimeoutRangeError(sandbox({ provider, model: "test-model" }), {
           NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "3601",
         }),
       ).toBe('NEMOCLAW_LOCAL_INFERENCE_TIMEOUT must be from 1 to 3600 seconds; got "3601".');
       expect(
-        connectInferenceTimeoutRangeError(sandbox({ provider }), {
+        connectInferenceTimeoutRangeError(sandbox({ provider, model: "test-model" }), {
           NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "3600",
         }),
       ).toBeNull();
@@ -35,8 +35,11 @@ describe("connect local inference timeout range (#13734)", () => {
   );
 
   it.each([
-    sandbox({ provider: "nvidia-prod" }),
-    sandbox({ provider: "openai-api" }),
+    sandbox({ provider: "nvidia-prod", model: "test-model" }),
+    sandbox({ provider: "openai-api", model: "test-model" }),
+    sandbox({ provider: "compatible-endpoint" }),
+    sandbox({ provider: "ollama-local", model: "" }),
+    sandbox({ provider: "vllm-local", model: "  " }),
     sandbox({}),
     null,
     undefined,
@@ -51,6 +54,7 @@ describe("connect local inference timeout range (#13734)", () => {
       connectInferenceTimeoutRangeError(
         sandbox({
           provider: "ollama-local",
+          model: "test-model",
           nativeLocalProviderAttachment: {} as SandboxEntry["nativeLocalProviderAttachment"],
         }),
         { NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "7200" },
