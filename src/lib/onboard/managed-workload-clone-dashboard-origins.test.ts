@@ -17,7 +17,10 @@ import { prepareManagedWorkloadCloneHandoff } from "./workload/clone";
 
 const ORIGINS = ["https://launchpad.example.test:8443"];
 
-function openClawSource(profile: ManagedStartupProfile): SandboxEntry {
+function openClawSource(
+  profile: ManagedStartupProfile,
+  recordedOrigins: readonly string[] | undefined,
+): SandboxEntry {
   const encodedProfile = encodeManagedStartupProfile(profile);
   const workload = {
     schemaVersion: 1,
@@ -51,12 +54,12 @@ function openClawSource(profile: ManagedStartupProfile): SandboxEntry {
     toolDisclosure: profile.tools.disclosure,
     dashboardPort: 18_789,
     dashboardRemoteBindPrepared: false,
-    dashboardOrigins: ORIGINS,
+    ...(recordedOrigins ? { dashboardOrigins: [...recordedOrigins] } : {}),
   } as SandboxEntry;
 }
 
-function cloneOf(profile: ManagedStartupProfile) {
-  const entry = openClawSource(profile);
+function cloneOf(profile: ManagedStartupProfile, recordedOrigins?: readonly string[]) {
+  const entry = openClawSource(profile, recordedOrigins);
   return prepareManagedWorkloadCloneHandoff({
     source: entry,
     snapshot: {
@@ -97,10 +100,23 @@ describe("clone dashboard origins (#13177)", () => {
       dashboard: { ...base.dashboard, extraOrigins: ORIGINS },
     });
 
-    const handoff = cloneOf(profile);
+    const handoff = cloneOf(profile, ORIGINS);
 
     expect(handoff.rebound.profile.dashboard).toMatchObject({ extraOrigins: ORIGINS });
     expect(handoff.registryFields.dashboardOrigins).toEqual(ORIGINS);
+  });
+
+  it("follows the source's current record when re-onboarding removed the origins", () => {
+    const base = managedStartupE2eProfile("openclaw");
+    const profile = validateManagedStartupProfile({
+      ...base,
+      dashboard: { ...base.dashboard, extraOrigins: ORIGINS },
+    });
+
+    const handoff = cloneOf(profile, undefined);
+
+    expect(handoff.rebound.profile.dashboard).not.toHaveProperty("extraOrigins");
+    expect(handoff.registryFields).not.toHaveProperty("dashboardOrigins");
   });
 
   it("records no origins for a clone whose profile has none", () => {
