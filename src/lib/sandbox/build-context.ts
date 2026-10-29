@@ -422,6 +422,7 @@ function stageOptimizedSandboxBuildContext(
     "openclaw-device-patch-payloads.mts",
     "openclaw-mcp-retry-payloads.mts",
     "patch-openclaw-worker-mcp-reliability.mts",
+    "patch-openclaw-webhook-completion.mts",
   ]) {
     fs.copyFileSync(
       path.join(rootDir, "scripts", "lib", name),

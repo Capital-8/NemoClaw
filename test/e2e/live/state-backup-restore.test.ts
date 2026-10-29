@@ -49,7 +49,7 @@ async function rebuildFixture(
     "artifacts" | "cleanup" | "host" | "progress" | "runtimeProvider" | "sandbox" | "secrets"
   >,
 ) {
-  const sandboxName = scenario === "legacy" ? SANDBOX_NAME : `${SANDBOX_NAME}-refusal`;
+  const sandboxName = scenario === "legacy" ? SANDBOX_NAME : `${SANDBOX_NAME}-r`;
   const deadline = performance.now() + testTimeout(45 * 60_000) - 60_000;
   const bounded = (cap: number) => {
     const remaining = Math.floor(deadline - performance.now());

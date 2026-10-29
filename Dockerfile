@@ -711,6 +711,7 @@ COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/pat
 COPY scripts/lib/patch-openclaw-secondary-main-session-delete.mts /usr/local/lib/nemoclaw/patch-openclaw-secondary-main-session-delete.mts
 COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
 COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
+COPY scripts/lib/patch-openclaw-webhook-completion.mts /usr/local/lib/nemoclaw/patch-openclaw-webhook-completion.mts
 COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
 FROM scratch AS openclaw-runtime-payload
@@ -920,6 +921,7 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-secondary-main-session-delete.mts \
         /usr/local/lib/nemoclaw/extract-semver \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-webhook-completion.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
 # Install SRI-verified ACP offline; runtime registry access is blocked.
@@ -1023,6 +1025,12 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     CI_GATED_BASE_IMAGE=0; \
     case "$BASE_IMAGE" in \
         ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:*) CI_GATED_BASE_IMAGE=1 ;; \
+        localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:*) \
+            OPENCLAW_BASE_DIGEST="${BASE_IMAGE#localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:}"; \
+            case "$OPENCLAW_BASE_DIGEST" in \
+                *[!a-f0-9]*) ;; \
+                *) if [ "${#OPENCLAW_BASE_DIGEST}" = "64" ]; then CI_GATED_BASE_IMAGE=1; fi ;; \
+            esac ;; \
     esac; \
     USE_REVIEWED_BASE_RUNTIME=0; \
     if [ "$CI_GATED_BASE_IMAGE" = "1" ] \
@@ -1468,19 +1476,17 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
     && node /usr/local/lib/nemoclaw/npm12.mts \
     /usr/local/lib/node_modules/openclaw/dist "$OPENCLAW_VERSION"
 
-# OpenClaw 2026.9.1 moved gateway startup work into shared and per-agent SQLite
-# databases, but hardens them to owner-only modes on every open. NemoClaw's
-# native lifecycle runs the CLI and gateway as the sandbox identity, so keep
-# the retired split-user marker unset and preserve OpenClaw's owner-only modes.
-# The patch leaves generic credential and identity store enforcement unchanged,
-# avoids redundant chmod calls when a reviewed private database mode already
-# matches, keeps generated models files private, and ignores the obsolete
-# update-check cache migration that cannot archive through a root-owned parent.
-#
-# Removal criteria: drop when upstream OpenClaw no longer needs the managed
-# runtime permission and legacy-cache compatibility changes.
+# CLI and gateway share one sandbox identity; preserve owner-only SQLite,
+# credential, identity and model files. Keep the retired split-user marker unset.
+# Skip redundant chmod and the obsolete cache migration through a root-owned parent.
+# Remove when upstream needs no managed permission or legacy-cache compatibility.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Read completed native webhook decisions before loading migration contracts again.
+# hadolint ignore=DL3059
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-webhook-completion.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Blueprint files stay immutable; apply root ownership after copying because

@@ -271,6 +271,7 @@ test(
       execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
     );
     expect(first.exitCode, resultText(first)).toBe(1);
+    expect(resultText(first)).toContain("[e2e] Forced onboarding failure at step 'policies'.");
 
     await createExtraGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
       artifactName: "phase-1-live-extra-provider-create",
@@ -357,7 +358,9 @@ test(
       env: env(),
       timeoutMs: 60_000,
     });
+    expect(sourceBeforeBackup.exitCode, resultText(sourceBeforeBackup)).toBe(0);
     const sourceId = parseOpenShellSandboxId(resultText(sourceBeforeBackup));
+    expect(sourceId, resultText(sourceBeforeBackup)).not.toBeNull();
     await sandbox.execShell(
       SANDBOX_NAME,
       trustedSandboxShellScript(
@@ -404,6 +407,7 @@ test(
       env: env(),
       timeoutMs: 60_000,
     });
+    expect(sourceAfterBackup.exitCode, resultText(sourceAfterBackup)).toBe(0);
     expect(parseOpenShellSandboxId(resultText(sourceAfterBackup))).toBe(sourceId);
     const requestOffset = fake.requests().length;
     const sourceChat = await sandbox.exec(
@@ -469,7 +473,10 @@ test(
       env: env(),
       timeoutMs: 60_000,
     });
-    expect(parseOpenShellSandboxId(resultText(replacement))).not.toBe(sourceId);
+    expect(replacement.exitCode, resultText(replacement)).toBe(0);
+    const replacementId = parseOpenShellSandboxId(resultText(replacement));
+    expect(replacementId, resultText(replacement)).not.toBeNull();
+    expect(replacementId).not.toBe(sourceId);
     const restoredMarker = await sandbox.exec(
       SANDBOX_NAME,
       ["cat", RESTORED_WORKSPACE_MARKER_FILE],
@@ -479,6 +486,7 @@ test(
         timeoutMs: 60_000,
       },
     );
+    expect(restoredMarker.exitCode, resultText(restoredMarker)).toBe(0);
     expect(restoredMarker.stdout.trim(), resultText(restoredMarker)).toBe(
       RESTORED_WORKSPACE_MARKER,
     );
@@ -522,6 +530,7 @@ test(
     fs.rmSync(SESSION_FILE, { force: true });
 
     progress.phase("reseed interrupted onboarding state");
+    // Let the model change reconcile restored routing before the policy failure injection.
     const reinject = await nemoclaw(
       host,
       ["onboard", "--non-interactive"],
@@ -530,7 +539,6 @@ test(
         NEMOCLAW_E2E_FAILURE_INJECTION: "1",
         NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "policies",
         NEMOCLAW_POLICY_MODE: "suggested",
-        NEMOCLAW_RECREATE_SANDBOX: "1",
         ...corporateCa.env,
       }),
       execTimeout(ONBOARD_REPAIR_COMMAND_TIMEOUT_MS),
@@ -541,6 +549,8 @@ test(
       redactionValues: [EXTRA_PROVIDER_TOKEN, "dummy"],
       captureGatewayLog: true,
     });
+    expect(reinject.exitCode, resultText(reinject)).toBe(1);
+    expect(resultText(reinject)).toContain("[e2e] Forced onboarding failure at step 'policies'.");
     progress.phase("reject conflicting resume inputs");
     const sandboxConflict = await nemoclaw(
       host,

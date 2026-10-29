@@ -321,6 +321,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "patch-openclaw-secondary-main-session-delete.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
     writeFixture(path.join("scripts", "patch-openclaw-shared-state-permissions.mts"));
+    writeFixture(path.join("scripts", "lib", "patch-openclaw-webhook-completion.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-brace-expansion.mts"));
     writeFixture(path.join("scripts", "lib", "patch-bundled-npm-ip-address.mts"));
     writeFixture(path.join("scripts", "patch-bundled-npm-tar.mts"));

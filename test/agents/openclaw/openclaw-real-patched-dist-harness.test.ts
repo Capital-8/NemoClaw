@@ -1089,6 +1089,27 @@ try {
             "shared-state patch idempotence",
           );
 
+          const webhookPatch = path.join(
+            REPO_ROOT,
+            "scripts",
+            "lib",
+            "patch-openclaw-webhook-completion.mts",
+          );
+          requireSpawnSuccess(
+            spawnSync(nodeRuntime.executable, [webhookPatch, dist], {
+              encoding: "utf8",
+              timeout: PATCH_COMMAND_TIMEOUT_MS,
+            }),
+            "apply native webhook completion after shared-state patches",
+          );
+          requireSpawnSuccess(
+            spawnSync(nodeRuntime.executable, [webhookPatch, "--audit", dist], {
+              encoding: "utf8",
+              timeout: PATCH_COMMAND_TIMEOUT_MS,
+            }),
+            "audit native webhook completion after shared-state patches",
+          );
+
           const sharedStateTargets = fs
             .readdirSync(dist)
             .filter((file) => /^openclaw-state-db-.+\.m?js$/.test(file))

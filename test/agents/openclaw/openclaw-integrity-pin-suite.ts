@@ -980,7 +980,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
     }
 
     if (group === "base") {
-      it("reuses exact protected OpenClaw and mcporter base provenance without registry work", () => {
+      it.each([
+        `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"a".repeat(64)}`,
+        `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:${"a".repeat(64)}`,
+      ])("reuses matching protected provenance from %s without registry work", (baseImage) => {
         const { result, calls, provenanceExists } = runInstallBlock(
           extractRunBlock(
             DOCKERFILE,
@@ -995,6 +998,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
             registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
             baseProvenance: openClawBaseProvenance(),
+            baseImage,
           },
         );
 
@@ -1248,6 +1252,28 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           {
             baseProvenance: openClawBaseProvenance(),
             baseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          },
+        ],
+        ...[
+          "localhost:5000/nemoclaw-managed-protected-base/openclaw:latest",
+          "localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:abc",
+          `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:${"g".repeat(64)}`,
+          `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:${"a".repeat(65)}`,
+          `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:bad@sha256:${"a".repeat(64)}`,
+          `localhost:5000/nemoclaw-managed-protected-base/hermes@sha256:${"a".repeat(64)}`,
+          `registry.example/nemoclaw-managed-protected-base/openclaw@sha256:${"a".repeat(64)}`,
+        ].map(
+          (baseImage) =>
+            [
+              `unverified prepared reference ${baseImage}`,
+              { baseImage, baseProvenance: openClawBaseProvenance() },
+            ] as const,
+        ),
+        [
+          "prepared local base with mismatched provenance",
+          {
+            baseImage: `localhost:5000/nemoclaw-managed-protected-base/openclaw@sha256:${"a".repeat(64)}`,
+            baseProvenance: openClawBaseProvenance().replace("schema=4", "schema=3"),
           },
         ],
       ])("falls back to the reviewed archive for %s", (_label, overrides) => {

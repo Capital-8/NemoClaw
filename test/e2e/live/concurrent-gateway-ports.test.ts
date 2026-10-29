@@ -10,6 +10,7 @@
  * uninstall when only a non-default gateway remains. This case also verifies
  * cross-gateway destroy survival under both cleanup policies: gateway A stays
  * selected and its sandbox restarts through unscoped OpenShell commands.
+ * NemoClaw then recovers forwards that OpenShell ends while the sandbox is stopped.
  */
 
 import fs from "node:fs";
@@ -286,6 +287,7 @@ async function probeSurvivorDashboard(
   dashboardPort: string,
   artifactPrefix: string,
   dashboardProbes = 1,
+  recoveryDeadline?: number,
 ): Promise<SurvivorDashboardProbe> {
   const gatewayPortProbe = await host.command(
     "bash",
@@ -302,7 +304,7 @@ async function probeSurvivorDashboard(
     timeoutMs: 30_000,
   });
   const dashboard: ShellProbeResult[] = [];
-  const dashboardDeadline = Date.now() + 60_000;
+  const dashboardDeadline = recoveryDeadline ?? Date.now() + 60_000;
   for (
     let probe = 1;
     probe <= dashboardProbes &&
@@ -337,6 +339,39 @@ async function probeSurvivorDashboard(
       : Promise.resolve());
   }
   return { gatewayPort: gatewayPortProbe, scopedList, dashboard };
+}
+
+async function recoverSurvivorDashboard(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  gatewayName: string,
+  gatewayPort: string,
+  dashboardPort: string,
+  artifactPrefix: string,
+): Promise<SurvivorDashboardProbe> {
+  // OpenShell service forwards terminate when their sandbox leaves Ready.
+  // Recovery and HTTP verification share the existing dashboard deadline.
+  const deadline = Date.now() + 60_000;
+  const recovery = await command(host, [sandboxName, "connect", "--probe-only"], {
+    artifactName: `${artifactPrefix}-recover-forward`,
+    env: commandEnv({
+      NEMOCLAW_GATEWAY_PORT: gatewayPort,
+      OPENSHELL_GATEWAY: gatewayName,
+    }),
+    timeoutMs: Math.max(1, deadline - Date.now()),
+  });
+  expect(recovery.exitCode, resultText(recovery)).toBe(0);
+  return probeSurvivorDashboard(
+    host,
+    sandbox,
+    gatewayName,
+    gatewayPort,
+    dashboardPort,
+    artifactPrefix,
+    PROBE_ATTEMPTS,
+    deadline,
+  );
 }
 
 async function selectAndVerifyActiveGateway(
@@ -873,14 +908,14 @@ test(
       gatewayA,
       "phase-3-survivor-after-cleanup-destroy",
     );
-    const survivorDashboardAfterCleanupDestroy = await probeSurvivorDashboard(
+    const survivorDashboardAfterCleanupDestroy = await recoverSurvivorDashboard(
       host,
       sandbox,
+      SANDBOX_A,
       gatewayA,
       GATEWAY_PORT_A,
       DASHBOARD_PORT_A,
       "phase-3-survivor-after-cleanup-destroy",
-      PROBE_ATTEMPTS,
     );
     const sandboxARestartedWithCleanup =
       survivorRestartAfterCleanupDestroy.stop.exitCode === 0 &&
@@ -1011,14 +1046,14 @@ test(
       gatewayA,
       "phase-3-survivor-after-retained-destroy",
     );
-    const survivorDashboardAfterRetainedDestroy = await probeSurvivorDashboard(
+    const survivorDashboardAfterRetainedDestroy = await recoverSurvivorDashboard(
       host,
       sandbox,
+      SANDBOX_A,
       gatewayA,
       GATEWAY_PORT_A,
       DASHBOARD_PORT_A,
       "phase-3-survivor-after-retained-destroy",
-      PROBE_ATTEMPTS,
     );
     const sandboxARestartedWithoutCleanup =
       survivorRestartAfterRetainedDestroy.stop.exitCode === 0 &&
