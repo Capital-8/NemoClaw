@@ -386,6 +386,66 @@ async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn declared_services_reach_the_gateway_as_exposures_and_survive_reapply() {
+    let mut document =
+        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
+    document
+        .spec
+        .sandboxes
+        .get_mut("assistant")
+        .unwrap()
+        .services = vec![
+        nemoclaw_sdk::config::ServiceExposure {
+            name: "dashboard".into(),
+            target_port: 18800,
+            authorization_mode: None,
+        },
+        nemoclaw_sdk::config::ServiceExposure {
+            name: "api".into(),
+            target_port: 8642,
+            authorization_mode: Some(nemoclaw_sdk::config::AuthorizationMode::BearerPassthrough),
+        },
+    ];
+    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
+    let effects = lifecycle.apply().await;
+    let sent = lifecycle
+        .fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandbox_exposures
+        .clone();
+    let [exposures] = sent.as_slice() else {
+        panic!("one sandbox creation must carry the exposures: {sent:?}")
+    };
+    let seen: std::collections::BTreeMap<_, _> = exposures
+        .iter()
+        .map(|exposure| {
+            (
+                exposure.service.clone(),
+                (exposure.target_port, exposure.authorization_mode),
+            )
+        })
+        .collect();
+    assert_eq!(seen.len(), 2, "{exposures:?}");
+    assert_eq!(seen["dashboard"].0, 18800);
+    assert_eq!(seen["api"].0, 8642);
+    // An omitted mode stays omitted, so OpenShell applies its own default.
+    assert_eq!(
+        seen["dashboard"].1,
+        openshell_core::proto::ServiceAuthorizationMode::Unspecified as i32
+    );
+    assert_eq!(
+        seen["api"].1,
+        openshell_core::proto::ServiceAuthorizationMode::BearerPassthrough as i32
+    );
+    // Reapplying the unchanged document, and exporting it, change nothing.
+    lifecycle.export_and_reapply_unchanged(effects).await;
+    lifecycle.destroy();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();

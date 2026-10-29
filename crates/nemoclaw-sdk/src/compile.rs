@@ -169,6 +169,28 @@ fn targets_with_plans(
                 serde_json::to_string(config).expect("driver configuration"),
             );
         }
+        if !sandbox.services.is_empty() {
+            // OpenShell's terms: snake_case names, as in the HCL service block.
+            let exposures: Vec<_> = sandbox
+                .services
+                .iter()
+                .map(|service| {
+                    let mut exposure = serde_json::json!({
+                        "name": service.name,
+                        "target_port": service.target_port,
+                    });
+                    if let Some(mode) = service.authorization_mode {
+                        exposure["authorization_mode"] =
+                            serde_json::to_value(mode).expect("authorization mode");
+                    }
+                    exposure
+                })
+                .collect();
+            values.insert(
+                "services_json".into(),
+                serde_json::to_string(&exposures).expect("service exposures"),
+            );
+        }
         {
             // The agent's inputs are Fabric's configuration sections; the
             // sandbox fields name the sandbox whose ref the graph passes.

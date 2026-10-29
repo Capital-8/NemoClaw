@@ -78,6 +78,28 @@ Stopping a client forward does not stop the sandbox or its Fabric runtime.
 No bundled adapter's Fabric configuration currently enables a browser interface.
 OpenClaw's dashboard ([#13360](https://github.com/NVIDIA/NemoClaw/issues/13360)) and Hermes's API, dashboard, and browser TUI ([#13321](https://github.com/NVIDIA/NemoClaw/issues/13321)) return when Fabric's adapters support configuring them.
 
+## Expose a Service Through the Gateway
+
+To make a sandbox's loopback listener reachable at a URL that OpenShell's gateway serves, declare it under the sandbox's `services`:
+
+```yaml
+sandboxes:
+  assistant:
+    services:
+      - name: dashboard
+        targetPort: 18800
+        authorizationMode: BEARER_PASSTHROUGH
+```
+
+Each entry is OpenShell's service exposure, passed through unchanged: `name`, `targetPort`, and an optional `authorizationMode` (`STRIP` or `BEARER_PASSTHROUGH`).
+OpenShell applies `STRIP` when the mode is omitted, and an empty name is the unnamed endpoint.
+Exposures belong to the sandbox's creation, so adding, changing, or removing one replaces the sandbox.
+In HCL, use `openshell_sandbox`'s [`service` blocks](provider.md#openshell-resources-and-data-sources).
+
+An exposure makes the port reachable; the service must still listen on loopback and authenticate its own clients.
+To list the URL the gateway reports, [select the gateway and workspace](#select-the-gateway-and-workspace) and run `openshell service list`.
+Apply output doesn't report it.
+
 ## Diagnose Failures
 
 Check gateway authorization, the UID-derived workspace, sandbox name, and native service state independently.

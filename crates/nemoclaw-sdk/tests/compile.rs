@@ -703,3 +703,46 @@ fn the_apply_time_gateway_read_waits_for_a_managed_gateway() {
         );
     }
 }
+
+#[test]
+fn sandboxes_expose_services_in_openshells_terms() {
+    let generations: nemoclaw_sdk::compile::Generations = ["workspace", "provider", "sandbox"]
+        .map(|key| (key.into(), "a".repeat(32)))
+        .into();
+    let mut value: serde_json::Value =
+        serde_saphyr::from_str(include_str!("../../../examples/fabric-openclaw.yaml")).unwrap();
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes()).unwrap();
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    assert!(
+        graph["resource"]["openshell_sandbox"]["assistant"]
+            .get("service")
+            .is_none()
+    );
+
+    value["spec"]["sandboxes"]["assistant"]["services"] = serde_json::json!([
+        {"name": "dashboard", "targetPort": 18800},
+        {"name": "api", "targetPort": 8642, "authorizationMode": "BEARER_PASSTHROUGH"}
+    ]);
+    let doc = nemoclaw_sdk::config::Document::parse(value.to_string().as_bytes())
+        .expect("services must parse");
+    let graph = nemoclaw_sdk::compile::compile(&doc, &generations, "0.1.0").unwrap();
+    // However OpenTofu takes it, OpenShell receives each exposure in its own terms.
+    let attribute = &graph["resource"]["openshell_sandbox"]["assistant"]["service"];
+    let decoded: serde_json::Value = match attribute.as_str() {
+        Some(text) => serde_json::from_str(text).unwrap(),
+        None => attribute.clone(),
+    };
+    assert_eq!(
+        decoded,
+        serde_json::json!([
+            {"name": "dashboard", "target_port": 18800},
+            {"name": "api", "target_port": 8642, "authorization_mode": "BEARER_PASSTHROUGH"}
+        ]),
+        "{attribute}"
+    );
+    // The document round-trips with it.
+    assert_eq!(
+        nemoclaw_sdk::config::Document::parse(doc.yaml().unwrap().as_bytes()).unwrap(),
+        doc
+    );
+}

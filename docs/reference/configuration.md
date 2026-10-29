@@ -142,6 +142,20 @@ Accepted input: string.
 
 Constraints: `"api-key"`.
 
+## AuthorizationMode
+
+OpenShell's service authorization modes.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.sandboxes.{key}.services[].authorizationMode`
+
+Accepted input: string.
+
+Constraints: `"STRIP"` or `"BEARER_PASSTHROUGH"`.
+
 ## Compatibility
 
 Execution host requirements and labels that must be present on the pinned image.
@@ -1121,6 +1135,7 @@ Paths:
 | `inferences` | map of [Inference](#inference) | No | — | Named inference configurations available through inferenceRef. Definitions resolve providers in their own scope and create no resources until selected. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `integrations` | map of [Integration](#integration) | No | — | Named integration definitions selected by this sandbox's agent through integrationRefs. Names must not collide with deployment definitions. Constraints: keys: pattern `^[a-z][a-z0-9-]{0,39}$`. |
 | `network` | [Network](#network) | No | — | Sandbox network policy; omission selects isolated egress with grants for declared inference. |
+| `services` | array of [ServiceExposure](#serviceexposure) | No | — | Loopback services in the sandbox that OpenShell's gateway makes reachable at a URL it reports. They are part of the sandbox's creation: changing them replaces the sandbox. |
 
 ## SearchProvider
 
@@ -1276,6 +1291,22 @@ Image-owned container with explicit launch settings and bounded readiness.
 | `publication` | [ContainerPublication](#containerpublication) | No | — | Optional loopback or private IPv4 TCP publication. Omission publishes no port. |
 | `readiness` | [ContainerReadiness](#containerreadiness) | No | — | HTTP, managed-runtime status, or image HEALTHCHECK readiness on every apply. |
 | `user` | string | No | `"65532:65532"` | Numeric UID:GID. Omission selects 65532:65532; root requires an explicit 0:0 for images that need it. Constraints: pattern `^[0-9]{1,9}:[0-9]{1,9}$`. |
+
+## ServiceExposure
+
+One service exposure, in OpenShell's terms: a loopback port the gateway makes reachable.
+
+Guide: [Configuration and credentials](../usage.md#configuration-and-credentials).
+
+Paths:
+
+- `spec.sandboxes.{key}.services[]`
+
+| Field | Input type | Required | Default | Description and constraints |
+|---|---|---|---|---|
+| `authorizationMode` | [AuthorizationMode](#authorizationmode) | No | — | How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP. |
+| `name` | string | Yes | — | Service name within the sandbox; an empty name is OpenShell's unnamed endpoint. |
+| `targetPort` | integer | Yes | — | Loopback TCP port the service listens on inside the sandbox. Constraints: minimum 1; maximum 65535. |
 
 ## ServiceHardware
 

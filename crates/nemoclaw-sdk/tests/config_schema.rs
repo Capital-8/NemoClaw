@@ -928,3 +928,33 @@ fn metadata_uid_accepts_either_case_and_keeps_it_lowercase() {
     assert_eq!(direct, same);
     direct.validate().unwrap();
 }
+
+#[test]
+fn sandbox_services_take_a_port_and_an_authorization_mode_openshell_accepts() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("fabric-openclaw.yaml");
+    let path = "/spec/sandboxes/assistant/services";
+    let set = |value: &mut Value, services: Value| {
+        value["spec"]["sandboxes"]["assistant"]["services"] = services;
+    };
+    for accepted in [
+        json!([{"name": "dashboard", "targetPort": 18800}]),
+        json!([{"name": "", "targetPort": 65535, "authorizationMode": "STRIP"}]),
+        json!([{"name": "api", "targetPort": 1, "authorizationMode": "BEARER_PASSTHROUGH"}]),
+    ] {
+        set(&mut value, accepted);
+        agrees(&validator, &value, true);
+    }
+    for rejected in [
+        json!([{"name": "dashboard", "targetPort": 0}]),
+        json!([{"name": "dashboard", "targetPort": 65536}]),
+        json!([{"name": "dashboard", "targetPort": 80, "authorizationMode": "OPEN"}]),
+        json!([{"name": "dashboard", "targetPort": 80, "surprise": true}]),
+        json!([{"targetPort": 80}]),
+        json!([{"name": "dashboard"}]),
+    ] {
+        set(&mut value, rejected);
+        agrees(&validator, &value, false);
+    }
+    assert!(value.pointer(path).is_some());
+}

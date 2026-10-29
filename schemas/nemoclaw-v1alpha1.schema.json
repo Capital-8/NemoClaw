@@ -141,6 +141,21 @@
       ],
       "type": "string"
     },
+    "AuthorizationMode": {
+      "description": "OpenShell's service authorization modes.",
+      "oneOf": [
+        {
+          "const": "STRIP",
+          "description": "Remove the Authorization header before the request reaches the service.",
+          "type": "string"
+        },
+        {
+          "const": "BEARER_PASSTHROUGH",
+          "description": "Pass a bearer Authorization header through to the service.",
+          "type": "string"
+        }
+      ]
+    },
     "Compatibility": {
       "additionalProperties": false,
       "description": "Execution host requirements and labels that must be present on the pinned image.",
@@ -2717,6 +2732,13 @@
         "network": {
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
+        },
+        "services": {
+          "description": "Loopback services in the sandbox that OpenShell's gateway makes reachable at a URL it reports. They are part of the sandbox's creation: changing them replaces the sandbox.",
+          "items": {
+            "$ref": "#/$defs/ServiceExposure"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -3346,6 +3368,32 @@
           "type": "object"
         }
       ]
+    },
+    "ServiceExposure": {
+      "additionalProperties": false,
+      "description": "One service exposure, in OpenShell's terms: a loopback port the gateway makes reachable.",
+      "properties": {
+        "authorizationMode": {
+          "$ref": "#/$defs/AuthorizationMode",
+          "description": "How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP."
+        },
+        "name": {
+          "description": "Service name within the sandbox; an empty name is OpenShell's unnamed endpoint.",
+          "type": "string"
+        },
+        "targetPort": {
+          "description": "Loopback TCP port the service listens on inside the sandbox.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "targetPort"
+      ],
+      "type": "object"
     },
     "ServiceHardware": {
       "anyOf": [

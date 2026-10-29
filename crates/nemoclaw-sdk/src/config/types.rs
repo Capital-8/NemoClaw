@@ -307,9 +307,44 @@ pub struct Sandbox {
     #[schemars(default, with = "serde_json::Map<String, serde_json::Value>")]
     /// OpenShell's per-driver sandbox configuration, such as mounts, passed through unchanged. NemoClaw sets nothing in it; the gateway must allow driver configuration.
     pub driver_config: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(default)]
+    /// Loopback services in the sandbox that OpenShell's gateway makes reachable at a URL it reports. They are part of the sandbox's creation: changing them replaces the sandbox.
+    pub services: Vec<ServiceExposure>,
     #[serde(rename = "agent")]
     /// The configured agent hosted by this sandbox in one Fabric runtime. Deploy additional agents in separate sandboxes.
     pub agent: Agent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+/// One service exposure, in OpenShell's terms: a loopback port the gateway makes reachable.
+pub struct ServiceExposure {
+    #[serde(rename = "name")]
+    /// Service name within the sandbox; an empty name is OpenShell's unnamed endpoint.
+    pub name: String,
+    #[serde(rename = "targetPort")]
+    #[schemars(range(min = 1, max = 65535))]
+    /// Loopback TCP port the service listens on inside the sandbox.
+    pub target_port: u16,
+    #[serde(
+        rename = "authorizationMode",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(default, with = "AuthorizationMode")]
+    /// How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP.
+    pub authorization_mode: Option<AuthorizationMode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+/// OpenShell's service authorization modes.
+pub enum AuthorizationMode {
+    /// Remove the Authorization header before the request reaches the service.
+    Strip,
+    /// Pass a bearer Authorization header through to the service.
+    BearerPassthrough,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
