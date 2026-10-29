@@ -60,11 +60,7 @@ export function registerIncompleteOnboardExitFailureHandler(
     const interrupted = markLastStartedStepFailed(deps, message, true);
     if (!interrupted) return;
     if (interrupted.status === "recovery_required") return;
-    printOnboardResumeHint(
-      portable,
-      undefined,
-      interrupted.sandboxName || deps.requestedSandboxName,
-    );
+    printOnboardResumeHint(portable, undefined, interrupted.sandboxName, deps.requestedSandboxName);
   };
 
   processLike.once("exit", (code) => {

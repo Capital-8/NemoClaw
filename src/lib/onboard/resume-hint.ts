@@ -36,19 +36,21 @@ export function printOnboardResumeHint(
   portable = isPortableExperimentalProfile(),
   log: (message: string) => void = (message) => console.error(message),
   sandboxName?: string | null,
+  requestedSandboxName?: string | null,
 ): void {
   if (resumeHintShown) return;
   resumeHintShown = true;
+  const recoveryName = isValidName(sandboxName) ? sandboxName : requestedSandboxName;
   log("");
   if (portable) {
     log("  Onboarding did not finish. Resume from the step that failed with:");
-    log(`    ${onboardResumeRecoveryCommand(sandboxName)}`);
+    log(`    ${onboardResumeRecoveryCommand(recoveryName)}`);
     log("  The portable profile and rootless Podman authority are restored from the checkpoint.");
     log("  To start over instead, run:");
     log(`    ${onboardFreshRecoveryCommand(true)}`);
   } else {
     log("  Onboarding did not finish. Resume from the step that failed with:");
-    log(`    ${onboardResumeRecoveryCommand(sandboxName)}`);
+    log(`    ${onboardResumeRecoveryCommand(recoveryName)}`);
     log("  Completed steps are skipped; pass --fresh instead to start over.");
   }
 }

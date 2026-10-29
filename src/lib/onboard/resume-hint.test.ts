@@ -50,6 +50,29 @@ describe("onboard resume hint", () => {
     },
   );
 
+  it.each([
+    [false, "invalid_name", "requested-name", " --name requested-name"],
+    [true, "invalid_name", "requested-name", " --name requested-name"],
+    [false, "chosen-name", "requested-name", " --name chosen-name"],
+    [false, "invalid_name", "requested; printf injected", ""],
+    [true, "invalid_name", "requested\n--fresh", ""],
+  ] as const)(
+    "uses the first valid recovery name with portable=%s, recorded=%s, requested=%s (#13730)",
+    (portable, sandboxName, requestedSandboxName, nameArg) => {
+      const lines: string[] = [];
+      printOnboardResumeHint(
+        portable,
+        (message) => lines.push(message),
+        sandboxName,
+        requestedSandboxName,
+      );
+
+      expect(lines.filter((line) => line.includes("onboard --resume"))).toEqual([
+        `    nemoclaw onboard --resume${nameArg}`,
+      ]);
+    },
+  );
+
   it("prints portable resume recovery guidance when the portable env is set (#9035)", () => {
     const prev = process.env[portableEnv];
     process.env[portableEnv] = "portable";

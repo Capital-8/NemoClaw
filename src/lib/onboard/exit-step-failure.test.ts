@@ -271,6 +271,24 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
     expect(requireLoadedSession().sandboxName).toBe("chosen-name");
   });
 
+  it.each(["invalid_name", "alpha; printf injected", "alpha\n--fresh"])(
+    "uses the requested name when the recorded name is invalid: %s (#13730)",
+    (sandboxName) => {
+      session.saveSession(session.createSession({ lastStepStarted: "inference", sandboxName }));
+      const beforeExit = requireLoadedSession();
+
+      const output = runExitHandler(1, { requestedSandboxName: "requested-name" });
+
+      expect(output.split("\n").filter((line) => line.includes("onboard --resume"))).toEqual([
+        "    nemoclaw onboard --resume --name requested-name",
+      ]);
+      const afterExit = requireLoadedSession();
+      expect(afterExit.sandboxName).toBe(sandboxName);
+      expect(afterExit.sandboxPromptProgress).toEqual(beforeExit.sandboxPromptProgress);
+      expect(afterExit.steps.inference.status).toBe("failed");
+    },
+  );
+
   it.each([
     ["SIGINT", 130],
     ["SIGTERM", 143],
