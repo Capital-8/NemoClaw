@@ -2282,12 +2282,13 @@ The command prints the private archive path and keeps the archive after recovery
 
 Before changing a Docker-backed sandbox, NemoClaw inspects every container with the requested `openshell.ai/sandbox-name` label.
 The command continues when Docker returns no matching containers.
-For one matching container, the command continues only when these labels have the required values:
+In an ordinary destroy flow with one matching container, the command continues only when these conditions are true:
 
-- `openshell.ai/managed-by=openshell`
-- A nonempty `openshell.ai/sandbox-id`
+- `openshell.ai/managed-by=openshell`.
+- `openshell.ai/sandbox-id` is not empty.
+- When the sandbox registry entry records a lifecycle identity fingerprint, the SHA-256 digest of `openshell.ai/sandbox-id` matches that fingerprint.
 
-In an ordinary destroy flow, if the initial inspection cannot complete, more than one container matches, a matching container lacks a required label or value, or Docker returns malformed identity data, `destroy` exits before changing sandbox resources.
+In an ordinary destroy flow, if the initial inspection cannot complete, more than one container matches, a matching container lacks a required label or value, the SHA-256 digest of the container's `openshell.ai/sandbox-id` does not match the sandbox registry's lifecycle identity fingerprint (reported as "registered sandbox identity"), or Docker returns malformed identity data, `destroy` exits before changing sandbox resources.
 Retained-sandbox recovery continues only when all these conditions are true:
 
 - The recovery record has a durable identity fingerprint.
@@ -2308,7 +2309,7 @@ For common recovery steps, refer to [Docker is not running](troubleshooting#dock
 If onboarding fails before NemoClaw records a runtime provider, keep the original `NEMOCLAW_GATEWAY_RUNTIME` selection set when you rerun `destroy`.
 Recorded sandbox or gateway ownership takes precedence over that fallback and must agree when both are present.
 
-If `destroy` reports conflicting containers, a retained sandbox identity mismatch, a recovery record with no durable sandbox identity, a missing required label, or malformed identity data, inspect the matching containers:
+If `destroy` reports conflicting containers, a registered or retained sandbox identity mismatch, a recovery record with no durable sandbox identity, a missing required label, or malformed identity data, inspect the matching containers:
 
 ```bash
 docker ps -a --no-trunc \
@@ -2328,9 +2329,9 @@ Docker cannot change labels on an existing container.
 Rerun the query after you resolve the conflict.
 Rerun `destroy` only when the query returns one of these verified states:
 
-- For a sandbox without a retained recovery record: one container with `openshell.ai/managed-by=openshell` and a nonempty `openshell.ai/sandbox-id`
-- For a retained recovery record with a durable identity fingerprint: one or more containers with `openshell.ai/managed-by=openshell`, a nonempty `openshell.ai/sandbox-id` whose SHA-256 digest matches the record's durable identity fingerprint, and the same `openshell.ai/sandbox-workspace` value
-- For any sandbox: no containers
+- For a sandbox without a retained recovery record: one container with `openshell.ai/managed-by=openshell` and an `openshell.ai/sandbox-id` value that is not empty. If the sandbox registry entry records a lifecycle identity fingerprint, the SHA-256 digest of that ID must match it.
+- For a retained recovery record with a durable identity fingerprint: one or more containers with `openshell.ai/managed-by=openshell`, an `openshell.ai/sandbox-id` value that is not empty whose SHA-256 digest matches the record's durable identity fingerprint, and the same `openshell.ai/sandbox-workspace` value.
+- For any sandbox: no containers.
 
 If the query returns no containers and a retained recovery record exists, OpenShell can still report the sandbox as present.
 `destroy` then deletes the sandbox only after its durable identity matches the recovery record.
@@ -2352,8 +2353,10 @@ printf '%s' '<sandbox-id>' | shasum -a 256
 ```
 
 If a Linux host does not supply `sha256sum`, run the `shasum -a 256` command instead.
+Compare only the 64-character hexadecimal value before the trailing `-`.
 
-The digest must equal the value after `Durable sandbox identity fingerprint:` that onboarding printed when it preserved the sandbox.
+For a retained recovery record, the digest must equal the value after `Durable sandbox identity fingerprint:` that onboarding printed when it preserved the sandbox.
+For a sandbox without a retained recovery record, `destroy` compares the digest with the `lifecycleLiveIdentityFingerprint` value in the sandbox's entry in `~/.nemoclaw/sandboxes.json` and refuses a mismatch.
 An empty workspace column is acceptable.
 In a retained recovery set, every container must show the same workspace value, including an empty value.
 

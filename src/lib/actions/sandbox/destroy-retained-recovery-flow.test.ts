@@ -984,4 +984,29 @@ describe("destroySandbox retained recovery flow", () => {
       expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
     },
   );
+
+  it(
+    "refuses to destroy a same-name legacy container with a different registered identity",
+    { timeout: 30_000 },
+    async () => {
+      const harness = createDestroyHarness({
+        dockerRunResult: {
+          status: 0,
+          stdout: "aaaa000000000000\topenshell\t\tsb-other",
+        },
+        registryEntryOverrides: {
+          lifecycleLiveIdentityFingerprint: createHash("sha256").update("sb-alpha").digest("hex"),
+        },
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["sandbox", "delete"]),
+        expect.anything(),
+      );
+    },
+  );
 });
