@@ -13,7 +13,7 @@ run "openclaw_vllm" {
     targets = {
       assistant = {
         agent             = "assistant"
-        request           = "What is 2 plus 2? Answer in one short sentence. /no_think"
+        request           = "What is 2 plus 2? Answer in one short sentence."
         response_contract = "openclaw"
       }
     }
