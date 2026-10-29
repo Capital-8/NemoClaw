@@ -39,6 +39,7 @@ describe("Hermes Switchyard routing", () => {
   it("serializes the released adaptive Relay and Switchyard contracts (#13862)", () => {
     const serialized = serializeHermesSwitchyardRouting(routing());
     const relay = parseToml(serialized.relayPluginsToml) as Record<string, unknown>;
+    const relayState = JSON.parse(serialized.relayPluginStateJson) as Record<string, unknown>;
     const deployment = parseToml(serialized.switchyardDeploymentToml) as Record<string, unknown>;
 
     expect(relay).toMatchObject({
@@ -89,6 +90,25 @@ describe("Hermes Switchyard routing", () => {
           message_hash_fallback: true,
         },
       },
+    });
+    expect(relayState).toMatchObject({
+      schema_version: 1,
+      records: [
+        {
+          metadata: { id: "nvidia.switchyard", kind: "rust_dynamic", generation: 1 },
+          source: { manifest_ref: "/opt/nemo-relay/plugins/switchyard/relay-plugin.toml" },
+          spec: { present: true, enabled: true },
+          compatibility: {
+            rust_dynamic: { relay: ">=0.8.0, <1.0.0", native_api: "1" },
+          },
+          load: {
+            rust_dynamic: {
+              library: "libswitchyard_nemo_relay_plugin.so",
+              symbol: "nemo_relay_register_plugin",
+            },
+          },
+        },
+      ],
     });
     expect(serialized.switchyardDeploymentToml).not.toContain("weighted");
     expect(serialized.switchyardDeploymentToml).not.toContain("sk-test-secret");

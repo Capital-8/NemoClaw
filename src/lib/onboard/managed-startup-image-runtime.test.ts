@@ -634,6 +634,8 @@ describe("managed startup image runtime", () => {
         [HERMES_SWITCHYARD_ROUTING_ENV]: encodeHermesSwitchyardRoutingIntent(routing),
       },
       paths: {
+        relayPluginStateSource: "/sandbox/hermes-relay-plugin-state.json",
+        relayPluginStateTarget: "/usr/local/share/.dynamic-plugins.json",
         relayPluginsSource: "/sandbox/hermes-relay-plugins.toml",
         relayPluginsTarget: "/usr/local/share/hermes-relay-plugins.toml",
         switchyardDeploymentSource: "/sandbox/hermes-switchyard-v1.toml",
@@ -649,17 +651,20 @@ describe("managed startup image runtime", () => {
       [],
       new Map([
         [paths.relayPluginsSource, { contents: serialized.relayPluginsToml, mode: 0o600 }],
+        [paths.relayPluginStateSource, { contents: serialized.relayPluginStateJson, mode: 0o600 }],
         [
           paths.switchyardDeploymentSource,
           { contents: serialized.switchyardDeploymentToml, mode: 0o600 },
         ],
         [paths.relayPluginsTarget, { contents: "previous relay activation", mode: 0o444 }],
+        [paths.relayPluginStateTarget, { contents: "previous relay state", mode: 0o444 }],
         [paths.switchyardDeploymentTarget, { contents: "previous deployment", mode: 0o444 }],
       ]),
     );
     const promotionOrder: string[] = [];
     const previousByTarget = new Map([
       [paths.switchyardDeploymentTarget, "previous deployment"],
+      [paths.relayPluginStateTarget, "previous relay state"],
       [paths.relayPluginsTarget, "previous relay activation"],
     ]);
     filesystem.beforeRename((_source, target) => {
@@ -669,15 +674,62 @@ describe("managed startup image runtime", () => {
 
     installHermesSwitchyardRoutingFiles(environment, paths, { uid: 0, gid: 0 });
 
-    expect(promotionOrder).toEqual([paths.switchyardDeploymentTarget, paths.relayPluginsTarget]);
+    expect(promotionOrder).toEqual([
+      paths.switchyardDeploymentTarget,
+      paths.relayPluginStateTarget,
+      paths.relayPluginsTarget,
+    ]);
     expect(filesystem.readFile(paths.switchyardDeploymentTarget)).toBe(
       serialized.switchyardDeploymentToml,
     );
     expect(filesystem.readFile(paths.relayPluginsTarget)).toBe(serialized.relayPluginsToml);
+    expect(filesystem.readFile(paths.relayPluginStateTarget)).toBe(serialized.relayPluginStateJson);
     expect(filesystem.hasFile(paths.switchyardDeploymentSource)).toBe(false);
+    expect(filesystem.hasFile(paths.relayPluginStateSource)).toBe(false);
     expect(filesystem.hasFile(paths.relayPluginsSource)).toBe(false);
     expect(() => verifyHermesSwitchyardRoutingFiles(environment, paths)).not.toThrow();
   });
+
+  it.each(["owner", "mode", "bytes"] as const)(
+    "rejects a staged Switchyard artifact with invalid %s before target mutation (#13862)",
+    (invalid) => {
+      const { environment, paths, serialized } = switchyardRoutingFixture();
+      const filesystem = mockRootReplayFilesystem(
+        [],
+        new Map([
+          [
+            paths.relayPluginsSource,
+            {
+              contents: invalid === "bytes" ? "changed relay config" : serialized.relayPluginsToml,
+              mode: invalid === "mode" ? 0o644 : 0o600,
+            },
+          ],
+          [
+            paths.relayPluginStateSource,
+            { contents: serialized.relayPluginStateJson, mode: 0o600 },
+          ],
+          [
+            paths.switchyardDeploymentSource,
+            { contents: serialized.switchyardDeploymentToml, mode: 0o600 },
+          ],
+          [paths.relayPluginsTarget, { contents: "previous relay activation", mode: 0o444 }],
+          [paths.relayPluginStateTarget, { contents: "previous relay state", mode: 0o444 }],
+          [paths.switchyardDeploymentTarget, { contents: "previous deployment", mode: 0o444 }],
+        ]),
+      );
+
+      expect(() =>
+        installHermesSwitchyardRoutingFiles(
+          environment,
+          paths,
+          invalid === "owner" ? { uid: 999, gid: 999 } : { uid: 0, gid: 0 },
+        ),
+      ).toThrow(/generated Hermes routing artifact is invalid/u);
+      expect(filesystem.readFile(paths.relayPluginsTarget)).toBe("previous relay activation");
+      expect(filesystem.readFile(paths.relayPluginStateTarget)).toBe("previous relay state");
+      expect(filesystem.readFile(paths.switchyardDeploymentTarget)).toBe("previous deployment");
+    },
+  );
 
   it("removes Relay activation before stale Switchyard deployment when disabled (#13862)", () => {
     const { paths } = switchyardRoutingFixture();
@@ -685,6 +737,7 @@ describe("managed startup image runtime", () => {
       [],
       new Map([
         [paths.relayPluginsTarget, { contents: "stale relay activation", mode: 0o444 }],
+        [paths.relayPluginStateTarget, { contents: "stale relay state", mode: 0o444 }],
         [paths.switchyardDeploymentTarget, { contents: "stale deployment", mode: 0o444 }],
       ]),
     );
@@ -693,8 +746,13 @@ describe("managed startup image runtime", () => {
 
     installHermesSwitchyardRoutingFiles({}, paths, { uid: 0, gid: 0 });
 
-    expect(removalOrder).toEqual([paths.relayPluginsTarget, paths.switchyardDeploymentTarget]);
+    expect(removalOrder).toEqual([
+      paths.relayPluginsTarget,
+      paths.relayPluginStateTarget,
+      paths.switchyardDeploymentTarget,
+    ]);
     expect(filesystem.hasFile(paths.relayPluginsTarget)).toBe(false);
+    expect(filesystem.hasFile(paths.relayPluginStateTarget)).toBe(false);
     expect(filesystem.hasFile(paths.switchyardDeploymentTarget)).toBe(false);
     expect(() => verifyHermesSwitchyardRoutingFiles({}, paths)).not.toThrow();
   });
@@ -705,6 +763,7 @@ describe("managed startup image runtime", () => {
       [],
       new Map([
         [paths.relayPluginsSource, { contents: serialized.relayPluginsToml, mode: 0o600 }],
+        [paths.relayPluginStateSource, { contents: serialized.relayPluginStateJson, mode: 0o600 }],
         [
           paths.switchyardDeploymentSource,
           { contents: serialized.switchyardDeploymentToml, mode: 0o600 },

@@ -453,7 +453,7 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 
 #### `--switchyard-config <file>`
 
-For managed Hermes onboarding, load adaptive Switchyard routing from a JSON file containing only the efficient and capable provider/model selections. NemoClaw reuses the capable target as the routing judge and derives the internal Relay and Switchyard configuration; the file must not contain credentials, endpoints, or internal routing fragments.
+For managed Hermes onboarding, load adaptive Switchyard routing from a JSON file containing only the efficient and capable provider/model selections. Both targets must name approved fixed hosted provider profiles. NemoClaw reuses the capable target as the routing judge and derives the internal Relay and Switchyard configuration; the file must not contain credentials, endpoints, or internal routing fragments. This option requires the managed Hermes image. Portable and custom images are not supported.
 
 ```json
 {
@@ -464,7 +464,7 @@ For managed Hermes onboarding, load adaptive Switchyard routing from a JSON file
 ```
 
 ```bash
-nemohermes onboard --switchyard-config ./switchyard.json
+$$nemoclaw onboard --agent hermes --switchyard-config ./switchyard.json
 ```
 
 #### External Component Onboarding

@@ -9,6 +9,7 @@ test -n "$pid"
 /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I - "$pid" <<'PY'
 import hashlib
 from importlib.metadata import version
+import json
 import os
 from pathlib import Path
 import platform
@@ -76,18 +77,63 @@ id = "switchyard/fixture"
 type = "passthrough"
 target = "default"
 ''')
+    state = Path(directory) / '.dynamic-plugins.json'
+    state.write_text(json.dumps({
+        'schema_version': 1,
+        'records': [{
+            'metadata': {
+                'id': 'nvidia.switchyard',
+                'kind': 'rust_dynamic',
+                'generation': 1,
+            },
+            'source': {'manifest_ref': str(bundle / 'relay-plugin.toml')},
+            'spec': {'present': True, 'enabled': True},
+            'compatibility': {
+                'rust_dynamic': {'relay': '>=0.8.0, <1.0.0', 'native_api': '1'},
+            },
+            'load': {
+                'rust_dynamic': {
+                    'library': library.name,
+                    'symbol': 'nemo_relay_register_plugin',
+                },
+            },
+            'status': {},
+        }],
+    }))
+    state_before = state.read_bytes()
+    lifecycle = json.loads(state_before)
+    assert lifecycle['schema_version'] == 1
+    assert len(lifecycle['records']) == 1
+    record = lifecycle['records'][0]
+    assert record['metadata'] == {
+        'id': 'nvidia.switchyard',
+        'kind': 'rust_dynamic',
+        'generation': 1,
+    }
+    assert record['spec'] == {'present': True, 'enabled': True}
+    assert record['source']['manifest_ref'] == str(bundle / 'relay-plugin.toml')
+    assert record['load']['rust_dynamic'] == {
+        'library': library.name,
+        'symbol': 'nemo_relay_register_plugin',
+    }
+    dynamic_plugins = nemo_relay.plugin.load_dynamic_plugin_activation_specs(config)
+    assert len(dynamic_plugins) == 1
+    assert dynamic_plugins[0].plugin_id == 'nvidia.switchyard'
+    # Hermes 0.21.3 treats this explicit config as activation consent. Its
+    # compatibility host reads the config and leaves Relay lifecycle state untouched.
     os.environ[relay_runtime.RELAY_PLUGINS_CONFIG_ENV] = str(config)
     runtime = relay_runtime.RelayRuntime()
     try:
         assert runtime.managed_execution_enabled(), runtime._plugin_configuration_state
         assert str(library) in Path('/proc/self/maps').read_text()
         assert nemo_relay.plugin.report() is not None
+        assert state.read_bytes() == state_before
     finally:
         runtime.shutdown()
         os.environ.pop(relay_runtime.RELAY_PLUGINS_CONFIG_ENV)
     assert nemo_relay.plugin.report() is None
 # The separate probe must not change the gateway's routing state.
 assert library.name not in Path(f'/proc/{pid}/maps').read_text()
-print('Switchyard package, disabled gateway, native activation, and cleanup verified')
+print('Switchyard package, disabled gateway, Relay enabled state, native activation, and cleanup verified')
 PY
 `;

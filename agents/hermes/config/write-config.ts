@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HermesManagedPolicyV3 } from "./managed-policy.ts";
 import {
+  HERMES_RELAY_PLUGIN_STATE_STAGING_FILE,
   HERMES_RELAY_PLUGINS_STAGING_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE,
   type SerializedHermesSwitchyardRouting,
@@ -18,6 +19,7 @@ export type WrittenHermesConfig = {
   envPath: string;
   envEntryCount: number;
   policyPath: string;
+  relayPluginStatePath: string | null;
   relayPluginsPath: string | null;
   switchyardDeploymentPath: string | null;
 };
@@ -42,6 +44,7 @@ export function writeHermesConfigFiles(
   chmodSync(policyPath, 0o600);
 
   const relayPluginsPath = join(homeDir, ".hermes", HERMES_RELAY_PLUGINS_STAGING_FILE);
+  const relayPluginStatePath = join(homeDir, ".hermes", HERMES_RELAY_PLUGIN_STATE_STAGING_FILE);
   const switchyardDeploymentPath = join(
     homeDir,
     ".hermes",
@@ -50,10 +53,13 @@ export function writeHermesConfigFiles(
   if (switchyardFiles) {
     writeFileSync(relayPluginsPath, switchyardFiles.relayPluginsToml);
     chmodSync(relayPluginsPath, 0o600);
+    writeFileSync(relayPluginStatePath, switchyardFiles.relayPluginStateJson);
+    chmodSync(relayPluginStatePath, 0o600);
     writeFileSync(switchyardDeploymentPath, switchyardFiles.switchyardDeploymentToml);
     chmodSync(switchyardDeploymentPath, 0o600);
   } else {
     rmSync(relayPluginsPath, { force: true });
+    rmSync(relayPluginStatePath, { force: true });
     rmSync(switchyardDeploymentPath, { force: true });
   }
 
@@ -62,6 +68,7 @@ export function writeHermesConfigFiles(
     envPath,
     envEntryCount: envLines.length,
     policyPath,
+    relayPluginStatePath: switchyardFiles ? relayPluginStatePath : null,
     relayPluginsPath: switchyardFiles ? relayPluginsPath : null,
     switchyardDeploymentPath: switchyardFiles ? switchyardDeploymentPath : null,
   };

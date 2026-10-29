@@ -62,8 +62,13 @@ export function generateHermesConfig({
   );
   log(`[config] Wrote ${written.envPath} (${written.envEntryCount} entries)`);
   log(`[config] Wrote ${written.policyPath} (schema=${policy.schema_version})`);
-  if (written.relayPluginsPath && written.switchyardDeploymentPath) {
+  if (
+    written.relayPluginsPath &&
+    written.relayPluginStatePath &&
+    written.switchyardDeploymentPath
+  ) {
     log(`[config] Wrote ${written.relayPluginsPath} (Relay plugin activation)`);
+    log(`[config] Wrote ${written.relayPluginStatePath} (Relay enabled state)`);
     log(`[config] Wrote ${written.switchyardDeploymentPath} (adaptive route)`);
   }
 

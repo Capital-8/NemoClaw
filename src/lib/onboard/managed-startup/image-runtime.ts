@@ -9,6 +9,8 @@ import path from "node:path";
 import { PEM_CERTIFICATE_RE_GLOBAL } from "../corporate-ca-policy";
 import { managedImageRuntimeIdentity } from "../managed-image/agents";
 import {
+  HERMES_RELAY_PLUGIN_STATE_FILE,
+  HERMES_RELAY_PLUGIN_STATE_STAGING_FILE,
   HERMES_RELAY_PLUGINS_FILE,
   HERMES_RELAY_PLUGINS_STAGING_FILE,
   HERMES_SWITCHYARD_DEPLOYMENT_FILE,
@@ -909,6 +911,8 @@ export function installHermesManagedPolicy(
 }
 
 export interface HermesSwitchyardRoutingFilePaths {
+  readonly relayPluginStateSource: string;
+  readonly relayPluginStateTarget: string;
   readonly relayPluginsSource: string;
   readonly relayPluginsTarget: string;
   readonly switchyardDeploymentSource: string;
@@ -916,6 +920,8 @@ export interface HermesSwitchyardRoutingFilePaths {
 }
 
 const HERMES_SWITCHYARD_ROUTING_PATHS: HermesSwitchyardRoutingFilePaths = {
+  relayPluginStateSource: `/sandbox/.hermes/${HERMES_RELAY_PLUGIN_STATE_STAGING_FILE}`,
+  relayPluginStateTarget: HERMES_RELAY_PLUGIN_STATE_FILE,
   relayPluginsSource: `/sandbox/.hermes/${HERMES_RELAY_PLUGINS_STAGING_FILE}`,
   relayPluginsTarget: HERMES_RELAY_PLUGINS_FILE,
   switchyardDeploymentSource: `/sandbox/.hermes/${HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE}`,
@@ -969,7 +975,7 @@ function removeStableRoutingSource(target: string, snapshot: StableRegularFile):
   fs.unlinkSync(target);
 }
 
-/** Reconcile the two generated Switchyard files without exposing sandbox-owned mutable state. */
+/** Reconcile generated Switchyard configuration and Relay lifecycle state. */
 export function installHermesSwitchyardRoutingFiles(
   configurationEnvironment: Readonly<NodeJS.ProcessEnv>,
   paths: HermesSwitchyardRoutingFilePaths = HERMES_SWITCHYARD_ROUTING_PATHS,
@@ -980,11 +986,13 @@ export function installHermesSwitchyardRoutingFiles(
     // Remove activation first so no live Relay configuration can reference a
     // deployment file while stale state is being cleared.
     removeSafeRootFile(paths.relayPluginsTarget);
+    removeSafeRootFile(paths.relayPluginStateTarget);
     removeSafeRootFile(paths.switchyardDeploymentTarget);
     return;
   }
   const serialized = serializeHermesSwitchyardRouting(routing);
   const expectedRelay = Buffer.from(serialized.relayPluginsToml, "utf8");
+  const expectedRelayState = Buffer.from(serialized.relayPluginStateJson, "utf8");
   const expectedDeployment = Buffer.from(serialized.switchyardDeploymentToml, "utf8");
   const sandboxIdentity =
     sandboxIdentityInput ??
@@ -997,19 +1005,27 @@ export function installHermesSwitchyardRoutingFiles(
     expectedRelay,
     sandboxIdentity,
   );
+  const relayStateSource = expectedSandboxOwnedRoutingSource(
+    paths.relayPluginStateSource,
+    expectedRelayState,
+    sandboxIdentity,
+  );
   const deploymentSource = expectedSandboxOwnedRoutingSource(
     paths.switchyardDeploymentSource,
     expectedDeployment,
     sandboxIdentity,
   );
 
-  // Install the referenced deployment before making the Relay activation
-  // visible. Each replacement is independently atomic and verified byte-for-byte.
+  // Install the referenced deployment and enabled lifecycle state before
+  // making the Relay plugin configuration visible.
   atomicWriteRootFile(paths.switchyardDeploymentTarget, expectedDeployment, 0o444);
+  atomicWriteRootFile(paths.relayPluginStateTarget, expectedRelayState, 0o444);
   atomicWriteRootFile(paths.relayPluginsTarget, expectedRelay, 0o444);
   verifyCommittedRoutingFile(paths.switchyardDeploymentTarget, expectedDeployment);
+  verifyCommittedRoutingFile(paths.relayPluginStateTarget, expectedRelayState);
   verifyCommittedRoutingFile(paths.relayPluginsTarget, expectedRelay);
   removeStableRoutingSource(paths.switchyardDeploymentSource, deploymentSource);
+  removeStableRoutingSource(paths.relayPluginStateSource, relayStateSource);
   removeStableRoutingSource(paths.relayPluginsSource, relaySource);
 }
 
@@ -1020,6 +1036,7 @@ export function verifyHermesSwitchyardRoutingFiles(
   const routing = readHermesSwitchyardRoutingEnvironment(configurationEnvironment);
   if (!routing) {
     assertRoutingFileAbsent(paths.relayPluginsTarget);
+    assertRoutingFileAbsent(paths.relayPluginStateTarget);
     assertRoutingFileAbsent(paths.switchyardDeploymentTarget);
     return;
   }
@@ -1027,6 +1044,10 @@ export function verifyHermesSwitchyardRoutingFiles(
   verifyCommittedRoutingFile(
     paths.relayPluginsTarget,
     Buffer.from(serialized.relayPluginsToml, "utf8"),
+  );
+  verifyCommittedRoutingFile(
+    paths.relayPluginStateTarget,
+    Buffer.from(serialized.relayPluginStateJson, "utf8"),
   );
   verifyCommittedRoutingFile(
     paths.switchyardDeploymentTarget,

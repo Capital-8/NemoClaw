@@ -20,11 +20,14 @@ export const HERMES_SWITCHYARD_ROUTING_ENV = "NEMOCLAW_HERMES_SWITCHYARD_ROUTING
 export const HERMES_RELAY_PLUGINS_ENV = "HERMES_NEMO_RELAY_PLUGINS_TOML" as const;
 export const HERMES_RELAY_PLUGINS_FILE =
   "/usr/local/share/nemoclaw/hermes-relay-plugins.toml" as const;
+export const HERMES_RELAY_PLUGIN_STATE_FILE =
+  "/usr/local/share/nemoclaw/.dynamic-plugins.json" as const;
 export const HERMES_SWITCHYARD_DEPLOYMENT_FILE =
   "/usr/local/share/nemoclaw/hermes-switchyard-v1.toml" as const;
 export const HERMES_SWITCHYARD_PLUGIN_MANIFEST =
   "/opt/nemo-relay/plugins/switchyard/relay-plugin.toml" as const;
 export const HERMES_RELAY_PLUGINS_STAGING_FILE = "hermes-relay-plugins.toml" as const;
+export const HERMES_RELAY_PLUGIN_STATE_STAGING_FILE = "hermes-relay-plugin-state.json" as const;
 export const HERMES_SWITCHYARD_DEPLOYMENT_STAGING_FILE = "hermes-switchyard-v1.toml" as const;
 
 const MAX_MODEL_BYTES = 512;
@@ -76,6 +79,7 @@ export interface HermesSwitchyardRoutingIntent {
 
 export interface SerializedHermesSwitchyardRouting {
   readonly relayPluginsToml: string;
+  readonly relayPluginStateJson: string;
   readonly switchyardDeploymentToml: string;
 }
 
@@ -358,5 +362,38 @@ export function serializeHermesSwitchyardRouting(
     "message_hash_fallback = true",
     "",
   ].join("\n");
-  return { relayPluginsToml, switchyardDeploymentToml };
+  // Relay 0.8.x keeps dynamic-plugin enablement in the lifecycle sidecar
+  // beside plugins.toml. The manifest deliberately defaults to disabled, so
+  // registration alone cannot activate the route. Hermes 0.21.3 treats its
+  // explicitly selected plugins.toml as activation consent and does not mutate
+  // this immutable lifecycle record.
+  const relayPluginStateJson = `${JSON.stringify(
+    {
+      schema_version: 1,
+      records: [
+        {
+          metadata: {
+            id: "nvidia.switchyard",
+            kind: "rust_dynamic",
+            generation: 1,
+          },
+          source: { manifest_ref: HERMES_SWITCHYARD_PLUGIN_MANIFEST },
+          spec: { present: true, enabled: true },
+          compatibility: {
+            rust_dynamic: { relay: ">=0.8.0, <1.0.0", native_api: "1" },
+          },
+          load: {
+            rust_dynamic: {
+              library: "libswitchyard_nemo_relay_plugin.so",
+              symbol: "nemo_relay_register_plugin",
+            },
+          },
+          status: {},
+        },
+      ],
+    },
+    null,
+    2,
+  )}\n`;
+  return { relayPluginsToml, relayPluginStateJson, switchyardDeploymentToml };
 }
