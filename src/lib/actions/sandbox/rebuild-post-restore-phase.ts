@@ -35,6 +35,7 @@ import {
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   type McpRebuildPreparation,
+  applyRestoredDirectToolDisclosure,
   postRestoreCompleted,
   printMcpRestoreRecovery,
   restoreMcpAfterRebuild,
@@ -95,6 +96,7 @@ export interface RebuildPostRestorePhaseInput {
     onConflict: RebuildBail,
   ) => Promise<void>;
   restoreSucceeded: boolean;
+  forceDirectToolDisclosure?: boolean;
   openClawDoctorWindow?: OpenClawPostRestoreDoctorWindow;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
@@ -236,6 +238,7 @@ export async function runRebuildPostRestorePhase(
     mcpEntries,
     mcpRuntimeSelection,
     restoreSucceeded,
+    forceDirectToolDisclosure,
     openClawDoctorWindow: preparedOpenClawDoctorWindow,
     hermesCronRestoreIdentity,
     preparedBackupRecovery,
@@ -383,6 +386,13 @@ export async function runRebuildPostRestorePhase(
         bail(message);
         return;
       }
+    }
+
+    if (
+      forceDirectToolDisclosure &&
+      (targetAgentName === "openclaw" || targetAgentName === "hermes")
+    ) {
+      applyRestoredDirectToolDisclosure(recreatedEntry, targetAgentName, mcpRuntimeSelection);
     }
 
     // Recreation starts Hermes before restore replaces its durable home. Rebind

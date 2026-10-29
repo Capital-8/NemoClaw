@@ -19,7 +19,7 @@ import {
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
-import { registry } from "../../../../test/helpers/rebuild-flow-harness";
+import { agentDefs, configOwner, registry } from "../../../../test/helpers/rebuild-flow-harness";
 
 const enforceRemovedImmutabilityMigrationBoundaryReal = enforceRemovedImmutabilityMigrationBoundary;
 
@@ -769,6 +769,17 @@ describe("rebuildSandbox flow: lifecycle", () => {
         scrubbedAdapterEntries: [mcpEntry],
       },
     });
+    const agent = agentDefs.loadAgent("openclaw");
+    vi.mocked(agentDefs.loadAgent).mockReturnValue({
+      ...agent,
+      configPaths: { dir: "/sandbox/.openclaw", configFile: "openclaw.json", format: "json5" },
+    });
+    vi.spyOn(configOwner, "readSandboxConfig").mockReturnValue({
+      tools: { toolSearch: { mode: "tools" } },
+    });
+    const nativeWrite = vi
+      .spyOn(configOwner, "setOpenClawConfigValues")
+      .mockImplementation(() => {});
 
     await expect(
       harness.rebuildSandbox(
@@ -782,6 +793,11 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect.objectContaining({ toolDisclosure: "direct" }),
     );
     expect(harness.session.toolDisclosure).toBe("direct");
+    expect(nativeWrite).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      [{ dotpath: "tools.toolSearch", value: false }],
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
       gatewayName: "nemoclaw",
       workspace: "default",
