@@ -26,6 +26,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - case: docker-openclaw-nvidia
+            deployment: docker-openclaw-nvidia
+            runner: ubuntu-24.04
+            secret: NVIDIA_API_KEY
           - case: docker-openclaw-vllm
             deployment: docker-openclaw-vllm-rtx-pro-6000
             # This NVIDIA GPU runner is already used by the main E2E workflow.
@@ -89,43 +93,6 @@ jobs:
             # Bind the test to this checkout's runtime image without changing the template.
             sed -i "s#nc-prototype-vllm@sha256:[0-9a-f]\{64\}#nc-prototype-vllm@$digest#" "$deployment"
           fi
-      - name: Observe private GPU diagnostics during the wrapper lifecycle
-        run: |
-          private_dir="$RUNNER_TEMP/hcl-gpu-private"
-          mkdir -m 700 "$private_dir"
-          cat > "$private_dir/observe.sh" <<'BASH'
-          #!/bin/bash
-          set -eu
-          umask 077
-          run_dir=$1
-          private_dir=$2
-          for ((i=0; i<240; i++)); do
-            [[ ! -f "$run_dir/result.json" ]] || break
-            state="$run_dir/deployment/terraform.tfstate"
-            if [[ -f "$state" ]]; then
-              id=$(jq -r 'first(.resources[]? | select(.type == "vllm_readiness" and .name == "inference_service_inference_qwen") | .instances[]?.attributes.container_id) // empty' "$state" 2>/dev/null || true)
-              if [[ "$id" =~ ^[0-9a-f]{12,64}$ ]]; then
-                if timeout -k 1 5 docker logs --tail 200 "$id" > "$private_dir/vllm.next" 2>&1; then
-                  mv "$private_dir/vllm.next" "$private_dir/vllm.log"
-                fi
-              fi
-              sandbox=$(jq -r 'first(.resources[]? | select(.type == "openshell_sandbox" and .name == "assistant") | .instances[]?.attributes.id) // empty' "$state" 2>/dev/null || true)
-              if [[ "$sandbox" =~ ^[0-9a-f-]{36}$ ]]; then
-                container=$(docker ps -q --filter "label=openshell.ai/sandbox-id=$sandbox" --filter label=openshell.ai/isolation-role=sandbox)
-                if [[ "$container" =~ ^[0-9a-f]{12,64}$ ]]; then
-                  if timeout -k 1 5 docker exec --user 10001 "$container" sh -c 'find /sandbox -type f \( -name "*.log" -o -name "stderr.txt" \) -exec tail -100 {} \; 2>/dev/null || true' > "$private_dir/openclaw.next" 2>&1; then
-                    mv "$private_dir/openclaw.next" "$private_dir/openclaw.log"
-                  fi
-                fi
-              fi
-            fi
-            sleep 5
-          done
-          BASH
-          nohup timeout -k 5 1200 bash "$private_dir/observe.sh" \
-            "$RUNNER_TEMP/$E2E_RUN_NAME" "$private_dir" \
-            > "$private_dir/observer.log" 2>&1 < /dev/null &
-          echo "$!" > "$private_dir/observer.pid"
       - name: Plan, apply, verify, and destroy
         env:
           # Only the hosted case receives the inference credential.
@@ -153,39 +120,6 @@ jobs:
             jq '{target, health, response, failure}' "$report" > "$evidence/$(basename "$report")"
           done
           # Requests, state, raw command logs, and backend diagnostics stay private.
-      - name: Project fixed diagnostic signals without raw logs
-        if: always()
-        run: |
-          private_dir="$RUNNER_TEMP/hcl-gpu-private"
-          if [[ -f "$private_dir/observer.pid" ]]; then
-            kill "$(cat "$private_dir/observer.pid")" 2>/dev/null || true
-          fi
-          evidence="$RUNNER_TEMP/hcl-e2e-evidence"
-          mkdir -p "$evidence"
-          for component in vllm openclaw; do
-            log="$private_dir/$component.log"
-            [[ -s "$log" ]] || continue
-            jq -Rs --arg component "$component" '{
-              target: $component,
-              failure: {
-                observed_at: "runtime.logs",
-                signals: {
-                  cuda_error: test("CUDA error|CUDA_ERROR|no kernel image|illegal memory access"; "i"),
-                  memory_error: test("out of memory|OutOfMemory|KV cache.*(insufficient|not enough)"; "i"),
-                  engine_failed: test("EngineCore.*(failed|died)|engine core.*(failed|died)|Worker proc.*died"; "i"),
-                  context_error: test("exceed.{0,80}(context|model)|(context|prompt).{0,80}(exceed|too (long|small))|max_tokens.{0,80}(exceed|greater|at most)"; "i"),
-                  authentication_error: test("No API key found|401 Unauthorized|403 Forbidden|invalid.api.key"; "i"),
-                  connection_error: test("ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ENOTFOUND|fetch failed|Connection error"; "i"),
-                  permission_error: test("EACCES|Operation not permitted|Permission denied"; "i"),
-                  timeout_error: test("timed out|TimeoutError|ETIMEDOUT|deadline exceeded"; "i"),
-                  chat_http_200: test("POST /v1/chat/completions HTTP/1.1. 200"),
-                  chat_http_400: test("POST /v1/chat/completions HTTP/1.1. 400"),
-                  chat_http_500: test("POST /v1/chat/completions HTTP/1.1. 500")
-                }
-              }
-            }' "$log" > "$evidence/diagnostic-$component.json"
-          done
-          # Raw files stay private; the upload contains fixed keys and booleans only.
       - name: Upload observations and cleanup receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
