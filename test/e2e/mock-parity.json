@@ -36,7 +36,9 @@
       "liveSources": [
         "test/e2e/live/portable-profile-gateway-proof.ts",
         "test/e2e/fixtures/portable-profile-rootless-finalization-helpers.ts",
-        "test/e2e/fixtures/portable-registry-readiness.ts"
+        "test/e2e/fixtures/portable-registry-readiness.ts",
+        "test/e2e/fixtures/portable-sandbox-build-diagnostics.ts",
+        "test/e2e/fixtures/portable-hermes-transaction-live.ts"
       ],
       "fast": [
         "src/lib/actions/sandbox/doctor-flow.test.ts",
@@ -51,7 +53,9 @@
         "test/agents/hermes/hermes-start.test.ts",
         "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
         "test/e2e/support/portable-profile-gateway-proof.test.ts",
-        "test/e2e/support/portable-registry-readiness.test.ts"
+        "test/e2e/support/portable-registry-readiness.test.ts",
+        "test/e2e/support/portable-sandbox-build-diagnostics.test.ts",
+        "test/e2e/support/portable-hermes-transaction-live.test.ts"
       ]
     },
     {

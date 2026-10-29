@@ -165,7 +165,8 @@ NemoClaw lists installed models or offers starter models when none are installed
 For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
 The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
 A reported value of `0 MiB` means no available GPU memory; NemoClaw does not substitute total memory for that reading.
-Free memory before retrying a model that does not fit.
+Each known starter model then appears as exceeding available memory.
+Free GPU memory before retrying a model that does not fit.
 
 Among installed models that fit, NemoClaw selects the registry-known model with the highest approximate VRAM requirement.
 Unregistered tags follow registry-known tags and retain Ollama's list order.
