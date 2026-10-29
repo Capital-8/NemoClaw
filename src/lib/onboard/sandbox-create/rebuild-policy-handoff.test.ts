@@ -511,6 +511,17 @@ network_policies:
       provider: "tavily-search",
     });
     expect(handoff.cleanup?.()).toBe(true);
+
+    const legacyHandoff = materializeRebuildPolicyHandoff({
+      sandboxName: "alpha",
+      livePolicyPath: livePath,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+      webSearchAgentName: "langchain-deepagents-code",
+      webSearchCredentialProviders: ["tavily-search"],
+      webSearchProviderTypes: { "tavily-search": "tavily" },
+    });
+    expect(legacyHandoff.policyPath).toBe(livePath);
+    expect(legacyHandoff.credentialBindingProviders).toEqual([]);
   });
 
   it("leaves a substituted web-search endpoint unbound", () => {

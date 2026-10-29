@@ -10,11 +10,12 @@ import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
 } from "../../adapters/openshell/policy-boundary";
+import { TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID } from "../../inference/web-search/provider-profile";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
 import {
   bindWebSearchPresetProviders,
-  parseWebSearchEndpointContract,
+  getWebSearchPresetContracts,
 } from "../../policy/preset-parsing";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
@@ -22,24 +23,17 @@ import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../t
 
 const REBUILD_POLICY_HANDOFF_PREFIX = "nemoclaw-rebuild-policy-handoff";
 
-function webSearchRebuildContracts(): Record<
-  string,
-  ReturnType<typeof parseWebSearchEndpointContract>
-> {
-  const contracts: Record<string, ReturnType<typeof parseWebSearchEndpointContract>> = {};
-  const presetsDir = path.join(
-    path.resolve(__dirname, "..", "..", "..", ".."),
-    "nemoclaw-blueprint",
-    "policies",
-    "presets",
-  );
-  for (const presetName of ["brave", "tavily"]) {
-    const file = path.join(presetsDir, `${presetName}.yaml`);
-    contracts[presetName] = fs.existsSync(file)
-      ? parseWebSearchEndpointContract(fs.readFileSync(file, "utf8"), presetName)
-      : null;
-  }
-  return contracts;
+function webSearchRebuildContracts() {
+  return getWebSearchPresetContracts((presetName) => {
+    const file = path.join(
+      path.resolve(__dirname, "..", "..", "..", ".."),
+      "nemoclaw-blueprint",
+      "policies",
+      "presets",
+      `${presetName}.yaml`,
+    );
+    return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  });
 }
 
 type PolicyMapping = Record<string, unknown>;
@@ -337,21 +331,35 @@ export function mergeReplacementPolicyAccess(
     : { changed: false, source: normalizedLivePolicySource };
 }
 
+function compatibleRebuildWebSearchProviders(input: {
+  readonly webSearchCredentialProviders?: readonly string[];
+  readonly webSearchProviderTypes?: Readonly<Record<string, string | null | undefined>>;
+}): string[] {
+  const providers = input.webSearchCredentialProviders ?? [];
+  if (!input.webSearchProviderTypes) return [...providers];
+  return providers.filter(
+    (provider) =>
+      input.webSearchProviderTypes![provider] === TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID,
+  );
+}
+
 function bindRebuildWebSearchProviders(
   source: string,
   input: {
     readonly sandboxName?: string;
     readonly webSearchAgentName?: string | null;
     readonly webSearchCredentialProviders?: readonly string[];
+    readonly webSearchProviderTypes?: Readonly<Record<string, string | null | undefined>>;
   },
 ): string {
-  const providers = input.webSearchCredentialProviders ?? [];
+  const providers = compatibleRebuildWebSearchProviders(input);
   if (!input.sandboxName || providers.length === 0) return source;
   return bindWebSearchPresetProviders({
     content: source,
     sandboxName: input.sandboxName,
     agentName: input.webSearchAgentName,
     availableProviders: new Set(providers),
+    providerTypes: input.webSearchProviderTypes,
     contracts: webSearchRebuildContracts(),
   });
 }
@@ -360,10 +368,11 @@ function bindRebuildWebSearchProviders(
 function handoffAuthorizedProviders(input: {
   readonly authorizedCredentialBindingProviders?: readonly string[];
   readonly webSearchCredentialProviders?: readonly string[];
+  readonly webSearchProviderTypes?: Readonly<Record<string, string | null | undefined>>;
 }): string[] {
   return [
     ...(input.authorizedCredentialBindingProviders ?? []),
-    ...(input.webSearchCredentialProviders ?? []),
+    ...compatibleRebuildWebSearchProviders(input),
   ];
 }
 
@@ -379,6 +388,7 @@ export function materializeRebuildPolicyHandoff(input: {
   readonly authorizedCredentialBindingProviders?: readonly string[];
   readonly webSearchAgentName?: string | null;
   readonly webSearchCredentialProviders?: readonly string[];
+  readonly webSearchProviderTypes?: Readonly<Record<string, string | null | undefined>>;
 }): InitialSandboxPolicy {
   const liveSource = input.livePolicySource ?? fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =

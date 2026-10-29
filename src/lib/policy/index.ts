@@ -42,6 +42,7 @@ import {
 } from "../messaging/channels";
 import {
   readSandboxProviderAttachments,
+  readSandboxProviderProfileType,
   resolveSandboxGatewayName,
 } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
@@ -83,8 +84,8 @@ import {
   type PolicyValue,
   parseNetworkPolicies,
   applyWebSearchCredentialBinding,
+  getWebSearchPresetContracts,
   isWebSearchPolicyPreset,
-  parseWebSearchEndpointContract,
   resolveWebSearchCredentialProvider,
 } from "./preset-parsing";
 import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
@@ -149,6 +150,8 @@ type SandboxPresetLoadOptions = {
   gatewayName?: string;
   /** Providers attached to the sandbox. Null means the observation failed and no binding is added. */
   attachedProviders?: readonly string[] | null;
+  /** Profile types keyed by attached provider name. */
+  attachedProviderProfiles?: Readonly<Record<string, string | null | undefined>>;
   recordedProviders?: readonly string[];
 };
 
@@ -446,22 +449,12 @@ function recordedWebSearchProviders(sandboxName: string): Set<string> {
   return providers;
 }
 
-let webSearchContracts: Record<string, ReturnType<typeof parseWebSearchEndpointContract>> | null =
-  null;
-
-function webSearchPresetContracts(): Record<
-  string,
-  ReturnType<typeof parseWebSearchEndpointContract>
+function webSearchPresetContracts(): Readonly<
+  Record<string, ReturnType<typeof getWebSearchPresetContracts>[string]>
 > {
-  if (webSearchContracts) return webSearchContracts;
-  webSearchContracts = {};
-  for (const presetName of ["brave", "tavily"]) {
-    const content = loadCentralPreset(presetName, { reportMissing: false });
-    webSearchContracts[presetName] = content
-      ? parseWebSearchEndpointContract(content, presetName)
-      : null;
-  }
-  return webSearchContracts;
+  return getWebSearchPresetContracts((presetName) =>
+    loadCentralPreset(presetName, { reportMissing: false }),
+  );
 }
 
 /**
@@ -484,6 +477,7 @@ function bindWebSearchPreset(
   agentName: string | null,
   attachedProviders: readonly string[] | null,
   recordedProviders: readonly string[] | undefined,
+  attachedProviderProfiles?: Readonly<Record<string, string | null | undefined>>,
 ): string {
   // Hermes Tavily and every Brave provider use an endpoint-bearing profile.
   // The pinned OpenShell release rejects a policy binding that names that
@@ -504,6 +498,7 @@ function bindWebSearchPreset(
       agentName,
       availableProviders: new Set(recordedProviders ?? recordedWebSearchProviders(sandboxName)),
       attachedProviders: new Set(attachedProviders),
+      providerTypes: attachedProviderProfiles,
     }),
     webSearchPresetContracts()[presetName] ?? null,
   );
@@ -568,6 +563,28 @@ async function loadPresetForSandbox(
       : isWebSearchPolicyPreset(presetName)
         ? await readSandboxProviderAttachments(sandboxName, sandbox)
         : null;
+  let attachedProviderProfiles = options.attachedProviderProfiles;
+  if (
+    presetName === "tavily" &&
+    attachedProviders !== null &&
+    attachedProviderProfiles === undefined &&
+    options.attachedProviders === undefined
+  ) {
+    const candidate = resolveWebSearchCredentialProvider({
+      presetName,
+      sandboxName,
+      agentName: sandboxAgent,
+      availableProviders: new Set(
+        options.recordedProviders ?? recordedWebSearchProviders(sandboxName),
+      ),
+      attachedProviders: new Set(attachedProviders),
+    });
+    if (candidate) {
+      attachedProviderProfiles = {
+        [candidate]: await readSandboxProviderProfileType(candidate, sandbox, options.gatewayName),
+      };
+    }
+  }
   const boundPresetContent = bindWebSearchPreset(
     resolvedPresetContent,
     presetName,
@@ -575,6 +592,7 @@ async function loadPresetForSandbox(
     sandboxAgent,
     attachedProviders,
     options.recordedProviders,
+    attachedProviderProfiles,
   );
   return presetName === "outlook" &&
     sandboxAgent !== "hermes" &&
@@ -2667,12 +2685,29 @@ async function applyPreset(
   presetName: string,
   options: Record<string, unknown> = {},
 ): Promise<boolean> {
+  const attachedProviders = isWebSearchPolicyPreset(presetName)
+    ? await observedSandboxAttachments(sandboxName)
+    : null;
+  let attachedProviderProfiles: Readonly<Record<string, string | null | undefined>> | undefined;
+  if (presetName === "tavily" && attachedProviders !== null) {
+    const sandbox = registry.getSandbox(sandboxName);
+    const candidate = resolveWebSearchCredentialProvider({
+      presetName,
+      sandboxName,
+      agentName: sandbox?.agent ?? null,
+      availableProviders: recordedWebSearchProviders(sandboxName),
+      attachedProviders: new Set(attachedProviders),
+    });
+    if (candidate) {
+      attachedProviderProfiles = {
+        [candidate]: await readSandboxProviderProfileType(candidate, sandbox),
+      };
+    }
+  }
   const presetContent = await loadPresetForSandbox(sandboxName, presetName, {
     includeMessagingCredentialBindings: options.includeMessagingCredentialBindings === true,
     messagingConfig: options.messagingConfig as MessagingPolicyConfig | null | undefined,
-    ...(isWebSearchPolicyPreset(presetName)
-      ? { attachedProviders: await observedSandboxAttachments(sandboxName) }
-      : {}),
+    ...(isWebSearchPolicyPreset(presetName) ? { attachedProviders, attachedProviderProfiles } : {}),
   });
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
@@ -2707,9 +2742,27 @@ async function applyPresets(sandboxName: string, presetNames: string[]): Promise
   const attachedProviders = uniquePresetNames.some(isWebSearchPolicyPreset)
     ? await observedSandboxAttachments(sandboxName)
     : null;
+  let attachedProviderProfiles: Readonly<Record<string, string | null | undefined>> | undefined;
+  if (uniquePresetNames.includes("tavily") && attachedProviders !== null) {
+    const sandbox = registry.getSandbox(sandboxName);
+    const candidate = resolveWebSearchCredentialProvider({
+      presetName: "tavily",
+      sandboxName,
+      agentName: sandbox?.agent ?? null,
+      availableProviders: recordedWebSearchProviders(sandboxName),
+      attachedProviders: new Set(attachedProviders),
+    });
+    if (candidate) {
+      attachedProviderProfiles = {
+        [candidate]: await readSandboxProviderProfileType(candidate, sandbox),
+      };
+    }
+  }
   for (const presetName of uniquePresetNames) {
     const presetContent = await loadPresetForSandbox(sandboxName, presetName, {
-      ...(isWebSearchPolicyPreset(presetName) ? { attachedProviders } : {}),
+      ...(isWebSearchPolicyPreset(presetName)
+        ? { attachedProviders, attachedProviderProfiles }
+        : {}),
     });
     if (!presetContent) {
       console.error(`  Cannot load preset: ${presetName}`);
@@ -3280,4 +3333,5 @@ export {
   selectForRemoval,
   selectFromList,
   setupPolicyPresetSupported,
+  webSearchPresetContracts,
 };

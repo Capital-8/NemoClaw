@@ -7,6 +7,7 @@ import YAML from "yaml";
 
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { DEFAULT_VLLM_PORT, VLLM_PORT } from "../core/vllm-port";
+import { TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID } from "../inference/web-search/provider-profile";
 import { isDcodeAgent } from "../onboard/observability-policy-presets";
 
 export type PolicyValue = JsonValue;
@@ -183,6 +184,12 @@ export function resolveWebSearchCredentialProvider(input: {
    * credential_binding that names an unattached provider.
    */
   readonly attachedProviders?: ReadonlySet<string>;
+  /**
+   * Observed profile types keyed by provider name. When supplied for Tavily,
+   * only a provider that uses tavily-policy-binding-v1 qualifies; OpenShell
+   * rejects a credential_binding that names an endpoint-bearing profile.
+   */
+  readonly providerTypes?: Readonly<Record<string, string | null | undefined>>;
 }): string | null {
   for (const candidate of webSearchCredentialProviderCandidates(
     input.presetName,
@@ -191,6 +198,13 @@ export function resolveWebSearchCredentialProvider(input: {
   )) {
     if (!input.availableProviders.has(candidate)) continue;
     if (input.attachedProviders && !input.attachedProviders.has(candidate)) continue;
+    if (
+      input.presetName === "tavily" &&
+      input.providerTypes &&
+      input.providerTypes[candidate] !== TAVILY_POLICY_BINDING_PROVIDER_PROFILE_ID
+    ) {
+      continue;
+    }
     return candidate;
   }
   return null;
@@ -203,6 +217,7 @@ export function resolveWebSearchCredentialProvider(input: {
  * checked-in preset declares.
  */
 export type WebSearchEndpointContract = Readonly<{
+  endpoint: Readonly<Record<string, JsonValue>>;
   host: string;
   port: number;
   protocol: string;
@@ -210,8 +225,6 @@ export type WebSearchEndpointContract = Readonly<{
   rules: readonly Readonly<Record<string, JsonValue>>[];
   requestBodyCredentialRewrite: boolean;
 }>;
-
-const WEB_SEARCH_CONTRACT_KEYS = ["host", "port", "protocol", "enforcement", "rules"] as const;
 
 function contractString(value: JsonValue): string | null {
   return typeof value === "string" ? value : null;
@@ -255,6 +268,7 @@ export function parseWebSearchEndpointContract(
   const rules = contractRules(endpoint.rules);
   if (!host || port === null || !protocol || !enforcement || !rules) return null;
   return {
+    endpoint,
     host,
     port,
     protocol,
@@ -268,12 +282,9 @@ function matchesWebSearchEndpointContract(
   endpoint: PolicyObject,
   contract: WebSearchEndpointContract,
 ): boolean {
-  return (
-    WEB_SEARCH_CONTRACT_KEYS.every((key) =>
-      isDeepStrictEqual(endpoint[key], contract[key as keyof WebSearchEndpointContract]),
-    ) &&
-    (endpoint.request_body_credential_rewrite === true) === contract.requestBodyCredentialRewrite
-  );
+  const candidate = { ...endpoint };
+  delete candidate.credential_binding;
+  return isDeepStrictEqual(candidate, contract.endpoint);
 }
 
 /**
@@ -327,6 +338,7 @@ export function bindWebSearchPresetProviders(input: {
   readonly sandboxName: string;
   readonly agentName?: string | null;
   readonly availableProviders: ReadonlySet<string>;
+  readonly providerTypes?: Readonly<Record<string, string | null | undefined>>;
   readonly contracts?: Readonly<Record<string, WebSearchEndpointContract | null>>;
 }): string {
   let content = input.content;
@@ -345,6 +357,7 @@ export function bindWebSearchPresetProviders(input: {
       sandboxName: input.sandboxName,
       agentName: input.agentName,
       availableProviders: input.availableProviders,
+      providerTypes: input.providerTypes,
     });
     content = applyWebSearchCredentialBinding(
       content,
@@ -354,4 +367,23 @@ export function bindWebSearchPresetProviders(input: {
     );
   }
   return content;
+}
+
+let cachedWebSearchContracts: Record<string, WebSearchEndpointContract | null> | null = null;
+
+/**
+ * Parse and cache the checked-in web-search preset endpoint contracts once so
+ * live policy loading and rebuild handoff share the same contract source.
+ */
+export function getWebSearchPresetContracts(
+  loadPresetContent?: (presetName: string) => string | null,
+): Readonly<Record<string, WebSearchEndpointContract | null>> {
+  if (cachedWebSearchContracts) return cachedWebSearchContracts;
+  const contracts: Record<string, WebSearchEndpointContract | null> = {};
+  for (const presetName of Object.keys(WEB_SEARCH_PRESET_PROVIDER_SUFFIXES)) {
+    const content = loadPresetContent ? loadPresetContent(presetName) : null;
+    contracts[presetName] = content ? parseWebSearchEndpointContract(content, presetName) : null;
+  }
+  if (loadPresetContent) cachedWebSearchContracts = contracts;
+  return contracts;
 }

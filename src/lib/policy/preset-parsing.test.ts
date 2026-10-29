@@ -35,7 +35,7 @@ function tavilyEndpoints(content: string): Array<Record<string, unknown>> {
 const tavilyContract = parseWebSearchEndpointContract(tavilyPreset, "tavily");
 
 describe("web-search credential provider resolution", () => {
-  it("recognizes the web-search presets", () => {
+  it("classifies brave and tavily as web-search presets and rejects other presets", () => {
     expect(isWebSearchPolicyPreset("tavily")).toBe(true);
     expect(isWebSearchPolicyPreset("brave")).toBe(true);
     expect(isWebSearchPolicyPreset("weather")).toBe(false);
@@ -97,6 +97,15 @@ describe("web-search credential binding", () => {
     );
     expect(
       YAML.parse(bound).network_policies.tavily.endpoints[0].credential_binding,
+    ).toBeUndefined();
+    const withAddedField = tavilyPreset.replace(
+      "        request_body_credential_rewrite: true\n",
+      "        request_body_credential_rewrite: true\n        path: /custom\n",
+    );
+    expect(
+      YAML.parse(
+        applyWebSearchCredentialBinding(withAddedField, "tavily", "tavily-search", tavilyContract),
+      ).network_policies.tavily.endpoints[0].credential_binding,
     ).toBeUndefined();
     expect(applyWebSearchCredentialBinding(tavilyPreset, "tavily", "tavily-search", null)).toBe(
       tavilyPreset,
@@ -197,6 +206,24 @@ describe("loadPresetForSandbox web-search binding", () => {
     mocks.listExtraProviders.mockReturnValue(["tavily-search"]);
 
     const content = await loadPresetForSandbox(sandboxName, "tavily", { attachedProviders: [] });
+
+    expect(tavilyEndpoints(content!)).toEqual([
+      expect.not.objectContaining({ credential_binding: expect.anything() }),
+    ]);
+  });
+
+  it("omits the binding when the attached provider uses an endpoint-bearing profile", async () => {
+    mocks.getSandbox.mockReturnValue({
+      name: sandboxName,
+      agent: "langchain-deepagents-code",
+      gatewayName: "nemoclaw",
+    });
+    mocks.listExtraProviders.mockReturnValue(["tavily-search"]);
+
+    const content = await loadPresetForSandbox(sandboxName, "tavily", {
+      attachedProviders: ["tavily-search"],
+      attachedProviderProfiles: { "tavily-search": "tavily" },
+    });
 
     expect(tavilyEndpoints(content!)).toEqual([
       expect.not.objectContaining({ credential_binding: expect.anything() }),

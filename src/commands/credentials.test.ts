@@ -88,7 +88,13 @@ describe("credentials oclif adapter source coverage", () => {
       const exportedProfile = JSON.stringify(
         parseYaml(
           fs.readFileSync(
-            path.join(rootDir, "nemoclaw-blueprint/provider-profiles", `${profile}.yaml`),
+            path.join(
+              rootDir,
+              profile === "tavily-policy-binding-v1"
+                ? "managed-inference/provider-profiles"
+                : "nemoclaw-blueprint/provider-profiles",
+              `${profile}.yaml`,
+            ),
             "utf8",
           ),
         ),
@@ -150,7 +156,7 @@ describe("credentials oclif adapter source coverage", () => {
     const exportedProfile = JSON.stringify(
       parseYaml(
         fs.readFileSync(
-          path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily-policy-binding-v1.yaml"),
+          path.join(rootDir, "managed-inference/provider-profiles/tavily-policy-binding-v1.yaml"),
           "utf8",
         ),
       ),

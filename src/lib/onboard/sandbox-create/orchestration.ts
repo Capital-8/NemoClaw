@@ -89,6 +89,7 @@ import {
 import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   resolveProviderAdapter,
+  resolveRebuildWebSearchProviderTypes,
   usesNativeNvidiaProvider,
   usesNativeHostedProvider,
   validateAttachedNativeProfileBeforeSandboxCreation,
@@ -391,6 +392,7 @@ export function selectRebuildCreatePolicy(
   policySource?: string,
   inferenceProvider: string | null = null,
   webSearchCredentialProviders: readonly string[] = [],
+  webSearchProviderTypes?: Readonly<Record<string, string | null | undefined>>,
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
@@ -428,6 +430,7 @@ export function selectRebuildCreatePolicy(
     authorizedCredentialBindingProviders,
     webSearchAgentName: messagingAgent,
     webSearchCredentialProviders,
+    webSearchProviderTypes,
   });
 }
 
@@ -3003,6 +3006,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         ? { policyProviders: rebuildPolicySource.providers }
         : { policyDocument: rebuildPolicyDocument }),
     });
+    const rebuildWebSearchProviderTypes = await resolveRebuildWebSearchProviderTypes({
+      rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
+      sandboxName,
+      agentName: effectiveMessagingAgent,
+      extraProviders: resolvedCreateIntent.extraProviders,
+      messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
+      gatewayName: GATEWAY_NAME,
+      runOpenshell,
+    });
     const initialSandboxPolicy = createIntent?.rebuildPolicySourcePath
       ? selectRebuildCreatePolicy(
           createIntent.rebuildPolicySourcePath,
@@ -3023,6 +3035,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicySource?.document,
           resolvedCreateIntent.inferenceProvider,
           resolvedCreateIntent.extraProviders,
+          rebuildWebSearchProviderTypes,
         )
       : materializedInitialSandboxPolicy;
     const createRequestPlan = selectRebuildCreateRequestPlan({
