@@ -3,9 +3,63 @@
 
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { isN1xManagedVllmProviderModel } from "../../../domain/sandbox/n1x-managed-vllm-rebuild";
+import {
+  isPendingReservationForSession,
+  isRouteOnlySandboxReservation,
+} from "../../../state/registry/route-reservation";
 import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";
 import { reserveRecoveredSandboxInferenceRoute } from "../../sandbox-lifecycle";
-import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
+import {
+  normalizeToolDisclosure,
+  resolveToolDisclosureRequest,
+  toolDisclosureOrDefault,
+  type ToolDisclosure,
+} from "../../../tool-disclosure";
+import { validateResourceValue } from "../../../resources-cmd";
+
+/** Return true when a saved resource profile is null or has valid CPU and memory values. */
+export function isValidSavedResourceProfile(
+  profile: { readonly cpu: string; readonly memory: string } | null | undefined,
+): boolean {
+  if (profile === null) return true;
+  if (!profile) return false;
+  try {
+    validateResourceValue(profile.cpu);
+    validateResourceValue(profile.memory);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Choose the initial local OpenClaw default only for this session's new reservation. */
+export function initialOpenClawToolDisclosure(input: {
+  fresh: boolean;
+  agentName: string;
+  provider: string;
+  model: string;
+  deferredN1xManagedVllmPreviewIntent?: boolean;
+  entry: SandboxEntry | null;
+  sessionId: string | undefined;
+  env: NodeJS.ProcessEnv;
+}): ToolDisclosure | null {
+  const localDefault =
+    input.fresh &&
+    input.agentName === "openclaw" &&
+    (input.provider === "ollama-local" || input.provider === "vllm-local") &&
+    input.entry !== null &&
+    isRouteOnlySandboxReservation(input.entry) &&
+    isPendingReservationForSession(input.entry, input.sessionId) &&
+    input.entry.toolDisclosure === undefined;
+  if (!localDefault) return null;
+  // Reserve context for replies on the 32K N1x Qwen recipe (#13088).
+  const n1xDefault =
+    input.deferredN1xManagedVllmPreviewIntent === true &&
+    isN1xManagedVllmProviderModel(input.provider, input.model) &&
+    input.entry?.model === input.model;
+  return resolveToolDisclosureRequest(null, input.env) ?? (n1xDefault ? "progressive" : "direct");
+}
 
 export interface SandboxResumeSignals {
   readonly resume: boolean;

@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../../cli/branding";
+import { OPENROUTER_PROVIDER_NAME } from "../../../inference/openrouter";
 import type { ExternalComponentActivationIncomplete } from "../../../state/onboard-session";
+import { DCODE_AGENT_NAME } from "../../observability-policy-presets";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import type { PreparedExternalComponent } from "../../external-component";
 import type {
@@ -11,7 +13,10 @@ import type {
 } from "../../external-component/activation";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import type { PortableOpenClawPairingSettlementResult } from "../../../actions/sandbox/launch-readiness";
-import type { OrdinaryOpenClawPairingSettlementResult } from "../finalization-deps";
+import type {
+  OrdinaryOpenClawPairingSettlementResult,
+  SandboxProcessReadinessResult,
+} from "../finalization-deps";
 import {
   advanceTo,
   completeOnboardMachine,
@@ -33,6 +38,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
+  preferredInferenceApi?: string | null;
   portableProfileSelected?: boolean;
   externalComponent?: PreparedExternalComponent | null;
   providerless?: boolean;
@@ -69,7 +75,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     checkAndRecoverSandboxProcesses(
       sandboxName: string,
       options: { quiet: boolean },
-    ): Promise<boolean>;
+    ): Promise<SandboxProcessReadinessResult>;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
@@ -96,6 +102,13 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      */
     buildVerifyChain(chatUiUrl: string, sandboxName: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
+    probeTerminalInference?(input: {
+      sandboxName: string;
+      agentName: string;
+      provider: string;
+      model: string;
+      preferredInferenceApi: string | null;
+    }): Promise<{ ok: boolean; detail?: string }>;
     formatVerificationDiagnostics(result: VerificationResult): string[];
     isDeploymentHealthy(result: VerificationResult): boolean;
     reportDeploymentReadiness(healthy: boolean): void;
@@ -174,6 +187,18 @@ function selectedAgentName(agent: unknown): string | null {
   return typeof name === "string" && name.trim() === name && name ? name : null;
 }
 
+function requiresTerminalInferenceVerification(agent: unknown, provider: string): boolean {
+  return selectedAgentName(agent) === DCODE_AGENT_NAME && provider === OPENROUTER_PROVIDER_NAME;
+}
+
+function terminalInferenceIncompleteMessage(sandboxName: string, detail: string): string {
+  return (
+    `Deep Code inference for '${sandboxName}' is not ready: ${detail}. The sandbox was preserved. ` +
+    `Resolve the provider, model, or runtime adapter problem, then resume onboarding with ` +
+    `${CLI_NAME} onboard --resume.`
+  );
+}
+
 function logTerminalReadyBlock(
   sandboxName: string,
   agent: unknown,
@@ -200,7 +225,20 @@ function logTerminalReadyBlock(
   }
 }
 
-function recoveryIncompleteMessage(sandboxName: string): string {
+function recoveryIncompleteMessage(
+  sandboxName: string,
+  readiness: Exclude<SandboxProcessReadinessResult, true> = false,
+): string {
+  if (typeof readiness === "object") {
+    switch (readiness.reason) {
+      case "portable-hermes-registry-authority-unavailable":
+        return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its lifecycle receipt and registered gateway authority could not be matched. Run ${CLI_NAME} ${sandboxName} doctor. Preserve the registry and lifecycle receipt files unchanged. Stop; do not resume onboarding or edit either file.`;
+      case "portable-hermes-native-gateway-unavailable":
+        return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its receipt-owned native gateway is not qualified and healthy. Run ${CLI_NAME} ${sandboxName} recover, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+      case "portable-hermes-lifecycle-lock-unavailable":
+        return `Portable Hermes onboarding for '${sandboxName}' is incomplete because its lifecycle lock is unavailable. Wait for the active sandbox operation to finish, then resume onboarding with ${CLI_NAME} onboard --resume.`;
+    }
+  }
   return `Onboarding for '${sandboxName}' is incomplete because a required process or secret-boundary check did not pass. Inspect with ${CLI_NAME} ${sandboxName} doctor, resolve the reported problem, then resume onboarding with ${CLI_NAME} onboard --resume.`;
 }
 
@@ -323,8 +361,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   }
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover before verification (#3573).
-    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
-      deps.error(`  ${recoveryIncompleteMessage(sandboxName)}`);
+    const readiness = await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    if (readiness !== true) {
+      deps.error(`  ${recoveryIncompleteMessage(sandboxName, readiness)}`);
       deps.reportDeploymentReadiness(false);
       return {
         stateResult: pauseOnboardMachine(
@@ -355,6 +394,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   hermesToolGateways,
   webSearchEnabled,
   webSearchProvider,
+  preferredInferenceApi = null,
   portableProfileSelected,
   deferRuntimeVerification = false,
   deps,
@@ -363,7 +403,11 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   VerifyChain,
   VerificationResult
 >): Promise<PostVerifyStateResult> {
-  if (deferRuntimeVerification) {
+  const terminalInferenceVerificationRequired = requiresTerminalInferenceVerification(
+    agent,
+    provider,
+  );
+  if (deferRuntimeVerification && !terminalInferenceVerificationRequired) {
     return {
       stateResult: completeOnboardMachine({}, { state: "post_verify" }),
       verificationDiagnostics: [],
@@ -437,8 +481,9 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   }
   if (manageDashboard) {
     // Recheck after pairing and on resume, including Hermes secret-boundary enforcement.
-    if (!(await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true }))) {
-      const message = recoveryIncompleteMessage(sandboxName);
+    const readiness = await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    if (readiness !== true) {
+      const message = recoveryIncompleteMessage(sandboxName, readiness);
       deps.error(`  ${message}`);
       deps.reportDeploymentReadiness(false);
       return {
@@ -472,6 +517,28 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
     await deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
+    deps.reportDeploymentReadiness(deploymentHealthy);
+  } else if (terminalInferenceVerificationRequired) {
+    const agentName = selectedAgentName(agent);
+    if (!agentName) throw new Error("Terminal inference verification requires an agent name.");
+    const inference = (await deps.probeTerminalInference?.({
+      sandboxName,
+      agentName,
+      provider,
+      model,
+      preferredInferenceApi,
+    })) ?? { ok: false, detail: "bounded sandbox inference verification is unavailable" };
+    deploymentHealthy = inference.ok;
+    if (deploymentHealthy) {
+      logTerminalReadyBlock(sandboxName, agent, deps.log);
+    } else {
+      const message = terminalInferenceIncompleteMessage(
+        sandboxName,
+        inference.detail ?? "bounded sandbox inference verification failed",
+      );
+      verificationDiagnostics = [message];
+      deps.error(`  ${message}`);
+    }
     deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
     logTerminalReadyBlock(sandboxName, agent, deps.log);

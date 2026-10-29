@@ -21,6 +21,7 @@ import {
   protectedProviderContainerName,
   protectedProviderContainerPreflightCommand,
   protectedProviderFinalInventoryCommand,
+  protectedProviderImagePulledByStart,
   protectedProviderReportedContainerId,
   protectedVllmReadinessCommand,
 } from "../live/managed-image-protected-runtime-helpers.ts";
@@ -36,7 +37,7 @@ vi.mock("../../../src/lib/inference/ollama/proxy.ts", () => ({
   getOllamaProxyToken: () => undefined,
   isProxyHealthy: () => false,
   killStaleProxy: () => undefined,
-  persistAndProbeOllamaProxy: async () => undefined,
+  persistProxyToken: () => undefined,
   startOllamaAuthProxy: () => false,
 }));
 vi.mock("../fixtures/e2e-test.ts", () => ({
@@ -741,7 +742,7 @@ printf 'vllm-stalled-probe-diagnostic\\n'`,
       "2",
       "--max-time",
       "5",
-      "http://127.0.0.1:8000/v1/models",
+      "http://127.0.0.1:8001/v1/models",
     ]);
     expect(result.stderr).toContain("vllm-stalled-probe-diagnostic");
     expect(result.stderr).toContain("managed-image-vllm-not-ready attempts=1");
@@ -792,12 +793,36 @@ printf 'nim-stalled-probe-diagnostic key=%s\\n' "$FAKE_NIM_API_KEY"`,
       "5",
       "--max-time",
       "5",
-      "http://127.0.0.1:8000/v1/models",
+      "http://127.0.0.1:8001/v1/models",
     ]);
     expect(result.stderr).toContain("nim-stalled-probe-diagnostic key=[REDACTED]");
     expect(result.stderr).toContain("managed-image-nim-not-ready attempts=1");
     expect(result.stderr).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.stderr, "utf8")).not.toContain(sensitiveValue);
     expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(sensitiveValue);
+  });
+});
+
+describe("protected provider image ownership", () => {
+  it("treats a provider image as run-owned only when docker run pulled that exact reference", () => {
+    const pulled = [
+      `Unable to find image '${PROVIDER_IMAGE}' locally`,
+      `${PROVIDER_IMAGE}: Pulling from vllm`,
+      "Status: Downloaded newer image",
+    ].join("\n");
+    expect(protectedProviderImagePulledByStart(PROVIDER_IMAGE, pulled)).toBe(true);
+    expect(protectedProviderImagePulledByStart(PROVIDER_IMAGE, "")).toBe(false);
+    expect(
+      protectedProviderImagePulledByStart(
+        PROVIDER_IMAGE,
+        `Unable to find image 'registry.example/other@sha256:${"c".repeat(64)}' locally`,
+      ),
+    ).toBe(false);
+    expect(
+      protectedProviderImagePulledByStart(
+        PROVIDER_IMAGE,
+        `provider log: Unable to find image '${PROVIDER_IMAGE}' locally (replayed)`,
+      ),
+    ).toBe(false);
   });
 });

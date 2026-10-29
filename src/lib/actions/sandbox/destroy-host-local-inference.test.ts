@@ -203,6 +203,7 @@ async function runDestroy(
     deleteResult?: { status: number; stdout: string; stderr: string };
     listResult?: { status: number; stdout: string; stderr: string };
     lookupResults?: { status: number; stdout: string; stderr: string }[];
+    expectedContainerIdentityFingerprint?: string;
     sandboxConfirmedAbsent?: boolean;
     force?: boolean;
     includeRegistryReaders?: boolean;
@@ -234,6 +235,7 @@ async function runDestroy(
   const stopInferenceResources = vi.fn(() => {
     runtimeProvider.events.push("legacy inference cleanup");
   });
+  const onMutationStarted = vi.fn();
   let lookupAttempt = 0;
   let convergenceClockMs = 0;
   const runOpenshell = vi.fn((args: string[]) => {
@@ -267,7 +269,11 @@ async function runDestroy(
     sandboxConfirmedAbsent: options.sandboxConfirmedAbsent ?? false,
     sandboxName: "alpha",
     stopInferenceResources,
+    onMutationStarted,
     ...(options.mcpRuntimeSelection ? { mcpRuntimeSelection: options.mcpRuntimeSelection } : {}),
+    ...(options.expectedContainerIdentityFingerprint
+      ? { expectedContainerIdentityFingerprint: options.expectedContainerIdentityFingerprint }
+      : {}),
     runtimeProviders: { mxc: runtimeProvider.bundle },
     deps: {
       ...(options.lifecycleOptions
@@ -278,7 +284,6 @@ async function runDestroy(
             inspectOpenShellSandboxIdentityFingerprint: options.inspectSandboxIdentityFingerprint,
           }
         : {}),
-      wipeSandboxState: () => undefined,
       deleteConvergence: {
         now: () => convergenceClockMs,
         sleep: (milliseconds) => {
@@ -293,6 +298,7 @@ async function runDestroy(
     result,
     runOpenshell,
     stopInferenceResources,
+    onMutationStarted,
   };
 }
 
@@ -322,10 +328,13 @@ describe("sandbox destroy host-local inference transaction", () => {
       pendingCreateIdentity: pendingCreateIdentity(),
     });
 
-    const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider, {
-      entry,
-      inspectSandboxIdentityFingerprint: inspect,
-    });
+    const { result, runOpenshell, stopInferenceResources, onMutationStarted } = await runDestroy(
+      runtimeProvider,
+      {
+        entry,
+        inspectSandboxIdentityFingerprint: inspect,
+      },
+    );
 
     expect(result).toMatchObject({
       ok: false,
@@ -333,6 +342,7 @@ describe("sandbox destroy host-local inference transaction", () => {
     });
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();
+    expect(onMutationStarted).not.toHaveBeenCalled();
     expect(runtimeProvider.events).toEqual([]);
   });
 
@@ -354,13 +364,17 @@ describe("sandbox destroy host-local inference transaction", () => {
       }) => SANDBOX_FINGERPRINT,
     );
 
-    const { getSandbox, result, runOpenshell } = await runDestroy(runtimeProvider, {
-      entry,
-      inspectSandboxIdentityFingerprint: inspect,
-      mcpRuntimeSelection: runtimeSelection,
-    });
+    const { getSandbox, result, runOpenshell, onMutationStarted } = await runDestroy(
+      runtimeProvider,
+      {
+        entry,
+        inspectSandboxIdentityFingerprint: inspect,
+        mcpRuntimeSelection: runtimeSelection,
+      },
+    );
 
     expect(result).toMatchObject({ ok: true });
+    expect(onMutationStarted).toHaveBeenCalledOnce();
     expect(inspect.mock.calls.length).toBeGreaterThanOrEqual(5);
     expect(inspect.mock.calls.map(([options]) => options)).toEqual(
       new Array(inspect.mock.calls.length).fill(
@@ -374,6 +388,71 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(getSandbox.mock.calls.length).toBeGreaterThanOrEqual(10);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("scopes pending-create cleanup and convergence to its recorded gateway", async () => {
+    const runtimeProvider = provider();
+    const entry = sandbox("alpha", receipt(), {
+      pendingCreateIdentity: pendingCreateIdentity({ gatewayName: "gateway-other" }),
+    });
+    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+      entry,
+      inspectSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "exec", "-g", "gateway-other", "--name", "alpha"]),
+      expect.any(Object),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "gateway-other", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "gateway-other", "alpha"],
+      expect.any(Object),
+    );
+  });
+
+  it("uses the runtime-selected gateway for identity continuity and cleanup", async () => {
+    const runtimeProvider = provider();
+    const entry = sandbox();
+    const runtimeSelection = {
+      gatewayName: "gateway-other",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const inspect = vi.fn(
+      (_options: {
+        readonly sandboxName: string;
+        readonly gatewayName: string;
+        readonly runtimeSelection?: OpenShellRuntimeSelection;
+      }) => SANDBOX_FINGERPRINT,
+    );
+
+    const { result, runOpenshell } = await runDestroy(runtimeProvider, {
+      entry,
+      expectedContainerIdentityFingerprint: SANDBOX_FINGERPRINT,
+      inspectSandboxIdentityFingerprint: inspect,
+      mcpRuntimeSelection: runtimeSelection,
+    });
+
+    expect(result).toMatchObject({ ok: true, alreadyGone: true });
+    expect(inspect.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(inspect.mock.calls.map(([options]) => options)).toEqual(
+      new Array(inspect.mock.calls.length).fill(
+        expect.objectContaining({
+          sandboxName: "alpha",
+          gatewayName: "gateway-other",
+          runtimeSelection,
+        }),
+      ),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "gateway-other", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -406,7 +485,6 @@ describe("sandbox destroy host-local inference transaction", () => {
       runtimeProviders: { mxc: runtimeProvider.bundle },
       deps: {
         inspectOpenShellSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
-        wipeSandboxState: () => undefined,
       },
     });
 
@@ -526,7 +604,6 @@ describe("sandbox destroy host-local inference transaction", () => {
         hostLocalInferenceLifecycleOptions: {
           createLlamaCppAdapter: runtimeProvider.createLlamaCppAdapter,
         },
-        wipeSandboxState: () => undefined,
       },
     });
 
@@ -562,7 +639,6 @@ describe("sandbox destroy host-local inference transaction", () => {
         hostLocalInferenceLifecycleOptions: {
           createLlamaCppAdapter: runtimeProvider.createLlamaCppAdapter,
         },
-        wipeSandboxState: () => undefined,
       },
     });
 
@@ -619,13 +695,15 @@ describe("sandbox destroy host-local inference transaction", () => {
         throw new Error("provider failed with OPENAI_API_KEY=super-secret");
       },
     });
-    const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider);
+    const { result, runOpenshell, stopInferenceResources, onMutationStarted } =
+      await runDestroy(runtimeProvider);
 
     expect(result).toMatchObject({ ok: false });
     expect(JSON.stringify(result)).not.toContain("super-secret");
     expect(JSON.stringify(result)).toContain("<REDACTED>");
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();
+    expect(onMutationStarted).not.toHaveBeenCalled();
   });
 
   it("requires exact registry readers before deleting a sandbox with durable authority", async () => {
@@ -708,14 +786,17 @@ describe("sandbox destroy host-local inference transaction", () => {
 
   it("does not discard durable authority when --force cannot reach the gateway", async () => {
     const runtimeProvider = provider();
-    const { result, stopInferenceResources } = await runDestroy(runtimeProvider, {
-      deleteResult: {
-        status: 1,
-        stdout: "",
-        stderr: "tcp connect error: Connection refused (os error 61)",
+    const { result, stopInferenceResources, onMutationStarted } = await runDestroy(
+      runtimeProvider,
+      {
+        deleteResult: {
+          status: 1,
+          stdout: "",
+          stderr: "tcp connect error: Connection refused (os error 61)",
+        },
+        force: true,
       },
-      force: true,
-    });
+    );
 
     expect(result).toMatchObject({
       ok: false,
@@ -725,6 +806,7 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(runtimeProvider.events).not.toContain("cleanup");
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();
+    expect(onMutationStarted).toHaveBeenCalledOnce();
   });
 
   it("preserves recovery authority when an accepted delete remains present", async () => {

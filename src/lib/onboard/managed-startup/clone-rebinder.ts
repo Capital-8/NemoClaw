@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import { createHash } from "node:crypto";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
@@ -38,6 +39,8 @@ const MANAGED_INFERENCE_API_SET = new Set([
  * state before a clone handoff can be prepared.
  */
 export interface ManagedStartupCloneCurrentState {
+  readonly nativeNvidiaProviderAttachment?: unknown;
+  readonly nativeHostedProviderAttachment?: unknown;
   readonly provider?: string | null;
   readonly model?: string | null;
   readonly endpointUrl?: string | null;
@@ -61,6 +64,7 @@ export interface ManagedStartupCloneCurrentState {
 
 export interface ManagedStartupCloneRebindInput {
   readonly sourceSandboxName: string;
+  readonly sourceGatewayPort: number;
   readonly destinationSandboxName: string;
   readonly expectedAgent: ManagedStartupAgent;
   readonly destinationDashboardPort: number | null;
@@ -138,11 +142,14 @@ function currentInference(
   if (preferredApi !== null && !MANAGED_INFERENCE_API_SET.has(preferredApi)) {
     fail("current source preferred inference API is unsupported");
   }
+  const nativeAttachment = recordedNativeProviderAttachment(current);
   const resolved = resolveManagedStartupInferenceRoute(
     profile.agent,
     provider,
     model,
     preferredApi,
+    Boolean(nativeAttachment),
+    nativeAttachment?.endpointUrl,
   );
   if (!MANAGED_INFERENCE_API_SET.has(resolved.inferenceApi)) {
     fail("current source inference route resolved an unsupported API");
@@ -301,6 +308,7 @@ function currentMessagingPlan(current: ManagedStartupCloneCurrentState): unknown
 function reconcileCurrentSourceProfile(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
+  sourceGatewayPort: number,
 ): ManagedStartupProfile {
   const inference = currentInference(profile, current);
   const hermesToolGateways = current.hermesToolGateways ?? [];
@@ -342,9 +350,11 @@ function reconcileCurrentSourceProfile(
       profile.inference?.upstreamProvider !== current.provider ||
       profile.inference?.model !== current.model
     ) {
+      const currentProvider = requireCurrentString(current.provider, "inference provider");
       contextWindow = managedStartupCloneRebinderDependencies.resolveContextWindowForModel(
-        requireCurrentString(current.provider, "inference provider"),
+        currentProvider,
         requireCurrentString(current.model, "inference model"),
+        sourceGatewayPort,
       );
       if (contextWindow === null) {
         fail("current OpenClaw inference route has no verifiable context window");
@@ -492,7 +502,11 @@ export function rebindManagedStartupProfileForClone(
 
   let profile: ManagedStartupProfile;
   try {
-    const currentSourceProfile = reconcileCurrentSourceProfile(sourceProfile, input.currentSource);
+    const currentSourceProfile = reconcileCurrentSourceProfile(
+      sourceProfile,
+      input.currentSource,
+      input.sourceGatewayPort,
+    );
     profile = validateManagedStartupProfile({
       ...currentSourceProfile,
       inference: destinationInference(currentSourceProfile, input),

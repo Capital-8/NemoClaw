@@ -16,6 +16,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../../onboard/docker-driver-gateway-config";
+import { writeCompleteDockerDriverGatewayLocalTlsBundle } from "../../onboard/__test-helpers__/docker-driver-gateway-local-tls";
 import { NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE } from "../../onboard/docker-driver-gateway-service";
 import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
@@ -33,9 +34,7 @@ const STATIC_TEST_HOME = fs.mkdtempSync(
 const NAMED_GATEWAY_ABSENCE = "No gateway metadata found for nemoclaw.";
 const REMOVE_UNSUPPORTED = "unrecognized subcommand 'remove'";
 
-afterAll(() => {
-  fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true });
-});
+afterAll(() => fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true }));
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -74,6 +73,7 @@ function writeScopedGatewayState(home: string, port = 8080): string {
   const stateDir = path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
   const configPath = path.join(stateDir, "openshell-gateway.toml");
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  writeCompleteDockerDriverGatewayLocalTlsBundle(stateDir);
   fs.writeFileSync(
     configPath,
     buildDockerDriverGatewayConfigToml(
@@ -213,10 +213,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("does not use legacy gateway destroy when external registration removal is unsupported (#6576)", async () => {
+  it("does not mutate an external gateway registration when bulk cleanup is not owned (#11831)", async () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
-      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
+      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw", active: false }]))],
       [
         "openshell gateway remove nemoclaw",
         { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
@@ -256,7 +256,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     const openshellCalls = calls
       .filter(({ command }) => command === "openshell")
       .map(({ args }) => args);
-    expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+    expect(openshellCalls).not.toContainEqual(["gateway", "remove", "nemoclaw"]);
     expect(openshellCalls).not.toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
   });
 
@@ -289,7 +289,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
   it("falls back to legacy gateway destroy only when gateway remove is unsupported", async () => {
     const calls: Array<{ args: string[]; command: string }> = [];
     const responses = new Map<string, RunResult>([
-      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
+      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw", active: false }]))],
       [
         "openshell gateway remove nemoclaw",
         { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
@@ -414,7 +414,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
             return key === "openshell gateway list -o json"
               ? removeAttempted && postcondition !== undefined
                 ? postcondition
-                : ok(JSON.stringify([{ name: "nemoclaw" }]))
+                : ok(JSON.stringify([{ name: "nemoclaw", active: false }]))
               : (responses.get(key) ?? ok());
           },
           runDocker: () => ok(""),

@@ -27,6 +27,7 @@ import { MIN_PROBE_REPLY_TOKENS, resolveProbeReplyTokens } from "./max-tokens-fi
 import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
 import { usesNvidiaEndpointProbePayload } from "./openai-probe-models";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
+import { RETRIABLE_HTTP_PROBE_STATUSES } from "./probe/transient-http-policy";
 
 export interface ProviderHealthStatus {
   ok: boolean;
@@ -35,6 +36,8 @@ export interface ProviderHealthStatus {
   endpoint: string;
   detail: string;
   failureLabel?: "unreachable" | "unhealthy" | "unauthorized";
+  /** A trusted upstream transient result, not proof that the route is broken. */
+  degraded?: true;
   /**
    * Short qualifier rendered as `Inference (<probeLabel>):` so multi-hop
    * health (e.g. ollama backend vs. auth proxy) surfaces in the status
@@ -60,6 +63,8 @@ export interface ProviderHealthProbeOptions {
   model?: string | null;
   getCredentialImpl?: (envName: string) => string | null | undefined;
   isWsl?: boolean;
+  /** Sandbox route endpoint recorded at onboard; selects the bearerless local vLLM host port. */
+  recordedEndpointUrl?: string | null;
 }
 
 export type OllamaHostInventoryProbeOptions = {
@@ -410,6 +415,7 @@ function validateInvocationProbeResult(
 function isHealthProbeTimeout(result: CurlProbeResult): boolean {
   return (
     !result.ok &&
+    result.httpStatus === 0 &&
     (result.curlStatus === CURL_TIMEOUT_STATUS || result.curlStatus === NODE_SPAWN_TIMEOUT_STATUS)
   );
 }
@@ -475,16 +481,35 @@ function timedOutHealthStatus(
   endpoint: string,
   credentialEnv: string,
   result: CurlProbeResult,
+  nvidia: boolean,
 ): ProviderHealthStatus {
   return {
     ok: true,
     probed: false,
+    ...(nvidia ? { degraded: true as const } : {}),
     providerLabel,
     endpoint,
     detail:
       `${providerLabel} model-invocation probe did not finish within the ` +
       `${HEALTH_PROBE_MAX_TIME_SECONDS}s status budget; model health was not verified. ` +
-      `Check your network connection or ${credentialEnv}. (${result.message})`,
+      (nvidia
+        ? `The upstream may be temporarily unavailable. (${result.message})`
+        : `Check your network connection or ${credentialEnv}. (${result.message})`),
+  };
+}
+
+function transientNvidiaHealthStatus(
+  providerLabel: string,
+  endpoint: string,
+  result: CurlProbeResult,
+): ProviderHealthStatus {
+  return {
+    ok: true,
+    probed: false,
+    degraded: true,
+    providerLabel,
+    endpoint,
+    detail: `${providerLabel} upstream returned HTTP ${result.httpStatus}; model inference was not verified.`,
   };
 }
 
@@ -560,7 +585,20 @@ function probeChatCompletionsProviderHealth(
     }
   })();
   if (isHealthProbeTimeout(rawResult)) {
-    return timedOutHealthStatus(providerLabel, endpoint, credentialEnv, rawResult);
+    return timedOutHealthStatus(
+      providerLabel,
+      endpoint,
+      credentialEnv,
+      rawResult,
+      useNvidiaEndpointProbePayload,
+    );
+  }
+  if (
+    useNvidiaEndpointProbePayload &&
+    rawResult.curlStatus === 0 &&
+    RETRIABLE_HTTP_PROBE_STATUSES.has(rawResult.httpStatus)
+  ) {
+    return transientNvidiaHealthStatus(providerLabel, endpoint, rawResult);
   }
   const result = validateInvocationProbeResult(rawResult, validateChatCompletionsResponse);
   const healthy = result.ok;
@@ -627,7 +665,7 @@ function probeAnthropicMessagesProviderHealth(
     }
   })();
   if (isHealthProbeTimeout(rawResult)) {
-    return timedOutHealthStatus(providerLabel, endpoint, credentialEnv, rawResult);
+    return timedOutHealthStatus(providerLabel, endpoint, credentialEnv, rawResult, false);
   }
   const result = validateInvocationProbeResult(rawResult, validateAnthropicMessagesResponse);
   const healthy = result.ok;
@@ -689,6 +727,7 @@ export function probeRemoteProviderHealth(
       `${BUILD_ENDPOINT_URL}/chat/completions`,
       options,
       true,
+      resolveProbeReplyTokens(provider, config.model),
     );
   }
 
@@ -738,6 +777,7 @@ export function probeProviderHealth(
   const localOptions: LocalProviderHealthProbeOptions = {
     model: options.model,
     runCurlProbeImpl: options.runCurlProbeImpl,
+    recordedEndpointUrl: options.recordedEndpointUrl,
   };
   const local = probeLocalProviderHealth(provider, localOptions);
   if (local) {

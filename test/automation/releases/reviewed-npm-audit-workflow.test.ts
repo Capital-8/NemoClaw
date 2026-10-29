@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { readWorkflow, required, step } from "../../helpers/managed-image-publication-workflow";
 import {
   assertReviewedAuditReportsPass,
   NPM_AUDIT_SIGNATURE_ARGV,
@@ -200,6 +201,7 @@ if (args[0] === "ci") {
   }
 }
 if (args[0] === "install" && !fs.existsSync("package-lock.json")) {
+  fs.mkdirSync("node_modules", { recursive: true });
   const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
   fs.writeFileSync("package-lock.json", JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }));
 }
@@ -304,6 +306,16 @@ function writeProductionSourceGraph(
 }
 
 describe("trusted npm audit workflow (#5896)", () => {
+  it("runs the PR audit from its exact head commit", () => {
+    const job = required(readWorkflow("pr.yaml").jobs?.["reviewed-npm-audit"], "missing PR audit");
+    expect(step(job, "Checkout").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      "persist-credentials": false,
+    });
+    expect(step(job, "Audit reviewed production npm graphs").uses).toBe(
+      "./.github/actions/ci-reviewed-npm-audit",
+    );
+  });
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
     const action = YAML.parse(
@@ -342,21 +354,20 @@ describe("trusted npm audit workflow (#5896)", () => {
   });
 
   it("records the selected replacement identity in locked-graph audit provenance", () => {
-    const graph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(({ id }) => id === "openclaw-runtime")!;
     const fixture = runConsolidatedAuditFixture(
       () => {},
       undefined,
       0,
       0,
       REVIEWED_AUDIT_CONFIG.npmVersion,
-      openClawReplacementGraphFixture(REPO_ROOT, graph),
+      openClawReplacementGraphFixture(REPO_ROOT),
     );
 
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
     expect(fixture.lockedProvenance).toMatchObject({
       graph: {
-        label: "OpenClaw 2026.9.1 locked runtime graph",
-        packageSpecs: ["openclaw@2026.9.1"],
+        label: "OpenClaw 2026.9.5 locked runtime graph",
+        packageSpecs: ["openclaw@2026.9.5"],
       },
       scanner: {
         name: "npm audit",
@@ -366,10 +377,10 @@ describe("trusted npm audit workflow (#5896)", () => {
     });
     expect(fixture.lockedReceipt).toBeDefined();
     expect(fixture.npmCalls).toContain(
-      JSON.stringify(["view", "openclaw@2026.9.1", "dist.integrity"]),
+      JSON.stringify(["view", "openclaw@2026.9.5", "dist.integrity"]),
     );
     expect(fixture.npmCalls).toContain(
-      JSON.stringify(["view", "openclaw@2026.9.1", "dist.tarball"]),
+      JSON.stringify(["view", "openclaw@2026.9.5", "dist.tarball"]),
     );
     expect(fixture.npmCalls).toContain(JSON.stringify(NPM_AUDIT_SIGNATURE_ARGV));
   });
@@ -511,9 +522,12 @@ describe("trusted npm audit workflow (#5896)", () => {
     }
   });
 
-  it("keeps the WeChat archive and reviewed locked graph distinct", () => {
+  it("reviews Google Chat and keeps the WeChat archive and locked graph distinct", () => {
     const config = parseAuditConfig(
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
+    );
+    expect(config.archivePackages.map(({ packageSpec }) => packageSpec)).toContain(
+      "@openclaw/googlechat@2026.9.5",
     );
     expect(
       config.archivePackages.some(
@@ -525,7 +539,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         id: "wechat-runtime",
         inputValidation: "wechat-runtime",
         installMode: "legacy-peer-deps",
-        lockSha256: "84f2b731e9ffe731d29c28ebbe795116217771971c729b577df1a8816296f9b8",
+        lockSha256: "74856e20d229528ee7e2d107e6238e2204beea36c0deb733a7102082bcd4e5ea",
         severityThreshold: "low",
         signatureAudit: "retry-download-failures",
       }),

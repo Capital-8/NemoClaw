@@ -117,7 +117,7 @@ export function inspectManagedLlamaCppStatus(
   let operation: ReturnType<typeof createDockerLlamaCppHostLocalOperation>;
   try {
     operation = options.engine
-      ? createDockerLlamaCppInspectionOperation(options.engine)
+      ? createDockerLlamaCppInspectionOperation(options.engine, options.env ?? process.env)
       : createDockerLlamaCppHostLocalOperation(options.env ?? process.env);
     engine = operation.engine;
     requirePersistedEngineAuthority(
@@ -191,6 +191,7 @@ export function inspectManagedLlamaCppStatus(
   try {
     readiness = (options.probe ?? probeLlamaCppAttachment)(apiKey, {
       requestedModel: selection.recipe.spec.model.servedName,
+      managedRuntime: true,
     });
   } catch {
     return {

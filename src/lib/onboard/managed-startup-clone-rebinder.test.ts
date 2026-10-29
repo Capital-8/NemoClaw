@@ -164,6 +164,7 @@ function rebind(
   names: {
     readonly sourceSandboxName?: string;
     readonly destinationSandboxName?: string;
+    readonly sourceGatewayPort?: number;
   } = {},
 ) {
   const profile = built.profile;
@@ -176,6 +177,7 @@ function rebind(
     profile.agentConfig.agent === "langchain-deepagents-code" ? profile.agentConfig : null;
   return rebindManagedStartupProfileForClone({
     sourceSandboxName: names.sourceSandboxName ?? "source",
+    sourceGatewayPort: names.sourceGatewayPort ?? 8080,
     destinationSandboxName: names.destinationSandboxName ?? "destination",
     expectedAgent,
     destinationDashboardPort,
@@ -318,12 +320,15 @@ describe("rebindManagedStartupProfileForClone", () => {
       .spyOn(managedStartupCloneRebinderDependencies, "resolveContextWindowForModel")
       .mockReturnValue(131_072);
 
-    const rebound = rebind(built, "openclaw", 20_789, {
-      provider: "ollama-local",
-      model: "qwen3.5:9b",
-    });
+    const rebound = rebind(
+      built,
+      "openclaw",
+      20_789,
+      { provider: "ollama-local", model: "qwen3.5:9b" },
+      { sourceGatewayPort: 18080 },
+    );
 
-    expect(resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b", 18080);
     expect(rebound.profile.tuning.contextWindow).toBe(131_072);
   });
 
@@ -350,8 +355,32 @@ describe("rebindManagedStartupProfileForClone", () => {
       model: "qwen3.5:9b",
     });
 
-    expect(resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b", 8080);
     expect(rebound.profile.tuning.contextWindow).toBe(131_072);
+  });
+
+  it("rejects a changed compatible endpoint without selected-route context evidence", () => {
+    const built = buildManagedStartupProfile({
+      ...openClawInput(),
+      environment: { NEMOCLAW_CONTEXT_WINDOW: "16384" },
+    });
+    const resolveContextWindowForModel = vi
+      .spyOn(managedStartupCloneRebinderDependencies, "resolveContextWindowForModel")
+      .mockReturnValue(null);
+
+    expect(() =>
+      rebind(built, "openclaw", 20_789, {
+        provider: "compatible-endpoint",
+        model: "nvidia/custom-model",
+        preferredInferenceApi: "openai-completions",
+      }),
+    ).toThrow("current OpenClaw inference route has no verifiable context window");
+
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith(
+      "compatible-endpoint",
+      "nvidia/custom-model",
+      8080,
+    );
   });
 
   it("rebinds Hermes public dashboard and provider identity while retaining its internal port", () => {
@@ -472,6 +501,7 @@ describe("rebindManagedStartupProfileForClone", () => {
     expect(() =>
       rebindManagedStartupProfileForClone({
         sourceSandboxName: "source",
+        sourceGatewayPort: 8080,
         destinationSandboxName: "destination",
         expectedAgent: "openclaw",
         destinationDashboardPort: 20_789,
@@ -493,6 +523,7 @@ describe("rebindManagedStartupProfileForClone", () => {
     expect(() =>
       rebindManagedStartupProfileForClone({
         sourceSandboxName: "source",
+        sourceGatewayPort: 8080,
         destinationSandboxName: "destination",
         expectedAgent: "openclaw",
         destinationDashboardPort: 20_789,

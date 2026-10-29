@@ -3,7 +3,7 @@
 //
 // Regression test for #3998 — `nemoclaw <sandbox> channels remove <channel>`
 // must (1) remove the channel preset from the live OpenShell policy, (2) wipe the channel's durable
-// state inside the sandbox so the rebuild's state_dirs backup does not
+// state inside the sandbox so the rebuild's complete native-home backup does not
 // restore stale auth files, and (3) refuse to proceed to rebuild when the
 // in-sandbox cleanup for a QR-paired channel fails — otherwise the backup
 // would re-capture the auth blob and the channel would reconnect after
@@ -206,6 +206,7 @@ const policies = require(${j("policy/index.js")});
 const removedPresets = [];
 policies.listPresets = () => ${JSON.stringify(presetNamesApplied.map((name) => ({ name })))};
 policies.getAppliedPresets = () => ${JSON.stringify(presetNamesApplied)};
+policies.getGatewayPresets = () => ${JSON.stringify(presetNamesApplied)};
 policies.removePreset = (sandboxName, presetName) => {
   removedPresets.push({ sandboxName, presetName });
   return true;
@@ -214,6 +215,10 @@ policies.removePreset = (sandboxName, presetName) => {
 const callOrder = [];
 const stoppedDockerCleanupCalls = [];
 const policyChannelDeps = require(${j("actions/sandbox/policy-channel-dependencies.js")});
+policyChannelDeps.policyChannelDependencies.resolveConfigRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
 policyChannelDeps.policyChannelDependencies.inspectMessagingProviderAttachmentTarget = () =>
   "fingerprint-1";
 policyChannelDeps.policyChannelDependencies.clearStoppedSandboxStateRoots = (sandboxName, paths) => {
@@ -594,7 +599,7 @@ const ctx = module.exports;
     );
   });
 
-  it("does not abort when removing a never-configured QR channel even if sandbox is unreachable", () => {
+  it("leaves an absent QR channel unchanged when the sandbox is unreachable", () => {
     const script = `${buildPreamble({
       presetNamesApplied: ["npm", "pypi"],
       sandboxAgent: "openclaw",
@@ -609,6 +614,8 @@ const ctx = module.exports;
       sandboxExecCalls: ctx.sandboxExecCalls,
       sandboxSshCalls: ctx.sandboxSshCalls,
       callOrder: ctx.callOrder,
+      removedPresets: ctx.removedPresets,
+      registryUpdates: ctx.registryUpdates,
       exitCode: ctx.getExitCode(),
     }) + "\\n");
   } catch (err) {
@@ -638,10 +645,9 @@ const ctx = module.exports;
       0,
       "SSH fallback must NOT run when channel was never configured",
     );
-    assert.ok(
-      payload.callOrder.includes("promptAndRebuild"),
-      `rebuild prompt must still fire on the no-op remove path; callOrder=${JSON.stringify(payload.callOrder)}`,
-    );
+    assert.deepEqual(payload.callOrder, [], "absent channels must not queue a rebuild");
+    assert.deepEqual(payload.removedPresets, [], "unrelated policies must remain unchanged");
+    assert.deepEqual(payload.registryUpdates, [], "the messaging plan must remain unchanged");
   });
 
   it("removes the live preset and messaging plan entry for a token-based channel", () => {

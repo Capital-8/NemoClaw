@@ -18,7 +18,10 @@ import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-obser
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import { getDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
-import { resolveGatewayCredentialMutationAuthority } from "../../onboard/gateway-teardown-authority";
+import {
+  resolveGatewayCredentialMutationAuthority,
+  resolveGatewayObservationAuthority,
+} from "../../onboard/gateway-teardown-authority";
 import {
   evaluateGatewayAttachmentConfiguration,
   isExternallySupervised,
@@ -28,7 +31,7 @@ import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-end
 import { listExtraProviders } from "../../state/registry/extra-providers";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
-import { getPersistedSandboxTargetGateway } from "./gateway-target";
+import { getKnownSandboxTarget, getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
@@ -135,16 +138,28 @@ function providerRuntimeLocalTlsDir(
 
 export function getMcpProviderInspectionRuntimeSelection(
   sandbox: SandboxEntry,
+  options: { observationOnly?: boolean } = {},
 ): McpProviderInspectionRuntimeSelection {
   const providerRuntimeGateway = getPersistedSandboxTargetGateway(sandbox);
   const { gatewayName, gatewayPort } = providerRuntimeGateway;
-  const owner = resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
+  const owner = options.observationOnly
+    ? resolveGatewayObservationAuthority({ gatewayName, gatewayPort })
+    : resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
   const localTlsDir = providerRuntimeLocalTlsDir(owner, providerRuntimeGateway.selectedInProcess);
   return {
     gatewayName,
     ...(localTlsDir ? { localTlsDir } : {}),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
+}
+
+export function resolveSandboxConfigRuntimeSelection(
+  sandboxName: string,
+  options: { observationOnly?: boolean } = {},
+): OpenShellRuntimeSelection {
+  const sandbox = getKnownSandboxTarget(sandboxName);
+  if (!sandbox) throw new Error(`Sandbox '${sandboxName}' has no recorded runtime target.`);
+  return getMcpProviderInspectionRuntimeSelection(sandbox, options);
 }
 
 export async function inspectMcpProvider(

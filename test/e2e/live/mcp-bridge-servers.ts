@@ -67,6 +67,7 @@ export interface FakeMcpHttpsServer extends StartedHttpServer {
   setSecret(secret: string): void;
   observations: FakeMcpRequest[];
   requests: FakeMcpRequest[];
+  tlsFailures: string[];
   activeLegacySessionCount(): number;
 }
 
@@ -467,8 +468,8 @@ export async function startPublicMcpHttpsTunnel(options: {
           !probeCompleted || probeSpawnError || probeChild.exitCode !== 0
             ? {
                 ready: false,
-                // curl stderr can contain proxy details. Keep transport failures opaque.
-                diagnostic: `public HEAD ${readinessPath} failed (curl transport error)`,
+                // Retain process status only; curl stderr can contain proxy details.
+                diagnostic: `public HEAD ${readinessPath} failed (curl exit=${String(probeChild.exitCode)}, deadline=${!probeCompleted}, spawnError=${probeSpawnError})`,
               }
             : probeOutputExceededLimit ||
                 !/^\d{3}$/u.test(probeOutput) ||
@@ -871,7 +872,23 @@ export async function startCompatibleMock(options: {
         if (toolResultCount === 0 && visibleToolNames.has(toolName)) {
           protocolError = `progressive target ${toolName} was visible before search_tools`;
         } else if (toolResultCount === 0 && !visibleToolNames.has("search_tools")) {
-          protocolError = "search_tools was not visible before progressive discovery";
+          const knownNames = [
+            "ask_user",
+            "edit_file",
+            "execute",
+            "glob",
+            "grep",
+            "ls",
+            "read_file",
+            "write_file",
+            "write_todos",
+            toolName,
+          ];
+          const visibleKnownNames = knownNames.filter((name) => visibleToolNames.has(name));
+          protocolError =
+            "search_tools was not visible before progressive discovery; " +
+            `visible known tools: ${visibleKnownNames.join(", ") || "none"}; ` +
+            `other tool count: ${visibleToolNames.size - visibleKnownNames.length}`;
         } else if (toolResultCount === 0) {
           plannedToolCall = {
             id: "call_progressive_tool_search",
@@ -1076,6 +1093,7 @@ export async function startFakeMcpHttpsServer(options: {
     })();
   const requests: FakeMcpRequest[] = [];
   const observations: FakeMcpRequest[] = [];
+  const tlsFailures: string[] = [];
   const diagnostics: FakeMcpHttpsDiagnostics = {
     secureConnections: 0,
     requestHeaders: 0,
@@ -1476,6 +1494,16 @@ export async function startFakeMcpHttpsServer(options: {
         ? (code as keyof FakeMcpHttpsDiagnostics["tlsClientErrors"])
         : "OTHER";
     diagnostics.tlsClientErrors[bucket] = increment(diagnostics.tlsClientErrors[bucket]);
+
+    if (tlsFailures.length >= 8) return;
+    const knownCodes = new Set([
+      "ERR_SSL_TLSV1_ALERT_UNKNOWN_CA",
+      "ERR_SSL_SSLV3_ALERT_BAD_CERTIFICATE",
+      "ERR_SSL_SSLV3_ALERT_CERTIFICATE_EXPIRED",
+      "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+      "ECONNRESET",
+    ]);
+    tlsFailures.push(code && knownCodes.has(code) ? code : "OTHER");
   });
   const port = await listenOnRandomPort(server);
   return {
@@ -1483,6 +1511,7 @@ export async function startFakeMcpHttpsServer(options: {
     port,
     observations,
     requests,
+    tlsFailures,
     activeLegacySessionCount: () => legacySessions.size,
     setSecret: (secret: string) => {
       expectedSecret = secret;

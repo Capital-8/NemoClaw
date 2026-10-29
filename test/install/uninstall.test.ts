@@ -4,6 +4,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { createServer, type AddressInfo } from "node:net";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +18,11 @@ import {
 } from "../../src/lib/onboard/docker-driver-gateway-config";
 import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../../src/lib/onboard/docker-driver-gateway-runtime-marker";
 import {
+  isHostPortFree,
+  scopedHostGatewayProcessOwnershipFailure,
+} from "../../src/lib/onboard/host-gateway-process";
+import { resolveGatewayName } from "../../src/lib/onboard/gateway-binding/identity";
+import {
   getNemoclawOpenShellGatewayUserServicePath,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
@@ -27,12 +33,14 @@ import { createSession } from "../../src/lib/state/onboard-session";
 const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "../..", "uninstall.sh");
 
 describe("uninstall CLI flags", () => {
-  function writeFakeTools(fakeBin: string) {
+  function writeFakeTools(fakeBin: string, sandboxName = "ordinary-authority") {
     fs.mkdirSync(fakeBin);
     const sandboxConfigDir = path.join(path.dirname(fakeBin), "sandbox", ".openclaw");
+    const remoteSandboxState = path.join(path.dirname(fakeBin), "remote-sandbox-inventory");
     const eventLog = path.join(path.dirname(fakeBin), "uninstall-events");
     fs.mkdirSync(path.join(sandboxConfigDir, "workspace"), { recursive: true });
     fs.writeFileSync(path.join(sandboxConfigDir, "workspace", "USER.md"), "preserve me\n");
+    fs.writeFileSync(remoteSandboxState, `${sandboxName}\n`);
     for (const cmd of ["npm", "docker", "ollama", "pgrep"]) {
       fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", {
         mode: 0o755,
@@ -42,12 +50,20 @@ describe("uninstall CLI flags", () => {
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 case "$*" in
-  "gateway list -o json") printf '[{"name":"nemoclaw"}]\\n' ;;
+  "gateway list -o json") printf '[{"name":"nemoclaw","active":true}]\\n' ;;
   "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
-  "sandbox list"|"sandbox list -g nemoclaw") printf 'ordinary-authority Ready\\n' ;;
-  "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
+  "sandbox list"|"sandbox list -g nemoclaw")
+    if [ -f ${JSON.stringify(remoteSandboxState)} ]; then
+      printf '${sandboxName} Ready\\n'
+    fi
+    ;;
+  "sandbox ssh-config "*) printf 'Host openshell-%s.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' "$3" ;;
   "sandbox delete "*)
     printf 'delete\\n' >> ${JSON.stringify(eventLog)}
+    if grep -qx 'delete-fails' ${JSON.stringify(remoteSandboxState)}; then
+      exit 1
+    fi
+    rm -f ${JSON.stringify(remoteSandboxState)}
     rm -rf ${JSON.stringify(path.dirname(sandboxConfigDir))}
     ;;
   "status") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
@@ -61,9 +77,9 @@ exit 0
       `#!/usr/bin/env bash
 remote="\${!#}"
 case "$remote" in
-  *"-printf"*) exit 0 ;;
-  *"tar --hard-dereference"*)
-    /usr/bin/tar -cf - -C ${JSON.stringify(sandboxConfigDir)} -- workspace
+  *'work=$(pwd -P)'*) printf '/sandbox\\0/sandbox\\0' ;;
+  *"tar -C"*)
+    /usr/bin/tar -cf - -C ${JSON.stringify(path.dirname(sandboxConfigDir))} -- .
     status=$?
     case "$status" in 0) printf 'backup-complete\\n' >> ${JSON.stringify(eventLog)} ;; esac
     exit "$status"
@@ -74,6 +90,7 @@ esac
 `,
       { mode: 0o755 },
     );
+    return remoteSandboxState;
   }
 
   function seedPreservedState(tmp: string): string {
@@ -100,7 +117,7 @@ esac
     tmp: string,
     source: "packaged-service" | "standalone" = "standalone",
     sandbox: {
-      agent: "hermes" | "openclaw";
+      agent: "hermes" | "openclaw" | "langchain-deepagents-code";
       name: string;
       workload?: { kind: "managed-image" };
     } = { agent: "openclaw", name: "ordinary-authority" },
@@ -227,14 +244,27 @@ exec '${process.execPath}' '${path.join(path.dirname(UNINSTALL_SCRIPT), "bin", "
     );
   }
 
-  function writeManagedGatewayConfig(tmp: string): string {
+  async function getFreeLoopbackPort(): Promise<number> {
+    const server = createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    expect(address).not.toBeNull();
+    expect(typeof address).not.toBe("string");
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    return (address as AddressInfo).port;
+  }
+
+  function writeManagedGatewayConfig(tmp: string, gatewayPort = 8080): string {
     const stateDir = path.join(tmp, ".local", "state", "nemoclaw", "openshell-docker-gateway");
     const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
     fs.writeFileSync(
       path.join(stateDir, "openshell-gateway.toml"),
       buildDockerDriverGatewayConfigToml(
         {
-          OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+          OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${String(gatewayPort)}`,
           OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
           OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
           OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
@@ -248,17 +278,27 @@ exec '${process.execPath}' '${path.join(path.dirname(UNINSTALL_SCRIPT), "bin", "
     return stateDir;
   }
 
-  function startManagedGatewayProcess(tmp: string): ChildProcess {
-    const stateDir = writeManagedGatewayConfig(tmp);
+  function startManagedGatewayProcess(
+    tmp: string,
+    gatewayName = "nemoclaw",
+    gatewayPort = 8080,
+  ): ChildProcess {
+    const stateDir = writeManagedGatewayConfig(tmp, gatewayPort);
     const processScript = path.join(tmp, "managed-gateway-process.mjs");
+    const gatewayBin = path.join(tmp, "openshell-gateway");
     fs.writeFileSync(processScript, "setInterval(() => {}, 1_000);\n", { mode: 0o600 });
-    const child = spawn(process.execPath, [processScript, "--name", "nemoclaw", "--port", "8080"], {
-      env: {
-        ...sanitizedParentEnv(),
-        [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(stateDir),
+    fs.symlinkSync(process.execPath, gatewayBin);
+    const child = spawn(
+      gatewayBin,
+      [processScript, "--name", gatewayName, "--port", String(gatewayPort)],
+      {
+        env: {
+          ...sanitizedParentEnv(),
+          [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(stateDir),
+        },
+        stdio: "ignore",
       },
-      stdio: "ignore",
-    });
+    );
     const childPid =
       child.pid ??
       (() => {
@@ -269,7 +309,7 @@ exec '${process.execPath}' '${path.join(path.dirname(UNINSTALL_SCRIPT), "bin", "
     });
     writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
       desiredEnv: {},
-      endpoint: "https://127.0.0.1:8080",
+      endpoint: `https://127.0.0.1:${String(gatewayPort)}`,
       pid: childPid,
     });
     return child;
@@ -278,26 +318,32 @@ exec '${process.execPath}' '${path.join(path.dirname(UNINSTALL_SCRIPT), "bin", "
   function startPackagedGatewayProcess(
     tmp: string,
     fakeBin: string,
+    gatewayName = "nemoclaw",
+    gatewayPort = 8080,
   ): {
     child: ChildProcess;
     servicePath: string;
     stateDir: string;
     systemctlCalls: string;
   } {
-    const stateDir = writeManagedGatewayConfig(tmp);
+    const stateDir = writeManagedGatewayConfig(tmp, gatewayPort);
     const gatewayBinDir = path.join(tmp, ".local", "bin");
     const gatewayBin = path.join(gatewayBinDir, "openshell-gateway");
     const processScript = path.join(tmp, "packaged-gateway-process.mjs");
     fs.mkdirSync(gatewayBinDir, { recursive: true });
     fs.symlinkSync(process.execPath, gatewayBin);
     fs.writeFileSync(processScript, "setInterval(() => {}, 1_000);\n", { mode: 0o600 });
-    const child = spawn(gatewayBin, [processScript], {
-      env: {
-        ...sanitizedParentEnv(),
-        [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(stateDir),
+    const child = spawn(
+      gatewayBin,
+      [processScript, "--name", gatewayName, "--port", String(gatewayPort)],
+      {
+        env: {
+          ...sanitizedParentEnv(),
+          [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(stateDir),
+        },
+        stdio: "ignore",
       },
-      stdio: "ignore",
-    });
+    );
     const childPid =
       child.pid ??
       (() => {
@@ -307,7 +353,7 @@ exec '${process.execPath}' '${path.join(path.dirname(UNINSTALL_SCRIPT), "bin", "
     fs.mkdirSync(path.dirname(servicePath), { recursive: true });
     fs.writeFileSync(
       servicePath,
-      `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}\n[Service]\nExecStart=${gatewayBin} ${processScript}\n`,
+      `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}\n[Service]\nExecStart=${gatewayBin} ${processScript} --name ${gatewayName} --port ${String(gatewayPort)}\n`,
     );
     const systemctlCalls = path.join(tmp, "systemctl-calls");
     fs.writeFileSync(
@@ -316,10 +362,10 @@ exec '${process.execPath}' '${path.join(path.dirname(UNINSTALL_SCRIPT), "bin", "
 printf '%s\\n' "$*" >> '${systemctlCalls}'
 case "$*" in
   "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart")
-    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ${processScript} ; }'
+    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ${processScript} --name ${gatewayName} --port ${String(gatewayPort)} ; }'
     ;;
   "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID")
-    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ${processScript} ; }' 'ActiveState=active' 'MainPID=${String(childPid)}'
+    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ${processScript} --name ${gatewayName} --port ${String(gatewayPort)} ; }' 'ActiveState=active' 'MainPID=${String(childPid)}'
     ;;
   "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=MainPID --value")
     printf '%s\\n' '${String(childPid)}'
@@ -387,13 +433,18 @@ esac
     try {
       const result = runUninstall(tmp, ["--yes"]);
       const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
       const backupRoot = path.join(stateDir, "rebuild-backups", "ordinary-authority");
       const snapshot = fs.readdirSync(backupRoot).at(0);
-      const backupFile = path.join(backupRoot, String(snapshot), "workspace", "USER.md");
+      const archive = path.join(backupRoot, String(snapshot), "native-home.tar");
+      const archivedWorkspace = spawnSync(
+        "/usr/bin/tar",
+        ["-xOf", archive, "./.openclaw/workspace/USER.md"],
+        { encoding: null },
+      );
       const events = fs.readFileSync(path.join(tmp, "uninstall-events"), "utf8").trim().split("\n");
 
-      expect(result.status, output).toBe(0);
-      expect(createHash("sha256").update(fs.readFileSync(backupFile)).digest("hex")).toBe(
+      expect(createHash("sha256").update(archivedWorkspace.stdout).digest("hex")).toBe(
         workspaceDigest,
       );
       expect(output).toContain("Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped");
@@ -401,6 +452,44 @@ esac
       expect(fs.existsSync(path.join(tmp, "sandbox"))).toBe(false);
       expect(output).toMatch(/NemoClaw/);
       expect(output).toMatch(/Claws retracted/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("preserves Deep Agents native state in the archive before --yes removes the sandbox (#12728)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dcode-state-"));
+    const sandboxName = "dcode-backup-check";
+    writeFakeTools(path.join(tmp, "bin"), sandboxName);
+    const stateDir = seedCompletedDefaultAuthority(tmp, "standalone", {
+      agent: "langchain-deepagents-code",
+      name: sandboxName,
+    });
+    const marker = path.join(tmp, "sandbox", ".deepagents", ".state", "preservation.txt");
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.writeFileSync(marker, "PRESERVE-THIS-LINE\n");
+    const expectedDigest = createHash("sha256").update(fs.readFileSync(marker)).digest("hex");
+    try {
+      const result = runUninstall(tmp, ["--yes"]);
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
+      const backupRoot = path.join(stateDir, "rebuild-backups", sandboxName);
+      const snapshot = fs.readdirSync(backupRoot).at(0);
+      const archive = path.join(backupRoot, String(snapshot), "native-home.tar");
+      const archivedMarker = spawnSync(
+        "/usr/bin/tar",
+        ["-xOf", archive, "./.deepagents/.state/preservation.txt"],
+        { encoding: null },
+      );
+      const events = fs.readFileSync(path.join(tmp, "uninstall-events"), "utf8").trim().split("\n");
+
+      expect(archivedMarker.status, archivedMarker.stderr.toString()).toBe(0);
+      expect(createHash("sha256").update(archivedMarker.stdout).digest("hex")).toBe(expectedDigest);
+      expect(output).toContain(`${sandboxName}: 5 dirs, 2 files → ${archive}`);
+      expect(output).not.toContain("1 dirs, 0 files");
+      expect(output).toContain("Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped");
+      expect(events).toEqual(["backup-complete", "delete"]);
+      expect(fs.existsSync(path.join(tmp, "sandbox"))).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -445,6 +534,25 @@ esac
     }
   }, 60_000);
 
+  it("preserves uninstall state when bulk sandbox cleanup cannot remove remote inventory (#11831)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-remote-delete-fails-"));
+    const remoteSandboxState = writeFakeTools(path.join(tmp, "bin"));
+    const stateDir = seedCompletedDefaultAuthority(tmp);
+    fs.writeFileSync(remoteSandboxState, "delete-fails\n");
+    try {
+      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"]);
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("OpenShell sandbox cleanup was not accepted");
+      expect(output).not.toContain("Deleted all OpenShell sandboxes");
+      expect(fs.existsSync(remoteSandboxState)).toBe(true);
+      expect(fs.existsSync(stateDir)).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it.each([
     {
       environment: (_fakeBin: string, _tmp: string): NodeJS.ProcessEnv => ({}),
@@ -478,7 +586,7 @@ esac
         expect(fs.readFileSync(volume.callsPath, "utf8")).toContain(
           `volume rm ${volume.volumeName}`,
         );
-        expect(output).toContain("Removed managed Hermes state volume for 'hermes'.");
+        expect(output).toContain("Removed managed agent state volume for 'hermes'.");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
@@ -487,17 +595,26 @@ esac
   );
 
   it("completes selected-gateway cleanup and exits 0 when the recorded sandbox is already absent (#7906)", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-absent-sandbox-"));
+    const tmp = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-uninstall-absent-sandbox-"));
     const fakeBin = path.join(tmp, "bin");
     writeFakeTools(fakeBin);
-    const managedGateway = startManagedGatewayProcess(tmp);
+    const gatewayPort = await getFreeLoopbackPort();
+    const gatewayName = resolveGatewayName(gatewayPort);
+    const gatewayStateDir = path.join(
+      tmp,
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway",
+    );
+    const managedGateway = startManagedGatewayProcess(tmp, gatewayName, gatewayPort);
     fs.writeFileSync(
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 case "$*" in
-  "status -g nemoclaw") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
-  "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
-  "sandbox delete -g nemoclaw my-assistant")
+  "status -g ${gatewayName}") printf 'Status: Connected\\nGateway: ${gatewayName}\\n' ;;
+  "gateway list -o json") printf '[{"name":"${gatewayName}","active":true},{"name":"nemoclaw-9124","active":false}]\\n' ;;
+  "sandbox delete -g ${gatewayName} my-assistant")
     printf "Error: status: NotFound, sandbox 'my-assistant' not found\\n" >&2
     exit 1
     ;;
@@ -513,15 +630,28 @@ exit 0
       JSON.stringify({
         defaultSandbox: "my-assistant",
         sandboxes: {
-          "my-assistant": { name: "my-assistant", gatewayName: "nemoclaw", gatewayPort: 8080 },
+          "my-assistant": { name: "my-assistant", gatewayName, gatewayPort },
           sibling: { name: "sibling", gatewayName: "nemoclaw-9124", gatewayPort: 9124 },
         },
       }),
     );
     try {
       await once(managedGateway, "spawn");
+      expect(
+        scopedHostGatewayProcessOwnershipFailure(
+          { env: { ...sanitizedParentEnv(), HOME: tmp } },
+          {
+            gatewayBin: process.execPath,
+            openShellGatewayName: gatewayName,
+            openShellGatewayPort: gatewayPort,
+            stateDir: gatewayStateDir,
+          },
+        ),
+      ).toBeNull();
       const result = runUninstall(tmp, ["--yes", "--destroy-user-data"], {
+        NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
         NEMOCLAW_OPENSHELL_GATEWAY_BIN: process.execPath,
+        NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: gatewayStateDir,
       });
       const output = `${result.stdout}${result.stderr}`;
 
@@ -535,27 +665,33 @@ exit 0
     }
   }, 60_000);
 
-  it.runIf(process.platform === "linux")(
+  it.runIf(process.platform === "linux" && isHostPortFree(8080))(
     "uninstalls the scoped package-managed gateway without standalone runtime files",
     async () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-packaged-gateway-"));
+      const tmp = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-uninstall-packaged-gateway-"));
       const fakeBin = path.join(tmp, "bin");
       writeFakeTools(fakeBin);
+      const gatewayPort = 8080;
+      const gatewayName = resolveGatewayName(gatewayPort);
       const { child, servicePath, stateDir, systemctlCalls } = startPackagedGatewayProcess(
         tmp,
         fakeBin,
+        gatewayName,
+        gatewayPort,
       );
       const openshellCalls = path.join(tmp, "openshell-calls");
+      const deletedSandboxMarker = path.join(tmp, "ordinary-authority-deleted");
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> '${openshellCalls}'
 case "$*" in
-  "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
-  "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
-  "sandbox list") printf 'ordinary-authority Ready\\n' ;;
-  "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
-  "status") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
+  "gateway list -o json") printf '[{"name":"${gatewayName}","active":true},{"name":"nemoclaw-9124","active":false}]\\n' ;;
+  "gateway info -g ${gatewayName}") printf 'Gateway: ${gatewayName}\\n' ;;
+  "sandbox list"|"sandbox list -g ${gatewayName}") if [[ -e '${deletedSandboxMarker}' ]]; then printf 'NAME STATUS\\n'; else printf 'ordinary-authority Ready\\n'; fi ;;
+  "sandbox delete -g ${gatewayName} ordinary-authority") : > '${deletedSandboxMarker}' ;;
+  "sandbox ssh-config ordinary-authority"|"sandbox ssh-config -g ${gatewayName} ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
+  "status"|"status -g ${gatewayName}") printf 'Status: Connected\\nGateway: ${gatewayName}\\n' ;;
 esac
 exit 0
 `,
@@ -576,12 +712,16 @@ exit 0
       try {
         await once(child, "spawn");
         expect(fs.existsSync(path.join(stateDir, "openshell-gateway.pid"))).toBe(false);
-        const result = runUninstall(tmp, ["--yes"]);
+        const result = runUninstall(tmp, ["--yes"], {
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+        });
         const output = `${result.stdout}${result.stderr}`;
 
         expect(result.status, output).toBe(0);
         const openshellInvocations = fs.readFileSync(openshellCalls, "utf-8");
-        expect(openshellInvocations).toContain("sandbox delete -g nemoclaw ordinary-authority");
+        expect(openshellInvocations).toContain(
+          `sandbox delete -g ${gatewayName} ordinary-authority`,
+        );
         expect(openshellInvocations).not.toMatch(
           /sandbox delete .*nemoclaw-9124|sandbox delete .*sibling/,
         );
@@ -599,9 +739,9 @@ exit 0
           { encoding: "utf-8" },
         );
         expect(gatewayList.status, gatewayList.stderr).toBe(0);
-        expect(JSON.parse(gatewayList.stdout) as Array<{ name: string }>).toContainEqual({
-          name: "nemoclaw-9124",
-        });
+        expect(JSON.parse(gatewayList.stdout) as Array<{ name: string }>).toEqual(
+          expect.arrayContaining([expect.objectContaining({ name: "nemoclaw-9124" })]),
+        );
         const serviceInvocations = fs.readFileSync(systemctlCalls, "utf-8");
         expect(serviceInvocations).toContain(
           `--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart`,

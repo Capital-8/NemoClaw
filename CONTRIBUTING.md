@@ -59,6 +59,9 @@ host, Docker, GitHub authentication, contributor identity, and commit-signing pr
 changing them. Follow its remediation and rerun the doctor until it
 passes.
 
+`hadolint` is optional for contributor setup. The doctor warns when it is missing. Dockerfile lint
+checks require `hadolint` on your `PATH`. Install it before running those checks.
+
 Setup installs the required OpenShell SDK from the archive shipped with this checkout and verifies its lockfile checksum.
 SDK installation does not require GitHub credentials. The doctor also checks that the installed SDK can load.
 See the [SDK archive guidance](scripts/vendor/openshell-sdk/README.md) for direct dependency installation and SDK updates.
@@ -109,10 +112,15 @@ placement and specialized evidence. Common starting points are:
 npm run test:changed
 ```
 
-Normal Git hooks validate committed changes. If hooks were skipped or unavailable, commit the
-changes, run `git fetch origin main`, then run `npm run validate:pr`. This command compares committed
-changes with `origin/main` and requires a clean worktree. It checks formatting without applying fixes.
-Complete formatting and generated-file updates before the final commit.
+Normal Git hooks validate committed changes. If hooks are missing, stale, or were skipped, repair
+[contributor setup](.agents/skills/nemoclaw-contributor-onboard/SKILL.md), then follow the
+[publication procedure](.agents/skills/nemoclaw-contributor-create-pr/references/validation.md)
+before pushing. The installed pre-push hook runs publication validation; a separate
+`npm run validate:pr` is not a substitute. Changed validators must run inside the actual hook's
+verified isolation boundary, with Git transport authentication outside it.
+Publication validation compares committed changes with the refreshed `origin/main` and requires a
+clean worktree. It checks formatting without applying fixes. Complete formatting and generated-file
+updates before the final commit.
 When adding or renaming a hook, classify its read-only behavior in
 `scripts/checks/read-only-config.mts`; publication validation rejects unclassified hooks.
 
@@ -128,6 +136,15 @@ change has repository-wide impact or targeted validation cannot prove the outcom
 - `npm run check` runs the repository-wide pre-commit and coverage baseline.
 
 Most focused changes do not require both. Record only checks that actually ran and their results.
+
+### Pi qualification during publication
+
+Local hooks permit publication with pending Pi qualification when image inputs change.
+They still reject missing or malformed receipts and inconsistent receipt authority.
+Publish through normal hooks, then collect genuine AMD64 and ARM64 receipts from the same successful
+managed-image qualification run. Verify the image inputs match the receipt source and commit the receipts
+with their matching authority digests. Existing PR authorization covers this sequence across in-scope repairs.
+CI enforces the strict check; pending qualification does not establish readiness or merge approval.
 
 ### Reviewed SDK archives in PR CI
 
@@ -169,6 +186,10 @@ The [pull request template](.github/PULL_REQUEST_TEMPLATE.md) is the source of t
 content and conditional evidence. The [contributor PR skill](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md)
 owns the automated publication and review-follow-up workflow. The root
 [PR requirements](AGENTS.md#pr-requirements) own repository-specific exceptions.
+
+Every PR includes a collapsed opening [authoring-session report](.agents/skills/nemoclaw-contributor-create-pr/SKILL.md#session-report) comment, including existing and automated PRs.
+Post the report when opening a PR, or on the next update to an existing PR.
+The metadata job checks the PR author's posted comment and the shared template. Use unavailable fields when historical evidence is missing; preserve existing evidence and cutoffs. After posting, rerun a failed metadata job for the current PR revision. Comment events alone do not refresh this check.
 
 After each revision, follow CI and review to completion. Address valid findings with a change, or
 explain why they do not apply. Keep the PR description and validation evidence current.

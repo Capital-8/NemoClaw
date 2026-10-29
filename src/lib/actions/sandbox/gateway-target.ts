@@ -3,8 +3,8 @@
 
 import { GATEWAY_PORT } from "../../core/ports";
 import {
+  registryEntryGatewayPort,
   resolveGatewayName,
-  resolveGatewayPortFromName,
   resolveSandboxGatewayName,
   type SandboxGatewayBinding,
 } from "../../onboard/gateway-binding";
@@ -17,6 +17,10 @@ export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntr
 
 export function listPersistedSandboxTargets(): registry.SandboxEntry[] {
   return registry.listSandboxes().sandboxes;
+}
+
+export function getDefaultSandboxTargetName(): string | null {
+  return registry.getDefault();
 }
 
 export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | null {
@@ -38,16 +42,15 @@ export function getPersistedSandboxTargetGatewayName(sandbox: SandboxGatewayBind
 }
 
 /** Resolve the complete canonical gateway binding from one persisted sandbox row. */
-export function getPersistedSandboxTargetGateway(sandbox: SandboxGatewayBinding): {
+export function getPersistedSandboxTargetGateway(
+  sandbox: SandboxGatewayBinding & { name: string },
+): {
   gatewayName: string;
   gatewayPort: number;
   selectedInProcess: boolean;
 } {
-  const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
-  const gatewayPort = resolveGatewayPortFromName(gatewayName);
-  if (gatewayPort === null) {
-    throw new Error(`Invalid persisted OpenShell gateway '${gatewayName}'.`);
-  }
+  const gatewayPort = registryEntryGatewayPort(sandbox);
+  const gatewayName = resolveGatewayName(gatewayPort);
   return { gatewayName, gatewayPort, selectedInProcess: gatewayPort === GATEWAY_PORT };
 }
 

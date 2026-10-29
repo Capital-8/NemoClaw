@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command, Flags, type Interfaces } from "@oclif/core";
+import os from "node:os";
+import path from "node:path";
 import {
   assertHermesPortableCommandSupported,
   assertHermesPortableCommandUnavailable,
@@ -9,18 +11,67 @@ import {
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
 } from "../onboard/experimental/portable-agent-lifecycle";
-import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
+import { HERMES_PORTABLE_RECEIPT_DIRECTORY } from "../onboard/experimental/hermes-portable-receipt";
+import {
+  defaultPortableDemoStateDir,
+  portableDemoReceiptDirectory,
+} from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import {
   assertNoHermesPortableHostAuthority,
+  PORTABLE_HOST_FENCE_BUSY_MESSAGE,
+  readPortableAuthorityDirectory,
+  samePortableAuthorityDirectory,
+  type PortableAuthorityDirectorySnapshot,
   withCurrentPortableHostFence,
+  withCurrentPortableHostFenceTry,
 } from "../state/portable-uninstall-retirement";
 import { withSandboxLifecycleLock } from "../actions/sandbox/lifecycle/lock";
+import { withUnlockedSandboxStatusRead } from "../actions/sandbox/status-snapshot";
+import { listInferenceRouteOwnersAcrossGatewayRoots } from "../state/registry/cross-port";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
   reportRemovedImmutabilityUpgrade,
 } from "../state/migrations/removed-immutability";
 import { log } from "./logger";
+import { withTelemetryOperation } from "../actions/telemetry/operation";
+import { isTelemetryConfigurationKey, type TelemetryOperation } from "../domain/telemetry/event";
+
+function telemetryOperation(
+  commandId: string | undefined,
+  argv: readonly string[],
+): TelemetryOperation | null {
+  if (argv.includes("--help") || argv.includes("-h")) return null;
+  const operations: Record<string, TelemetryOperation> = {
+    onboard: "sandbox_create",
+    update: "update",
+    "upgrade-sandboxes": "upgrade_sandboxes",
+    "sandbox:rebuild": "sandbox_rebuild",
+    "sandbox:destroy": "sandbox_destroy",
+    "sandbox:recover": "sandbox_recover",
+    "inference:set": "inference_set",
+    "sandbox:inference:set": "inference_set",
+    "sandbox:agents:add": "agent_add",
+    "sandbox:agents:delete": "agent_delete",
+    "sandbox:agents:apply": "agents_apply",
+    "sandbox:channels:add": "messaging_add",
+    "sandbox:channels:remove": "messaging_remove",
+    "sandbox:channels:stop": "messaging_pause",
+    "sandbox:channels:start": "messaging_resume",
+    "sandbox:policy:add": "policy_change",
+    "sandbox:policy:remove": "policy_change",
+    "sandbox:policy:exclude": "policy_change",
+    "sandbox:policy:restore": "policy_change",
+  };
+  if (commandId === "sandbox:config:set") {
+    const keyIndex = argv.indexOf("--key");
+    const key =
+      argv.find((argument) => argument.startsWith("--key="))?.slice(6) ??
+      (keyIndex >= 0 ? argv[keyIndex + 1] : undefined);
+    return isTelemetryConfigurationKey(key) ? "settings_change" : null;
+  }
+  return commandId ? (operations[commandId] ?? null) : null;
+}
 
 export type CommandExitResult = {
   exitCode?: number | null;
@@ -37,12 +88,61 @@ const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
   "sandbox:destroy",
   "sandbox:logs",
   "sandbox:rebuild",
-  "sandbox:snapshot",
-  "sandbox:snapshot:create",
-  "sandbox:snapshot:list",
   "sandbox:status",
   "sandbox:stop",
 ]);
+
+function hasPortableRegistryAuthorityOnHost(): boolean {
+  return listInferenceRouteOwnersAcrossGatewayRoots(process.env.HOME || os.homedir()).some(
+    (entry) => entry.portableLifecycleProfile !== undefined,
+  );
+}
+
+type PortableAuthorityDirectories = {
+  readonly hermes: PortableAuthorityDirectorySnapshot;
+  readonly openclaw: PortableAuthorityDirectorySnapshot;
+};
+
+function readPortableAuthorityDirectories(stateDir: string): PortableAuthorityDirectories {
+  return {
+    hermes: readPortableAuthorityDirectory(
+      path.join(stateDir, HERMES_PORTABLE_RECEIPT_DIRECTORY),
+      false,
+    ),
+    openclaw: readPortableAuthorityDirectory(portableDemoReceiptDirectory(stateDir), false),
+  };
+}
+
+function hasPortableReceiptAuthority(directories: PortableAuthorityDirectories): boolean {
+  return directories.hermes.entries.length > 0 || directories.openclaw.entries.length > 0;
+}
+
+function samePortableAuthorityDirectories(
+  left: PortableAuthorityDirectories,
+  right: PortableAuthorityDirectories,
+): boolean {
+  return (
+    samePortableAuthorityDirectory(left.hermes, right.hermes) &&
+    samePortableAuthorityDirectory(left.openclaw, right.openclaw)
+  );
+}
+
+function canUseUnlockedSandboxStatusRead(): boolean {
+  const stateDir = defaultPortableDemoStateDir(process.env);
+  try {
+    const before = readPortableAuthorityDirectories(stateDir);
+    if (hasPortableReceiptAuthority(before) || hasPortableRegistryAuthorityOnHost()) return false;
+
+    const after = readPortableAuthorityDirectories(stateDir);
+    return (
+      !hasPortableReceiptAuthority(after) &&
+      samePortableAuthorityDirectories(before, after) &&
+      !hasPortableRegistryAuthorityOnHost()
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Shared oclif base for NemoClaw commands.
@@ -105,6 +205,12 @@ export abstract class NemoClawCommand extends Command {
   }
 
   protected override async _run<T>(): Promise<T> {
+    return withTelemetryOperation(telemetryOperation(this.id, this.argv), () =>
+      this.runLifecycleBoundary<T>(),
+    );
+  }
+
+  private async runLifecycleBoundary<T>(): Promise<T> {
     if (await this.runBeforeLifecycleBoundary()) return undefined as T;
     const commandId = this.id;
     const portablePolicy =
@@ -142,6 +248,39 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
+    if (commandId === "sandbox:status") {
+      let fencedOperationStarted = false;
+      try {
+        return await withCurrentPortableHostFenceTry(() => {
+          fencedOperationStarted = true;
+          return withSandboxLifecycleLock(sandboxName, runLocked);
+        });
+      } catch (error) {
+        if (
+          fencedOperationStarted ||
+          !(error instanceof Error) ||
+          error.message !== PORTABLE_HOST_FENCE_BUSY_MESSAGE
+        ) {
+          throw error;
+        }
+        if (!canUseUnlockedSandboxStatusRead()) {
+          throw new Error(
+            "Another NemoClaw lifecycle operation is in progress on this host. Wait for it to finish, then retry status.",
+            { cause: error },
+          );
+        }
+        return await withUnlockedSandboxStatusRead(async () => {
+          const result = await runLocked();
+          if (!canUseUnlockedSandboxStatusRead()) {
+            throw new Error(
+              "Another NemoClaw lifecycle operation is in progress on this host. Wait for it to finish, then retry status.",
+              { cause: error },
+            );
+          }
+          return result;
+        });
+      }
+    }
     return await withSandboxLifecycleLock(sandboxName, runLocked);
   }
 
@@ -177,8 +316,7 @@ export abstract class NemoClawCommand extends Command {
     if (
       typeof commandId !== "string" ||
       (commandId !== "launch" && !commandId.startsWith("sandbox:")) ||
-      !portablePolicy ||
-      portablePolicy.multiSandboxLifecycle
+      !portablePolicy
     ) {
       return null;
     }

@@ -488,6 +488,25 @@ def verify_session_state_reopen() -> None:
         db.close()
 
 
+def verify_agent_home(*, hermes_home: Path = Path("/sandbox/.hermes")) -> None:
+    from types import SimpleNamespace
+
+    from agent import system_prompt
+    from tools import bot_mode_dm
+
+    ledger = (hermes_home / "state.db").resolve()
+    assert ledger == hermes_home / "runtime" / "state.db", ledger
+    profile_ledger = hermes_home / "profiles" / "agent-home-probe" / "state.db"
+    for db_path, expected in ((ledger, hermes_home), (profile_ledger, profile_ledger.parent)):
+        agent = SimpleNamespace(_session_db=SimpleNamespace(db_path=db_path))
+        homes = (
+            system_prompt._agent_home(agent),
+            system_prompt._agent_skills_dir(agent),
+            bot_mode_dm._agent_home(agent),
+        )
+        assert homes == (expected, expected / "skills", str(expected)), (db_path, homes)
+
+
 def verify_discord_recovery_source() -> None:
     source = Path("/opt/hermes/plugins/platforms/discord/recovery.py").read_text(
         encoding="utf-8"
@@ -574,19 +593,6 @@ def verify_langfuse_credentials() -> None:
         )
         is not None
     )
-
-
-def verify_dashboard_policy(path: Path) -> None:
-    import yaml
-    from managed_policy import load_managed_policy, policy_value
-
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    policy = load_managed_policy()
-    for dotted_path in policy["managed_paths"]:
-        expected = policy_value(policy["config"], dotted_path)
-        actual = policy_value(config, dotted_path)
-        assert actual == expected, (dotted_path, actual, expected)
-    path.unlink()
 
 
 def verify_cron_create() -> None:
@@ -783,7 +789,28 @@ def verify_managed_runtime_capability() -> None:
         raise RuntimeError("Hermes MCP Streamable HTTP runtime is unavailable")
 
 
+def verify_web_search_availability() -> None:
+    """Offer Hermes web tools only when the managed policy keeps a web route."""
+    from hermes_cli.config import load_config
+    from hermes_cli.tools_config import _get_platform_tools
+    from managed_policy import load_managed_policy
+    from model_tools import get_tool_definitions
+
+    web = load_managed_policy()["config"].get("web") or {}
+    expected = web.get("keyless_fallback", True) is not False
+    toolsets = sorted(_get_platform_tools(load_config(), "cli"))
+    names = {
+        item["function"]["name"]
+        for item in get_tool_definitions(enabled_toolsets=toolsets, quiet_mode=True)
+    }
+    for tool in ("web_search", "web_extract"):
+        if (tool in names) != expected:
+            state = "omits" if expected else "offers"
+            raise RuntimeError(f"Hermes {state} {tool} against the managed web policy")
+
+
 COMMANDS: dict[str, Callable[[], None]] = {
+    "agent-home": verify_agent_home,
     "auxiliary-token-limit": verify_auxiliary_token_limit,
     "compatibility-retirement": verify_compatibility_retirement,
     "cron-backup": verify_cron_backup,
@@ -807,16 +834,14 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "session-state-create": verify_session_state_create,
     "session-state-reopen": verify_session_state_reopen,
     "secure-directory-modes": verify_secure_directory_modes,
+    "web-search-availability": verify_web_search_availability,
 }
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) == 3 and argv[1] == "dashboard-policy":
-        verify_dashboard_policy(Path(argv[2]))
-        return 0
     if len(argv) != 2 or argv[1] not in COMMANDS:
-        commands = ", ".join(sorted([*COMMANDS, "dashboard-policy"]))
-        raise SystemExit(f"usage: {Path(argv[0]).name} <command> [path]\ncommands: {commands}")
+        commands = ", ".join(sorted(COMMANDS))
+        raise SystemExit(f"usage: {Path(argv[0]).name} <command>\ncommands: {commands}")
     COMMANDS[argv[1]]()
     return 0
 

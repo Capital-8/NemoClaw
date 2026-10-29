@@ -39,7 +39,12 @@ jobs:
             .github/actions/setup-reviewed-npm
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/lib/bundled-npm-package.mts
+            scripts/lib/patch-bundled-npm-undici.mts
+            scripts/lib/remediate-openclaw-runtime-dependencies.mts
+            scripts/lib/reviewed-npm-identity.mts
             scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/lib/npm-diagnostics.sh
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
@@ -50,7 +55,7 @@ jobs:
       - name: Setup Node.js for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
 
@@ -104,7 +109,8 @@ jobs:
       - name: Verify exported defaults with the pinned v1 consumer
         env:
           NEMOCLAW_RUN_V1_CONFIG_COMPATIBILITY: "1"
-        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts
+          RUSTUP_TOOLCHAIN: 1.98.1
+        run: ./node_modules/.bin/vitest run --project cli src/lib/domain/config/verify-export-defaults.test.ts src/lib/domain/config/verify-export-observability.test.ts
 
   compile-artifacts:
     permissions:
@@ -154,7 +160,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -221,7 +227,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
           cache: npm
 
       - name: Install reviewed npm
@@ -237,6 +243,18 @@ jobs:
         env:
           NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
         run: npx vitest run --project integration test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
+
+      - name: Verify remediated OpenClaw plugin runtimes
+        env:
+          NEMOCLAW_REAL_OPENCLAW_ZOD_HARNESS: "1"
+          NEMOCLAW_REAL_OPENCLAW_BODY_PARSER_HARNESS: "1"
+          NEMOCLAW_REAL_OPENCLAW_MSAL_HARNESS: "1"
+        run: >-
+          npx vitest run --project integration
+          test/agents/openclaw/openclaw-zod-runtime.test.ts
+          test/agents/openclaw/openclaw-body-parser-runtime.test.ts
+          test/agents/openclaw/openclaw-msal-runtime.test.ts
+          --silent=false --reporter=default
 
       - name: Verify reviewed Jaeger header handling
         env:

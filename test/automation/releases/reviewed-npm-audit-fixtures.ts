@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
+import type { parseAuditConfig } from "../../../scripts/audit-reviewed-npm-graph.mts";
 
 export type LockedGraphFixture<T> = Readonly<{
   graph: T;
@@ -12,13 +13,33 @@ export type LockedGraphFixture<T> = Readonly<{
   manifest: Buffer;
 }>;
 
-export function openClawReplacementGraphFixture<T>(
+type ReviewedLockedGraph = ReturnType<typeof parseAuditConfig>["lockedGraphs"][number];
+
+export function openClawReplacementGraphFixture(
   repoRoot: string,
-  graph: T,
-): LockedGraphFixture<T> {
+): LockedGraphFixture<ReviewedLockedGraph> {
+  // Keep the transition proof after production policy adopts the replacement.
+  const graph = {
+    id: "openclaw-runtime",
+    label: "OpenClaw 2026.9.2 locked runtime graph",
+    packageSpec: "openclaw@2026.9.2",
+    integrity:
+      "sha512-M6C7UsnX815nv26qBJFYGe6aGzv+ftZLRzV6S9oRXUtXg2Yn67eVntpssT94kgkquKVSeUxerUg0j1ONp4WYQg==",
+    tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.2.tgz",
+    directory: "agents/openclaw/openclaw-runtime",
+    lockSha256: "b44c7f475fe36a378ebc078dbf068bd225f8470002834ce1308872049213b633",
+    replacement: {
+      label: "OpenClaw 2026.9.5 locked runtime graph",
+      packageSpec: "openclaw@2026.9.5",
+      integrity:
+        "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
+      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.5.tgz",
+      lockSha256: "b73ebd8bb5e15cfcf080a21beaca0dce50cbca903988b20be74d49c9498baeb7",
+    },
+  } satisfies ReviewedLockedGraph;
   const encodedLock = fs
     .readFileSync(
-      path.join(repoRoot, "test/fixtures/openclaw-2026.9.1-package-lock.json.gz.base64"),
+      path.join(repoRoot, "test/fixtures/openclaw-2026.9.5-package-lock.json.gz.base64"),
       "utf8",
     )
     .replaceAll(/\s/g, "");
@@ -26,6 +47,9 @@ export function openClawReplacementGraphFixture<T>(
   const parsedLock = JSON.parse(lock.toString("utf8")) as {
     packages: { "": Record<string, unknown> };
   };
+  if (createHash("sha256").update(lock).digest("hex") !== graph.replacement.lockSha256) {
+    throw new Error("OpenClaw transition fixture does not match the reviewed replacement lock");
+  }
   return {
     graph,
     lock,

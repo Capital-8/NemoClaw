@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { prepareManagedWorkspaceMetadata } from "./managed-workspace-metadata";
 import { SANITIZED_PRIVILEGED_ENV } from "./privileged-sandbox-environment";
 import type { PodmanContainerEngine } from "../../adapters/podman";
 import type {
@@ -8,6 +9,8 @@ import type {
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxControl,
   RuntimeProviderPrivilegedSandboxTarget,
+  RuntimeProviderStoppedNativeHomeCleanupInput,
+  RuntimeProviderStoppedSandboxStateCleanupInput,
 } from "./contract";
 import { observePodmanManagedContainer } from "./podman-lifecycle";
 import {
@@ -16,9 +19,12 @@ import {
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
 import {
+  clearStoppedNativeHomeWithEngine,
   clearStoppedSandboxStateWithEngine,
+  sandboxNativeHomeResourceFromMounts,
   sandboxStateResourceFromMounts,
   type StoppedSandboxStateObservation,
+  type StoppedSandboxStateTarget,
 } from "./stopped-sandbox-state-cleanup";
 
 function resolveTarget(
@@ -26,12 +32,12 @@ function resolveTarget(
   input: Pick<
     RuntimeProviderPrivilegedSandboxCommandInput,
     "registeredSandboxNames" | "sandbox" | "sandboxName"
-  >,
+  > & { readonly timeoutMs?: number },
 ): RuntimeProviderPrivilegedSandboxTarget {
   if (input.sandbox.name !== input.sandboxName) {
     throw new Error("Podman privileged control requires the registered sandbox identity.");
   }
-  const container = observePodmanManagedContainer(engine, input.sandboxName);
+  const container = observePodmanManagedContainer(engine, input.sandboxName, input.timeoutMs);
   if (!container) {
     throw new DirectSandboxContainerNotFoundError(
       `No Podman runtime resource found for sandbox '${input.sandboxName}'.`,
@@ -39,7 +45,8 @@ function resolveTarget(
   }
   if (!container.running || container.paused) {
     throw new DirectSandboxFallbackUnavailableError(
-      `No running Podman runtime resource found for sandbox '${input.sandboxName}'.`,
+      `No running Podman runtime resource found for sandbox '${input.sandboxName}'. ` +
+        `Observed state: status=${container.status}, running=${String(container.running)}, paused=${String(container.paused)}.`,
     );
   }
   return Object.freeze({ providerId: "podman", resourceHandle: container.containerId });
@@ -48,6 +55,7 @@ function resolveTarget(
 function execute(
   engine: PodmanContainerEngine,
   input: RuntimeProviderPrivilegedSandboxCommandInput,
+  user = "root",
 ): RuntimeProviderPrivilegedSandboxCommandResult {
   const target = resolveTarget(engine, input);
   if (
@@ -66,12 +74,20 @@ function execute(
       ...(input.input ? ["--interactive"] : []),
       ...environment,
       "--user",
-      "root",
+      user,
       target.resourceHandle,
       ...input.command,
     ],
     input.timeoutMs,
     input.input,
+    ...(input.maxOutputBytes !== undefined || (input.input?.length ?? 0) > 1024 * 1024
+      ? [
+          {
+            maxInputBytes: Math.max(1, input.input?.length ?? 0),
+            maxOutputBytes: input.maxOutputBytes ?? 1024 * 1024,
+          },
+        ]
+      : []),
   );
   return Object.freeze({
     status: result.status,
@@ -84,9 +100,13 @@ function execute(
 
 function observeStoppedTarget(
   engine: PodmanContainerEngine,
-  input: Parameters<
-    NonNullable<RuntimeProviderPrivilegedSandboxControl["clearStoppedStateRoots"]>
-  >[0],
+  input:
+    | RuntimeProviderStoppedSandboxStateCleanupInput
+    | RuntimeProviderStoppedNativeHomeCleanupInput,
+  stateResourceFromMounts: (
+    mounts: unknown,
+    resourceHandle: string,
+  ) => StoppedSandboxStateTarget["stateResource"] | null,
 ): StoppedSandboxStateObservation {
   let container: ReturnType<typeof observePodmanManagedContainer>;
   try {
@@ -95,7 +115,14 @@ function observeStoppedTarget(
     return { failure: "runtime-discovery-failed" };
   }
   if (!container) return { failure: "no-eligible-stopped-runtime" };
-  const stateResource = sandboxStateResourceFromMounts(container.inspect.Mounts, input.paths);
+  if (
+    "expectedResourceHandle" in input &&
+    input.expectedResourceHandle !== undefined &&
+    input.expectedResourceHandle !== container.containerId
+  ) {
+    return { failure: "runtime-ownership-invalid" };
+  }
+  const stateResource = stateResourceFromMounts(container.inspect.Mounts, container.containerId);
   return stateResource
     ? {
         target: {
@@ -121,13 +148,50 @@ export function createPodmanPrivilegedSandboxControl(
     throw new Error("Podman stopped-state cleanup requires its workload-cleanup engine.");
   }
   return Object.freeze({
+    prepareManagedStartupWorkspace: (
+      input: Parameters<
+        NonNullable<RuntimeProviderPrivilegedSandboxControl["prepareManagedStartupWorkspace"]>
+      >[0],
+    ) =>
+      prepareManagedWorkspaceMetadata(input.workspace, {
+        execute: (command) =>
+          execute(engine, { ...input, command, sanitizeEnvironment: true, maxOutputBytes: 4096 }),
+        copyDirectory: (archive) => {
+          const target = resolveTarget(engine, input);
+          if (target.resourceHandle !== input.expectedResourceHandle) {
+            throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
+          }
+          // Preserve the declared UID/GID instead of substituting the container user.
+          const result = engine.capture(
+            ["container", "cp", "--archive=false", "-", `${target.resourceHandle}:/`],
+            input.timeoutMs,
+            archive,
+          );
+          return {
+            ...result,
+            signal: null,
+            stdout: Buffer.from(result.stdout, "utf8"),
+            stderr: Buffer.from(result.stderr, "utf8"),
+          };
+        },
+      }),
     resolveTarget: (
       input: Pick<
         RuntimeProviderPrivilegedSandboxCommandInput,
         "registeredSandboxNames" | "sandbox" | "sandboxName"
-      >,
+      > & { readonly timeoutMs?: number },
     ) => resolveTarget(engine, input),
     execute: (input: RuntimeProviderPrivilegedSandboxCommandInput) => execute(engine, input),
+    // The caller supplies its managed-image identity; target resolution still
+    // pins the exact container, and root or option-like identities are refused.
+    executeAsSandboxUser: (
+      input: RuntimeProviderPrivilegedSandboxCommandInput & { readonly sandboxUser: string },
+    ) => {
+      if (!/^[1-9][0-9]{0,9}:[1-9][0-9]{0,9}$/u.test(input.sandboxUser)) {
+        throw new Error("Podman sandbox-user cleanup requires a non-root numeric UID and GID.");
+      }
+      return execute(engine, input, input.sandboxUser);
+    },
     ...(cleanupEngine
       ? {
           clearStoppedStateRoots: (
@@ -137,7 +201,18 @@ export function createPodmanPrivilegedSandboxControl(
           ) =>
             clearStoppedSandboxStateWithEngine(input.sandboxName, input.paths, {
               capture: (args, timeoutMs = 30_000) => cleanupEngine.capture(args, timeoutMs),
-              observe: () => observeStoppedTarget(engine, input),
+              observe: () =>
+                observeStoppedTarget(engine, input, (mounts) =>
+                  sandboxStateResourceFromMounts(mounts, input.paths),
+                ),
+            }),
+          clearStoppedNativeHome: (input: RuntimeProviderStoppedNativeHomeCleanupInput) =>
+            clearStoppedNativeHomeWithEngine(input.sandboxName, input.root, input.protectedPaths, {
+              capture: (args, timeoutMs = 30_000) => cleanupEngine.capture(args, timeoutMs),
+              observe: () =>
+                observeStoppedTarget(engine, input, (mounts, resourceHandle) =>
+                  sandboxNativeHomeResourceFromMounts(mounts, input.root, resourceHandle),
+                ),
             }),
         }
       : {}),

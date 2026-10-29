@@ -19,7 +19,26 @@ export {
   hermesProviderKey,
 } from "../../../src/lib/hermes-managed-route.ts";
 
-export const HERMES_MANAGED_POLICY_SCHEMA_VERSION = 1 as const;
+export const HERMES_MANAGED_POLICY_SCHEMA_VERSION = 3 as const;
+
+const SHADOW_MIGRATION_ROUTING_KEYS = [
+  "model",
+  "providers",
+  "custom_providers",
+  "_nemoclaw_upstream",
+] as const;
+
+const SHADOW_MIGRATION_ENV_KEYS = [
+  "API_SERVER_HOST",
+  "API_SERVER_PORT",
+  "TAVILY_API_KEY",
+  "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER",
+  "FIRECRAWL_GATEWAY_URL",
+  "OPENAI_AUDIO_GATEWAY_URL",
+  "BROWSER_USE_GATEWAY_URL",
+  "FAL_QUEUE_GATEWAY_URL",
+  "MODAL_GATEWAY_URL",
+] as const;
 
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
@@ -88,25 +107,6 @@ export const MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS = [
   "yuanbao",
 ] as const;
 
-const DASHBOARD_ROUTING_KEYS = [
-  "model",
-  "providers",
-  "custom_providers",
-  "_nemoclaw_upstream",
-] as const;
-
-const DASHBOARD_ENV_KEYS = [
-  "API_SERVER_HOST",
-  "API_SERVER_PORT",
-  "TAVILY_API_KEY",
-  "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER",
-  "FIRECRAWL_GATEWAY_URL",
-  "OPENAI_AUDIO_GATEWAY_URL",
-  "BROWSER_USE_GATEWAY_URL",
-  "FAL_QUEUE_GATEWAY_URL",
-  "MODAL_GATEWAY_URL",
-] as const;
-
 const MANAGED_POLICY_PATHS = [
   "approvals.mode",
   "browser.allow_unsafe_evaluate",
@@ -123,6 +123,7 @@ const MANAGED_POLICY_PATHS = [
   "updates.pre_update_backup",
   "updates.refresh_cua_driver",
 ] as const;
+const WEB_KEYLESS_FALLBACK_PATH = "web.keyless_fallback";
 
 type HermesManagedConfigBase = Record<string, unknown> & {
   _config_version: number;
@@ -156,21 +157,21 @@ type HermesManagedConfigBase = Record<string, unknown> & {
 
 export type HermesManagedConfig = HermesManagedConfigBase & Partial<HermesManagedRouting>;
 
-export type HermesManagedPolicyV1 = {
+export type HermesManagedPolicyV3 = {
   schema_version: typeof HERMES_MANAGED_POLICY_SCHEMA_VERSION;
   config: HermesManagedConfig;
   env_lines: string[];
-  dashboard: {
-    routing_keys: [...typeof DASHBOARD_ROUTING_KEYS];
-    env_keys: [...typeof DASHBOARD_ENV_KEYS];
+  managed_paths: string[];
+  shadow_migration: {
+    routing_keys: [...typeof SHADOW_MIGRATION_ROUTING_KEYS];
+    env_keys: [...typeof SHADOW_MIGRATION_ENV_KEYS];
   };
-  managed_paths: [...typeof MANAGED_POLICY_PATHS];
 };
 
 export function buildHermesManagedPolicy(
   settings: HermesBuildSettings,
   env: NodeJS.ProcessEnv = process.env,
-): HermesManagedPolicyV1 {
+): HermesManagedPolicyV3 {
   const platforms: Record<string, unknown> = {
     api_server: {
       enabled: true,
@@ -302,16 +303,26 @@ export function buildHermesManagedPolicy(
 
   // An explicit Tavily selection replaces managed Firecrawl settings.
   if (settings.webSearchProvider === "tavily") config.web = { backend: "tavily" };
+  // Without any web backend, Hermes falls back to anonymous public search
+  // backends that sandbox egress blocks. Disable that fallback so web_search is
+  // not offered. A managed gateway backend keeps the Hermes default: its tool
+  // availability check still depends on the fallback. The managed path carries
+  // the value to config-less named profiles through the profile-default patch.
+  const keylessDisabled = settings.webSearchProvider === null && config.web === undefined;
+  if (keylessDisabled) config.web = { keyless_fallback: false };
 
   return {
     schema_version: HERMES_MANAGED_POLICY_SCHEMA_VERSION,
     config,
     env_lines: buildHermesEnvLines(settings, env),
-    dashboard: {
-      routing_keys: [...DASHBOARD_ROUTING_KEYS],
-      env_keys: [...DASHBOARD_ENV_KEYS],
+    managed_paths: [
+      ...MANAGED_POLICY_PATHS,
+      ...(keylessDisabled ? [WEB_KEYLESS_FALLBACK_PATH] : []),
+    ],
+    shadow_migration: {
+      routing_keys: [...SHADOW_MIGRATION_ROUTING_KEYS],
+      env_keys: [...SHADOW_MIGRATION_ENV_KEYS],
     },
-    managed_paths: [...MANAGED_POLICY_PATHS],
   };
 }
 

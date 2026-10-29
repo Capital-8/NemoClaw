@@ -31,6 +31,20 @@ afterEach(() => {
 });
 
 describe("live external component export (#11453)", () => {
+  it("ignores ambient registration for an ordinary gateway", async () => {
+    mockSupportedLiveSource();
+    vi.mocked(loadExternalComponentDeclaration).mockClear();
+    vi.mocked(loadExternalComponentDeclaration).mockImplementation(() => {
+      throw new Error("An unrelated registration must not affect ordinary export.");
+    });
+    const exported = await exportLiveSource();
+    expect(exported.result).toMatchObject({ ok: true });
+    expect(loadExternalComponentDeclaration).not.toHaveBeenCalled();
+    expect(YAML.parse(exported.writeStdout.mock.calls[0]![0]).spec.gateway).not.toHaveProperty(
+      "externalComponentRef",
+    );
+  });
+
   it("exports the reference when activation, registration, and gateway agree", async () => {
     mockSupportedLiveSource(3, 3, { ...entry, externalComponentSelection: selection });
     vi.mocked(observeExternalComponentGatewayConfiguration).mockReturnValue({
@@ -71,6 +85,29 @@ describe("live external component export (#11453)", () => {
     });
     vi.mocked(loadExternalComponentDeclaration).mockImplementation(() => ({
       declaration: { ...declaration, interceptorSocketPath: socket },
+      revalidateBeforeGateway: vi.fn(),
+      revalidateBeforeActivation: vi.fn(),
+    }));
+    const exported = await exportLiveSource();
+    expect(exported.result).toMatchObject({
+      ok: false,
+      failure: { findings: [expect.objectContaining({ category: "unstable-source" })] },
+    });
+    expect(exported.writeStdout).not.toHaveBeenCalled();
+  });
+
+  it("refuses an activation socket that changes while the gateway binding stays unchanged", async () => {
+    mockSupportedLiveSource(3, 3, { ...entry, externalComponentSelection: selection });
+    vi.mocked(observeExternalComponentGatewayConfiguration).mockReturnValue({
+      componentId: declaration.componentId,
+      interceptorSocketPath: declaration.interceptorSocketPath,
+    });
+    let observation = 0;
+    vi.mocked(loadExternalComponentDeclaration).mockImplementation(() => ({
+      declaration: {
+        ...declaration,
+        activationSocketPath: `/run/user/1000/policy-governance/activation-${observation++}.sock`,
+      },
       revalidateBeforeGateway: vi.fn(),
       revalidateBeforeActivation: vi.fn(),
     }));

@@ -7,6 +7,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../src/lib/adapters/openshell/resolve-shared";
 
+import { usesOpenShellNativeProjection } from "../../src/lib/onboard/openshell-version";
+
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 
 const {
@@ -64,6 +66,18 @@ const pinModule = require("../../src/lib/onboard/openshell-pin") as {
 const helpers = { versionGte };
 
 describe("OpenShell version helpers", () => {
+  it.each([
+    ["0.0.116", false],
+    ["0.1.2", false],
+    ["0.1.3", true],
+    ["0.1.4", false],
+    ["0.1.5", true],
+    ["0.1.6", false],
+    ["0.1.5-dev", false],
+  ] as const)("classifies native projection for OpenShell %s as %s", (version, expected) => {
+    expect(usesOpenShellNativeProjection(version)).toBe(expected);
+  });
+
   it("compares semver-like versions", () => {
     expect(versionGte("0.1.0", "0.1.0")).toBe(true);
     expect(versionGte("0.1.0", "0.0.20")).toBe(true);
@@ -223,6 +237,9 @@ describe("OpenShell version helpers", () => {
   it("parses installed OpenShell versions into stable gateway image refs", () => {
     expect(getInstalledOpenshellVersion("openshell 0.0.12")).toBe("0.0.12");
     expect(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("0.0.13");
+    expect(getInstalledOpenshellVersion("unrelated tool 0.0.13")).toBe(null);
+    expect(getInstalledOpenshellVersion("openshell-gateway 9.9.9")).toBe(null);
+    expect(getInstalledOpenshellVersion("not-openshell 8.8.8")).toBe(null);
     expect(getInstalledOpenshellVersion("bogus")).toBe(null);
     expect(getStableGatewayImageRef("openshell 0.0.12")).toBe(
       "ghcr.io/nvidia/openshell/cluster:0.0.12",

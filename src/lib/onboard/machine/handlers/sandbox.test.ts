@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hashCredential } from "../../../security/credential-hash";
-import {
-  decisionDeclined,
-  decisionSelected,
-  decisionUnset,
-} from "../../../state/onboard-checkpoint-decision";
+import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { CHECKPOINT_SCHEMA_VERSION } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
+import { recordCheckpointResourceProfile } from "../../checkpoint-record";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
 import {
@@ -45,7 +46,16 @@ function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
 
 describe("handleSandboxState", () => {
   beforeEach(() => {
+    vi.stubEnv(
+      "HOME",
+      fs.mkdtempSync(path.join(os.tmpdir() ?? "/tmp", "nemoclaw-sandbox-handler-")),
+    );
     detectMessagingChannelsFromEnvMock.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(process.env.HOME!, { force: true, recursive: true });
+    vi.unstubAllEnvs();
   });
 
   it("creates a sandbox and records messaging/web search state", async () => {
@@ -79,14 +89,14 @@ describe("handleSandboxState", () => {
       [],
       null,
       expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
-      {
+      expect.objectContaining({
         resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
-      },
+      }),
       undefined,
     );
     expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
@@ -120,7 +130,7 @@ describe("handleSandboxState", () => {
       metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
     });
     expect(result.session?.checkpoint?.webSearch).toEqual(decisionSelected({ fetchEnabled: true }));
-    expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
+    expect(result.session?.checkpoint?.messaging).toEqual(decisionUnset());
   });
 
   it("preserves a null endpoint source for fresh host-local inference-only creation (#9203)", async () => {
@@ -550,14 +560,14 @@ describe("handleSandboxState", () => {
       ["nous-audio"],
       null,
       expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
-      {
+      expect.objectContaining({
         resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
-      },
+      }),
       undefined,
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
@@ -744,50 +754,80 @@ describe("handleSandboxState", () => {
     });
   });
 
-  it("prefers the checkpointed resource-profile decision over a stale legacy completion flag (#7022)", async () => {
-    const session = createSession({
-      sandboxName: "saved",
-      sandboxPromptProgress: {
-        sandboxName: true,
-        webSearch: true,
-        messaging: true,
-        resourceProfile: true,
-      },
-    });
-    session.checkpoint = {
-      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
-      profile: { kind: "selected", value: "default" },
-      runtimeAuthority: { kind: "unset" },
-      sessionId: session.sessionId,
-      machineState: "sandbox",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
-      webSearch: decisionDeclined(),
-      messaging: decisionDeclined(),
-      resourceProfile: decisionSelected({ cpu: "4", memory: "8Gi" }),
-      gatewayAuthority: decisionUnset(),
-      effectGroups: {},
-      bindings: { credentialEnvs: [], registeredProviders: [] },
-      sandboxRecreate: null,
-    };
-    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
-      mutator(session);
-      return session;
-    });
-    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+  it.each([null, { cpu: "150%", memory: "25%" }])(
+    "prefers the checkpointed resource-profile decision over legacy profile %j (#7022)",
+    async (legacyProfile) => {
+      const session = createSession({
+        sandboxName: "saved",
+        agent: "openclaw",
+        resourceProfile: legacyProfile,
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: true,
+          messaging: true,
+          resourceProfile: true,
+        },
+      });
+      recordCheckpointResourceProfile(session, { cpu: "4", memory: "8Gi" });
+      const { deps, calls } = createDeps({}, session);
 
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "saved",
-    });
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+      });
 
-    expect(calls.selectResourceProfile).not.toHaveBeenCalled();
-    expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[11]).toEqual({
-      cpu: "4",
-      memory: "8Gi",
-    });
-  });
+      expect(calls.selectResourceProfile).not.toHaveBeenCalled();
+      expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ resourceProfile: { cpu: "4", memory: "8Gi" } }),
+      );
+      expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[11]).toEqual({
+        cpu: "4",
+        memory: "8Gi",
+      });
+    },
+  );
+
+  it.each([
+    ["checkpointed", { cpu: "150%", memory: "25%" }, recordCheckpointResourceProfile],
+    ["legacy", { cpu: "25%", memory: "0%" }, () => undefined],
+  ])(
+    "replaces an invalid %s resource profile %j on resume",
+    async (_source, invalidProfile, prepare) => {
+      const replacement = { cpu: "2", memory: "4Gi" };
+      const session = createSession({
+        sandboxName: "saved",
+        agent: "openclaw",
+        resourceProfile: invalidProfile,
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: true,
+          messaging: true,
+          resourceProfile: true,
+        },
+      });
+      prepare(session, invalidProfile);
+      const { deps, calls } = createDeps({}, session);
+      calls.selectResourceProfile.mockImplementation(async () => {
+        expect(session.resourceProfile).toBeNull();
+        expect(session.checkpoint?.resourceProfile).toEqual(decisionUnset());
+        return replacement;
+      });
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+      });
+
+      expect(calls.selectResourceProfile).toHaveBeenCalledOnce();
+      expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+        expect.objectContaining({ resourceProfile: replacement }),
+      );
+      expect(session.resourceProfile).toEqual(replacement);
+      expect(session.checkpoint?.resourceProfile).toEqual(decisionSelected(replacement));
+    },
+  );
 
   it("recreates a resumed Hermes sandbox when its compatible Anthropic frontend is stale", async () => {
     const session = createSession({
@@ -839,14 +879,15 @@ describe("handleSandboxState", () => {
       [],
       null,
       expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
-      {
+      expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
+        reservePublishedRouteAfterBackup: expect.any(Function),
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         endpointSource: null,
         extraProviders: [],
-      },
+      }),
       undefined,
     );
   });
