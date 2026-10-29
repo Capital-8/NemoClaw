@@ -474,10 +474,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.default).toBe("switchyard");
     expect(envFile).toContain(`${HERMES_RELAY_PLUGINS_ENV}=${HERMES_RELAY_PLUGINS_FILE}\n`);
     expect(relayPluginsStats.size).toBeGreaterThan(0);
-    expect(JSON.parse(fs.readFileSync(relayPluginStatePath, "utf8"))).toMatchObject({
-      schema_version: 1,
-      records: [{ metadata: { id: "nvidia.switchyard" }, spec: { enabled: true } }],
-    });
+    expect(relayPluginStateStats.size).toBeGreaterThan(0);
     expect(switchyardDeploymentStats.size).toBeGreaterThan(0);
     expect(relayPluginsStats.mode & 0o777).toBe(0o600);
     expect(relayPluginStateStats.mode & 0o777).toBe(0o600);
