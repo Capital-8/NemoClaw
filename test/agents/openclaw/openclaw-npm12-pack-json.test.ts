@@ -99,7 +99,7 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     }
   });
 
-  it("patches both OpenClaw image paths before plugin installation", () => {
+  it("validates the production runtime before plugin installation without a retired base-image path", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     const baseDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
     const script = "patch-openclaw-npm12-pack-json.mts";
@@ -115,14 +115,7 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     expect(
       dockerfile.slice(dockerfile.indexOf(invocation), dockerfile.indexOf(invocation) + 250),
     ).toContain('"$OPENCLAW_VERSION"');
-    expect(baseDockerfile).toContain(`COPY scripts/lib/${script} /scripts/lib/${script}`);
-    const baseInvocationIndex = baseDockerfile.indexOf(`node /scripts/lib/${script}`);
-    expect(baseInvocationIndex).toBeGreaterThanOrEqual(0);
-    expect(baseDockerfile.slice(baseInvocationIndex, baseInvocationIndex + 300)).toContain(
-      "/usr/local/lib/node_modules/openclaw/dist",
-    );
-    expect(baseDockerfile.slice(baseInvocationIndex, baseInvocationIndex + 300)).toContain(
-      '"$OPENCLAW_VERSION"',
-    );
+    expect(baseDockerfile).not.toContain(script);
+    expect(baseDockerfile).not.toContain("2026.7.1");
   });
 });

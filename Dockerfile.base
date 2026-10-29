@@ -417,7 +417,6 @@ COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/reviewed-npm-audit.mts \
     /scripts/lib/
 COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
-COPY scripts/lib/patch-openclaw-npm12-pack-json.mts /scripts/lib/patch-openclaw-npm12-pack-json.mts
 COPY --chmod=0444 scripts/openclaw-cli-wrapper.sh /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
@@ -586,13 +585,6 @@ RUN rm -f /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw \
     && install -o root -g root -m 0755 \
         /usr/local/lib/nemoclaw/openclaw-cli-wrapper.sh \
         /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw
-
-# npm 12 emits package-keyed objects from `npm pack --json`; OpenClaw 2026.7.1
-# expects the earlier array/direct-object shapes when installing local npm archives.
-RUN if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        node /scripts/lib/patch-openclaw-npm12-pack-json.mts \
-            /usr/local/lib/node_modules/openclaw/dist "$OPENCLAW_VERSION"; \
-    fi
 
 # Bake Homebrew core (Linuxbrew) into the sandbox base image (#3913).
 #

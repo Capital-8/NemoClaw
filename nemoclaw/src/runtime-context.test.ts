@@ -513,6 +513,72 @@ describe("registerRuntimeContext", () => {
   );
 
   it.each([
+    "Provide today's weather in Paris.",
+    "Give me today's weather in Paris.",
+    "Show today's weather in Paris.",
+    "Tell me today's weather in Paris.",
+    "Please report current flight delays.",
+    "List today's stock prices.",
+    "Return the current exchange rate.",
+    "Output today's election results.",
+    "Summarize today's public health guidance.",
+    "Get current travel restrictions for Japan.",
+    "Retrieve the latest court ruling.",
+    "Read today's market headlines.",
+    "I need today's weather in Paris.",
+    "I want the current exchange rate.",
+    "Describe today's election results.",
+    "Explain the latest tax rules.",
+    "Present the current travel restrictions.",
+    "Identify the current president of France.",
+    "Read README.md, then provide today's weather in Paris.",
+    "Read README.md, tell me today's weather in Paris.",
+    "Find unused imports and list today's stock prices.",
+  ])("withholds tools for imperative current information: %s", async (prompt) => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
+    expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+      "toolsAllow",
+      [],
+    );
+    expect(suppliedSearchSources(prompt)).toBeUndefined();
+  });
+
+  it.each([
+    "Show me today's date.",
+    "Give me the current git commit hash.",
+    "Tell me the current branch name.",
+    "List today's files.",
+    "Show the latest TODO comments.",
+    "Report the current uptime.",
+    "Show me the current git branch.",
+    "Tell me the current working directory.",
+    "Provide the current Node version.",
+    "List the current files.",
+    "Report current CPU usage.",
+    "Return the current process ID.",
+    "Output the current git status.",
+    "Summarize the latest test results.",
+    "Explain the current configuration.",
+    "Describe the current environment.",
+    "I need the current git branch.",
+    "I want the current process ID.",
+    "Give me today's weather from README.md.",
+    "Provide today's weather from https://example.org/weather.",
+    "Show today's logs.",
+    "Summarize today's code changes.",
+    "Do not provide today's weather. Read README.md.",
+  ])("preserves local and supplied-source imperative work: %s", async (prompt) => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
+    expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+      "toolsAllow",
+    );
+  });
+
+  it.each([
     "What is the current weather in Paris?",
     "What are today's stock prices?",
     "Who is the current president of France?",
