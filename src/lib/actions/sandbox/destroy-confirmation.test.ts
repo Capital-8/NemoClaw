@@ -50,6 +50,26 @@ describe("destroy confirmation", () => {
     expect(createSessionDeps).toHaveBeenCalledWith("/usr/bin/openshell", {
       runtimeSelection,
     });
+    expect(sandboxSession.getActiveSandboxSessions).toHaveBeenCalledWith(
+      "test-sb",
+      expect.any(Object),
+      "nemoclaw-9090",
+    );
+  });
+
+  it("uses the registered gateway when no runtime selection is present", async () => {
+    stubActiveSessions([]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      confirmSandboxDestroy("test-sb", { yes: true }, undefined, "nemoclaw-9091"),
+    ).resolves.toBe(true);
+
+    expect(sandboxSession.getActiveSandboxSessions).toHaveBeenCalledWith(
+      "test-sb",
+      expect.any(Object),
+      "nemoclaw-9091",
+    );
   });
 
   it("warns about active sessions when --force skips the prompt (#9855)", async () => {

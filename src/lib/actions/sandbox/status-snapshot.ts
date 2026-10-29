@@ -37,7 +37,11 @@ import {
   type DcodeAutoApprovalMode,
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  GATEWAY_PORT,
+  resolveGatewayName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding/identity";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
 import {
@@ -289,7 +293,9 @@ export function resolveSandboxStatusDcodeAutoApprovalMode(
 }
 
 export function resolveSandboxStatusSessionGatewayName(sandbox: registry.SandboxEntry): string {
-  return resolveSandboxGatewayName(sandbox);
+  return sandbox.gatewayName != null || sandbox.gatewayPort != null
+    ? resolveSandboxGatewayName(sandbox)
+    : resolveGatewayName(GATEWAY_PORT);
 }
 
 export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {
