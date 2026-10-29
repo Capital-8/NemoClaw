@@ -235,6 +235,27 @@ describe("OpenAI-compatible loopback no-auth onboarding", () => {
     );
   });
 
+  it("keeps an explicit no-auth shared route from staging a fallback API key (#13733)", () => {
+    assert.deepEqual(
+      runScenarios([
+        {
+          label: "explicit no-auth with provider-key fallback",
+          authMode: "none",
+          providerKey: "sk-bridge-TEST-NOT-A-REAL-VALUE",
+          peerCredentialEnv: PROXY,
+        },
+      ]),
+      [
+        {
+          label: "explicit no-auth with provider-key fallback",
+          credentialEnv: PROXY,
+          stagedApiKey: false,
+          askedApiKey: false,
+        },
+      ],
+    );
+  });
+
   it("checks the interactive credential choice before staging it (#13733)", () => {
     assert.deepEqual(
       runScenarios([

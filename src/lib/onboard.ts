@@ -1984,7 +1984,7 @@ async function handleRemoteProviderSelection(
       `stage inference provider ${JSON.stringify(state.provider)} credential`,
     );
     providerKeyBridge.stageRemoteProviderKeyBridge(
-      remoteConfig.credentialEnv,
+      useNoAuth && isNonInteractive() ? null : remoteConfig.credentialEnv,
       routeCheck.beforeSave,
     );
 
