@@ -110,11 +110,40 @@ esac
     },
   );
 
-  it.each(["pr-build-and-entrypoint", "build-and-validate"])(
-    "executes the %s native contract with immutable input and propagates failure",
-    (jobId) => {
+  it("qualifies the published immutable PR digest before exporting its contract", () => {
+    const job = required(
+      readWorkflow("managed-images.yaml").jobs?.["pr-build-and-entrypoint"],
+      "missing PR image job",
+    );
+    const steps = job.steps ?? [];
+    const publish = step(job, "Publish exact same-repository PR managed image by digest");
+    const logout = step(job, "Remove PR publication credentials");
+    const pull = step(job, "Pull exact published PR managed image");
+    const native = step(job, "Verify published PR Hermes Discord status");
+    const exportContract = step(job, "Export exact published PR managed-image contract");
+    expect(native.if).toBe(
+      "matrix.agent == 'hermes' && github.event.pull_request.head.repo.full_name == github.repository",
+    );
+    expect(native.env?.IMAGE_REFERENCE).toBe(
+      "${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}",
+    );
+    expect(native).not.toHaveProperty("continue-on-error");
+    expect(exportContract.env?.DIGEST).toBe("${{ steps.publish.outputs.digest }}");
+    expect(steps.indexOf(publish)).toBeLessThan(steps.indexOf(logout));
+    expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(pull));
+    expect(steps.indexOf(pull)).toBeLessThan(steps.indexOf(native));
+    expect(steps.indexOf(native)).toBeLessThan(steps.indexOf(exportContract));
+  });
+
+  it.each([
+    ["pr-build-and-entrypoint", "Verify native Hermes Discord status before publication"],
+    ["pr-build-and-entrypoint", "Verify published PR Hermes Discord status"],
+    ["build-and-validate", "Verify native Hermes Discord status before publication"],
+  ])(
+    "executes the %s %s contract with immutable input and propagates failure",
+    (jobId, stepName) => {
       const job = required(readWorkflow("managed-images.yaml").jobs?.[jobId], "missing image job");
-      const native = step(job, "Verify native Hermes Discord status before publication");
+      const native = step(job, stepName);
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-qualification-workflow-"));
       const argumentsFile = path.join(directory, "arguments");
       fs.writeFileSync(

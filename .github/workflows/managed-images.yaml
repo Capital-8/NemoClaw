@@ -1027,6 +1027,25 @@ jobs:
         shell: bash
         run: docker logout ghcr.io
 
+      - name: Pull exact published PR managed image
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}
+        run: |
+          set -euo pipefail
+          scripts/checks/pull-public-exact-digest.sh "$IMAGE_REFERENCE" "$PLATFORM"
+
+      - name: Verify published PR Hermes Discord status
+        if: matrix.agent == 'hermes' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ format('{0}@{1}', matrix.repository, steps.publish.outputs.digest) }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/checks/run-hermes-discord-runtime-contract.mts \
+            --image "$IMAGE_REFERENCE" --platform "$PLATFORM"
+
       - name: Export exact published PR managed-image contract
         if: github.event.pull_request.head.repo.full_name == github.repository
         shell: bash
@@ -1050,7 +1069,6 @@ jobs:
           }
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
-          scripts/checks/pull-public-exact-digest.sh "$reference" "$PLATFORM"
           if [ "$AGENT" = "hermes" ]; then
             published_layer_count="$(docker image inspect --format '{{len .RootFS.Layers}}' "$reference")"
             if [ "$published_layer_count" -gt 125 ]; then
