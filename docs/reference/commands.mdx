@@ -2918,8 +2918,9 @@ $$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe] [--too
 ### `$$nemoclaw <name> mcp restart`
 
 Refresh one MCP server registration, or every server on the sandbox when no server is supplied.
-Restart reads the current agent configuration and live OpenShell state, verifies that the policy, provider, attachment, and credential binding are ready, then reloads the agent registration from that current configuration. It does not recreate a missing provider, rotate a credential, regenerate policy, or restore agent configuration from local intent. Repair the reported source directly. To set up new policy or credential state, run `mcp remove`.
-If `mcp remove` reports a preserved OpenShell provider, follow [Add Reports an Existing Provider](troubleshoot-mcp-servers#add-reports-an-existing-provider) before you run `mcp add`.
+Restart reads the current agent configuration and live OpenShell state, verifies that the policy, provider, attachment, and credential binding are ready, then reloads the agent registration from that current configuration. It does not recreate a missing provider, rotate a credential, regenerate policy, or restore agent configuration from local intent. Repair the reported source directly. To set up new policy or credential state, record any `--deny-tool` selectors and trusted-private declaration, then run `mcp remove`.
+If `mcp remove` reports an `MCP cleanup warning`, resolve that warning before you continue.
+If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](troubleshoot-mcp-servers#add-reports-an-existing-provider) before you run `mcp add` with the recorded options.
 
 <AgentOnly variant="deepagents">
 

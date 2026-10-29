@@ -194,10 +194,12 @@ NemoClaw binds each dedicated provider to its generated MCP endpoint, so OpenShe
 One normalized endpoint URL can have only one credential-bound managed server definition in a sandbox.
 If two definitions need different credentials, retain one definition for that URL or configure distinct endpoint URLs so OpenShell can select one credential unambiguously.
 
-If this server uses the profile-less `generic` provider from an earlier NemoClaw build, run `mcp remove`.
+If this server uses the profile-less `generic` provider from an earlier NemoClaw build, record its `--deny-tool` selectors, then run `mcp remove`.
+`mcp remove` deletes the generated policy that holds them.
+If `mcp remove` reports an `MCP cleanup warning`, resolve that warning before you continue.
 If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before you add the server again.
 If `mcp remove` reports no preserved provider, skip provider deletion.
-Add the server again with the credential exported.
+Add the server again with the credential exported, and pass `--deny-tool` again for each recorded selector.
 That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
 
 ## Meet Endpoint Requirements

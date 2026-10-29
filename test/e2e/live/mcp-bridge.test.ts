@@ -387,9 +387,15 @@ async function removeBridgeAndAssertEmpty(
     artifactPrefix: string;
     providerName: string;
     mcpUrl: string;
+    readdAfterDelete?: {
+      credential: string;
+      fakeMcp: Awaited<ReturnType<typeof startFakeMcpHttpsServer>>;
+      verifyToolCall: () => Promise<void>;
+    };
   },
 ): Promise<void> {
-  const { agent, adapter, sandboxName, artifactPrefix, providerName, mcpUrl } = options;
+  const { agent, adapter, sandboxName, artifactPrefix, providerName, mcpUrl, readdAfterDelete } =
+    options;
   const remove = await removeMcpBridgeWithOneConcurrencyRetry(
     host,
     sandboxName,
@@ -440,12 +446,10 @@ async function removeBridgeAndAssertEmpty(
   expectExitZero(policy, `${artifactPrefix} policy after remove`);
   expect(resultText(policy)).toMatch(/^(?![\s\S]*mcp[-_]bridge[-_]fake)[\s\S]*mcp_host_edit_e2e/u);
   const entry: McpSourceEntry = {
+    ...options,
     server: SERVER_NAME,
-    agent,
-    adapter,
     url: mcpUrl,
     env: ["FAKE_MCP_SECRET"],
-    providerName,
     policyName: "mcp-bridge-fake",
   };
   const adapterStatusCommand =
@@ -466,6 +470,15 @@ async function removeBridgeAndAssertEmpty(
     probeCommandOptions("delete-retained-provider-after-mcp-remove"),
   );
   expectExitZero(deleteProvider, `${artifactPrefix} explicitly deletes retained provider`);
+  readdAfterDelete?.fakeMcp.setSecret(readdAfterDelete.credential);
+  await (readdAfterDelete &&
+    addBridgeAndReadStatus(host, sandbox, {
+      ...options,
+      expectedAdapter: adapter,
+      credential: readdAfterDelete.credential,
+      applyHostPolicyEdit: false,
+    }));
+  await readdAfterDelete?.verifyToolCall();
 }
 async function assertAdapterRequestDeniedAfterRemove(
   sandbox: SandboxClient,
@@ -615,23 +628,14 @@ async function replaceBridgeCredentialConservatively(
   sandbox: SandboxClient,
   fakeMcp: Awaited<ReturnType<typeof startFakeMcpHttpsServer>>,
   adapter: McpAdapter,
-  sandboxName: string,
-  mcpUrl: string,
+  bridge: { agent: McpAgent; sandboxName: string; mcpUrl: string; artifactPrefix: string },
+  verifyToolCall: () => Promise<void>,
 ): Promise<void> {
-  const [artifactPrefix, agent]: [string, McpAgent] =
-    adapter === "openclaw-config"
-      ? ["openclaw", "openclaw"]
-      : adapter === "hermes-config"
-        ? ["hermes", "hermes"]
-        : ["deepagents", "langchain-deepagents-code"];
+  const { agent, sandboxName, mcpUrl, artifactPrefix } = bridge;
   const providerName = `${sandboxName}-mcp-${SERVER_NAME}`;
-  const bridge = { sandboxName, mcpUrl, artifactPrefix };
   const restart = await host.nemoclaw([sandboxName, "mcp", "restart", SERVER_NAME], {
     artifactName: `${artifactPrefix}-mcp-restart-with-replacement-credential`,
-    env: {
-      ...buildAvailabilityProbeEnv(),
-      FAKE_MCP_SECRET: ROTATED_HOST_SECRET,
-    },
+    env: { ...buildAvailabilityProbeEnv(), FAKE_MCP_SECRET: ROTATED_HOST_SECRET },
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
     timeoutMs: 12 * 60_000,
   });
@@ -652,16 +656,9 @@ async function replaceBridgeCredentialConservatively(
   });
   await removeBridgeAndAssertEmpty(host, sandbox, {
     ...bridge,
-    agent,
     adapter,
     providerName,
-  });
-  fakeMcp.setSecret(ROTATED_HOST_SECRET);
-  await addBridgeAndReadStatus(host, sandbox, {
-    ...bridge,
-    expectedAdapter: adapter,
-    credential: ROTATED_HOST_SECRET,
-    applyHostPolicyEdit: false,
+    readdAfterDelete: { credential: ROTATED_HOST_SECRET, fakeMcp, verifyToolCall },
   });
 }
 
@@ -1008,15 +1005,15 @@ test(
       sandbox,
       fakeMcp,
       "openclaw-config",
-      OPENCLAW_SANDBOX_NAME,
-      mcpUrl,
+      bridge,
+      () =>
+        assertRealAdapterToolCall(host, sandbox, fakeMcp, {
+          ...bridge,
+          resultToken: MCP_RESULT,
+          artifactName: "openclaw-real-mcp-tool-call-after-credential-rotation",
+          expectedSecret: ROTATED_HOST_SECRET,
+        }),
     );
-    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
-      ...bridge,
-      resultToken: MCP_RESULT,
-      artifactName: "openclaw-real-mcp-tool-call-after-credential-rotation",
-      expectedSecret: ROTATED_HOST_SECRET,
-    });
     await assertSecretAbsentFromSandbox(
       sandbox,
       OPENCLAW_SANDBOX_NAME,
@@ -1220,15 +1217,15 @@ mcpBridgeShardTest("hermes")(
       sandbox,
       fakeMcp,
       "hermes-config",
-      HERMES_SANDBOX_NAME,
-      mcpUrl,
+      bridge,
+      () =>
+        assertRealAdapterToolCall(host, sandbox, fakeMcp, {
+          ...bridge,
+          resultToken: MCP_RESULT,
+          artifactName: "hermes-real-mcp-tool-call-after-credential-rotation",
+          expectedSecret: ROTATED_HOST_SECRET,
+        }),
     );
-    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
-      ...bridge,
-      resultToken: MCP_RESULT,
-      artifactName: "hermes-real-mcp-tool-call-after-credential-rotation",
-      expectedSecret: ROTATED_HOST_SECRET,
-    });
     await assertSecretAbsentFromSandbox(
       sandbox,
       HERMES_SANDBOX_NAME,
@@ -1421,15 +1418,15 @@ mcpBridgeShardTest("deepagents")(
       sandbox,
       fakeMcp,
       "deepagents-config",
-      sandboxName,
-      mcpUrl,
+      bridge,
+      () =>
+        assertRealAdapterToolCall(host, sandbox, fakeMcp, {
+          ...bridge,
+          resultToken: MCP_RESULT,
+          artifactName: "deepagents-real-mcp-tool-call-after-credential-rotation",
+          expectedSecret: ROTATED_HOST_SECRET,
+        }),
     );
-    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
-      ...bridge,
-      resultToken: MCP_RESULT,
-      artifactName: "deepagents-real-mcp-tool-call-after-credential-rotation",
-      expectedSecret: ROTATED_HOST_SECRET,
-    });
     await exactMainProof.assertSnapshotResidue("after-credential-rotation-tool-call");
     await assertSecretAbsentFromSandbox(
       sandbox,
