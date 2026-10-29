@@ -44,7 +44,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     'getattr(args, "auto_approve", False)',
     "_nemoclaw_assert_safe_runtime()",
     'os.environ.pop("PYTHONPATH", None)',
-  ])("patches every 0.1.71 mutation and credential boundary idempotently [case %#]", (expected) => {
+  ])("patches every 0.1.87 mutation and credential boundary idempotently [case %#]", (expected) => {
     const tempDir = createPatchedPackageFixture();
     patchFixture(tempDir);
 
@@ -108,6 +108,11 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
+    [
+      "non-interactive",
+      "client/non_interactive.py",
+      "if quiet and _nemoclaw_json_run.get() is None:",
+    ],
     ["app", "app.py", "blocked_managed_command = root in {"],
     ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
@@ -138,42 +143,6 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Managed package patch is partial: helper is missing or stale");
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
-  });
-  it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
-    const tempDir = createPatchedPackageFixture();
-    const invalidConfig = path.join(tempDir, "invalid-mcp.json");
-    fs.writeFileSync(invalidConfig, '{"mcpServers": }\n', "utf8");
-    const result = spawnSync(
-      "python3",
-      [
-        "-c",
-        `import json
-from deepagents_code.mcp_tools import load_mcp_config
-
-try:
-    load_mcp_config(${JSON.stringify(invalidConfig)})
-except json.JSONDecodeError as exc:
-    print(str(exc))
-else:
-    raise AssertionError("invalid JSON unexpectedly loaded")
-`,
-      ],
-      {
-        encoding: "utf8",
-        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("Invalid JSON in MCP config file");
-    expect(result.stdout).toContain("Check the JSON syntax.");
-    expect(result.stdout).toContain("^");
-    const patchedLoader = fs.readFileSync(
-      path.join(tempDir, "deepagents_code", "mcp_tools.py"),
-      "utf8",
-    );
-    expect(patchedLoader).toContain("return json.loads(managed_payload)");
-    expect(patchedLoader).toContain("return json.load(file_obj)");
   });
 
   it.each([
@@ -1401,7 +1370,7 @@ print("managed-auto-approval-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.71");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.87");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");

@@ -5,6 +5,18 @@
 
 Direct E2E coverage runs through Vitest.
 
+The clean Hermes root-entrypoint scenario also owns the Switchyard package's real-image
+contract. It checks the shipped files and root ownership, proves the healthy supervised
+gateway has not loaded the plugin, and uses a separate test-only Hermes process to prove
+native loading and cleanup on the image's architecture. It does not install routing
+configuration or qualify provider routing. `test/agents/hermes/hermes-switchyard-package.test.ts`
+owns deterministic archive, manifest, architecture, digest, and unsafe-member rejection.
+The Hermes jobs in `.github/workflows/managed-images.yaml` run this suite on native
+amd64 and arm64 runners against each job's built image. Both the PR build and publication
+jobs require it before exporting their validated image contracts. Their architecture-specific
+artifacts retain the probe results, including failures. Both architectures must pass for
+Switchyard release qualification; a startup-hold result alone does not qualify the package.
+
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
 Changes to the OpenClaw scope patch select the compatible-endpoint, latency, skill-lifecycle, inference-switch, and full OpenClaw targets on both runtimes, plus the Docker llama.cpp GPU target. The compatible-endpoint case owns the native in-sandbox CLI-to-gateway consumer proof before admin approval: it checks command success, the model reply, and newly observed mock-provider traffic separately.
@@ -219,12 +231,16 @@ The `managed-image-multiarch-startup` no-build job keeps that setting and compil
 It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
-base activation. PR runs build all three managed-agent bases from the selected
-checkout's Dockerfiles, pins and lockfiles on native CPU runners. Each base has
-a separate OCI layout and receipt bound to its agent, source SHA, trusted
-workflow SHA, platform, run ID and attempt. The protected GPU controller verifies
-these identities and every config, manifest and layer digest before using the
-bases offline. PR runs reject published-base substitution and failed verification.
+base activation. PR image-publication runs build all three managed-agent bases
+from the selected checkout's Dockerfiles, pins and lockfiles on native CPU runners.
+Each candidate base has a separate OCI layout and receipt bound to its agent,
+source SHA, trusted workflow SHA, platform, run ID and attempt. The protected
+GPU controller verifies these identities and every config, manifest and layer
+digest before using candidate bases offline. In a protected startup PR run, the
+trusted resolver may select a published OpenClaw base only when its direct inputs
+match the candidate. The GPU controller rechecks that published base's digest.
+Hermes and Deep Agents Code use candidate bases in protected startup PR runs.
+Failed verification stops the run.
 Runs without a PR source retain published OpenClaw and Hermes bases; Deep Agents
 uses a published base with v1 activation and a candidate base with v2 activation.
 The receipt command retains its Deep Agents default for existing callers; an
@@ -837,6 +853,8 @@ or exactly one thread whose recorded cwd matches. Ambiguous results fail cleanup
 thread. Listing, deletion, and removal of the private directory each use a 30-second host timeout with
 a five-second kill grace. A failed command or timeout marks cleanup as failed, retains the private
 directory and recovery instructions, and allows policy and capture cleanup to continue.
+The same target writes an npm cache marker under the DCode native home before its existing rebuild.
+After rebuild, it verifies that the marker survived, the sandbox is Ready, and a DCode action succeeds.
 The TUI check then runs without changing that registry baseline. The installed
 CLI on Docker must emit a v1alpha1 document with the `deepagents` harness, hosted OpenAI-compatible route,
 credential reference, and independently observed effective policy.
@@ -2322,6 +2340,13 @@ Direct `main` runs use the same publication workflow and artifact contract.
 Protected managed-image build jobs apply a separate rule to their reusable base receipt.
 The producer must be from the same workflow run and no later than the consumer attempt.
 Receipt verification remains bound to the producer attempt.
+For a manual PR run, the protected startup job uses a trusted resolver to compare
+the candidate's OpenClaw base Dockerfile and its inputs with the published base's
+source revision. Matching inputs permit an immutable published base reference.
+Changed or unverified inputs use a base built from the exact candidate instead.
+The final managed image always builds from the selected candidate commit, and the
+GPU job verifies the same-run build-cache identity and any published OpenClaw
+base digest before its offline rebuild.
 
 The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
 Onboarding and fresh re-onboarding do not supply a base-image override.
@@ -2444,6 +2469,11 @@ It projects the SDK identity into the trusted manifest and lockfile, then instal
 The SDK version must match the candidate runtime version.
 Changed SDK dependency metadata or transitive dependencies require a trust/bootstrap review; unrelated candidate npm changes never enter the controller.
 Live qualification must still pass for the selected candidate; source projection and archive-install tests do not establish that result.
+When a parsed OpenClaw result fails the provider, model, completion, or assistant-answer checks, the job reports a bounded diagnostic.
+The workflow revision must contain this helper; a premerge run using an older trusted workflow cannot report it.
+It contains only allowlisted status fields, flags, counts, and text lengths.
+The diagnostic excludes raw responses, payload text, prompts, transcripts, and credentials.
+Use it with the failed assertion and retained cleanup evidence; it does not establish a cause or a passing result.
 To select native runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.

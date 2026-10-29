@@ -437,6 +437,11 @@
       "category": "security"
     },
     {
+      "file": "test/install/upgrade-bundled-npm.test.ts",
+      "test": "keeps the DCode image upgrade cache out of native home when the command exits %i (#13241)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
       "category": "security"
