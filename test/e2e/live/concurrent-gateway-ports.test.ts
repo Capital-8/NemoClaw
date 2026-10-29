@@ -12,8 +12,6 @@
  * selected and its sandbox restarts through unscoped OpenShell commands.
  */
 
-import fs from "node:fs";
-
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -22,7 +20,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -114,6 +112,7 @@ async function activeSessionCount(
     env: commandEnv({ NEMOCLAW_GATEWAY_PORT: gatewayPort }),
     timeoutMs: 60_000,
   });
+  expect(result.exitCode, resultText(result)).toBe(0);
   const parsed = JSON.parse(result.stdout) as {
     sandboxes?: { name: string; activeSessionCount?: number | null }[];
   };
@@ -543,11 +542,6 @@ test(
     },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-    expect(
-      fs.existsSync(CLI_DIST_ENTRYPOINT),
-      "run `npm run build:cli` before live repo CLI targets",
-    ).toBe(true);
-
     await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
     await prerequisiteOrSkip(
       host,

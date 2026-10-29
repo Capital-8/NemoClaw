@@ -547,6 +547,37 @@ describe("getActiveSandboxSessions", () => {
     expect(openshellOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
   });
 
+  it("resolves and caches proxied session IDs by owning gateway (#12665)", () => {
+    const outputs: Record<string, string> = {
+      ps: [
+        "120 ssh -tt -o ProxyCommand=openshell ssh-proxy --sandbox-id id-a --gateway-name gateway-a sandbox",
+        "121 ssh -tt -o ProxyCommand=openshell ssh-proxy --sandbox-id id-b --gateway-name gateway-b sandbox",
+      ].join("\n"),
+      "gateway-a": "Id: id-a\n",
+      "gateway-b": "Id: id-b\n",
+    };
+    const spawn = vi.fn((binary: string, args: string[]) => ({
+      status: 0,
+      stdout: outputs[binary === "ps" ? binary : args[args.indexOf("-g") + 1]!] ?? "",
+      stderr: "",
+    }));
+    const deps = createSystemDeps("/usr/bin/openshell", { spawnSync: spawn as never });
+
+    expect(
+      getActiveSandboxSessions("same-name", deps, "gateway-a").sessions.map((s) => s.pid),
+    ).toEqual([120]);
+    expect(
+      getActiveSandboxSessions("same-name", deps, "gateway-b").sessions.map((s) => s.pid),
+    ).toEqual([121]);
+    expect(
+      getActiveSandboxSessions("same-name", deps, "gateway-a").sessions.map((s) => s.pid),
+    ).toEqual([120]);
+    expect(spawn.mock.calls.filter(([binary]) => binary !== "ps").map(([, args]) => args)).toEqual([
+      ["sandbox", "get", "-g", "gateway-a", "same-name"],
+      ["sandbox", "get", "-g", "gateway-b", "same-name"],
+    ]);
+  });
+
   it("returns detected=false when no deps available", () => {
     const deps: SessionDetectionDeps = {
       getSshProcesses: () => null,
@@ -585,7 +616,7 @@ describe("getActiveSandboxSessions", () => {
 
     const result = getActiveSandboxSessions("my-sandbox", deps);
 
-    expect(resolveSandboxId).toHaveBeenCalledExactlyOnceWith("my-sandbox");
+    expect(resolveSandboxId).toHaveBeenCalledExactlyOnceWith("my-sandbox", undefined);
     expect(result).toEqual({
       detected: true,
       sessions: [

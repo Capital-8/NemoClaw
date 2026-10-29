@@ -215,7 +215,7 @@ export interface SessionDetectionDeps {
    * determined. Only consulted when the process list contains a proxied
    * connection, which is the only shape that needs it (#9316).
    */
-  resolveSandboxId?: (sandboxName: string) => string | null;
+  resolveSandboxId?: (sandboxName: string, gatewayName?: string | null) => string | null;
   /** Return only OPENSHELL_GATEWAY for the matching PID/command, or null if unavailable. */
   resolveNativeExecGateway?: (pid: number, processCommand: string) => string | null;
   /** Return only the gateway from a NemoClaw-owned ACP SSH config, or null. */
@@ -256,7 +256,9 @@ export function getActiveSandboxSessions(
       isInteractiveSshCommand(command)
     );
   });
-  const sandboxId = needsSandboxId ? (deps.resolveSandboxId?.(sandboxName) ?? null) : null;
+  const sandboxId = needsSandboxId
+    ? (deps.resolveSandboxId?.(sandboxName, gatewayName) ?? null)
+    : null;
   const gatewayEvidence = new Map<number, string>();
   if (gatewayName?.trim()) {
     const sandboxHosts = [openshellSandboxSshHost(sandboxName), `openshell-${sandboxName}`];
@@ -533,24 +535,25 @@ export function createSystemDeps(
   const selectedEnv = options.runtimeSelection
     ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
     : undefined;
+  const readSandboxId = openshellBinary
+    ? createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
+        const result = runCommand(binary, args, {
+          encoding: "utf-8",
+          ...(selectedEnv ? { env: selectedEnv } : {}),
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 5000,
+        });
+        return { status: result.status, stdout: result.stdout || "" };
+      })
+    : undefined;
   return {
     getSshProcesses: () => queryCandidateSessionProcesses(runCommand),
     resolveNativeExecGateway: readNativeExecGateway,
     resolveSshConfigGateway: readNemoClawAcpSshGateway,
-    ...(openshellBinary
+    ...(readSandboxId
       ? {
-          resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
-            const selectedArgs = options.runtimeSelection
-              ? [args[0]!, args[1]!, "-g", options.runtimeSelection.gatewayName, ...args.slice(2)]
-              : args;
-            const result = runCommand(binary, selectedArgs, {
-              encoding: "utf-8",
-              ...(selectedEnv ? { env: selectedEnv } : {}),
-              stdio: ["ignore", "pipe", "pipe"],
-              timeout: 5000,
-            });
-            return { status: result.status, stdout: result.stdout || "" };
-          }),
+          resolveSandboxId: (sandboxName: string, gatewayName?: string | null) =>
+            readSandboxId(sandboxName, options.runtimeSelection?.gatewayName ?? gatewayName),
         }
       : {}),
   };
