@@ -506,6 +506,8 @@ fn credential_references_cannot_override_helm_or_kubernetes_controls() {
         "KUBE_CONFIG_PATH",
         "KUBE_CONFIG_PATHS",
         "KUBE_INSECURE",
+        "KUBERNETES_SERVICE_HOST",
+        "KUBERNETES_SERVICE_PORT",
     ] {
         assert!(
             matches!(

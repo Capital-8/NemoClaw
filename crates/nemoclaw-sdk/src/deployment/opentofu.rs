@@ -247,6 +247,7 @@ pub(super) fn credential_environment<'a>(
             "PLUGIN_",
             "HELM_",
             "KUBE_",
+            "KUBERNETES_SERVICE_",
             "NEMOCLAW_INTERNAL_",
             "NEMOCLAW_MANAGED_K8S_",
         ]

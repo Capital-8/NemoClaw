@@ -324,6 +324,11 @@ fn authored_credentials_cannot_shadow_managed_kubernetes_runtime_controls() {
         "NEMOCLAW_KUBERNETES_STATE",
         "NEMOCLAW_MANAGED_K8S_TOKEN",
         "NEMOCLAW_MANAGED_K8S_CA",
+        // A pod's API server address reaches OpenTofu when no kubeconfig is
+        // named, so no reference may carry these names.
+        "KUBERNETES_SERVICE_HOST",
+        "KUBERNETES_SERVICE_PORT",
+        "KUBERNETES_SERVICE_PORT_HTTPS",
     ] {
         for path in [
             "/spec/gateway/kubernetes/kubeconfig",

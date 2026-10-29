@@ -127,7 +127,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 "pattern": c::ENV,
                 "not": {"anyOf": [
                     {"const": "NEMOCLAW_KUBERNETES_STATE"},
-                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
+                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_|KUBERNETES_SERVICE_)"}
                 ]},
                 "x-nemoclaw-error": format!("{kind} reference must name a valid environment variable that does not shadow managed Kubernetes runtime controls")
             }),
@@ -177,7 +177,7 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
                 "not": {"anyOf": [
                     reserved,
                     {"const": "NEMOCLAW_KUBERNETES_STATE"},
-                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_)"}
+                    {"pattern": "^(?:NEMOCLAW_MANAGED_K8S_|HELM_|KUBE_|KUBERNETES_SERVICE_)"}
                 ]}
             },
             "x-nemoclaw-error": "Kubernetes environment names must be unique variable names that do not shadow process, trust, proxy, or cluster controls"
