@@ -171,20 +171,54 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       );
     // A local source must be the action's target or an explicit source location.
     // Words in the requested research topic do not grant access to substitutes.
-    const subject = source
+    const rawSubject = source
       .slice(action?.[0].length ?? 0)
       .trimStart()
       .replace(/^(?:['’]s|is|are|was|were)\s+/iu, "");
-    const codeNavigationTarget =
+    const navigationTarget = (navigationSubject: string): string | undefined =>
       /^(?:for\s+)?(?:(?:all|the|a|an|which)\s+)?(?:(?:current|latest|recent|existing)\s+)?(?:where\s+(.+?)\s+(?:is|are)\s+(?:called|invoked|defined|declared|implemented|imported|exported|used|referenced|tested)|(?:functions?|methods?|class(?:es)?|modules?)\s+(?:(?:that|which)\s+)?(?:calls?|invokes?|uses?|references?|imports?|exports?|implements?)\s+(.+?)|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?\s+(?:(?:that|which)\s+)?(?:covers?|covering|exercises?|exercising|calls?|calling|tests?|testing|imports?|importing)\s+(.+?)|(?:unit|integration|regression)\s+tests?(?:\s+cases?)?\s+for\s+(.+?)|(?:callers?|call\s+sites?|references?|definitions?|declarations?|implementations?|imports?|exports?|usages?|test\s+coverage)\s+(?:of|to|for)\s+(.+?)|(.+?)['’]s\s+(?:callers?|call\s+sites?))\s*[.!?]*\s*$/iu
-        .exec(subject)
+        .exec(navigationSubject)
         ?.slice(1)
         .find(Boolean);
-    const localCodeNavigation =
-      typeof codeNavigationTarget === "string" &&
-      /^(?:(?:(?:this|that|the|our|my|your)\s+)?(?:function|method|class|symbol|variable|module)(?:\s+[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)?|[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)$/iu.test(
-        codeNavigationTarget,
-      );
+    const rawNavigationTarget = navigationTarget(rawSubject);
+    const navigationTargetStart =
+      rawNavigationTarget === undefined ? -1 : rawSubject.lastIndexOf(rawNavigationTarget);
+    // Scan trailing modifiers once to avoid backtracking on long requests.
+    // External intent still uses the complete, unchanged source.
+    const subjectWords = Array.from(rawSubject.matchAll(/[^\s,]+/gu), (match) => ({
+      index: match.index,
+      word: match[0].replace(/[.!?]+$/u, "").toLowerCase(),
+    }));
+    let subjectEnd = subjectWords.length;
+    while (subjectEnd > 0 && subjectWords[subjectEnd - 1]!.index > navigationTargetStart) {
+      const last = subjectWords[subjectEnd - 1]!.word;
+      const previous = subjectWords[subjectEnd - 2]?.word;
+      if (
+        /^(?:recursively|case-insensitively|carefully|thoroughly|first|please|thanks)$/u.test(last)
+      ) {
+        subjectEnd--;
+      } else if (
+        (last === "you" && previous === "thank") ||
+        ((last === "me" || last === "us") && previous === "for") ||
+        (last === "insensitively" && previous === "case")
+      ) {
+        subjectEnd -= 2;
+      } else {
+        break;
+      }
+      if (subjectWords[subjectEnd - 1]?.word === "and") subjectEnd--;
+    }
+    const subject = rawSubject
+      .slice(0, subjectWords[subjectEnd]?.index ?? rawSubject.length)
+      .replace(/[\s,]+$/u, "");
+    // Keep navigation identifiers even when their names are also modifiers.
+    const localCodeNavigation = [rawNavigationTarget, navigationTarget(subject)].some(
+      (target) =>
+        typeof target === "string" &&
+        /^(?:(?:(?:this|that|the|our|my|your)\s+)?(?:function|method|class|symbol|variable|module)(?:\s+[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)?|[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)$/iu.test(
+          target,
+        ),
+    );
     // Code inspection targets imply local work without a path. Match the whole
     // target so an external topic cannot inherit this exemption.
     const localCodeInspection =

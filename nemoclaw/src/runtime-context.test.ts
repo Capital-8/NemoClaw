@@ -39,6 +39,33 @@ const localCodeInspectionPrompts = [
   "Find bugs and add regression tests.",
 ];
 
+const modifiedLocalRequestPrompts = [
+  "Find unused imports recursively.",
+  "Search for TODO comments please.",
+  "Find unused imports recursively, please.",
+  "Search for TODO comments please and thank you.",
+  "Find and fix the bug please.",
+  "Locate unused variables carefully.",
+  "Find dead code thoroughly.",
+  "Search for FIXME comments case-insensitively.",
+  "Find unused imports, please.",
+  "Find all callers of handleRequest recursively.",
+  "Find where this function is called, please.",
+  "Find the unit test that covers handleRequest please.",
+  "Discover web_fetch please.",
+  "Find the current git branch please.",
+  "Investigate why npm install fails please.",
+  "Find all files recursively.",
+  "Search README.md please.",
+  "Find unused imports first.",
+  "Find callers of please.",
+  "Find the definition of recursively.",
+  "Find where recursively is defined.",
+  "Find callers of first recursively.",
+  "Find callers of please recursively.",
+  "Find the definition of recursively please.",
+];
+
 const mockedLoadState = vi.mocked(loadState);
 
 const defaultConfig: NemoClawConfig = {
@@ -137,6 +164,40 @@ describe("registerRuntimeContext", () => {
     vi.clearAllMocks();
     mockedLoadState.mockReturnValue(blankState());
   });
+
+  it.each(modifiedLocalRequestPrompts)(
+    "preserves tools for local requests with modifiers or polite suffixes: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+    },
+  );
+
+  it.each(
+    modifiedLocalRequestPrompts.flatMap((prompt) => [
+      `${prompt.replace(/[.!?]$/u, "")} using Tavily, please.`,
+      `${prompt} Then search the web for solutions, please.`,
+      `${prompt} Then find official installation documentation please.`,
+    ]),
+  )(
+    "withholds tools for modified local requests mixed with external research: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+        "toolsAllow",
+        [],
+      );
+      expect(suppliedSearchSources(prompt)).toBeUndefined();
+    },
+  );
 
   it.each(localCodeInspectionPrompts)(
     "preserves tools for local code inspection without a path: %s",
