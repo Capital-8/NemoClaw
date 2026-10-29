@@ -199,7 +199,9 @@ If the only other attached provider is one inference provider, NemoClaw can atta
 When a sandbox already has 32 attached providers, NemoClaw rejects a new server before it creates a provider or policy.
 If another command attaches a provider at the same time, the add fails with the same error and removes the generated policy.
 It can keep a detached provider.
-Delete that provider with `openshell provider delete <PROVIDER_NAME>` before you retry the add.
+Before deleting the retained provider, confirm its identity and credential key on the gateway that owns the sandbox, and confirm that no sandbox on that gateway attaches it.
+If an inspection fails or ownership is uncertain, leave the provider unchanged and stop.
+After those checks pass, delete only that provider with `openshell -g <GATEWAY> provider delete <PROVIDER_NAME>` before you retry the add.
 Before you add the server, run `mcp remove` for an unused MCP server, or remove another provider-backed integration.
 `channels remove` deletes the channel credentials and rebuilds the sandbox.
 Rebuild checks this limit before it changes the original sandbox.
