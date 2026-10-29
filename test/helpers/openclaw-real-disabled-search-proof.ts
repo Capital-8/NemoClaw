@@ -254,6 +254,9 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Search for TODO comments",
         "Find and fix the bug",
         "Search auth.test.ts for failing assertions.",
+        "Search main.rs for TODO comments",
+        "Search main.go for TODO comments",
+        "Search data.csv for missing values",
         "Find all callers of handleRequest and return their file paths.",
         "Search for TODO comments and list the matching files.",
         "Find unused imports recursively.",
@@ -405,6 +408,9 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       }
       for (const prompt of [
         searchPrompt,
+        "Search main.rs for TODO comments, then search the web for solutions.",
+        "Search data.csv for missing values using Tavily.",
+        "Search data.csv for missing values online.",
         "Read README.md, then search the web for installation documentation.",
         "Find all files containing foo, then search the web for solutions.",
         "Fetch https://example.com/docs and find alternative installation guides.",
@@ -515,6 +521,9 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         ["Search for TODO comments", "read", { file_path: "src/index.ts" }],
         ["Find and fix the bug", "read", { file_path: "src/index.ts" }],
         ["Search auth.test.ts for failing assertions.", "read", { file_path: "auth.test.ts" }],
+        ["Search main.rs for TODO comments", "read", { file_path: "main.rs" }],
+        ["Search main.go for TODO comments", "read", { file_path: "main.go" }],
+        ["Search data.csv for missing values", "read", { file_path: "data.csv" }],
         [
           "Find all callers of handleRequest and return their file paths.",
           "read",

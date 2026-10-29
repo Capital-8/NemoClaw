@@ -168,6 +168,9 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
     const externalSource =
       /^(?:(?:use|run|ask)\s+(?:tavily|brave)|google|bing|duckduckgo|web[_ -]?search)\b|\b(?:(?:on|from)\s+(?:the\s+)?(?:web|internet|online)|(?:search|research|browse|look)\s+(?:(?:the|on\s+the)\s+)?(?:web|internet|online)|(?:using|with|via)\s+(?:tavily|brave|google|bing|duckduckgo))\b/iu.test(
         source,
+      ) ||
+      /\bonline(?=\s*(?:[.!?]|$)|\s+(?:for|about|using|with|via|today|now|please)\b)/iu.test(
+        source,
       );
     // A local source must be the action's target or an explicit source location.
     // Words in the requested research topic do not grant access to substitutes.
@@ -237,11 +240,16 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       /^(?:for\s+)?(?:(?:all|any|some|the|this|these|those|our|my|your|a|an)\s+)*(?:(?:unused|dead|unreachable|duplicate|missing|unresolved|undefined|deprecated|broken|failing|failed|TODO|FIXME|HACK|XXX)(?:\s+(?:and|or))?\s+)*(?:imports?|exports?|variables?|parameters?|arguments?|functions?|methods?|class(?:es)?|modules?|code|tests?|dependencies|references?|comments?|markers?|bugs?|defects?|typos?|(?:lint|type|syntax|compilation|compiler|build|test)\s+(?:errors?|warnings?|failures?))\s*[.!?]*\s*$/iu.test(
         subject,
       );
+    // Tool-call URL fields describe argument transport, not local files.
+    const localSourceSubject = subject.replace(
+      /\b(?:URL|URI)\s+in\s+(?:args|params)\.[\w.]+/giu,
+      "",
+    );
     const localSource =
       localCodeNavigation ||
       localCodeInspection ||
-      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)*\/|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
-        subject,
+      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)*\/|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w.-]+\.[\w-]+\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
+        localSourceSubject,
       ) ||
       /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:why|how)\s+|(?:the\s+)?(?:root\s+)?cause\s+of\s+)?(?:(?:(?:this|these|those|our|my|the|your|a|an)\s+)?(?:(?:(?:failing|failed|broken)\s+)?(?:(?:unit|integration)\s+)?tests?|(?:build|test)\s+(?:error|failure|output|results?))|shell\s+history)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:(?:(?:is|are|was|were|has|have|had|keeps?|kept)\s+)?fail(?:s|ed|ing)?|for|to|and|then)\b)/iu.test(
         subject,
@@ -278,9 +286,6 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
         /^(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\b|\bto\s+search\b/iu.test(
           source,
         )) ||
-      /\bonline(?=\s*(?:[.!?]|$)|\s+(?:for|about|using|with|via|today|now|please)\b)/iu.test(
-        source,
-      ) ||
       (!localWork &&
         /^(?:what|where|which|who|when|how)\b/iu.test(source) &&
         /\b(?:current|latest|recent|today(?:['’]s)?|now|live|up[ -]to[ -]date)\b/iu.test(source)) ||

@@ -499,6 +499,9 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     ].flatMap((event) =>
       [
         "Find the official NemoClaw installation documentation.",
+        "Search main.rs for TODO comments, then search the web for solutions.",
+        "Search data.csv for missing values using Tavily.",
+        "Search data.csv for missing values online.",
         "Find all files containing foo, then search the web for solutions.",
         "Read README.md, then search the web for installation documentation.",
         "Fetch https://example.com/docs and find alternative installation guides.",
@@ -536,6 +539,9 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   );
 
   it.each([
+    "Search main.rs for TODO comments",
+    "Search main.go for TODO comments",
+    "Search data.csv for missing values",
     "Find all files containing foo.",
     'Search for files containing "foo".',
     "Find all files containing foo recursively, please.",
@@ -555,6 +561,9 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   });
 
   it.each([
+    ["Search main.rs for TODO comments", "read", { file_path: "main.rs" }],
+    ["Search main.go for TODO comments", "read", { file_path: "main.go" }],
+    ["Search data.csv for missing values", "read", { file_path: "data.csv" }],
     ["Find all callers of handleRequest().", "read", { file_path: "src/handler.ts" }],
     ["Find all callers of `handleRequest()`.", "read", { file_path: "src/handler.ts" }],
     ["Find all callers of `handleRequest`().", "read", { file_path: "src/handler.ts" }],

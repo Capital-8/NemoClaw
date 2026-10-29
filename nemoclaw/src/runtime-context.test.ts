@@ -86,6 +86,20 @@ const localSourceAndOutputPrompts = [
   "Search auth.test.ts for failing assertions and list their line numbers.",
 ];
 
+const localFilenamePrompts = [
+  "Search main.rs for TODO comments",
+  "Search main.go for TODO comments",
+  "Search data.csv for missing values",
+  "Search kernel.c for TODO comments.",
+  "Search service.test.cpp for failing assertions.",
+  "Search migration.sql for missing constraints.",
+  "Search config.xml for duplicate keys.",
+  "Search notebook.ipynb for failing assertions.",
+  "Search archive.custom-format for missing values.",
+  "Search args.url for TODO comments.",
+  "Search for TODO comments in main.rs.",
+];
+
 const localCallNavigationPrompts = [
   "Find all callers of handleRequest().",
   "Find all callers of `handleRequest()`.",
@@ -219,6 +233,58 @@ describe("registerRuntimeContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedLoadState.mockReturnValue(blankState());
+  });
+
+  it.each(["args.url", "params.url"])(
+    "does not grant local sources for supplied-URL argument instructions: %s",
+    async (field) => {
+      const prompt = `Fetch https://example.org/data.csv with the URL in ${field}.`;
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+      expect(suppliedSearchSources(prompt)).toEqual({
+        local: false,
+        urls: ["https://example.org/data.csv"],
+      });
+    },
+  );
+
+  it.each(localFilenamePrompts)(
+    "preserves tools and local sources for filename targets with disabled search: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+      expect(suppliedSearchSources(prompt)).toEqual({ local: true, urls: [] });
+    },
+  );
+
+  it.each([
+    "Search the web for main.rs TODO comments.",
+    "Search main.go for TODO comments using Tavily.",
+    "Search data.csv for missing values online.",
+    "Search README.md for TODO comments online.",
+    "Search service.test.cpp for failing assertions from the internet.",
+    "Search config.xml for duplicate keys. Then find official installation documentation.",
+    "Search notebook.ipynb for failing assertions and search the web for solutions.",
+  ])("withholds tools when filename targets require external research: %s", async (prompt) => {
+    const api = createMockApi();
+    api.config = { tools: { web: { search: { enabled: false } } } };
+    registerRuntimeContext(api, defaultConfig);
+
+    expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+      "toolsAllow",
+      [],
+    );
+    expect(suppliedSearchSources(prompt)).toBeUndefined();
   });
 
   it.each(localFileContentPrompts)(
