@@ -292,7 +292,9 @@ Installing Docker may require elevated privileges on Linux.
 ### npm install fails with permission errors
 
 If `npm install` fails with an `EACCES` permission error, do not run npm with `sudo`.
-If `~/.npm-global` already exists with group or world write access, follow [Permission errors during installation](#permission-errors-during-installation) to repair it before configuring npm.
+Before configuring npm, inspect `~/.npm-global` (if it exists) and every parent directory.
+Each existing directory must meet the ownership and permission requirements in [Permission errors during installation](#permission-errors-during-installation).
+Repair any unsafe directory using that procedure before running these commands.
 Configure npm to use a directory you own:
 
 ```bash
