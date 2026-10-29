@@ -151,6 +151,10 @@ async fn every_scenario_passes_under_tofu_test() {
         tofu(&bundle, &work, &base, ["init", "-input=false", "-no-color"]).await;
     assert!(initialized, "tofu init failed:\n{output}");
 
+    // CI names a directory to upload; otherwise evidence stays in the work directory.
+    let evidence_root = std::env::var_os("NEMOCLAW_INTEGRATION_EVIDENCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| directory.path().join("evidence"));
     let mut failed = Vec::new();
     for scenario in &scenarios {
         fixtures.reset(scenario.credentials.clone());
@@ -170,7 +174,7 @@ async fn every_scenario_passes_under_tofu_test() {
             }
         );
         if let Some(problem) = problem {
-            let evidence = directory.path().join("evidence").join(&scenario.name);
+            let evidence = evidence_root.join(&scenario.name);
             fs::create_dir_all(&evidence).unwrap();
             let observations = fixtures.shared.observations().to_string();
             for (file, text) in [("tofu.txt", output), ("observations.json", observations)] {
@@ -187,8 +191,9 @@ async fn every_scenario_passes_under_tofu_test() {
     if !failed.is_empty() {
         let kept = directory.keep();
         panic!(
-            "failed scenarios: {failed:?}; evidence retained in {}",
-            kept.join("evidence").display()
+            "failed scenarios: {failed:?}; evidence in {}, work directory in {}",
+            evidence_root.display(),
+            kept.display()
         );
     }
 }

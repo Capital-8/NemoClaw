@@ -3,10 +3,14 @@
 
 # A managed vLLM service with bearer authentication and one OpenClaw agent.
 
-# Docker is mocked. Its alias and image addresses follow from the runner's
-# engine socket; the IDs match the fixtures module's declaration.
+# Docker is mocked. Its alias follows from the runner's engine socket, and
+# its IDs match what the fixtures module declares to the engine.
 mock_provider "docker" {
   alias = "engine_23ddaef7520a85fde258e31aae3cf758"
+
+  mock_resource "docker_image" {
+    defaults = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
+  }
 }
 
 override_resource {
@@ -17,21 +21,6 @@ override_resource {
 override_resource {
   target = docker_container.inference_service_inference_qwen
   values = { id = "fixture-qwen-container" }
-}
-
-override_resource {
-  target = docker_image.image_2cca7375931d84dde8c7697a5011510a
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
-}
-
-override_resource {
-  target = docker_image.image_3293b9f826e49a048bcfc5f1293d57cc
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000002" }
-}
-
-override_resource {
-  target = docker_image.image_7998830fa7e277e85b40b4df2225de1e
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000003" }
 }
 
 # Declare the fixtures before the deployment's first plan reads them.
@@ -67,7 +56,7 @@ run "verify" {
   # network's host address.
   assert {
     condition = (
-      docker_container.inference_service_inference_qwen.image == docker_image.image_7998830fa7e277e85b40b4df2225de1e.image_id
+      docker_container.inference_service_inference_qwen.image == module.fixtures.image_id
       && docker_container.inference_service_inference_qwen.env == toset(["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.inference_service_inference_qwen.spec}"])
       && toset([for mount in docker_container.inference_service_inference_qwen.mounts : "${mount.source}:${mount.target}"]) == toset([
         "${docker_volume.inference_storage_inference_qwen.name}:/data",

@@ -4,25 +4,19 @@
 # The live E2E hosted scenario: two OpenClaw agents on NVIDIA hosted inference
 # behind a managed Docker gateway.
 
-# Docker is mocked. Its alias and image addresses follow from the runner's
-# engine socket; the IDs match the fixtures module's declaration.
+# Docker is mocked. Its alias follows from the runner's engine socket, and
+# its IDs match what the fixtures module declares to the engine.
 mock_provider "docker" {
   alias = "engine_23ddaef7520a85fde258e31aae3cf758"
+
+  mock_resource "docker_image" {
+    defaults = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
+  }
 }
 
 override_resource {
   target = docker_container.managed_gateway_runtime
   values = { id = "fixture-gateway-container" }
-}
-
-override_resource {
-  target = docker_image.image_2cca7375931d84dde8c7697a5011510a
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
-}
-
-override_resource {
-  target = docker_image.image_638c90056c2497661432d77b6741eb7d
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000002" }
 }
 
 # Declare the fixtures before the deployment's first plan reads them.
@@ -52,13 +46,12 @@ run "verify" {
     source = "./cases/docker-openclaw-nvidia"
   }
 
-  # Docker inputs: the gateway container runs the image its storage was
-  # initialized from, mounts the data path, receives the configuration the
+  # Docker inputs: the gateway container runs the pulled image, mounts the
+  # storage's data path, receives the configuration the
   # real OpenShell provider returned, and carries the owner label.
   assert {
     condition = (
-      docker_image.image_2cca7375931d84dde8c7697a5011510a.name == openshell_gateway_storage.runtime.image
-      && docker_container.managed_gateway_runtime.image == docker_image.image_2cca7375931d84dde8c7697a5011510a.image_id
+      docker_container.managed_gateway_runtime.image == module.fixtures.image_id
       && contains([for mount in docker_container.managed_gateway_runtime.mounts : mount.target if mount.type == "volume"], openshell_gateway_storage.runtime.data_path)
       && docker_container.managed_gateway_runtime.command == data.openshell_docker_gateway_runtime.managed_gateway_runtime.command
       && [for file in docker_container.managed_gateway_runtime.upload : file.content] == [data.openshell_docker_gateway_runtime.managed_gateway_runtime.config_file]
@@ -85,26 +78,26 @@ run "verify" {
   # The mocked pull's image ID reaches both agents' real harness reads.
   assert {
     condition = (
-      docker_image.image_638c90056c2497661432d77b6741eb7d.name == openshell_sandbox.assistant.image
-      && data.fabric_harness.assistant_acquired.image_id == docker_image.image_638c90056c2497661432d77b6741eb7d.image_id
-      && data.fabric_harness.researcher_acquired.image_id == docker_image.image_638c90056c2497661432d77b6741eb7d.image_id
+      data.fabric_harness.assistant_acquired.image == openshell_sandbox.assistant.image
+      && data.fabric_harness.assistant_acquired.image_id == module.fixtures.image_id
+      && data.fabric_harness.researcher_acquired.image_id == module.fixtures.image_id
       && data.fabric_harness.assistant_acquired.adapter_id == "nvidia.fabric.openclaw"
     )
     error_message = "The sandbox image did not hand off to the OpenClaw harnesses."
   }
 
-  # OpenShell stored one registration at the fixture upstream, holding the
-  # credential from NVIDIA_INFERENCE_API_KEY under the sandboxes' name for it.
+  # OpenShell stored one registration at the fixture upstream. It holds the
+  # credential from NVIDIA_INFERENCE_API_KEY under the name each Fabric agent
+  # reads its key from.
   assert {
     condition = (
-      openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.api == "openai-completions"
-      && openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint == "${module.observed.http.endpoint}/v1"
-      && keys(module.observed.registrations) == [openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration]
-      && module.observed.registrations[openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration].labels["nemoclaw.nvidia.com/uid"] == module.fixtures.owner
-      && module.observed.registrations[openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration].config["OPENAI_BASE_URL"] == openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.server.endpoint
-      && module.observed.registrations[openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration].credentials == {
-        (openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.sandbox_env) = "env:NVIDIA_INFERENCE_API_KEY"
+      length(module.observed.registrations) == 1
+      && one(values(module.observed.registrations)).labels["nemoclaw.nvidia.com/uid"] == module.fixtures.owner
+      && one(values(module.observed.registrations)).config["OPENAI_BASE_URL"] == "${module.observed.http.endpoint}/v1"
+      && one(values(module.observed.registrations)).credentials == {
+        (fabric_agent.assistant.models["primary"].api_key_env) = "env:NVIDIA_INFERENCE_API_KEY"
       }
+      && fabric_agent.researcher.models["primary"].api_key_env == fabric_agent.assistant.models["primary"].api_key_env
     )
     error_message = "The NVIDIA inference binding is not registered as configured."
   }
@@ -120,7 +113,7 @@ run "verify" {
         for agent in values(module.observed.agents) :
         agent.workspace == openshell_workspace.deployment.name
         && agent.labels["nemoclaw.nvidia.com/uid"] == module.fixtures.owner
-        && agent.providers == [openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.registration]
+        && agent.providers == [one(values(module.observed.registrations)).name]
         && agent.policy_endpoints == ["${trimprefix(module.observed.http.endpoint, "http://")}/v1/**"]
         && agent.command == jsondecode(data.fabric_harness.assistant_acquired.launch_json).command
       ])
@@ -135,7 +128,7 @@ run "verify" {
     condition = (
       fabric_agent.assistant.sandbox == openshell_sandbox.assistant.ref
       && fabric_agent.researcher.sandbox == openshell_sandbox.researcher.ref
-      && fabric_agent.assistant.models["primary"].api_key_env == openshell_inference.inference_nvidia-4bd9a6f30569077adaf61353.sandbox_env
+      && fabric_agent.assistant.models["primary"].base_url == "${module.observed.http.endpoint}/v1"
       && module.observed.agents.assistant.start.command == ["/opt/fabric/bin/fabric-agent-ctl", "start", "--agent", "assistant", "--config", "-"]
       && module.observed.agents.researcher.start.command == ["/opt/fabric/bin/fabric-agent-ctl", "start", "--agent", "researcher", "--config", "-"]
       && module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)

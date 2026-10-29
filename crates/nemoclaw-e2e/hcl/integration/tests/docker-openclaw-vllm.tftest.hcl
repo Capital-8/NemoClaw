@@ -4,10 +4,14 @@
 # The live E2E local scenario: one OpenClaw agent on an unauthenticated managed
 # vLLM service behind a managed Docker gateway.
 
-# Docker is mocked. Its alias and image addresses follow from the runner's
-# engine socket; the IDs match the fixtures module's declaration.
+# Docker is mocked. Its alias follows from the runner's engine socket, and
+# its IDs match what the fixtures module declares to the engine.
 mock_provider "docker" {
   alias = "engine_23ddaef7520a85fde258e31aae3cf758"
+
+  mock_resource "docker_image" {
+    defaults = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
+  }
 }
 
 override_resource {
@@ -18,21 +22,6 @@ override_resource {
 override_resource {
   target = docker_container.inference_service_inference_qwen
   values = { id = "fixture-qwen-container" }
-}
-
-override_resource {
-  target = docker_image.image_2cca7375931d84dde8c7697a5011510a
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
-}
-
-override_resource {
-  target = docker_image.image_638c90056c2497661432d77b6741eb7d
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000002" }
-}
-
-override_resource {
-  target = docker_image.image_c128e682c2c41aa7f1c28e92cd7f9ff3
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000003" }
 }
 
 # Declare the fixtures before the deployment's first plan reads them.
@@ -66,7 +55,7 @@ run "verify" {
   # no credential storage exists, and readiness reads its status but no key.
   assert {
     condition = (
-      docker_container.inference_service_inference_qwen.image == docker_image.image_c128e682c2c41aa7f1c28e92cd7f9ff3.image_id
+      docker_container.inference_service_inference_qwen.image == module.fixtures.image_id
       && docker_container.inference_service_inference_qwen.env == toset(["NEMOCLAW_RUNTIME_SPEC=${data.vllm_runtime.inference_service_inference_qwen.spec}"])
       && [for mount in docker_container.inference_service_inference_qwen.mounts : "${mount.source}:${mount.target}"] == ["${docker_volume.inference_storage_inference_qwen.name}:/data"]
       && [for port in docker_container.inference_service_inference_qwen.ports : "${port.ip}:${port.external}"] == ["172.30.121.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}"]
@@ -83,13 +72,13 @@ run "verify" {
   # with that address and model.
   assert {
     condition = (
-      openshell_inference.inference_qwen-1accf815f0f08e0407410a07.server.endpoint == "http://172.30.121.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1"
-      && keys(module.observed.registrations) == [openshell_inference.inference_qwen-1accf815f0f08e0407410a07.registration]
-      && values(module.observed.registrations)[0].credentials == {}
-      && module.observed.agents.assistant.providers == [openshell_inference.inference_qwen-1accf815f0f08e0407410a07.registration]
+      length(module.observed.registrations) == 1
+      && one(values(module.observed.registrations)).config["OPENAI_BASE_URL"] == "http://172.30.121.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1"
+      && one(values(module.observed.registrations)).credentials == {}
+      && module.observed.agents.assistant.providers == [one(values(module.observed.registrations)).name]
       && module.observed.agents.assistant.policy_endpoints == ["172.30.121.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1/**"]
       && module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
-      && module.observed.agents.assistant.start.configuration.models.primary.base_url == openshell_inference.inference_qwen-1accf815f0f08e0407410a07.server.endpoint
+      && module.observed.agents.assistant.start.configuration.models.primary.base_url == "http://172.30.121.1:${data.vllm_runtime.inference_service_inference_qwen.launch.port}/v1"
       && module.observed.agents.assistant.start.configuration.models.primary.model == "Qwen/Qwen3-4B"
     )
     error_message = "The vLLM binding, the sandbox's access to it, or the agent's configuration differs from the service."

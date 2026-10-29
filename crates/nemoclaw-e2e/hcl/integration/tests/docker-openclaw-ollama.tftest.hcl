@@ -3,10 +3,14 @@
 
 # A managed Ollama service and one OpenClaw agent on a managed Docker gateway.
 
-# Docker is mocked. Its alias and image addresses follow from the runner's
-# engine socket; the IDs match the fixtures module's declaration.
+# Docker is mocked. Its alias follows from the runner's engine socket, and
+# its IDs match what the fixtures module declares to the engine.
 mock_provider "docker" {
   alias = "engine_23ddaef7520a85fde258e31aae3cf758"
+
+  mock_resource "docker_image" {
+    defaults = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
+  }
 }
 
 override_resource {
@@ -17,21 +21,6 @@ override_resource {
 override_resource {
   target = docker_container.ollama_service_ollama-server
   values = { id = "fixture-ollama-server-container" }
-}
-
-override_resource {
-  target = docker_image.image_2cca7375931d84dde8c7697a5011510a
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000001" }
-}
-
-override_resource {
-  target = docker_image.image_638c90056c2497661432d77b6741eb7d
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000002" }
-}
-
-override_resource {
-  target = docker_image.image_986f52bd8726c1cac8461c87b008f0d5
-  values = { image_id = "sha256:0000000000000000000000000000000000000000000000000000000000000003" }
 }
 
 # Declare the fixtures before the deployment's first plan reads them.
@@ -66,7 +55,7 @@ run "verify" {
   # GPUs, and the gateway network's host address.
   assert {
     condition = (
-      docker_container.ollama_service_ollama-server.image == docker_image.image_986f52bd8726c1cac8461c87b008f0d5.image_id
+      docker_container.ollama_service_ollama-server.image == module.fixtures.image_id
       && docker_container.ollama_service_ollama-server.entrypoint == data.ollama_runtime.ollama_service_ollama-server.launch.entrypoint
       && docker_container.ollama_service_ollama-server.env == toset(["NEMOCLAW_RUNTIME_SPEC=${data.ollama_runtime.ollama_service_ollama-server.spec}"])
       && [for mount in docker_container.ollama_service_ollama-server.mounts : "${mount.source}:${mount.target}"] == ["${docker_volume.ollama_service_storage_ollama-server.name}:${data.ollama_runtime.ollama_service_ollama-server.launch.data_path}"]

@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Integration / HCL
+
+# The tofu test scenarios in crates/nemoclaw-e2e/hcl/integration, against
+# fixtures: no Docker, cluster, GPU, or credentials. CI / Bundle's lifecycle
+# partitions also run them on every pull request; this workflow reports each
+# scenario and uploads redacted evidence when one fails, for changes to the
+# scenarios, their documents, or the runner and fixtures.
+on:
+  # Stacked v1 PRs target feature branches, so do not filter by base branch.
+  pull_request:
+    paths:
+      - .github/workflows/hcl-integration.yml
+      - crates/nemoclaw-e2e/hcl/cases/**
+      - crates/nemoclaw-e2e/hcl/integration/**
+      - crates/nemoclaw-e2e/tests/hcl_integration/**
+      - crates/nemoclaw-test-fixtures/**
+      - crates/test-support/**
+  push:
+    branches: [v1]
+    paths:
+      - .github/workflows/hcl-integration.yml
+      - crates/nemoclaw-e2e/hcl/cases/**
+      - crates/nemoclaw-e2e/hcl/integration/**
+      - crates/nemoclaw-e2e/tests/hcl_integration/**
+      - crates/nemoclaw-test-fixtures/**
+      - crates/test-support/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hcl-integration-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  scenarios:
+    name: Scenarios
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TEST_PLATFORM: linux_amd64
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          platform: linux_amd64
+          save-cache: "false"
+      # The scenarios run the candidate's pinned OpenTofu and provider binaries.
+      - name: Build and verify the bundle
+        run: cargo ci bundle
+      - name: Build the fixture executables
+        run: cargo build --locked -p nemoclaw-test-fixtures --bins
+      - name: Run every scenario
+        env:
+          NEMOCLAW_INTEGRATION_EVIDENCE: ${{ runner.temp }}/hcl-integration-evidence
+        run: |
+          set -o pipefail
+          NEMOCLAW_TEST_BUNDLE="$GITHUB_WORKSPACE/dist/$TEST_PLATFORM" \
+            cargo test --locked -p nemoclaw-e2e --test integration hcl_integration:: \
+            -- --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/hcl-integration.log"
+      - name: Summarize scenarios
+        if: always()
+        run: |
+          {
+            echo '| Scenario | Result |'
+            echo '|---|---|'
+            awk '/^scenario .*: (passed|failed)$/ { sub(/^scenario /, ""); split($0, part, ": "); printf "| `%s` | %s |\n", part[1], part[2] }' "$RUNNER_TEMP/hcl-integration.log" || true
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Fixture credentials are redacted; the evidence holds only fixture data.
+      - name: Upload failed scenarios' evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hcl-integration-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hcl-integration-evidence
+          if-no-files-found: ignore
+          retention-days: 7

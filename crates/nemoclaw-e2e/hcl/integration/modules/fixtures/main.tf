@@ -7,11 +7,9 @@
 # provider would have created: the pulled images, the running gateway
 # container, and each managed service's running container, whose runtime
 # reports ready and, with bearer authentication, holds its generated key.
-# Test files give the mocked resources the same IDs:
-#
-#   gateway image sha256:0...01, sandbox image sha256:0...02, the Nth service
-#   image sha256:0...(N+3); gateway container fixture-gateway-container, and
-#   each service's container fixture-SERVICE-container.
+# Test files give the mocked resources the same IDs: image_id for every
+# image, fixture-gateway-container for the gateway container, and
+# fixture-SERVICE-container for each service's container.
 
 variable "document" {
   description = "Path of the scenario's nemoclaw.yaml."
@@ -36,15 +34,21 @@ locals {
     try(sandbox.image.ref, "nc-fabric-owner-20260924@sha256:c4c0d3add3869e49d0ce8d03bd7e41bbe2682d0df285ef6fde5f181b123cf83e")
   ])
   services = {
-    for index, name in sort(keys(try(local.spec.services, {}))) : name => {
+    for name in sort(keys(try(local.spec.services, {}))) : name => {
       service       = local.spec.services[name]
-      image_id      = format("sha256:%064d", index + 3)
       container_id  = "fixture-${name}-container"
       container     = local.spec.services[name].kind == "vllm" ? "${local.prefix}-inference-${name}" : "${local.prefix}-ollama-${name}"
       authenticated = try(local.spec.services[name].authentication, "") == "bearer"
     }
   }
-  key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  # Mocked pulls report one image ID, so the engine reports it for every image.
+  image_id = format("sha256:%064d", 1)
+  key      = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+
+output "image_id" {
+  description = "The ID of every image, which a test file's Docker mock reports for each pull."
+  value       = local.image_id
 }
 
 output "owner" {
@@ -66,10 +70,10 @@ output "declare" {
   value = !local.docker ? jsonencode({ compute_driver = local.driver }) : jsonencode({
     compute_driver = local.driver
     images = concat(
-      [for reference in local.sandbox_images : { reference = reference, id = format("sha256:%064d", 2), fabric_catalog = true }],
+      [for reference in local.sandbox_images : { reference = reference, id = local.image_id, fabric_catalog = true }],
       [for name, service in local.services : {
         reference = service.service.image
-        id        = service.image_id
+        id        = local.image_id
         labels = merge(
           { "org.nemoclaw.backend" = service.service.kind },
           service.authenticated ? {
@@ -83,14 +87,14 @@ output "declare" {
       [{
         id      = "fixture-gateway-container"
         name    = "${local.prefix}-gateway"
-        image   = format("sha256:%064d", 1)
+        image   = local.image_id
         labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
         running = true
       }],
       [for name, service in local.services : {
         id      = service.container_id
         name    = service.container
-        image   = service.image_id
+        image   = local.image_id
         labels  = { "nemoclaw.nvidia.com/uid" = local.owner }
         running = true
         # OpenShell finds an authenticated service by name for its key.
