@@ -57,7 +57,7 @@ Follow any recovery guidance that the installer prints, then rerun `$$nemoclaw`.
 
 ### Installer Cannot Look Up the Requested Release
 
-The hosted installer leaves the installed CLI unchanged when it cannot look up the requested install reference.
+If a managed install or upgrade cannot look up the requested install reference, the installer may already have removed the existing CLI source checkout. The `nemoclaw` command can then fail until you resolve the lookup issue and rerun the installer.
 Follow the diagnostic that it prints:
 
 - For `Timed out looking up install ref`, check network access to `github.com`, then retry.
