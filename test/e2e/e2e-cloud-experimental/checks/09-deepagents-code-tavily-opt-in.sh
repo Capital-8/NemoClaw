@@ -142,6 +142,23 @@ python_probe() {
   sandbox_exec_argv "$python_bin" -c "$source" "$url"
 }
 
+# A just-attached provider can reach a fresh sandbox process a moment late.
+# Until then the request carries the unresolved placeholder and Tavily answers
+# 401, so the authenticated probe retries that answer only, for a bounded time.
+# Fixture output never changes, so it is read once.
+await_authenticated_probe() {
+  local url="$1" attempt attempts=10 output
+  [ -z "${NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE+x}" ] || attempts=1
+  for attempt in $(seq 1 "$attempts"); do
+    output="$(python_probe "$url")" || return 1
+    if [ "$attempt" -eq "$attempts" ] || ! printf '%s\n' "$output" | grep -Fxq "REACHED:401"; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    sleep "${NEMOCLAW_E2E_TAVILY_PROBE_RETRY_SECONDS:-2}"
+  done
+}
+
 verify_observability_state() {
   local phase="$1" marker_state registry_state
   if ! registry_state="$(observability_registry_state 2>&1)"; then
@@ -307,6 +324,25 @@ if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
   exit 0
 fi
 
+if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "authenticated-probe-retry" ]; then
+  PROBE_CALLS_FILE="$(mktemp)"
+  printf '%s\n' 0 >"$PROBE_CALLS_FILE"
+  trap 'rm -f "$PROBE_CALLS_FILE"' EXIT
+  python_probe() {
+    local calls
+    calls=$(($(cat "$PROBE_CALLS_FILE") + 1))
+    printf '%s\n' "$calls" >"$PROBE_CALLS_FILE"
+    if [ "$calls" -le "${NEMOCLAW_E2E_TAVILY_UNRESOLVED_PROBES:-0}" ]; then
+      printf '%s\n' "REACHED:401"
+    else
+      printf '%s\n' "REACHED:200"
+    fi
+  }
+  NEMOCLAW_E2E_TAVILY_PROBE_RETRY_SECONDS=0 await_authenticated_probe "https://api.tavily.com/search"
+  printf 'CALLS:%s\n' "$(cat "$PROBE_CALLS_FILE")"
+  exit 0
+fi
+
 if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "audit-cleanup" ]; then
   AUDIT_FIXTURE="$(mktemp)"
   printf '%s' "${NEMOCLAW_E2E_AUDIT_BEFORE:-<unset>}" >"$AUDIT_FIXTURE"
@@ -423,7 +459,11 @@ pass "tavily policy preset applies"
 
 sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
 
-PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search")"
+if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ]; then
+  PROBE_OUTPUT="$(await_authenticated_probe "https://api.tavily.com/search")"
+else
+  PROBE_OUTPUT="$(python_probe "https://api.tavily.com/search")"
+fi
 if [ "${NEMOCLAW_E2E_TAVILY_AUTHENTICATED:-0}" = "1" ] \
   && ! echo "$PROBE_OUTPUT" | grep -Fxq "REACHED:200"; then
   fail_test "authenticated Tavily request did not succeed after policy-add"

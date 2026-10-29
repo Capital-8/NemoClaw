@@ -47,6 +47,28 @@ describe("formatResetOutcome (#5560)", () => {
     expect(outcome.lines).toContain("    nemoclaw beta rebuild");
   });
 
+  it("gives a restore path when the removed provider's type could not be read", () => {
+    const outcome = formatResetOutcome(
+      "tavily-search",
+      result({ ok: true, detachedSandboxes: ["alpha", "beta"] }),
+      "nemoclaw",
+    );
+
+    expect(outcome.ok).toBe(true);
+    const text = outcome.lines.join("\n");
+    expect(text).toContain("the removed provider cannot be inspected");
+    expect(text).not.toContain("credentials list");
+    expect(outcome.lines).toContain("    openshell provider get -g nemoclaw tavily-search");
+    expect(outcome.lines).toContain(
+      "    openshell sandbox provider attach -g nemoclaw alpha tavily-search",
+    );
+    expect(outcome.lines).toContain(
+      "    openshell sandbox provider attach -g nemoclaw beta tavily-search",
+    );
+    expect(outcome.lines).toContain("    nemoclaw alpha rebuild");
+    expect(outcome.lines).toContain("    nemoclaw beta rebuild");
+  });
+
   it("surfaces the still-attached sandboxes with a detach hint when recovery fails", () => {
     const outcome = formatResetOutcome(
       "my-assistant-brave-search",

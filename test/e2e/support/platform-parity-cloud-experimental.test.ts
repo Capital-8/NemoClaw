@@ -426,17 +426,22 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.stdout).toContain("ATOMIC_COMMAND");
   });
 
-  it("passes the Deep Agents Tavily probe as native multiline argv", () => {
+  it.each([
+    ["probe-command-shape", 0, "NATIVE_MULTILINE_ARGV\n"],
+    ["authenticated-probe-retry", 0, "REACHED:200\nCALLS:1\n"],
+    ["authenticated-probe-retry", 2, "REACHED:200\nCALLS:3\n"],
+    ["authenticated-probe-retry", 20, "REACHED:401\nCALLS:10\n"],
+  ])("passes the Deep Agents Tavily %s self-test (%i unresolved)", (mode, n, expected) => {
     const result = spawnSync("bash", [dcodeTavilyCheck], {
       encoding: "utf8",
       env: {
-        NEMOCLAW_E2E_TAVILY_SELF_TEST: "probe-command-shape",
+        NEMOCLAW_E2E_TAVILY_SELF_TEST: mode,
+        NEMOCLAW_E2E_TAVILY_UNRESOLVED_PROBES: String(n),
         PATH: DEFAULT_TEST_PATH,
       },
     });
-
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("NATIVE_MULTILINE_ARGV");
+    expect(result.stdout).toContain(expected);
   });
 
   it.each([

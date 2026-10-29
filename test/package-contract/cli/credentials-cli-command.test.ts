@@ -920,7 +920,18 @@ describe("credentials oclif commands", () => {
     ),
   )(
     "credentials reset selects $type recovery after $outcome removal",
-    async ({ provider, metadata, attach, rebuild, unknown, finalDelete, exitCode, stream }) => {
+    async ({
+      provider,
+      metadata,
+      attach,
+      rebuild,
+      unknown,
+      outcome,
+      finalDelete,
+      exitCode,
+      stream,
+    }) => {
+      const restoreUnknown = unknown && outcome !== "partial";
       const operations: string[] = [];
       const responses: Record<string, SpawnLikeResult[]> = {
         get: [metadata],
@@ -943,12 +954,13 @@ describe("credentials oclif commands", () => {
       expect(
         text.includes(`openshell sandbox provider attach -g nemoclaw <sandbox> ${provider}`),
       ).toBe(attach);
-      expect(text.includes("openshell sandbox provider attach")).toBe(attach);
-      expect(text.includes("nemoclaw alpha rebuild")).toBe(rebuild);
-      expect(text.includes("rebuild")).toBe(rebuild);
+      expect(text.includes("openshell sandbox provider attach")).toBe(attach || restoreUnknown);
+      expect(text.includes("nemoclaw alpha rebuild")).toBe(rebuild || restoreUnknown);
+      expect(text.includes("rebuild")).toBe(rebuild || restoreUnknown);
       expect(text.includes("Provider type could not be verified")).toBe(unknown);
-      expect(text.includes("nemoclaw credentials list")).toBe(unknown);
-      expect(text.includes("Tavily")).toBe(attach);
+      expect(text.includes("nemoclaw credentials list")).toBe(unknown && !restoreUnknown);
+      expect(text.includes(`openshell provider get -g nemoclaw ${provider}`)).toBe(restoreUnknown);
+      expect(text.includes("Tavily")).toBe(attach || restoreUnknown);
       expect(operations).toEqual(["delete", "get", "detach", "delete"]);
     },
   );

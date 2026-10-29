@@ -112,7 +112,19 @@ function detachedSandboxGuidance(
   ];
   if (!removed)
     lines.push(`  Rerun '${CLI_NAME} credentials reset ${key}' to complete provider removal.`);
-  if (recovery.providerType === undefined) {
+  if (recovery.providerType === undefined && removed) {
+    lines.push(
+      "  Provider type could not be verified before removal, and the removed provider cannot be inspected.",
+      "  Register the replacement provider, inspect its type, then restore each detached sandbox:",
+      `    openshell provider get -g ${gatewayName} ${key}`,
+      "  For a Tavily provider type, restore its attachments explicitly:",
+      ...detachedSandboxes.map(
+        (sandbox) => `    openshell sandbox provider attach -g ${gatewayName} ${sandbox} ${key}`,
+      ),
+      "  For any other provider type, rebuild each detached sandbox:",
+      ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
+    );
+  } else if (recovery.providerType === undefined) {
     lines.push(
       `  Provider type could not be verified. Inspect it with '${CLI_NAME} credentials list' before restoring detached sandboxes.`,
     );
