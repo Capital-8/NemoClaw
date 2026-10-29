@@ -17,7 +17,7 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
 - **Cluster access:** a kubeconfig file and an exact context, or, when NemoClaw [runs in a pod](#run-nemoclaw-in-a-pod), the pod's service account.
-  Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets and NetworkPolicies, and port-forward to its pods (`pods/portforward`).
+  Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets, Jobs and NetworkPolicies, and port-forward to its pods (`get` and `create` on `pods/portforward`).
   The SDK reads nothing else outside the namespace.
   The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context or service account must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
@@ -244,7 +244,7 @@ spec:
 
 - NemoClaw passes OpenTofu `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`, which Kubernetes sets in the pod, and no kubeconfig.
   NemoClaw's providers then connect with the service account's token and CA from `/var/run/secrets/kubernetes.io/serviceaccount/`, and the Helm provider gets no kubeconfig path or context, so it falls back to the same account.
-- This hasn't been run in a pod yet ([#13826](https://github.com/NVIDIA/NemoClaw/issues/13826)): that the providers ignore `KUBECONFIG` and `~/.kube/config` and use the service account comes from reading their sources.
+- They ignore `KUBECONFIG` and `~/.kube/config`: in a run from a pod on kind, with both naming an unreachable server, plan, apply, export and destroy used only the service account.
 - If either variable is unset, as outside a pod, plan stops before OpenTofu plans; name a kubeconfig and context there.
 - `gateway.kubernetes.environment` serves a kubeconfig's exec plugin, so it requires `kubeconfig`.
 - The `kubectl` commands on this page name a context; in the pod, omit `--context`.
@@ -252,12 +252,78 @@ spec:
 
 The pod needs:
 
-- **A service account** that can do what NemoClaw and the chart do: the [cluster access](#prerequisites) rights, including `pods/portforward` in the deployment's namespace for the providers' port forwards, and creating the chart's [cluster-wide objects](#cluster-wide-objects).
+- **A service account** that can do what NemoClaw and the chart do, bound to the Role and ClusterRole below.
   Kubernetes mounts its token unless the pod or service account sets `automountServiceAccountToken: false`.
-
-  TODO(#13826): list the Role and ClusterRole the service account needed in the kind run, with the kind version and revision.
 - **A persistent volume for `--state-dir`:** keep it across runs, because destroy needs the receipt and issuer keys the state directory holds.
 - **The bundle and inputs:** the NemoClaw bundle, `deployment.yaml`, each image's metadata bundle, and the variables its references name.
+
+Create the deployment's namespace first, so the Role can live in it; NemoClaw binds the existing namespace.
+These rules were enough for plan, apply, export and destroy from a pod on kind.
+Kubernetes lets an account create a Role or ClusterRole only with rules it holds itself, so the rules the pinned OpenShell chart's roles grant are included.
+The ClusterRole's rules:
+
+```yaml
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles, clusterrolebindings]
+    verbs: [get, create, delete]
+  # Granted by the chart's ClusterRole.
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get]
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    verbs: [get]
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+```
+
+The rules of the Role in the deployment's namespace:
+
+```yaml
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, serviceaccounts, services]
+    verbs: [get, create, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, create, update, delete]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [get, create, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, watch, create, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, create, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [get, create, delete]
+  # The providers' port forwards; the WebSocket upgrade also needs create.
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [get, create]
+  # Granted by the chart's Roles.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [agents.x-k8s.io]
+    resources: [sandboxes, sandboxes/status]
+    verbs: [get, list, watch, create, update, patch, delete]
+```
+
+Bind the ClusterRole with a ClusterRoleBinding and the Role with a RoleBinding in the namespace, both to the pod's service account.
 
 ## Deploy to OpenShift
 

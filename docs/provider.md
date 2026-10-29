@@ -897,8 +897,7 @@ Changing any of these settings after creation fails planning and leaves the reso
 
 Each NemoClaw resource has a postcondition requiring `running`, so an incomplete step stops apply until a later apply with the same state completes it.
 The SDK requires each earlier binding before it accepts a later one.
-The Helm provider receives only the authored kubeconfig path and context; without them, it receives neither.
-That its client then uses the pod's service account comes from the Helm provider's source and hasn't been run in a pod ([#13826](https://github.com/NVIDIA/NemoClaw/issues/13826)).
+The Helm provider receives only the authored kubeconfig path and context; without them, it receives neither, and its client uses the pod's service account.
 Ambient Helm and Kubernetes settings are excluded.
 
 Teardown removes the release before the issuer.
