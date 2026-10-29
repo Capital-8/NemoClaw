@@ -186,9 +186,14 @@ describe("onboard shared gateway route containment", () => {
     },
   );
 
-  it.each(["provider", "verification", "reservation"] as const)(
-    "preserves the published route when deferred %s fails",
-    async (failure) => {
+  it.each([
+    { failure: "provider", staleAttachment: false },
+    { failure: "verification", staleAttachment: false },
+    { failure: "reservation", staleAttachment: false },
+    { failure: "verification", staleAttachment: true },
+  ] as const)(
+    "preserves the published route when deferred $failure fails (stale native attachment: $staleAttachment)",
+    async ({ failure, staleAttachment }) => {
       const sourceProvider = failure === "provider" ? "old-provider" : "compatible-endpoint";
       let liveRoute = { provider: sourceProvider, model: "old-model" };
       const providerProfile = { endpointUrl: "https://api.example/v1", credential: "old-secret" };
@@ -225,6 +230,10 @@ describe("onboard shared gateway route containment", () => {
             endpointUrl: "https://api.example/v1",
             credentialEnv: "COMPATIBLE_API_KEY",
             pendingRouteReservation: false,
+            // An earlier switch may have left the source's NVIDIA attachment behind (#13897).
+            ...(staleAttachment
+              ? { nativeNvidiaProviderAttachment: { providerName: "nemoclaw-nvidia-prod-v1" } }
+              : {}),
           }) as unknown as SandboxEntry,
         localInference: {
           loadPendingOllamaModelCleanup: vi.fn(() => []),
@@ -323,25 +332,36 @@ describe("onboard shared gateway route containment", () => {
     {
       scenario: "native source applies",
       nativeSource: true,
+      staleAttachment: false,
       failVerification: false,
       expectedError: null,
     },
     {
       scenario: "native source fails verification",
       nativeSource: true,
+      staleAttachment: false,
       failVerification: true,
       expectedError: "The replacement inference route was not verified.",
     },
     {
       scenario: "routed source",
       nativeSource: false,
+      staleAttachment: false,
+      failVerification: false,
+      expectedError:
+        "Cannot capture the published inference route on gateway 'nemoclaw' before replacement.",
+    },
+    {
+      scenario: "routed source keeps a stale native attachment",
+      nativeSource: false,
+      staleAttachment: true,
       failVerification: false,
       expectedError:
         "Cannot capture the published inference route on gateway 'nemoclaw' before replacement.",
     },
   ])(
     "handles an unconfigured gateway route when the $scenario (#13897)",
-    async ({ nativeSource, failVerification, expectedError }) => {
+    async ({ nativeSource, staleAttachment, failVerification, expectedError }) => {
       let liveRoute: { provider: string; model: string } | null = null;
       const inferenceRouteMutator = {
         setInferenceRoute: vi.fn(
@@ -375,7 +395,7 @@ describe("onboard shared gateway route containment", () => {
             endpointUrl: nativeSource ? "https://old.example/v1" : "https://api.example/v1",
             credentialEnv: nativeSource ? "NVIDIA_INFERENCE_API_KEY" : "COMPATIBLE_API_KEY",
             pendingRouteReservation: false,
-            ...(nativeSource
+            ...(nativeSource || staleAttachment
               ? { nativeNvidiaProviderAttachment: { providerName: "nemoclaw-nvidia-prod-v1" } }
               : {}),
           }) as unknown as SandboxEntry,

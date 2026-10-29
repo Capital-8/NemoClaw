@@ -910,14 +910,32 @@ function shouldStageGatewayRouteAfterBackup(
 }
 
 // A native provider attachment bypasses the gateway-wide route, so a source
-// that uses one may leave no published route to capture or restore.
+// that uses one may leave no published route to capture or restore. Count only
+// an attachment that belongs to the source's recorded provider: an earlier
+// provider switch may have left a stale one on a routed source (#13897).
 function usesNativeProviderAttachment(source: SandboxEntry | null): boolean {
-  return Boolean(
-    source &&
-    (source.nativeNvidiaProviderAttachment !== undefined ||
-      source.nativeHostedProviderAttachment !== undefined ||
-      source.nativeLocalProviderAttachment !== undefined),
-  );
+  if (!source) return false;
+  if (
+    source.nativeNvidiaProviderAttachment !== undefined &&
+    isNativeNvidiaProvider(source.provider)
+  )
+    return true;
+  const provider = source.provider ?? null;
+  const endpointUrl = source.endpointUrl ?? null;
+  if (
+    source.nativeLocalProviderAttachment?.provider === provider &&
+    (usesNativeLocalInference(provider, endpointUrl) ||
+      usesNativeLocalInferenceForAgent(source.agent, provider, endpointUrl))
+  )
+    return true;
+  try {
+    return (
+      requireHostedProviderAttachment(source.nativeHostedProviderAttachment, source.provider) !==
+      undefined
+    );
+  } catch {
+    return false;
+  }
 }
 
 function createGatewayRouteStager(input: {
