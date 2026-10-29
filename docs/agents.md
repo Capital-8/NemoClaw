@@ -53,7 +53,7 @@ Check `result.status` as well as the outer `status`: the outer one only reports 
 ### Run One Headless OpenClaw Request
 
 Headless operation follows the same public Fabric invocation boundary.
-The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/67acf1cff0d598fc3e6a32370cd63fc088e86958/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
+The [pinned OpenClaw adapter](https://github.com/NVIDIA/NeMo-Fabric/blob/7aedb66be0d0b7fc5a0d466539d87f835f16b1c1/adapters/python/openclaw/README.md) takes a text prompt and sends it to the native OpenClaw agent selected by `harness.settings.agent_id`, which defaults to `default`.
 A request can incur inference charges and affect retained conversation history.
 
 With a running agent whose YAML `agent.name` is `assistant`, read its runtime ID from the deployment's state directory with `jq`, then send the request from the client host:
@@ -67,7 +67,7 @@ JSON
 
 The command's `--agent` selects the deployment's YAML `agent.name`; the input is one JSON value, here the prompt string.
 On success, inspect `result.status` and `result.output.response`; a successful command does not establish general model compatibility.
-If later invocations fail with `runtime_unavailable`, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime).
+If later invocations fail with `runtime_unavailable`, plan and apply again: apply starts a new runtime in the same sandbox. If the plan shows no change, replace the sandbox using the [CLI replacement procedure](usage.md#replace-workloads-after-an-unusable-runtime).
 To reach an agent from the client host, see [agent interfaces](interfaces.md).
 
 ## Native Controls at Initialization
