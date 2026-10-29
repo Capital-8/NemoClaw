@@ -195,6 +195,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Google the official NemoClaw installation documentation.",
         "Look up the official NemoClaw installation documentation.",
         "Find the official NemoClaw installation documentation.",
+        "Find all files containing foo, then search the web for solutions.",
         "Where is the official NemoClaw installation documentation?",
         "I want the official NemoClaw installation documentation.",
         "Official NemoClaw installation documentation, please.",
@@ -297,6 +298,9 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "Find test coverage for handleRequest.",
         "Find this function's callers.",
         "Find the class that implements Handler.",
+        "Find all files containing foo.",
+        'Search for files containing "foo".',
+        "Find files containing foo and return their file paths.",
         "Find the largest files on disk",
         "Investigate the disk usage",
         "Find the process using port 8080.",
@@ -402,6 +406,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const prompt of [
         searchPrompt,
         "Read README.md, then search the web for installation documentation.",
+        "Find all files containing foo, then search the web for solutions.",
         "Fetch https://example.com/docs and find alternative installation guides.",
       ]) {
         const context = { runId: "external-first-tool" };
@@ -678,6 +683,10 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
       for (const [prompt, wrapped] of [
         ["Find and fix the bug in src/index.ts.", false],
         ["Find and fix the bug in src/index.ts.", true],
+        ["Find all files containing foo.", false],
+        ["Find all files containing foo.", true],
+        ['Search for files containing "foo".', false],
+        ['Search for files containing "foo".', true],
         ["Find the largest files on disk", false],
         ["Find the largest files on disk", true],
         ["Investigate the disk usage", false],

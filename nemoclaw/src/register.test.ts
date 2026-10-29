@@ -499,6 +499,7 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     ].flatMap((event) =>
       [
         "Find the official NemoClaw installation documentation.",
+        "Find all files containing foo, then search the web for solutions.",
         "Read README.md, then search the web for installation documentation.",
         "Fetch https://example.com/docs and find alternative installation guides.",
       ].map((prompt) => ({ event, prompt })),
@@ -535,6 +536,10 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
   );
 
   it.each([
+    "Find all files containing foo.",
+    'Search for files containing "foo".',
+    "Find all files containing foo recursively, please.",
+    "Find files containing foo and return their file paths.",
     "Refactor this function.",
     "What time is it?",
     "Find unused imports.",

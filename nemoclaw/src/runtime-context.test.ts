@@ -111,6 +111,17 @@ const localCallNavigationPrompts = [
   "Find callers of please().",
 ];
 
+const localFileContentPrompts = [
+  "Find all files containing foo.",
+  'Search for files containing "foo".',
+  "Locate a file containing `foo`.",
+  "Find hidden files containing foo.",
+  "Find all files containing foo recursively, please.",
+  "Find files containing foo and return their file paths.",
+  "Find directories containing foo.",
+  "Find folders containing foo.",
+];
+
 const mockedLoadState = vi.mocked(loadState);
 
 const defaultConfig: NemoClawConfig = {
@@ -209,6 +220,19 @@ describe("registerRuntimeContext", () => {
     vi.clearAllMocks();
     mockedLoadState.mockReturnValue(blankState());
   });
+
+  it.each(localFileContentPrompts)(
+    "preserves tools for file-content searches with disabled search: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+    },
+  );
 
   it.each(localCallNavigationPrompts)(
     "preserves tools and local sources for function-call navigation: %s",
@@ -410,6 +434,11 @@ describe("registerRuntimeContext", () => {
     "Research documentation about disk usage.",
     "Investigate process optimization methods.",
     "Search the web for disk usage tools.",
+    ...localFileContentPrompts.flatMap((prompt) => [
+      `${prompt.replace(/[.!?]$/u, "")} using Tavily.`,
+      `${prompt} Then search the web for solutions.`,
+      `${prompt} Then find official installation documentation.`,
+    ]),
     "Find the largest files online.",
     "Find the largest files on disk and search the web for cleanup advice.",
     "Investigate disk usage and fetch the latest official documentation.",
