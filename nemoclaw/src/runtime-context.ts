@@ -184,12 +184,23 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       /\b(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:browse|summarize|fetch|retrieve|read|get)\s+https?:\/\/\S+|\b(?:in|within|at|from)\s+https?:\/\/\S+/iu.test(
         request,
       );
+    // Match the complete local target so incidental tool names cannot exempt
+    // a question that requires current external information.
+    const localState =
+      /^(?:(?:do|can|should|would)\s+(?:I|we)\s+(?:fix|repair|debug|diagnose|inspect|resolve|check|read|view|show)\s+)?(?:(?:the|this|our|my|your)\s+)?(?:(?:current|latest|recent|last|active|installed|running|local)\s+)*(?:git(?:\s+(?:branch(?:es)?|commits?|status|log|diff))?|branch(?:es)?|commits?|(?:(?:node(?:\.js)?|python3?|npm|pnpm|yarn|bun|git|openclaw|nemoclaw|hermes)\s+)?(?:versions?|errors?|status)|(?:installed|local|running)\s+[\w.+-]+\s+versions?|(?:build|test)\s+(?:errors?|failures?|output|results?|status)|environment|config(?:uration)?|hostname|user(?:name)?|time|clock|shell)(?:\s+(?:is|are)\s+(?:current|latest|active))?(?:\s+(?:in|for|of|from|on)\s+(?:(?:the|this|our|my|your|local|current|working)\s+)*(?:node(?:\.js)?|python3?|npm|pnpm|yarn|bun|git|openclaw|nemoclaw|hermes|(?:[\w.-]+\s+)*(?:app|server|project|repository|repo|workspace|sandbox|environment|shell|terminal|machine|directory|runtime)))?\s*[.!?]*\s*$/iu.test(
+        subject,
+      );
     // Local inspection does not require a supplied retrieval source. Keep it
     // separate from source grants and from requests about an external topic.
     const localWork =
-      /^(?:for\s+)?(?:(?:out\s+)?(?:which|what|why|how)(?:\s+many)?\s+)?(?:of\s+)?(?:(?:all|any|some|each|every|both|many)(?:\s+of)?\s+)?(?:(?:this|these|those|the|our|my|your|a|an)\s+)?(?:(?:top\s+)?\d+\s+)?(?:(?:(?:current|high|low|excessive)\s+)?(?:disk|storage|memory|cpu)\s+(?:usage|space|pressure)|(?:(?:running|active|stalled|zombie|background)\s+)?process(?:es)?|(?:(?:largest|biggest|smallest|oldest|newest|duplicate|empty|hidden|temporary|(?:recently\s+)?modified)\s+)?(?:files?|directories|folders?)|(?:file\s*system|file|directory)\s+permissions)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:is|are|was|were|has|have|owns?|uses?|using|listens?|listening|consumes?|consuming|holds?|holding|by|with|that|which|named|matching|larger|smaller|older|newer|for|to|and|then)\b|\s+(?:in|on|under|within)\s+(?:(?:this|the|our|my|your|local|current|working)\s+)*(?:disk|file\s*system|directory|folder|machine|sandbox|workspace|repo|repository|computer|host)\b)/iu.test(
+      /^(?:for\s+)?(?:(?:out\s+)?(?:which|what|why|how)(?:\s+many)?\s+)?(?:of\s+)?(?:(?:all|any|some|each|every|both|many)(?:\s+of)?\s+)?(?:(?:this|these|those|the|our|my|your|a|an)\s+)?(?:(?:top\s+)?\d+\s+)?(?:(?:(?:current|high|low|excessive)\s+)?(?:disk|storage|memory|cpu)\s+(?:usage|space|pressure)|(?:(?:current|parent|child|running|active|stalled|zombie|background)\s+)?(?:process(?:es)?(?:\s+(?:ids?|identifiers?))?|pids?)|(?:(?:current|latest|recent|largest|biggest|smallest|oldest|newest|duplicate|empty|hidden|temporary|(?:recently\s+)?modified)\s+)?(?:files?|directories|folders?)|(?:file\s*system|file|directory)\s+permissions)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:is|are|was|were|has|have|owns?|uses?|using|listens?|listening|consumes?|consuming|holds?|holding|by|with|that|which|named|matching|larger|smaller|older|newer|for|to|and|then)\b|\s+of\s+(?:(?:this|the|our|my|your)\s+)?(?:shell|process|terminal|server|application|command)\b|\s+(?:in|on|under|within)\s+(?:(?:this|the|our|my|your|local|current|working)\s+)*(?:disk|file\s*system|directory|folder|machine|sandbox|workspace|repo|repository|computer|host)\b)/iu.test(
         subject,
-      );
+      ) ||
+      // A failed local command needs sandbox diagnosis without web research.
+      /^(?:(?:why|how)\s+|(?:the\s+)?(?:root\s+)?cause\s+of\s+)?[`"']?(?:npm|npx|pnpm|yarn|bun|pip3?|uv|cargo|go|make|cmake|git|node|python3?|docker|nemoclaw)\b[`"']?\s+(?:[^\s;]+\s+)*[`"']?(?:(?:is|are|was|were|has|have|had|keeps?|kept)\s+)?(?:fail(?:s|ed|ing)?|failures?|errors?|hang(?:s|ing)?|hung|crash(?:es|ed|ing)?|tim(?:es?|ed|ing)\s+out|(?:exit(?:s|ed)?|return(?:s|ed)?)\s+(?:with\s+)?(?:code\s+)?[1-9]\d*)(?:\s+(?:with\s+(?:error(?:\s+code)?\s+)?[\w-]+|(?:in|on)\s+(?:this|the|our|my|your|local)\s+(?:sandbox|workspace|machine|container|repository|repo|project)))?\s*[.!?]*\s*$/iu.test(
+        subject,
+      ) ||
+      localState;
     const externalResearch =
       (!localWork &&
         /^(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\b|\bto\s+search\b/iu.test(
@@ -201,7 +212,8 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       (!localWork &&
         /^(?:what|where|which|who|when|how)\b/iu.test(source) &&
         /\b(?:current|latest|recent|today(?:['’]s)?|now|live|up[ -]to[ -]date)\b/iu.test(source)) ||
-      (/\b(?:official|latest|recent|alternative)\b/iu.test(source) &&
+      (!localState &&
+        /\b(?:official|latest|recent|alternative)\b/iu.test(source) &&
         /\b(?:documentation|docs|installation\s+(?:instructions|procedure|guides?)|release\s+notes|announcements|news|sources)\b/iu.test(
           source,
         ));
