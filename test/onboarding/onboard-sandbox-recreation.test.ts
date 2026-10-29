@@ -1230,7 +1230,7 @@ const { createSandbox } = require(${onboardPath});
 	    createFixture,
 	  );
   if (${preopened}) {
-    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshNonForced: true } : {}) };
+    createArgs[15].recreateTransaction = { ...createArgs[15].recreateTransaction, ...(${fresh} ? { freshSelection: true } : {}) };
   }
   if (${journalOnly} && !${preopened}) {
     // Exercise a new lower-layer journal, with recreation planned but not necessarily forced.

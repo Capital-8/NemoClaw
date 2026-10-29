@@ -18,6 +18,7 @@ import {
   usesNativeLocalInferenceForAgent,
 } from "../inference/selection";
 import {
+  NVIDIA_HOSTED_LOGICAL_PROVIDER,
   normalizeNativeNvidiaProviderAttachment,
   nativeInferenceProviderForSandbox,
 } from "../inference/native-nvidia";
@@ -590,9 +591,12 @@ export function nativeInferenceCreateIntentFields(
     provider === "vllm-local" && (localNimSelected || entry?.nimContainer)
       ? undefined
       : normalizeNativeLocalProviderAttachment(entry?.nativeLocalProviderAttachment);
-  const nativeNvidiaProviderAttachment = normalizeNativeNvidiaProviderAttachment(
-    entry?.nativeNvidiaProviderAttachment,
-  );
+  // A provider switch keeps the source registry row until replacement, so its
+  // native NVIDIA attachment must not describe a different selection (#13897).
+  const nativeNvidiaProviderAttachment =
+    provider === NVIDIA_HOSTED_LOGICAL_PROVIDER
+      ? normalizeNativeNvidiaProviderAttachment(entry?.nativeNvidiaProviderAttachment)
+      : undefined;
   const hostedAttachment = requireHostedProviderAttachment(
     entry?.nativeHostedProviderAttachment,
     provider,

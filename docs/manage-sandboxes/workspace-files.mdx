@@ -319,6 +319,8 @@ Back up important Deep Agents state before destroying the sandbox.
 
 Prefer NemoClaw host commands for generated configuration such as model, provider, managed MCP, and policy settings.
 Direct edits to `/sandbox/.deepagents/config.toml` persist through rebuild. A later explicit configuration command can still change fields it owns.
+When onboarding recreates a managed Deep Agents sandbox for a verified provider or model change, NemoClaw keeps the newly generated `config.toml` instead of the backup copy.
+The backup keeps direct edits to the previous file; reapply them after recreation if you still need them.
 
 Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively.
 Use `$$nemoclaw <name> download` for manual host downloads, or use `openshell sandbox upload` when you intentionally need the raw OpenShell upload path.
