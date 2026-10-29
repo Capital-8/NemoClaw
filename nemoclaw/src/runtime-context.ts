@@ -185,8 +185,15 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
       /^(?:(?:(?:this|that|the|our|my|your)\s+)?(?:function|method|class|symbol|variable|module)(?:\s+[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)?|[`"']?[\w$]+(?:[.:][\w$]+)*[`"']?)$/iu.test(
         codeNavigationTarget,
       );
+    // Code inspection targets imply local work without a path. Match the whole
+    // target so an external topic cannot inherit this exemption.
+    const localCodeInspection =
+      /^(?:for\s+)?(?:(?:all|any|some|the|this|these|those|our|my|your|a|an)\s+)*(?:(?:unused|dead|unreachable|duplicate|missing|unresolved|undefined|deprecated|broken|failing|failed|TODO|FIXME|HACK|XXX)(?:\s+(?:and|or))?\s+)*(?:imports?|exports?|variables?|parameters?|arguments?|functions?|methods?|class(?:es)?|modules?|code|tests?|dependencies|references?|comments?|markers?|bugs?|defects?|typos?|(?:lint|type|syntax|compilation|compiler|build|test)\s+(?:errors?|warnings?|failures?))\s*[.!?]*\s*$/iu.test(
+        subject,
+      );
     const localSource =
       localCodeNavigation ||
+      localCodeInspection ||
       /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)*\/|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
         subject,
       ) ||

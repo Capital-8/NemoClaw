@@ -21,6 +21,24 @@ const publicFetchPrompts = [
   "Use web_fetch to fetch exactly this public HTTPS URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.\nDo not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.\nSet web_fetch maxChars to no more than 8000.\nAfter web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
 ];
 
+const localCodeInspectionPrompts = [
+  "Find unused imports",
+  "Search for TODO comments",
+  "Find and fix the bug",
+  "Locate unused variables.",
+  "Search for FIXME comments.",
+  "Find dead code.",
+  "Find duplicate functions.",
+  "Find and remove unused imports.",
+  "Search for TODO and FIXME comments.",
+  "Investigate type errors.",
+  "Find all syntax errors.",
+  "Find unresolved references.",
+  "Find and fix lint warnings.",
+  "Find unused and duplicate imports, then remove them.",
+  "Find bugs and add regression tests.",
+];
+
 const mockedLoadState = vi.mocked(loadState);
 
 const defaultConfig: NemoClawConfig = {
@@ -119,6 +137,41 @@ describe("registerRuntimeContext", () => {
     vi.clearAllMocks();
     mockedLoadState.mockReturnValue(blankState());
   });
+
+  it.each(localCodeInspectionPrompts)(
+    "preserves tools for local code inspection without a path: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+      expect(suppliedSearchSources(prompt)).toEqual({ local: true, urls: [] });
+    },
+  );
+
+  it.each(
+    localCodeInspectionPrompts.flatMap((prompt) => [
+      `${prompt.replace(/[.!?]$/u, "")} using Tavily.`,
+      `${prompt} Then search the web for solutions.`,
+      `${prompt} Then find official installation documentation.`,
+    ]),
+  )(
+    "withholds tools for local code inspection mixed with external research: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+        "toolsAllow",
+        [],
+      );
+      expect(suppliedSearchSources(prompt)).toBeUndefined();
+    },
+  );
 
   it.each([
     "What is the current weather in Paris?",
