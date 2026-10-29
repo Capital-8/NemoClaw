@@ -13,6 +13,8 @@ export type SessionInventoryStage =
   | "configuredExport"
   | "sqliteExport"
   | "stateExport"
+  | "registryExport"
+  | "registry"
   | "candidates"
   | "configured"
   | "stateDirectory"
@@ -122,15 +124,46 @@ export async function resolveLegacySessionSources(
   observeStage?.("sqliteExport");
   const resolveSqlite = await loadNative(
     bridgeRoot,
-    version === "2026.9.5" ? "doctor-session-sqlite-readers-" : "session-sqlite-migration-readers-",
-    "resolveTargetSqlitePath",
+    "session-sqlite-target-",
+    "resolveSqliteTargetFromSessionStorePath",
   );
   observeStage?.("stateExport");
   const stateDir = await loadNative(bridgeRoot, "paths-", "resolveStateDir");
+  observeStage?.("registryExport");
+  const inspectRegistry = await loadNative(
+    bridgeRoot,
+    "openclaw-agent-db-registry-listing-",
+    "inspectOpenClawRegisteredAgentDatabases",
+  );
+  const inspectScope = await loadNative(
+    bridgeRoot,
+    "sqlite-readonly-worker-",
+    "withSqliteReadOnlyWorkerScope",
+  );
+  observeStage?.("registry");
+  // The ordinary registry reader rejects pre-bridge schemas. Inspect a native
+  // snapshot instead, and carry its ownership facts through every resolver.
+  const registeredDatabases = await inspectScope(
+    () => inspectRegistry({ env: process.env, includeIncompatibleSchemaVersions: true }),
+    { signal: AbortSignal.timeout(45_000) },
+  );
+  if (!Array.isArray(registeredDatabases)) throw new Error("Invalid native session registry");
+  const options = { env: process.env, registeredDatabases };
+  const sqlitePath = (value: unknown): string => {
+    const target = record(value);
+    const resolved = record(
+      resolveSqlite(target.sqlitePath ?? target.storePath, {
+        ...options,
+        agentId: target.agentId,
+      }),
+    );
+    if (typeof resolved.path !== "string") throw new Error("Invalid native session store path");
+    return resolved.path;
+  };
   observeStage?.("candidates");
-  const targets = candidates(config, { env: process.env });
+  const targets = candidates(config, options);
   observeStage?.("configured");
-  const configuredTargets = configured(config, { allAgents: true }, { env: process.env });
+  const configuredTargets = configured(config, { allAgents: true }, options);
   observeStage?.("stateDirectory");
   const state = stateDir(process.env);
   observeStage?.("validation");
@@ -144,14 +177,14 @@ export async function resolveLegacySessionSources(
     ...targets,
     ...configuredTargets.map((target) => ({
       ...record(target),
-      sqlitePath: resolveSqlite(target, process.env),
+      sqlitePath: sqlitePath(target),
       storePath: sharedStore,
     })),
   ];
   observeStage?.("candidatePaths");
   return stores.map((value) => {
     const target = record(value);
-    const sqlite = resolveSqlite(target, process.env);
+    const sqlite = sqlitePath(target);
     if (typeof target.storePath !== "string" || typeof sqlite !== "string") {
       throw new Error("Invalid native session store path");
     }

@@ -361,20 +361,41 @@ function fixture(
     );
     write(
       root,
+      "openclaw-agent-db-registry-listing-fixture.mjs",
+      `import assert from 'node:assert/strict';
+      const registrations=[{agentId:'main',path:process.env.OPENCLAW_STATE_DIR+'/openclaw-agent.sqlite',schemaVersion:17}];
+      function inspectOpenClawRegisteredAgentDatabases(options){
+        assert.equal(options.env,process.env);assert.equal(options.includeIncompatibleSchemaVersions,true);
+        return registrations;
+      }
+      export {inspectOpenClawRegisteredAgentDatabases,registrations};`,
+    );
+    write(
+      root,
+      "sqlite-readonly-worker-fixture.mjs",
+      `import assert from 'node:assert/strict';
+      async function withSqliteReadOnlyWorkerScope(operation,options){assert.equal(options.signal.aborted,false);return await operation();}
+      export {withSqliteReadOnlyWorkerScope};`,
+    );
+    write(
+      root,
       "targets-fixture.mjs",
-      `
-      function resolveAllAgentSessionStoreCandidateTargetsSync(){return [{agentId:'main',storePath:process.env.OPENCLAW_STATE_DIR+'/sessions.json'}];}
-      function resolveSessionStoreTargets(){return resolveAllAgentSessionStoreCandidateTargetsSync();}
+      `import assert from 'node:assert/strict';
+      import {registrations} from './openclaw-agent-db-registry-listing-fixture.mjs';
+      function resolveAllAgentSessionStoreCandidateTargetsSync(config,options){assert.equal(options.registeredDatabases,registrations);return [{agentId:'main',storePath:process.env.OPENCLAW_STATE_DIR+'/sessions.json'}];}
+      function resolveSessionStoreTargets(config,selection,options){assert.equal(selection.allAgents,true);return resolveAllAgentSessionStoreCandidateTargetsSync(config,options);}
       export {resolveAllAgentSessionStoreCandidateTargetsSync,resolveSessionStoreTargets};`,
     );
     write(
       root,
-      version === "2026.9.5"
-        ? "doctor-session-sqlite-readers-fixture.mjs"
-        : "session-sqlite-migration-readers-fixture.mjs",
-      `
-      function resolveTargetSqlitePath(target){return target.sqlitePath??process.env.OPENCLAW_STATE_DIR+'/openclaw-agent.sqlite';}
-      export {resolveTargetSqlitePath};`,
+      "session-sqlite-target-fixture.mjs",
+      `import assert from 'node:assert/strict';
+      import {registrations} from './openclaw-agent-db-registry-listing-fixture.mjs';
+      function resolveSqliteTargetFromSessionStorePath(storePath,options){
+        assert.equal(options.registeredDatabases,registrations);assert.equal(options.env,process.env);assert.equal(options.agentId,'main');
+        return {path:storePath.endsWith('.sqlite')?storePath:process.env.OPENCLAW_STATE_DIR+'/openclaw-agent.sqlite'};
+      }
+      export {resolveSqliteTargetFromSessionStorePath};`,
     );
     fs.mkdirSync(path.join(root, "dist/extensions/telegram"), { recursive: true });
     write(
@@ -675,7 +696,36 @@ describe("OpenClaw intermediate restore migrations", () => {
         "};",
         "configured session export loading",
       ],
-      ["sqlite", "export {resolveTargetSqlitePath};", "", "session SQLite export loading"],
+      [
+        "sqlite",
+        "export {resolveSqliteTargetFromSessionStorePath};",
+        "",
+        "session SQLite export loading",
+      ],
+      [
+        "openclaw-agent-db-registry-listing-fixture.mjs",
+        "inspectOpenClawRegisteredAgentDatabases,registrations};",
+        "registrations};",
+        "session registry export loading",
+      ],
+      [
+        "openclaw-agent-db-registry-listing-fixture.mjs",
+        "return registrations;",
+        "REJECT;",
+        "session registry inspection",
+      ],
+      [
+        "sqlite-readonly-worker-fixture.mjs",
+        "return await operation();",
+        "REJECT;",
+        "session registry inspection",
+      ],
+      [
+        "openclaw-agent-db-registry-listing-fixture.mjs",
+        "return registrations;",
+        "return undefined;",
+        "session registry inspection",
+      ],
       [
         "paths-fixture.mjs",
         "export {resolveStateDir};",
@@ -690,7 +740,7 @@ describe("OpenClaw intermediate restore migrations", () => {
       ],
       [
         "targets-fixture.mjs",
-        "return resolveAllAgentSessionStoreCandidateTargetsSync();",
+        "return resolveAllAgentSessionStoreCandidateTargetsSync(config,options);",
         "REJECT;",
         "configured session discovery",
       ],
@@ -702,20 +752,20 @@ describe("OpenClaw intermediate restore migrations", () => {
       ],
       [
         "targets-fixture.mjs",
-        "return resolveAllAgentSessionStoreCandidateTargetsSync();",
+        "return resolveAllAgentSessionStoreCandidateTargetsSync(config,options);",
         "return undefined;",
         "session inventory result validation",
       ],
       [
         "sqlite",
-        "return target.sqlitePath??",
-        "REJECT;return target.sqlitePath??",
+        "return {path:storePath",
+        "REJECT;return {path:storePath",
         "configured session SQLite path resolution",
       ],
       [
         "sqlite",
-        "return target.sqlitePath??",
-        "resolveTargetSqlitePath.calls=(resolveTargetSqlitePath.calls??0)+1;if(resolveTargetSqlitePath.calls===2){REJECT;}return target.sqlitePath??",
+        "return {path:storePath",
+        "resolveSqliteTargetFromSessionStorePath.calls=(resolveSqliteTargetFromSessionStorePath.calls??0)+1;if(resolveSqliteTargetFromSessionStorePath.calls===2){REJECT;}return {path:storePath",
         "candidate session SQLite path resolution",
       ],
     ])(
@@ -726,11 +776,7 @@ describe("OpenClaw intermediate restore migrations", () => {
           proof.migrationRoot,
           version,
           "node_modules/openclaw/dist",
-          file === "sqlite"
-            ? version === "2026.9.5"
-              ? "doctor-session-sqlite-readers-fixture.mjs"
-              : "session-sqlite-migration-readers-fixture.mjs"
-            : file,
+          file === "sqlite" ? "session-sqlite-target-fixture.mjs" : file,
         );
         const original = fs.readFileSync(modulePath, "utf8");
         const rejection = `throw new Error(${JSON.stringify(`fixture-secret-value ${proof.configPath}`)})`;

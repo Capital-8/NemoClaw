@@ -196,6 +196,8 @@ const PREVIEW_FAILURES = {
   65: "session inventory result validation",
   66: "configured session SQLite path resolution",
   67: "candidate session SQLite path resolution",
+  68: "session registry export loading",
+  69: "session registry inspection",
 } as const;
 
 const SESSION_INVENTORY_FAILURE_CODES = {
@@ -209,6 +211,8 @@ const SESSION_INVENTORY_FAILURE_CODES = {
   validation: 65,
   configuredPaths: 66,
   candidatePaths: 67,
+  registryExport: 68,
+  registry: 69,
 } as const satisfies Record<SessionInventoryStage, keyof typeof PREVIEW_FAILURES>;
 
 class PreviewError extends Error {
