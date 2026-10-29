@@ -51,15 +51,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Restore the cache that CI / Bundle's Build bundle job saves on every v1
+      # push, as the documentation workflow does, rather than keeping another
+      # cache. This job runs the same `cargo ci bundle` with the same
+      # environment, so the build tool and the release bundle resolve the same
+      # features and reuse it; the test build reuses its debug dependencies.
+      # Pull requests restore it only when they target v1.
       - uses: ./.github/actions/setup-rust
         with:
           platform: linux_amd64
+          cache-prefix: native-bundle-v3
           save-cache: "false"
       # The scenarios run the candidate's pinned OpenTofu and provider binaries.
       - name: Build and verify the bundle
         run: cargo ci bundle
-      - name: Build the fixture executables
-        run: cargo build --locked -p nemoclaw-test-fixtures --bins
+      - name: Build the fixture provider
+        run: cargo build --locked -p nemoclaw-test-fixtures --bin nemoclaw-fixture-control
       - name: Run every scenario
         env:
           NEMOCLAW_INTEGRATION_EVIDENCE: ${{ runner.temp }}/hcl-integration-evidence
