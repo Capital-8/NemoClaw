@@ -24,6 +24,9 @@ enum Action {
         deployment: PathBuf,
         #[arg(long)]
         suite: PathBuf,
+        /// HCL test file relative to the suite, such as tests/docker-openclaw-nvidia.tftest.hcl.
+        #[arg(long)]
+        filter: PathBuf,
         #[arg(long)]
         bundle: PathBuf,
         /// Candidate source commit under test, recorded with the results.
@@ -45,6 +48,7 @@ async fn main() -> ExitCode {
         Action::Run {
             deployment,
             suite,
+            filter,
             bundle,
             candidate_revision,
             run_dir,
@@ -70,6 +74,7 @@ async fn main() -> ExitCode {
             let result = wrapper::execute(
                 &deployment,
                 &suite,
+                &filter,
                 &bundle,
                 &candidate_revision,
                 &run_dir,

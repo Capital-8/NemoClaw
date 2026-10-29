@@ -27,19 +27,8 @@ fn deployment(path: &Path) -> Result<Document, String> {
     let mut value =
         parse_yaml_value(fs::File::open(path).map_err(|_| "cannot read deployment YAML")?)
             .map_err(|_| "invalid deployment YAML")?;
-    let mut random = [0_u8; 16];
-    getrandom::fill(&mut random).map_err(|_| "cannot allocate deployment identity")?;
-    random[6] = (random[6] & 15) | 64;
-    random[8] = (random[8] & 63) | 128;
-    let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
-    let uid = format!(
-        "{}-{}-{}-{}-{}",
-        &hex[..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..]
-    );
+    let uid =
+        nemoclaw_backend::generate_owner().map_err(|_| "cannot allocate deployment identity")?;
     value
         .get_mut("metadata")
         .and_then(serde_json::Value::as_object_mut)
@@ -52,6 +41,7 @@ fn deployment(path: &Path) -> Result<Document, String> {
 pub(super) async fn execute(
     deployment_path: &Path,
     suite: &Path,
+    filter: &Path,
     bundle: &Path,
     candidate_revision: &str,
     directory: &Path,
@@ -65,12 +55,22 @@ pub(super) async fn execute(
         probe: std::env::current_exe().map_err(|_| "cannot locate probe executable")?,
         environment: BTreeMap::new(),
     };
-    execute_with_tools(deployment_path, suite, &bundle, directory, &tools, cancel).await
+    execute_with_tools(
+        deployment_path,
+        suite,
+        filter,
+        &bundle,
+        directory,
+        &tools,
+        cancel,
+    )
+    .await
 }
 
 pub(super) async fn execute_with_tools(
     deployment_path: &Path,
     suite: &Path,
+    filter: &Path,
     bundle: &Bundle,
     directory: &Path,
     tools: &Tools,
@@ -82,6 +82,19 @@ pub(super) async fn execute_with_tools(
         .map_err(|_| "HCL suite directory is unavailable")?;
     if !suite.is_dir() {
         return Err("HCL suite must be a directory".into());
+    }
+    if filter.is_absolute()
+        || filter
+            .parent()
+            .is_none_or(|parent| !parent.as_os_str().is_empty() && parent != Path::new("tests"))
+        || !suite.join(filter).is_file()
+        || !filter
+            .to_str()
+            .is_some_and(|name| name.ends_with(".tftest.hcl") || name.ends_with(".tftest.json"))
+    {
+        return Err(
+            "filter must select an existing test file in the suite or its tests directory".into(),
+        );
     }
     if tools.candidate_revision.len() != 40
         || !tools
@@ -150,7 +163,7 @@ pub(super) async fn execute_with_tools(
     .map_err(|_| "cannot save resolved deployment")?;
     nemoclaw_runtime::files::save_json(
         &directory.join("run.json"),
-        &json!({"suite": suite, "candidate_revision": tools.candidate_revision}),
+        &json!({"suite": suite, "filter": filter, "candidate_revision": tools.candidate_revision}),
     )
     .map_err(|_| "cannot save run identity")?;
     let mut environment = tools.environment.clone();
@@ -159,12 +172,13 @@ pub(super) async fn execute_with_tools(
     for name in connection
         .credential_env
         .into_iter()
-        .chain(
-            connection
-                .tls
-                .into_iter()
-                .flat_map(|tls| [tls.ca_env, tls.certificate_env, tls.key_env]),
-        )
+        .chain(connection.tls.into_iter().flat_map(|tls| {
+            std::iter::once(tls.ca_env).chain(
+                tls.identity
+                    .into_iter()
+                    .flat_map(|identity| [identity.certificate_env, identity.key_env]),
+            )
+        }))
         .filter(|name| !name.starts_with("TF_") && !name.starts_with("TOFU_"))
     {
         if let Some(value) = std::env::var_os(&name) {
@@ -250,7 +264,13 @@ pub(super) async fn execute_with_tools(
         phase = "tofu-test";
         process::execute(
             &tools.tofu,
-            &[chdir, "test".into(), "-json".into(), "-no-color".into()],
+            &[
+                chdir,
+                "test".into(),
+                format!("-filter={}", filter.display()).into(),
+                "-json".into(),
+                "-no-color".into(),
+            ],
             &verification,
             phase,
             &verifier_environment,
@@ -281,7 +301,7 @@ pub(super) async fn execute_with_tools(
     };
     let succeeded = primary.is_ok() && cleanup_result.is_ok();
     let result = json!({
-        "deployment": document.metadata.name, "suite": suite, "succeeded": succeeded,
+        "deployment": document.metadata.name, "suite": suite, "filter": filter, "succeeded": succeeded,
         "candidate_revision": tools.candidate_revision,
         "deployment_uid": document.metadata.uid,
         "failed_phase": failed_phase, "attributed_to": if succeeded { "none" } else { "unknown" },

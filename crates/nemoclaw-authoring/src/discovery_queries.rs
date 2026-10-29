@@ -66,10 +66,19 @@ pub fn discovery_queries(
             DiscoveryQuery::Gateway(_) | DiscoveryQuery::Credential(_) => true,
         })
         .collect();
-    queries.extend(document.credential_names().into_iter().map(|reference| {
-        DiscoveryQuery::Credential(CredentialRequest {
-            reference: reference.into(),
-        })
-    }));
+    queries.extend(credential_queries(document));
     Ok(queries)
+}
+
+/// One availability check for each credential reference in `document`.
+pub fn credential_queries(document: &Document) -> Vec<DiscoveryQuery> {
+    document
+        .credential_names()
+        .into_iter()
+        .map(|reference| {
+            DiscoveryQuery::Credential(CredentialRequest {
+                reference: reference.into(),
+            })
+        })
+        .collect()
 }
