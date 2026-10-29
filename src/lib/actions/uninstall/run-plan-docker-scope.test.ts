@@ -384,6 +384,8 @@ describe("uninstall Docker resource scope", () => {
     { status: 0, stdout: "0123456789ab redis:7", stderr: "" },
     { status: 0, stdout: "0123456789ab|redis:7", stderr: "" },
     { status: 0, stdout: "0123456789ab||", stderr: "" },
+    { status: 0, stdout: "0123456789ab|redis: 7|foreign", stderr: "" },
+    { status: 0, stdout: "0123456789ab|redis:7| foreign", stderr: "" },
   ])("preserves state and the CLI when Docker inventory is inconclusive: %j", async (inventory) => {
     const result = await runWithDockerInventory({ inventory });
     expect(result.result.exitCode).toBe(1);

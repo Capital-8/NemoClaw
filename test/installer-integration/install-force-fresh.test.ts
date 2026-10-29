@@ -272,8 +272,9 @@ esac
 
   expect(result.status).not.toBe(0);
   expect(`${result.stdout}${result.stderr}`).toContain(
-    "Could not inspect existing NemoClaw or OpenShell state",
+    "Inspect and reconcile this row in the selected Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started.",
   );
+  expect(`${result.stdout}${result.stderr}`).toContain("fedcba987654");
   expect(fs.existsSync(cleanupMarker)).toBe(false);
 });
 
@@ -320,8 +321,9 @@ esac
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain(
-      "Could not inspect existing NemoClaw or OpenShell state",
+      "Inspect and reconcile this row in the selected Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started.",
     );
+    expect(`${result.stdout}${result.stderr}`).toContain("fedcba987654");
     expect(fs.existsSync(cleanupMarker)).toBe(false);
   },
 );

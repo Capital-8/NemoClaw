@@ -3785,6 +3785,7 @@ force_fresh_install_has_existing_state() {
   local existing_state=0 docker_inventory_row_pattern='^[0-9a-f]+[|][^|[:space:]]*[|][^|[:space:]]*$'
   _FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER=""
   _FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME=""
+  _FORCE_FRESH_MALFORMED_DOCKER_ROW=""
   user_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   if [[ -e "$(nemoclaw_state_root)" ]] \
     || [[ -e "${HOME}/.config/nemoclaw" ]] \
@@ -3814,9 +3815,11 @@ force_fresh_install_has_existing_state() {
     )" || return 2
     while IFS= read -r container_row; do
       [[ -n "$container_row" ]] || continue
+      printf -v _FORCE_FRESH_MALFORMED_DOCKER_ROW '%q' "${container_row:0:80}"
       [[ "$container_row" =~ $docker_inventory_row_pattern ]] || return 5
       IFS='|' read -r container_id container_image container_name <<<"$container_row"
       [[ -n "$container_image$container_name" ]] || return 5
+      _FORCE_FRESH_MALFORMED_DOCKER_ROW=""
       if [[ -z "$container_name" ]]; then
         case "$container_image" in
           openshell-* | nemoclaw-*) container_name="$container_image" ;;
@@ -3978,6 +3981,7 @@ run_force_fresh_install_reset() {
     2) error "Docker is installed but unavailable. Start the selected local Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
     3) error "Force-fresh cleanup found unverified receipt volume ${_FORCE_FRESH_UNVERIFIED_RECEIPT_VOLUME}. Docker names and mutable labels are not ownership proof. Inspect it, remove it only after confirming it belongs to the interrupted NemoClaw install, then rerun. No cleanup started." ;;
     4) error "Force-fresh cleanup found unverified Docker container ${_FORCE_FRESH_UNVERIFIED_DOCKER_CONTAINER}. NemoClaw cannot prove this Docker-only resource belongs to the current installation. Inspect and reconcile it explicitly, then rerun. No cleanup started." ;;
+    5) error "Docker returned a malformed container inventory row: ${_FORCE_FRESH_MALFORMED_DOCKER_ROW}. Inspect and reconcile this row in the selected Docker or Colima daemon, then rerun --force-fresh-install. No cleanup started." ;;
     *) error "Could not inspect existing NemoClaw or OpenShell state. No cleanup started." ;;
   esac
   remove_macos_openshell_for_force_fresh_install
