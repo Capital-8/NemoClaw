@@ -3,8 +3,9 @@
 //! Kubernetes preparation, authentication and gateway observation resources.
 //!
 //! Each row carries the cluster target and identity as attributes. Operations
-//! connect with the kubeconfig and context they name and keep their receipt in the directory
-//! the SDK passes through `NEMOCLAW_KUBERNETES_STATE`.
+//! connect with the kubeconfig and context they name, or with the pod's service
+//! account when both are empty, and keep their receipt in the directory the SDK
+//! passes through `NEMOCLAW_KUBERNETES_STATE`.
 
 use crate::{
     Error, ObservationError,
@@ -233,16 +234,32 @@ mod tests {
     use serde_json::json;
 
     fn spec_row(kind: &str) -> Row {
+        target_row(
+            kind,
+            json!({
+                "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
+                "authentication": {"profile": "development"}
+            }),
+        )
+    }
+
+    /// The same resource without a kubeconfig: operations use the service
+    /// account of the pod that runs NemoClaw.
+    fn pod_row(kind: &str) -> Row {
+        target_row(
+            kind,
+            json!({"namespace": "agents", "authentication": {"profile": "development"}}),
+        )
+    }
+
+    fn target_row(kind: &str, kubernetes: serde_json::Value) -> Row {
         let spec: Spec = serde_json::from_value(json!({
             "layout": 1, "kind": kind, "name": "nc-0123456789abcdef-gateway",
             "owner": "11111111-1111-4111-8111-111111111111", "generation": "0123456789abcdef0123456789abcdef",
             "settings": {
                 "runtime": {"provider": "kubernetes"},
                 "endpoint": "https://127.0.0.1:17671",
-                "kubernetes": {
-                    "kubeconfig": {"env": "TEST_CLUSTER_CONFIG"}, "context": "selected", "namespace": "agents",
-                    "authentication": {"profile": "development"}
-                }
+                "kubernetes": kubernetes
             }
         }))
         .unwrap();
@@ -451,6 +468,31 @@ mod tests {
             .plan(GATEWAY_KIND, &prior, Some(&prior))
             .await
             .unwrap();
+    }
+
+    /// An applied deployment keeps the access it was applied with: switching
+    /// between a kubeconfig and the pod's service account is refused in both
+    /// directions, and the pod's own access plans as unchanged.
+    #[tokio::test]
+    async fn switching_between_a_kubeconfig_and_the_pods_service_account_is_refused() {
+        let backend = KubernetesBackend::new();
+        for kind in [STORAGE_KIND, AUTH_KIND, GATEWAY_KIND] {
+            let (kubeconfig, pod) = (spec_row(kind), pod_row(kind));
+            assert_eq!(pod["kubeconfig_env"], "");
+            assert_eq!(pod["context"], "");
+            for (prior, desired) in [(&kubeconfig, &pod), (&pod, &kubeconfig)] {
+                assert!(
+                    matches!(
+                        backend.plan(kind, desired, Some(prior)).await,
+                        Err(Error::Conflict(_))
+                    ),
+                    "{kind}: {} to {}",
+                    prior["kubeconfig_env"],
+                    desired["kubeconfig_env"]
+                );
+            }
+            backend.plan(kind, &pod, Some(&pod)).await.unwrap();
+        }
     }
 
     #[tokio::test]

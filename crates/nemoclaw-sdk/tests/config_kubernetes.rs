@@ -76,7 +76,7 @@ fn managed_kubernetes_preserves_explicit_target_and_has_no_local_engine_defaults
         assert!(document.spec.gateway.as_local_managed().is_none());
         assert_eq!(
             document.spec.gateway.as_kubernetes().unwrap().context,
-            "explicit-context"
+            Some("explicit-context".into())
         );
         assert!(
             document
@@ -144,6 +144,32 @@ fn a_managed_target_names_the_variables_its_kubeconfig_needs() {
         ]
     );
     assert_eq!(serde_json::to_value(&document).unwrap(), input);
+}
+
+/// Without a kubeconfig and context, every cluster client uses the pod's
+/// service account; nothing is resolved from the caller for the cluster.
+#[test]
+fn a_target_without_kubeconfig_and_context_uses_the_pods_service_account() {
+    let validator = jsonschema::validator_for(&schema::input_schema()).unwrap();
+    let mut input = managed_document();
+    let kubernetes = input["spec"]["gateway"]["kubernetes"]
+        .as_object_mut()
+        .unwrap();
+    kubernetes.remove("kubeconfig");
+    kubernetes.remove("context");
+    assert!(validator.is_valid(&input));
+    let document = Document::parse(input.to_string().as_bytes()).unwrap();
+    assert_eq!(document.credential_names(), ["TEST_IMAGE_METADATA"]);
+    assert_eq!(serde_json::to_value(&document).unwrap(), input);
+    assert_eq!(
+        Document::parse(document.yaml().unwrap().as_bytes()).unwrap(),
+        document
+    );
+
+    // The listed variables serve a kubeconfig's exec plugin, so they need one.
+    input["spec"]["gateway"]["kubernetes"]["environment"] = json!(["AWS_PROFILE"]);
+    assert!(!validator.is_valid(&input));
+    assert!(Document::parse(input.to_string().as_bytes()).is_err());
 }
 
 #[test]
