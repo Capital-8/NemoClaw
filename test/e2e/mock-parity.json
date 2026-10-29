@@ -837,6 +837,7 @@
         "test/e2e/fixtures/installed-telegram-runtime-proof.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -876,6 +877,7 @@
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
@@ -936,6 +938,7 @@
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
@@ -1092,6 +1095,7 @@
       "live": "test/e2e/live/telegram-injection.test.ts",
       "liveSources": ["test/e2e/live/phase6-messaging-helpers.ts"],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -1099,6 +1103,7 @@
     {
       "live": "test/e2e/live/token-rotation.test.ts",
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/e2e-phase-environment.test.ts",
@@ -1115,6 +1120,7 @@
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/channels-stop-start-cleanup.test.ts",
         "test/e2e/support/channels-stop-start-config-state.test.ts",
@@ -1160,6 +1166,7 @@
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/discord-enrollment-child.test.ts",
         "test/e2e/support/hermes-slack-cleanup.test.ts",
         "test/e2e/support/hermes-slack-credential-transport.test.ts",
         "test/e2e/support/hermes-slack-proof.test.ts",

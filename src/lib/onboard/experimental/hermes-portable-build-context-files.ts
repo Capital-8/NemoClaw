@@ -387,6 +387,10 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/compiler/engines/state-update-engine.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/engines/template.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/index.ts", mode: "100644" },
+  {
+    path: "src/lib/messaging/compiler/manifest-compiler-discord-enrollment.test.ts",
+    mode: "100644",
+  },
   { path: "src/lib/messaging/compiler/manifest-compiler.test.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/manifest-compiler.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/types.ts", mode: "100644" },

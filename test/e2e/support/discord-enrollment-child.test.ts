@@ -70,6 +70,40 @@ function runChild(env: NodeJS.ProcessEnv, source = COMPILER_PROBE) {
 }
 
 describe("Discord enrollment in live-test children", () => {
+  it.each<[string, NodeJS.ProcessEnv]>([
+    ["Slack", { SLACK_BOT_TOKEN: "xoxb-synthetic", SLACK_APP_TOKEN: "xapp-synthetic" }],
+    ["Telegram", { TELEGRAM_BOT_TOKEN: "synthetic-telegram-token" }],
+    ["no channel", {}],
+  ])(
+    "preserves the %s child environment without a Discord token (#13809)",
+    (_channel, credentials) => {
+      const env = phase6Env({
+        sandboxName: "e2e-oc-ch-cycle",
+        agent: "openclaw",
+        extra: { ...credentials, DISCORD_BOT_TOKEN: undefined, NODE_OPTIONS: transportOptions },
+      });
+
+      expect(env.NODE_OPTIONS).toBe(transportOptions);
+      expect(env).toMatchObject(credentials);
+      expect(
+        runChild(
+          env,
+          String.raw`
+await fetch("https://discord.com/api/v10/users/@me");
+console.log(JSON.stringify({ slack: process.env.SLACK_BOT_TOKEN,
+  slackApp: process.env.SLACK_APP_TOKEN, telegram: process.env.TELEGRAM_BOT_TOKEN,
+  fallbackUrls: globalThis.fixtureRequests }));
+`,
+        ),
+      ).toMatchObject({
+        ...(credentials.SLACK_BOT_TOKEN ? { slack: credentials.SLACK_BOT_TOKEN } : {}),
+        ...(credentials.SLACK_APP_TOKEN ? { slackApp: credentials.SLACK_APP_TOKEN } : {}),
+        ...(credentials.TELEGRAM_BOT_TOKEN ? { telegram: credentials.TELEGRAM_BOT_TOKEN } : {}),
+        fallbackUrls: ["https://discord.com/api/v10/users/@me"],
+      });
+    },
+  );
+
   it("carries the catalogue fixture through the installer helper into the child (#13809)", async () => {
     const target = catalogueTarget("channels-stop-start-openclaw");
     const env = phase6Env({
