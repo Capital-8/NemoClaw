@@ -993,3 +993,39 @@ fn metadata_uid_accepts_either_case_and_keeps_it_lowercase() {
     assert_eq!(direct, same);
     direct.validate().unwrap();
 }
+
+#[test]
+fn service_exposures_take_a_port_and_an_authorization_mode_openshell_accepts() {
+    let validator = jsonschema::validator_for(&input_schema()).unwrap();
+    let mut value = input("fabric-openclaw.yaml");
+    let set = |value: &mut Value, exposures: Value| {
+        value["spec"]["sandboxes"]["assistant"]["serviceExposures"] = exposures;
+    };
+    let many: serde_json::Map<String, Value> = (0..33)
+        .map(|index| (format!("s{index}"), json!({"targetPort": 8000 + index})))
+        .collect();
+    let mut at_most: serde_json::Map<String, Value> = many.clone();
+    at_most.remove("s32");
+    for accepted in [
+        json!({"dashboard": {"targetPort": 18800}}),
+        json!({"": {"targetPort": 65535, "authorizationMode": "STRIP"}}),
+        json!({"api": {"targetPort": 1, "authorizationMode": "BEARER_PASSTHROUGH"}}),
+        Value::Object(at_most),
+    ] {
+        set(&mut value, accepted);
+        agrees(&validator, &value, true);
+    }
+    for rejected in [
+        json!({"dashboard": {"targetPort": 0}}),
+        json!({"dashboard": {"targetPort": 65536}}),
+        json!({"dashboard": {"targetPort": "80"}}),
+        json!({"dashboard": {"targetPort": 80, "authorizationMode": "OPEN"}}),
+        json!({"dashboard": {"targetPort": 80, "surprise": true}}),
+        json!({"dashboard": {}}),
+        json!([{"name": "dashboard", "targetPort": 80}]),
+        Value::Object(many),
+    ] {
+        set(&mut value, rejected);
+        agrees(&validator, &value, false);
+    }
+}

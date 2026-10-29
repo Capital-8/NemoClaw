@@ -141,6 +141,21 @@
       ],
       "type": "string"
     },
+    "AuthorizationMode": {
+      "description": "OpenShell's service authorization modes.",
+      "oneOf": [
+        {
+          "const": "STRIP",
+          "description": "Remove the Authorization header before the request reaches the service.",
+          "type": "string"
+        },
+        {
+          "const": "BEARER_PASSTHROUGH",
+          "description": "Pass a bearer Authorization header through to the service.",
+          "type": "string"
+        }
+      ]
+    },
     "Compatibility": {
       "additionalProperties": false,
       "description": "Execution host requirements and labels that must be present on the pinned image.",
@@ -2717,6 +2732,14 @@
         "network": {
           "$ref": "#/$defs/Network",
           "description": "Sandbox network policy; omission selects isolated egress with grants for declared inference."
+        },
+        "serviceExposures": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ServiceExposure"
+          },
+          "description": "OpenShell service exposures, keyed by service name: loopback ports in the sandbox that the gateway makes reachable at a URL it reports. OpenShell checks the names when it creates the sandbox. Exposures belong to the sandbox's creation: changing them replaces the sandbox.",
+          "maxProperties": 32,
+          "type": "object"
         }
       },
       "required": [
@@ -3437,6 +3460,27 @@
           "type": "object"
         }
       ]
+    },
+    "ServiceExposure": {
+      "additionalProperties": false,
+      "description": "One OpenShell service exposure: a loopback port the gateway makes reachable.",
+      "properties": {
+        "authorizationMode": {
+          "$ref": "#/$defs/AuthorizationMode",
+          "description": "How OpenShell treats an incoming application Authorization header. Omission leaves OpenShell's default, STRIP."
+        },
+        "targetPort": {
+          "description": "Loopback TCP port the service listens on inside the sandbox.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "targetPort"
+      ],
+      "type": "object"
     },
     "ServiceHardware": {
       "anyOf": [
