@@ -18,9 +18,10 @@ import { parseJsonFromText } from "./json-envelope.ts";
 const runDashboardRemoteBindTest =
   process.env.NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND === "1" ? test : test.skip;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-dashboard-bind";
-// Covers install, the 25-minute rebuild budget, stop/start, and audit reads, and
-// stays under the 80-minute catalogue job timeout so cleanup can still run.
-const TEST_TIMEOUT_MS = 75 * 60_000;
+// Leaves 20 minutes of the 80-minute catalogue job for the shared 10-minute
+// cleanup and workflow finalization. Real runs take 6 to 8 minutes; the per-step
+// budgets below are ceilings, not expected durations.
+const TEST_TIMEOUT_MS = 60 * 60_000;
 const REBUILD_TIMEOUT_MS = 25 * 60_000;
 const EXTRA_DASHBOARD_ORIGIN = "https://launchpad.example.test:8443";
 // Rebuild must ignore these exported values and replay the recorded origins (#13177).
