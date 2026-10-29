@@ -2862,7 +2862,7 @@ Both checks use `/health` because a managed profile can require bearer authentic
 `/health` proves only that the server answers.
 For an operator-run server, onboarding offers **Local vLLM** only when its model list reports a model with `owned_by: "vllm"`.
 A recorded NemoClaw-managed server qualifies when its `/health` endpoint returns HTTP 200.
-Another OpenAI-compatible server on this port belongs to **Other OpenAI-compatible endpoint**.
+For another OpenAI-compatible server on this port, select **Other OpenAI-compatible endpoint**.
 
 For an existing vLLM server, inspect its launch arguments:
 
