@@ -726,6 +726,8 @@ test(
       await connectDone;
     };
     cleanup.add("close interactive cross-gateway connect", stopConnect);
+    let owningGatewaySessionObserved = false;
+    let siblingGatewaySessionAbsent = false;
     try {
       const attached = await pollUntil({
         artifactPrefix: "phase-3-interactive-connect-attached",
@@ -741,6 +743,8 @@ test(
             ? "interactive connect exited before its session became visible"
             : undefined,
       });
+      owningGatewaySessionObserved = attached.value.b !== null && attached.value.b > 0;
+      siblingGatewaySessionAbsent = attached.value.a === 0;
       expect(attached.value.a).toBe(0);
       const markedList = await command(host, ["list"], {
         artifactName: "phase-3-interactive-connect-marked-list",
@@ -752,7 +756,7 @@ test(
     } finally {
       await stopConnect();
     }
-    await pollUntil({
+    const detached = await pollUntil({
       artifactPrefix: "phase-3-interactive-connect-detached",
       attempts: PROBE_ATTEMPTS,
       delayMs: PROBE_DELAY_MS,
@@ -1267,6 +1271,9 @@ test(
           !outputIncludesSandbox(listGatewayA.stdout, SANDBOX_B) &&
           outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B) &&
           !outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A),
+        owningGatewaySessionObserved,
+        siblingGatewaySessionAbsent,
+        sessionClearedAfterDisconnect: detached.value === 0,
         siblingGatewayImagePreservedByGc: siblingImagePreserved,
         gcRemovedOnlyOrphanTag: orphanTagAbsent,
         dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),
