@@ -8,6 +8,7 @@ import {
   classifyDestroyContainerIdentity,
   type DestroyContainerIdentityVerdict,
   formatAmbiguousDestroyIdentity,
+  observeDestroyContainerIdentity,
 } from "./destroy-presence";
 
 type Row = {
@@ -235,4 +236,82 @@ describe("formatAmbiguousDestroyIdentity", () => {
       'openshell.ai/managed-by="foreign", openshell.ai/sandbox-workspace="default"',
     );
   });
+});
+
+describe("observeDestroyContainerIdentity", () => {
+  const OWN = "aaaa000000000000";
+  const OTHER = "bbbb000000000000";
+  const dockerPs = (otherManagedBy: string) => () => ({
+    status: 0,
+    stdout: [
+      `${OWN}\topenshell\tdefault\tsb-own`,
+      `${OTHER}\t${otherManagedBy}\tdefault\tsb-other`,
+    ].join("\n"),
+  });
+
+  it("drops a lone container that proves another gateway namespace (#13895)", () => {
+    const observation = observeDestroyContainerIdentity(
+      "alpha",
+      () => ({ status: 0, stdout: `${OTHER}\topenshell\tdefault\tsb-other` }),
+      { readGatewayNamespace: () => "ns-own", readContainerNamespace: () => "ns-other" },
+    );
+
+    expect(observation).toEqual({ status: "observed", rows: [], malformedRows: 0 });
+  });
+
+  it.each([
+    {
+      scenario: "another proven gateway namespace",
+      gateway: "ns-own",
+      other: "ns-other",
+      managedBy: "openshell",
+      ids: [OWN],
+    },
+    {
+      scenario: "the same gateway namespace",
+      gateway: "ns-own",
+      other: "ns-own",
+      managedBy: "openshell",
+      ids: [OWN, OTHER],
+    },
+    {
+      scenario: "an unreadable container namespace",
+      gateway: "ns-own",
+      other: null,
+      managedBy: "openshell",
+      ids: [OWN, OTHER],
+    },
+    {
+      scenario: "a foreign container",
+      gateway: "ns-own",
+      other: "ns-other",
+      managedBy: "",
+      ids: [OWN, OTHER],
+    },
+    {
+      scenario: "an unproven gateway namespace",
+      gateway: null,
+      other: "ns-other",
+      managedBy: "openshell",
+      ids: [OWN, OTHER],
+    },
+  ])(
+    "drops a name-labeled container only for $scenario when it is the other one (#13895)",
+    ({ gateway, other, managedBy, ids }) => {
+      const namespaces = new Map([
+        [OWN, "ns-own"],
+        [OTHER, other],
+      ]);
+      const observation = observeDestroyContainerIdentity("alpha", dockerPs(managedBy), {
+        readGatewayNamespace: () => gateway,
+        readContainerNamespace: (id) => namespaces.get(id) ?? null,
+      });
+
+      expect(observation).toMatchObject({
+        status: "observed",
+        malformedRows: 0,
+        rows: ids.map((id) => expect.objectContaining({ id })),
+      });
+    },
+  );
 });

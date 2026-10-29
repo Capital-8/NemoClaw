@@ -2286,6 +2286,10 @@ Before changing a Docker-backed sandbox, NemoClaw inspects every container with 
 - A nonempty `openshell.ai/sandbox-workspace`
 - A nonempty `openshell.ai/sandbox-id`
 
+When several gateways share one Docker host, each gateway can use the same sandbox name in its own sandbox namespace.
+If NemoClaw can prove the scoped `openshell.ai/sandbox-namespace` of the selected gateway, `destroy` ignores OpenShell-managed containers whose namespace label names a different namespace.
+Containers without the managed-by label, containers whose namespace cannot be read, and sandboxes on a legacy gateway without a scoped namespace still count as matches.
+
 In an ordinary destroy flow, if the initial inspection cannot complete, more than one container matches, a matching container has conflicting or incomplete labels, or Docker returns malformed identity data, `destroy` exits before changing sandbox resources.
 Retained-sandbox recovery accepts multiple managed containers only when every immutable sandbox ID matches the retained recovery fingerprint.
 The identity checks still apply with `--force`, `--yes`, or `NEMOCLAW_NON_INTERACTIVE=1`; those controls authorize confirmation but do not authorize an unproven container identity.
