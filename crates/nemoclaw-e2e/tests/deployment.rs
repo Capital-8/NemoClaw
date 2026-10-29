@@ -386,73 +386,6 @@ async fn sdk_apply_cli_export_sdk_reapply_and_cli_destroy_share_state() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn declared_service_exposures_reach_the_gateway_and_survive_reapply() {
-    let mut document =
-        Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .service_exposures = [
-        (
-            "dashboard".to_owned(),
-            nemoclaw_sdk::config::ServiceExposure {
-                target_port: 18800,
-                authorization_mode: None,
-            },
-        ),
-        (
-            "api".to_owned(),
-            nemoclaw_sdk::config::ServiceExposure {
-                target_port: 8642,
-                authorization_mode: Some(
-                    nemoclaw_sdk::config::AuthorizationMode::BearerPassthrough,
-                ),
-            },
-        ),
-    ]
-    .into();
-    let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
-    let effects = lifecycle.apply().await;
-    let sent = lifecycle
-        .fixture
-        .state
-        .lock()
-        .unwrap()
-        .sandbox_exposures
-        .clone();
-    let [exposures] = sent.as_slice() else {
-        panic!("one sandbox creation must carry the exposures: {sent:?}")
-    };
-    let seen: std::collections::BTreeMap<_, _> = exposures
-        .iter()
-        .map(|exposure| {
-            (
-                exposure.service.clone(),
-                (exposure.target_port, exposure.authorization_mode),
-            )
-        })
-        .collect();
-    assert_eq!(seen.len(), 2, "{exposures:?}");
-    assert_eq!(seen["dashboard"].0, 18800);
-    assert_eq!(seen["api"].0, 8642);
-    // An omitted mode stays omitted, so OpenShell applies its own default.
-    assert_eq!(
-        seen["dashboard"].1,
-        openshell_core::proto::ServiceAuthorizationMode::Unspecified as i32
-    );
-    assert_eq!(
-        seen["api"].1,
-        openshell_core::proto::ServiceAuthorizationMode::BearerPassthrough as i32
-    );
-    // Reapplying the unchanged document, and exporting it, change nothing.
-    lifecycle.export_and_reapply_unchanged(effects).await;
-    lifecycle.destroy();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
 async fn separate_agent_sandboxes_cli_export_reapply_and_policy_drift() {
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
@@ -562,17 +495,14 @@ async fn api_integration_applies_exports_and_reapplies_unchanged() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn network_grants_apply_export_and_reapply_unchanged() {
-    // Grants added to the isolated preset reach the sandbox's managed policy
-    // and survive export and re-apply.
+async fn network_grants_and_service_exposures_apply_export_and_reapply_unchanged() {
+    // Grants added to the isolated preset reach the sandbox's managed policy,
+    // and service exposures reach its creation request; both survive export
+    // and re-apply.
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .network = serde_json::from_value(serde_json::json!({
+    let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
+    sandbox.network = serde_json::from_value(serde_json::json!({
         "tier": "isolated",
         "grants": {"docs": {"endpoints": [{
             "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
@@ -580,8 +510,50 @@ async fn network_grants_apply_export_and_reapply_unchanged() {
         }]}}
     }))
     .unwrap();
+    sandbox.service_exposures = serde_json::from_value(serde_json::json!({
+        "dashboard": {"targetPort": 18800},
+        "api": {"targetPort": 8642, "authorizationMode": "BEARER_PASSTHROUGH"}
+    }))
+    .unwrap();
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
+    let sent = lifecycle
+        .fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandbox_exposures
+        .clone();
+    let [exposures] = sent.as_slice() else {
+        panic!("one sandbox creation must carry the exposures: {sent:?}")
+    };
+    let mut seen: Vec<_> = exposures
+        .iter()
+        .map(|exposure| {
+            (
+                exposure.service.as_str(),
+                exposure.target_port,
+                exposure.authorization_mode,
+            )
+        })
+        .collect();
+    seen.sort();
+    // An omitted mode stays omitted, so OpenShell applies its own default.
+    assert_eq!(
+        seen,
+        [
+            (
+                "api",
+                8642,
+                openshell_core::proto::ServiceAuthorizationMode::BearerPassthrough as i32
+            ),
+            (
+                "dashboard",
+                18800,
+                openshell_core::proto::ServiceAuthorizationMode::Unspecified as i32
+            ),
+        ]
+    );
     lifecycle.export_and_reapply_unchanged(effects).await;
     lifecycle.destroy();
 }
