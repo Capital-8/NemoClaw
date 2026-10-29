@@ -137,6 +137,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/portable-sandbox-build-diagnostics.test.ts",
+      "test": "reserves live-test time for bounded image, gateway, create, lifecycle, and cleanup work (#13482)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "binds the exact PR publication to the generic NVIDIA GPU job",
       "category": "security"
@@ -435,6 +440,11 @@
       "file": "test/install/installer-supervisor-manifest-trust.test.ts",
       "test": "accepts the prospective shared gateway state resolver template (#10544)",
       "category": "security"
+    },
+    {
+      "file": "test/install/upgrade-bundled-npm.test.ts",
+      "test": "keeps the DCode image upgrade cache out of native home when the command exits %i (#13241)",
+      "category": "compatibility"
     },
     {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
