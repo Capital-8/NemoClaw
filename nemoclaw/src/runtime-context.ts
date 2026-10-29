@@ -174,10 +174,21 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
     const rawSubject = source
       .slice(action?.[0].length ?? 0)
       .trimStart()
-      .replace(/^(?:['’]s|is|are|was|were)\s+/iu, "");
+      .replace(/^(?:['’]s|is|are|was|were)\s+/iu, "")
+      // Result instructions do not extend the local inspection target. Keep
+      // external topics out of this normalization and inspect the full source.
+      .replace(
+        /(?:,\s*(?:(?:and(?:\s+then)?|then)\s+)?|\b(?:and(?:\s+then)?|then)\s+)(?:please\s+)?(?:return|list|print|report|output)\s+(?:(?:all|the|their|its|these|those|matching|matched|resulting|relevant|affected|a|an|short|brief)\s+)*(?:file\s+(?:paths?|names?)|filenames?|files?|paths?|matches|results?|findings?|locations?|line\s+numbers?|summary|names?)(?:[,\s]+(?:please|thanks|thank\s+you|for\s+(?:me|us)))*[.!?\s]*$/iu,
+        "",
+      );
     const navigationTarget = (navigationSubject: string): string | undefined =>
-      /^(?:for\s+)?(?:(?:all|the|a|an|which)\s+)?(?:(?:current|latest|recent|existing)\s+)?(?:where\s+(.+?)\s+(?:is|are)\s+(?:called|invoked|defined|declared|implemented|imported|exported|used|referenced|tested)|(?:functions?|methods?|class(?:es)?|modules?)\s+(?:(?:that|which)\s+)?(?:calls?|invokes?|uses?|references?|imports?|exports?|implements?)\s+(.+?)|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?\s+(?:(?:that|which)\s+)?(?:covers?|covering|exercises?|exercising|calls?|calling|tests?|testing|imports?|importing)\s+(.+?)|(?:unit|integration|regression)\s+tests?(?:\s+cases?)?\s+for\s+(.+?)|(?:callers?|call\s+sites?|references?|definitions?|declarations?|implementations?|imports?|exports?|usages?|test\s+coverage)\s+(?:of|to|for)\s+(.+?)|(.+?)['’]s\s+(?:callers?|call\s+sites?))\s*[.!?]*\s*$/iu
-        .exec(navigationSubject)
+      /^(?:for\s+)?(?:(?:all|the|a|an|which)\s+)?(?:(?:current|latest|recent|existing)\s+)?(?:where\s+(.+?)\s+(?:is|are)\s+(?:called|invoked|defined|declared|implemented|imported|exported|used|referenced|tested)|(?:functions?|methods?|class(?:es)?|modules?)\s+(?:(?:that|which)\s+)?(?:calls?|invokes?|uses?|references?|imports?|exports?|implements?)\s+(.+?)|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?\s+(?:(?:that|which)\s+)?(?:covers?|covering|exercises?|exercising|calls?|calling|tests?|testing|imports?|importing)\s+(.+?)|(?:unit|integration|regression)\s+tests?(?:\s+cases?)?\s+for\s+(.+?)|(?:callers?|call\s+sites?|references?|definitions?|declarations?|implementations?|imports?|exports?|usages?|test\s+coverage)\s+(?:of|to|for)\s+(.+?)|(.+?)['’]s\s+(?:callers?|call\s+sites?))$/iu
+        .exec(
+          navigationSubject
+            .trim()
+            .replace(/[.!?]+$/u, "")
+            .trimEnd(),
+        )
         ?.slice(1)
         .find(Boolean);
     const rawNavigationTarget = navigationTarget(rawSubject);
@@ -228,7 +239,7 @@ function classifyResearchScope(prompt: string): ResearchRequestScope {
     const localSource =
       localCodeNavigation ||
       localCodeInspection ||
-      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)*\/|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
+      /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:this|the|our|my|your)\s+)?(?:file\s+)?(?:local\s+(?:files?|logs?|memory|repository|repo|workspace|codebase|project|directory|sources?|docs|documentation)\b|sandbox\b|(?:current\s+(?:working\s+)?|working\s+)directory\b|(?:logs|memory|repository|repo|workspace|codebase|project|function|conversation|code)\b|[`"']?(?:\.?\.?\/)[^\s]+|[`"']?(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*(?![\w-]|\.[\w-])|[`"']?\.[\w-]+\b|[`"']?[\w.-]+(?:\/[\w.-]+)*\/|[`"']?[\w.-]+(?:\/[\w.-]+)+|[`"'][\w.-]+[`"']|[`"']?(?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|[cm]?[jt]sx?|json|ya?ml|toml|py|sh)\b)(?:\s+(?:files?|docs|directory|sources?|logs?|code|recursively|layout))*[`"']?(?=\s*(?:[.!?,;:]|$)|\s+(?:for|to|and|then)\b)/iu.test(
         subject,
       ) ||
       /(?:^|\b(?:in|from|within|under|through)\s+)(?:(?:why|how)\s+|(?:the\s+)?(?:root\s+)?cause\s+of\s+)?(?:(?:(?:this|these|those|our|my|the|your|a|an)\s+)?(?:(?:(?:failing|failed|broken)\s+)?(?:(?:unit|integration)\s+)?tests?|(?:build|test)\s+(?:error|failure|output|results?))|shell\s+history)\b(?=\s*(?:[.!?,;:]|$)|\s+(?:(?:(?:is|are|was|were|has|have|had|keeps?|kept)\s+)?fail(?:s|ed|ing)?|for|to|and|then)\b)/iu.test(

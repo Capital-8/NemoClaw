@@ -64,6 +64,26 @@ const modifiedLocalRequestPrompts = [
   "Find callers of first recursively.",
   "Find callers of please recursively.",
   "Find the definition of recursively please.",
+  "Find the current git branch and return the results.",
+  "Find all files recursively and list the results.",
+  "Discover web_fetch and return its name.",
+];
+
+const localSourceAndOutputPrompts = [
+  "Search auth.test.ts for failing assertions.",
+  "Search server.integration.spec.ts for failing assertions.",
+  "Search package.dev.json for the build script.",
+  "Search `ci.workflow.yaml` for the test command.",
+  "Find all callers of handleRequest and return their file paths.",
+  "Search for TODO comments and list the matching files.",
+  "Find where handleRequest is called, then print the results.",
+  "Locate unit tests covering handleRequest and report their locations.",
+  "Find unused imports and output the matches.",
+  "Find dead code and return a summary.",
+  "Search for TODO comments, list matching files.",
+  "Find callers of first recursively and return their file paths please.",
+  "Find callers of please and return file paths.",
+  "Search auth.test.ts for failing assertions and list their line numbers.",
 ];
 
 const mockedLoadState = vi.mocked(loadState);
@@ -164,6 +184,45 @@ describe("registerRuntimeContext", () => {
     vi.clearAllMocks();
     mockedLoadState.mockReturnValue(blankState());
   });
+
+  it.each(localSourceAndOutputPrompts)(
+    "preserves tools and local sources for filenames and result instructions: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
+        "toolsAllow",
+      );
+      expect(suppliedSearchSources(prompt)).toEqual({ local: true, urls: [] });
+    },
+  );
+
+  it.each([
+    ...localSourceAndOutputPrompts.flatMap((prompt) => [
+      `${prompt.replace(/[.!?]$/u, "")} using Tavily.`,
+      `${prompt} Then search the web for solutions.`,
+      `${prompt} Then find official installation documentation.`,
+    ]),
+    "Find all callers of handleRequest and return today's stock prices.",
+    "Search for TODO comments and list the latest weather forecast.",
+    "Find all callers of handleRequest and return their file paths and current stock prices.",
+    "Search for TODO comments and list the matching files from the web.",
+  ])(
+    "withholds tools when filenames or result instructions include external research: %s",
+    async (prompt) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      registerRuntimeContext(api, defaultConfig);
+
+      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
+        "toolsAllow",
+        [],
+      );
+      expect(suppliedSearchSources(prompt)).toBeUndefined();
+    },
+  );
 
   it.each(modifiedLocalRequestPrompts)(
     "preserves tools for local requests with modifiers or polite suffixes: %s",
