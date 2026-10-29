@@ -307,6 +307,8 @@ describe("common-egress agent parsing and classification helpers", () => {
           expectedContentMatches: true,
           expectedUrlMatches: true,
           httpSuccess: true,
+          httpStatus: 200,
+          toolError: false,
           maxCharsWithinLimit: true,
           paired: true,
           resultSuccess: true,

@@ -13,6 +13,9 @@
  */
 
 import fs from "node:fs";
+import type { TestProgress } from "../fixtures/progress.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { observeForwardRestart } from "../fixtures/forward-restart-observation.ts";
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -371,6 +374,9 @@ async function selectAndVerifyActiveGateway(
 }
 
 async function stopStartSurvivor(
+  host: HostCliClient,
+  artifacts: ArtifactSink,
+  progress: TestProgress,
   sandbox: SandboxClient,
   sandboxName: string,
   gatewayName: string,
@@ -380,23 +386,60 @@ async function stopStartSurvivor(
   readonly start: ShellProbeResult;
   readonly phase: string;
 }> {
-  const stop = await sandbox.openshell(["sandbox", "stop", sandboxName], {
-    artifactName: `${artifactPrefix}-stop`,
+  const listener = async (stage: string) => {
+    const evidence = await host.inspectOpenShellForwardListener(DASHBOARD_PORT_A, sandboxName, {
+      env: { ...openshellEnvForGateway(gatewayName), NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A },
+      artifactName: `${artifactPrefix}-${stage}-dashboard-listener`,
+    });
+    await artifacts.writeJson(`actions/${artifactPrefix}-${stage}-dashboard-listener.json`, {
+      observedAt: new Date().toISOString(),
+      valid: evidence.valid,
+      pid: evidence.pid ?? null,
+    });
+  };
+  await listener("before-restart");
+  return observeForwardRestart({
+    progress,
+    executable: host.openshellCommandPath,
+    args: [
+      "--gateway",
+      gatewayName,
+      "--workspace",
+      "default",
+      "forward",
+      "service",
+      sandboxName,
+      "--target-port",
+      DASHBOARD_PORT_A,
+      "--target-host",
+      "127.0.0.1",
+      "--local",
+      "127.0.0.1:0",
+    ],
     env: commandEnv(),
-    timeoutMs: 120_000,
+    record: (observation) =>
+      artifacts.writeJson(`actions/${artifactPrefix}-forward-observation.json`, observation),
+    restart: async () => {
+      const stop = await sandbox.openshell(["sandbox", "stop", sandboxName], {
+        artifactName: `${artifactPrefix}-stop`,
+        env: commandEnv(),
+        timeoutMs: 120_000,
+      });
+      const start = await sandbox.openshell(["sandbox", "start", sandboxName], {
+        artifactName: `${artifactPrefix}-start`,
+        env: commandEnv(),
+        timeoutMs: 120_000,
+      });
+      const phase = await waitForSandboxReady(
+        sandbox,
+        sandboxName,
+        gatewayName,
+        `${artifactPrefix}-ready`,
+      );
+      await listener("after-restart");
+      return { stop, start, phase };
+    },
   });
-  const start = await sandbox.openshell(["sandbox", "start", sandboxName], {
-    artifactName: `${artifactPrefix}-start`,
-    env: commandEnv(),
-    timeoutMs: 120_000,
-  });
-  const phase = await waitForSandboxReady(
-    sandbox,
-    sandboxName,
-    gatewayName,
-    `${artifactPrefix}-ready`,
-  );
-  return { stop, start, phase };
 }
 
 async function prerequisiteOrSkip(
@@ -868,6 +911,9 @@ test(
       `selected A=${resultText(gatewayASelectionBeforeCleanupDestroy.select)}; active list=${resultText(gatewayASelectionBeforeCleanupDestroy.list)}; destroy=${resultText(destroyBWithGatewayCleanup)}; gateway B=${resultText(gatewayBStoppedAfterCleanupDestroy)}; gateway registry=${resultText(gatewayRegistryAfterCleanupDestroy)}; gateway A before=${gatewayAProcessBeforeCleanupDestroy}; gateway A after=${gatewayAProcessAfterCleanupDestroy}; survivor port=${resultText(liveSurvivorAfterCleanupDestroy.gatewayPort)}; list=${resultText(liveSurvivorAfterCleanupDestroy.scopedList)}; dashboard=${liveSurvivorAfterCleanupDestroy.dashboard.map(resultText).join("\\n")}`,
     ).toBe(true);
     const survivorRestartAfterCleanupDestroy = await stopStartSurvivor(
+      host,
+      artifacts,
+      progress,
       sandbox,
       SANDBOX_A,
       gatewayA,
@@ -1006,6 +1052,9 @@ test(
       `selected A=${resultText(gatewayASelectionBeforeRetainedDestroy.select)}; active list=${resultText(gatewayASelectionBeforeRetainedDestroy.list)}; destroy=${resultText(destroyBWithoutGatewayCleanup)}; gateway B=${resultText(gatewayBRetainedAfterDestroy)}; gateway registry=${resultText(gatewayRegistryAfterRetainedDestroy)}; sandbox B=${resultText(sandboxBAfterRetainedDestroy)}; gateway A=${gatewayAProcessAfterRetainedDestroy}; survivor port=${resultText(liveSurvivorAfterRetainedDestroy.gatewayPort)}; list=${resultText(liveSurvivorAfterRetainedDestroy.scopedList)}; dashboard=${liveSurvivorAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
     ).toBe(true);
     const survivorRestartAfterRetainedDestroy = await stopStartSurvivor(
+      host,
+      artifacts,
+      progress,
       sandbox,
       SANDBOX_A,
       gatewayA,

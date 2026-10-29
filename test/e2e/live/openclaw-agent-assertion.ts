@@ -136,6 +136,7 @@ export async function runOpenClawAgentAssertion(
       }
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
+        collectToolEvidence: args.publicFetchExpectation !== undefined && !classification.passed,
         label: args.label,
         recordToolEvidenceReductionFailure: async (failure) => {
           await artifacts.writeJson(
@@ -191,5 +192,66 @@ export async function runOpenClawAgentAssertion(
     }
   });
   if (execution.outcome === "passed" && successfulEvidence) return successfulEvidence;
+  if (args.publicFetchExpectation) {
+    await capturePublicFetchFailureProbe(
+      sandbox,
+      artifacts,
+      args.sandboxName,
+      args.label,
+      args.publicFetchExpectation.url,
+    );
+  }
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
+}
+
+/** A separate request can corroborate reachability, but cannot prove the tool request's response. */
+export async function capturePublicFetchFailureProbe(
+  sandbox: SandboxClient,
+  artifacts: ArtifactSink,
+  sandboxName: string,
+  label: string,
+  url: string,
+): Promise<void> {
+  const observedAt = new Date().toISOString();
+  try {
+    const result = await sandbox.exec(
+      sandboxName,
+      [
+        "curl",
+        "--silent",
+        "--show-error",
+        "--proto",
+        "=https",
+        "--max-time",
+        "15",
+        "--max-redirs",
+        "0",
+        "--output",
+        "/dev/null",
+        "--write-out",
+        "%{http_code}",
+        "--",
+        url,
+      ],
+      { env: commandEnv(), persistArtifacts: false, timeoutMs: 20_000 },
+    );
+    await artifacts.writeJson(`actions/${label}-separate-http-probe.json`, {
+      schemaVersion: 1,
+      source: "separate-sandbox-curl-request",
+      observedAt,
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      httpStatus: /^[1-5][0-9]{2}$/.test(result.stdout.trim())
+        ? Number(result.stdout.trim())
+        : null,
+    });
+  } catch {
+    await artifacts.writeJson(`actions/${label}-separate-http-probe.json`, {
+      schemaVersion: 1,
+      source: "separate-sandbox-curl-request",
+      observedAt,
+      unavailable: true,
+    });
+  }
 }
