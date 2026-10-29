@@ -159,7 +159,7 @@ The first two tests end with export, unchanged reapply, and destroy.
 ```sh
 cargo build -p nemoclaw-test-fixtures
 NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
-  cargo test -p nemoclaw-e2e --test integration -- --ignored hcl_integration::
+  cargo test -p nemoclaw-e2e --test integration -- --ignored --test-threads=1 hcl_integration::
 ```
 
 A scenario is a document in `hcl/cases`, shared with the live E2E suites that `nemoclaw-hcl-e2e` runs from `hcl/tests`, and an integration test file with the same name:
@@ -186,7 +186,8 @@ A test file runs four steps:
 Docker scenarios mock the Docker provider by its generated alias and give mocked resources the IDs the `fixtures` module declares. One fixed engine socket, `/tmp/nemoclaw-integration/engine.sock`, gives every scenario the same alias and image addresses.
 A run that is expected to fail lists the checkable object in `expect_failures`. A targeted plan does not evaluate locals or module outputs.
 
-The runner runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tftest.hcl` for each scenario, resetting the fixtures between scenarios.
+The runner deals the scenarios round-robin across four tests, `scenarios_in_shard_1` to `scenarios_in_shard_4`, so each stays within the lifecycle per-test budget. They share the fixed engine socket, so nextest's `hcl-integration` test group runs one at a time on a runner, and `cargo test` needs `--test-threads=1`.
+Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tftest.hcl` for each scenario, resetting the fixtures between scenarios.
 After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
 When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
 The [Integration / HCL](../../.github/workflows/hcl-integration.yml) workflow runs the scenarios on Linux, summarizes each one, and uploads that evidence when a scenario fails.

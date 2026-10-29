@@ -74,7 +74,7 @@ jobs:
           set -o pipefail
           NEMOCLAW_TEST_BUNDLE="$GITHUB_WORKSPACE/dist/$TEST_PLATFORM" \
             cargo test --locked -p nemoclaw-e2e --test integration hcl_integration:: \
-            -- --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/hcl-integration.log"
+            -- --ignored --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/hcl-integration.log"
       - name: Summarize scenarios
         if: always()
         run: |

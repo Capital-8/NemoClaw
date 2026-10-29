@@ -68,6 +68,11 @@ slow-timeout = { period = "12s", terminate-after = 2 }
 filter = 'binary_id(=openshell-provider::contract)'
 slow-timeout = { period = "8s", terminate-after = 2 }
 
+
+# The tofu test integration shards share one fixed engine socket.
+[[profile.lifecycle.overrides]]
+filter = 'test(/^hcl_integration::/)'
+test-group = "hcl-integration"
 # Real Docker and OpenTofu; run through `cargo ci live-docker`, which builds the
 # images and owned inputs these tests read. The Docker tests share one engine,
 # so they run one at a time; the offline runtime rebuild uses no engine and
@@ -117,6 +122,7 @@ store-failure-output = false
 [test-groups]
 docker-engine = { max-threads = 1 }
 build-integration = { max-threads = 2 }
+hcl-integration = { max-threads = 1 }
 
 # Every live Docker test uses the engine.
 [[profile.live-docker.overrides]]

@@ -37,9 +37,36 @@ struct Scenario {
     credentials: BTreeMap<String, String>,
 }
 
+/// Scenarios are dealt round-robin across shards, so each test stays within
+/// the lifecycle per-test budget; nextest runs the shards one at a time on a
+/// runner, because they share the fixed engine socket.
+const SHARDS: usize = 4;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn every_scenario_passes_under_tofu_test() {
+async fn scenarios_in_shard_1() {
+    run_shard(0).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn scenarios_in_shard_2() {
+    run_shard(1).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn scenarios_in_shard_3() {
+    run_shard(2).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
+async fn scenarios_in_shard_4() {
+    run_shard(3).await;
+}
+
+async fn run_shard(shard: usize) {
     let bundle = Bundle::from_env();
     let root = Path::new(HCL).join("integration");
     let mut tests: Vec<String> = fs::read_dir(root.join("tests"))
@@ -50,7 +77,7 @@ async fn every_scenario_passes_under_tofu_test() {
         })
         .collect();
     tests.sort();
-    assert!(!tests.is_empty(), "no integration scenarios");
+    assert!(tests.len() >= SHARDS, "every shard needs a scenario");
 
     let fixtures = Fixtures::start().await;
     let directory = tempfile::tempdir().unwrap();
@@ -156,7 +183,8 @@ async fn every_scenario_passes_under_tofu_test() {
         .map(PathBuf::from)
         .unwrap_or_else(|| directory.path().join("evidence"));
     let mut failed = Vec::new();
-    for scenario in &scenarios {
+    // OpenTofu loads every test file, so every scenario is compiled; this shard runs its own.
+    for scenario in scenarios.iter().skip(shard).step_by(SHARDS) {
         fixtures.reset(scenario.credentials.clone());
         let mut environment = base.clone();
         environment.extend(scenario.environment.clone());
