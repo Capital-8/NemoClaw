@@ -319,6 +319,39 @@ describe("explicit MCP migration", () => {
     expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("rejects Deep Agents migration when rebuild fills native capacity before registration or legacy cleanup", async () => {
+    const deepEntry = {
+      ...entry,
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config" as const,
+    };
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: deepEntry.agent });
+    mocks.getAgent.mockReturnValue({
+      name: deepEntry.agent,
+      displayName: "Deep Agents Code",
+      mcpCapability: { support: "bridge", adapter: deepEntry.adapter },
+    });
+    mocks.getAdapter.mockReturnValue(deepEntry.adapter);
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: { github: deepEntry },
+      sources: { native: {}, legacy: { github: deepEntry } },
+    });
+    const rebuildSandbox = vi.fn().mockImplementation(async () => {
+      mocks.inspectSources.mockReturnValue({
+        native: {},
+        legacy: { github: deepEntry },
+        nativeServerNames: Array.from({ length: 64 }, (_, index) => `local-${String(index)}`),
+      });
+    });
+
+    await expect(migrateMcpBridges("alpha", { apply: true, rebuildSandbox })).rejects.toThrow(
+      "Deep Agents managed MCP supports at most 64 servers; refusing to render a 65-server mutation.",
+    );
+    expect(rebuildSandbox).toHaveBeenCalledWith("alpha");
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+  });
+
   it("does not report Deep Agents migration success when legacy cleanup fails", async () => {
     const deepEntry = {
       ...entry,
