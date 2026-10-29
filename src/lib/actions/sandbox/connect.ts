@@ -2551,9 +2551,7 @@ export async function connectSandbox(
   sandboxName: string,
   options: SandboxConnectOptions = {},
 ): Promise<void> {
-  const timeoutRangeError = connectInferenceTimeoutRangeError(
-    readConnectSandbox(sandboxName)?.provider,
-  );
+  const timeoutRangeError = connectInferenceTimeoutRangeError(readConnectSandbox(sandboxName));
   if (timeoutRangeError) {
     console.error(`  ${timeoutRangeError}`);
     process.exit(1);

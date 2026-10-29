@@ -16,6 +16,7 @@ import {
   LOCAL_INFERENCE_TIMEOUT_SECS,
   localInferenceTimeoutRangeError,
 } from "../../onboard/env";
+import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
 import { listPublishedSandboxesAcrossGatewayRoots } from "../../state/registry/cross-port";
 
@@ -41,13 +42,19 @@ export function connectInferenceRouteMutationRequest(
 
 /**
  * Connect can re-point the route of these providers with the local inference
- * timeout. Report an unsupported value before connect changes anything.
+ * timeout. Report an unsupported value before connect changes anything. A
+ * native provider attachment is checked without a shared-route mutation, so
+ * the timeout does not reach `openshell inference set` there.
  */
 export function connectInferenceTimeoutRangeError(
-  provider: string | null | undefined,
+  sandbox: SandboxEntry | null | undefined,
   env: Record<string, string | undefined> = process.env,
 ): string | null {
-  return provider && LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS.includes(provider)
+  const provider = sandbox?.provider;
+  return provider &&
+    LOCAL_INFERENCE_TIMEOUT_ROUTE_PROVIDERS.includes(provider) &&
+    !recordedNativeProviderAttachment(sandbox) &&
+    sandbox.nativeLocalProviderAttachment === undefined
     ? localInferenceTimeoutRangeError(env)
     : null;
 }

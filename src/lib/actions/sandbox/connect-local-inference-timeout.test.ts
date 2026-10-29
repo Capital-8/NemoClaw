@@ -12,29 +12,51 @@ import {
   createConnectHarness,
   requireDist,
 } from "../../../../test/support/connect-flow-test-harness";
+import type { SandboxEntry } from "../../state/registry";
 import { connectInferenceTimeoutRangeError } from "./connect-inference-gateway";
 
 describe("connect local inference timeout range (#13734)", () => {
+  const sandbox = (fields: Partial<SandboxEntry>) => ({ name: "alpha", ...fields }) as SandboxEntry;
+
   it.each(["compatible-endpoint", "ollama-local", "vllm-local"])(
     "rejects an unsupported timeout for %s",
     (provider) => {
       expect(
-        connectInferenceTimeoutRangeError(provider, { NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "3601" }),
+        connectInferenceTimeoutRangeError(sandbox({ provider }), {
+          NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "3601",
+        }),
       ).toBe('NEMOCLAW_LOCAL_INFERENCE_TIMEOUT must be from 1 to 3600 seconds; got "3601".');
       expect(
-        connectInferenceTimeoutRangeError(provider, { NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "3600" }),
+        connectInferenceTimeoutRangeError(sandbox({ provider }), {
+          NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "3600",
+        }),
       ).toBeNull();
     },
   );
 
-  it.each(["nvidia-prod", "openai-api", null, undefined])(
-    "ignores the timeout for %s, whose route does not carry it",
-    (provider) => {
-      expect(
-        connectInferenceTimeoutRangeError(provider, { NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "7200" }),
-      ).toBeNull();
-    },
-  );
+  it.each([
+    sandbox({ provider: "nvidia-prod" }),
+    sandbox({ provider: "openai-api" }),
+    sandbox({}),
+    null,
+    undefined,
+  ])("ignores the timeout for %o, whose route does not carry it", (entry) => {
+    expect(
+      connectInferenceTimeoutRangeError(entry, { NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "7200" }),
+    ).toBeNull();
+  });
+
+  it("ignores the timeout for a native local provider attachment, which connect checks without a route mutation", () => {
+    expect(
+      connectInferenceTimeoutRangeError(
+        sandbox({
+          provider: "ollama-local",
+          nativeLocalProviderAttachment: {} as SandboxEntry["nativeLocalProviderAttachment"],
+        }),
+        { NEMOCLAW_LOCAL_INFERENCE_TIMEOUT: "7200" },
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("connectSandbox local inference timeout (#13734)", () => {
