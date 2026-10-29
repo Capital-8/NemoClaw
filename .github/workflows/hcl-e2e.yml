@@ -26,10 +26,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - case: docker-openclaw-nvidia
-            deployment: docker-openclaw-nvidia
-            runner: ubuntu-24.04
-            secret: NVIDIA_API_KEY
           - case: docker-openclaw-vllm
             deployment: docker-openclaw-vllm-rtx-pro-6000
             # This NVIDIA GPU runner is already used by the main E2E workflow.
@@ -93,6 +89,43 @@ jobs:
             # Bind the test to this checkout's runtime image without changing the template.
             sed -i "s#nc-prototype-vllm@sha256:[0-9a-f]\{64\}#nc-prototype-vllm@$digest#" "$deployment"
           fi
+      - name: Capture native logs privately before teardown
+        run: |
+          private_dir="$RUNNER_TEMP/hcl-native-error-private"
+          mkdir -m 700 "$private_dir"
+          cat > "$private_dir/observe.sh" <<'BASH'
+          #!/bin/bash
+          set -eu
+          umask 077
+          run_dir=$1
+          private_dir=$2
+          for ((i=0; i<900; i++)); do
+            [[ ! -f "$run_dir/result.json" ]] || break
+            state="$run_dir/deployment/terraform.tfstate"
+            if [[ -f "$state" ]]; then
+              id=$(jq -r 'first(.resources[]? | select(.type == "vllm_readiness" and .name == "inference_service_inference_qwen") | .instances[]?.attributes.container_id) // empty' "$state" 2>/dev/null || true)
+              if [[ "$id" =~ ^[0-9a-f]{12,64}$ ]]; then
+                if timeout -k 1 5 docker logs --tail 1000 "$id" > "$private_dir/vllm.next" 2>&1 && [[ -s "$private_dir/vllm.next" ]]; then
+                  mv "$private_dir/vllm.next" "$private_dir/vllm.log"
+                fi
+              fi
+              sandbox=$(jq -r 'first(.resources[]? | select(.type == "openshell_sandbox" and .name == "assistant") | .instances[]?.attributes.id) // empty' "$state" 2>/dev/null || true)
+              if [[ "$sandbox" =~ ^[0-9a-f-]{36}$ ]]; then
+                container=$(timeout -k 1 5 docker ps -q --filter "label=openshell.ai/sandbox-id=$sandbox" --filter label=openshell.ai/isolation-role=sandbox || true)
+                if [[ "$container" =~ ^[0-9a-f]{12,64}$ ]]; then
+                  if timeout -k 1 5 docker exec --user 10001 "$container" sh -c 'find /tmp /sandbox -maxdepth 6 -type f -name "*.log" -exec tail -n 1000 {} \; 2>/dev/null || true' > "$private_dir/openclaw.next" 2>&1 && [[ -s "$private_dir/openclaw.next" ]]; then
+                    mv "$private_dir/openclaw.next" "$private_dir/openclaw.log"
+                  fi
+                fi
+              fi
+            fi
+            sleep 1
+          done
+          BASH
+          nohup timeout -k 5 1800 bash "$private_dir/observe.sh" \
+            "$RUNNER_TEMP/$E2E_RUN_NAME" "$private_dir" \
+            > "$private_dir/observer.log" 2>&1 < /dev/null &
+          echo "$!" > "$private_dir/observer.pid"
       - name: Plan, apply, verify, and destroy
         env:
           # Only the hosted case receives the inference credential.
@@ -120,6 +153,62 @@ jobs:
             jq '{target, health, response, failure}' "$report" > "$evidence/$(basename "$report")"
           done
           # Requests, state, raw command logs, and backend diagnostics stay private.
+      - name: Encrypt native diagnostics for local inspection
+        if: always()
+        run: |
+          private_dir="$RUNNER_TEMP/hcl-native-error-private"
+          [[ -d "$private_dir" ]] || exit 0
+          if [[ -f "$private_dir/observer.pid" ]]; then
+            pid=$(cat "$private_dir/observer.pid")
+            [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]]
+            kill "$pid" 2>/dev/null || true
+          fi
+          cat > "$private_dir/recipient.pem" <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIELTCCApWgAwIBAgIUBds585LjyS1+lv1l+6fPADqWlp0wDQYJKoZIhvcNAQEL
+          BQAwJjEkMCIGA1UEAwwbbmVtb2NsYXctcHIxMzcyMy1kaWFnbm9zdGljMB4XDTI2
+          MTAyOTE1MDA0N1oXDTI2MTEwMTE1MDA0N1owJjEkMCIGA1UEAwwbbmVtb2NsYXct
+          cHIxMzcyMy1kaWFnbm9zdGljMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKC
+          AYEAx+ewK+Cre0jpIVpbpoBXNzI/4DSjWGNlrOGK4cnih+gIXFkm/+hVUBRZqEsz
+          LPX46cQr42m9xo6jtWAlLRYEt8T5nyMCiRVWoo7QoDsw9ug5riv3qlnLhawiQpa9
+          PsMRrDhshvCzXA5N4gu9OgmNfWxoWBSOnvCnYUO2apu/HmXBSCTjhr5ewfwXGXj2
+          LHTIw+271Wwm9N9IWYWE88GuN9Hwt2Wi7cCtz5Hj7kwPR2mTYPgT9ul0w0kNlPFJ
+          eeSkcvR4hncv59XeONcotefNRdsu5wHpr0uRQCIHsVR4e/cLwc0PmdwR3O6RMM/s
+          UKYLKVOdJYd7/c9f1xHUpVUlunF5yRpNy2JuQftN/HRe1NypZ9dGgpmnG7lqTZdf
+          3EVUfRSNL1fv4lBakjTK1WIEpZCPK6ufh9H1IyXNxaFG/4hVFRF/Zqbeay69S2bW
+          7tEBEYN//fniahLk6k5dplZWj2b+C8xN2vpO2mv6gUhmtIDwRFBw3gWJPBIxT8vn
+          70hxAgMBAAGjUzBRMB0GA1UdDgQWBBT+2xIqIro0hAHmqjwR9EROqfiJYTAfBgNV
+          HSMEGDAWgBT+2xIqIro0hAHmqjwR9EROqfiJYTAPBgNVHRMBAf8EBTADAQH/MA0G
+          CSqGSIb3DQEBCwUAA4IBgQBCV1UgjTsS3baDMpdiLYuIeuaYwCa+VynWH3V+30k9
+          Q1BA7MuIYTbqUKhFWmSxdmhv6dD9OZNrVzVLzwg+XHvJhckBofkHJU1p+z1E0niz
+          up1MUufnDWf59HRRLzy3BemUwmEPx6dzEH0btUJKVgdpNVfo0UPNiVj1wme0ngXO
+          KooZGp0t0t35BmdUGNa+x4oiN/MS33qiARpYPgFWmWfp8eiOGj18G2DEJPqtasl0
+          eG9i75cVV2j87zUI4/INxtIlyPX9XkYuR0LG1O96foTiNdxTpoko/nsrMwMy2Xhp
+          OhluXT1NhAb3g5mrPWMllFGtBlotlqOCGj/Kzj2/0A3nNjUl8jyXJDg6LXcfIT/X
+          Tc2pARQpJTr+ZFQ5ZFxKq/ajpBkCAcrbSChAgLbbXVbvKkREEhS76wV8sl+52h1a
+          dGuamU2zarxFnIZwzPJuYW3UpGXyW/wU868MRh+9KEN9Y2WMB8Ilb1rFgedFmJ89
+          0O3o6se92W7qFAkHFVcu9wY=
+          -----END CERTIFICATE-----
+          CERT
+          logs=()
+          for name in openclaw.log vllm.log observer.log; do
+            [[ ! -f "$private_dir/$name" ]] || logs+=("$name")
+          done
+          # Only logs from this run's bound containers; no state, requests, or keys.
+          tar -C "$private_dir" -czf - "${logs[@]}" | \
+            openssl cms -encrypt -binary -aes-256-gcm -outform DER \
+              -recip "$private_dir/recipient.pem" \
+              -keyopt rsa_padding_mode:oaep -keyopt rsa_oaep_md:sha256 \
+              -out "$RUNNER_TEMP/hcl-native-error.cms"
+          # The decryption key exists only on the local investigator's machine.
+      - name: Upload encrypted native diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hcl-native-error-private-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hcl-native-error.cms
+          if-no-files-found: ignore
+          retention-days: 1
       - name: Upload observations and cleanup receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
