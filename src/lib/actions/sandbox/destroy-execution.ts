@@ -58,7 +58,7 @@ import {
   classifyDestroyContainerIdentity,
   isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
-  readSelectedGatewaySandboxNamespace,
+  readSandboxGatewaySandboxNamespace,
   type DestroyContainerIdentityProof,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
@@ -858,7 +858,7 @@ export async function executeSandboxDestroy({
           | undefined;
         if (runtimeProvider?.lifecycle.supported === true) {
           const control = runtimeProvider.lifecycle.privilegedSandboxControl;
-          const sandboxNamespace = readSelectedGatewaySandboxNamespace();
+          const sandboxNamespace = readSandboxGatewaySandboxNamespace(sandboxName);
           const namespaceScope = sandboxNamespace === null ? {} : { sandboxNamespace };
           runPrivileged = (command) =>
             control.execute({

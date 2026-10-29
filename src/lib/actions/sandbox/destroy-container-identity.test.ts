@@ -3,12 +3,27 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const namespaceMocks = vi.hoisted(() => ({
+  findSandbox: vi.fn(),
+  readNamespace: vi.fn((stateDir: string) => `ns:${stateDir}`),
+}));
+
+vi.mock("../../state/registry/cross-port", async (original) => ({
+  ...(await original<typeof import("../../state/registry/cross-port")>()),
+  findSandboxAcrossGatewayRoots: namespaceMocks.findSandbox,
+}));
+vi.mock("../../onboard/docker-driver-gateway-config", async (original) => ({
+  ...(await original<typeof import("../../onboard/docker-driver-gateway-config")>()),
+  readStateScopedSandboxNamespace: namespaceMocks.readNamespace,
+}));
+
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import {
   classifyDestroyContainerIdentity,
   type DestroyContainerIdentityVerdict,
   formatAmbiguousDestroyIdentity,
   observeDestroyContainerIdentity,
+  readSandboxGatewaySandboxNamespace,
 } from "./destroy-presence";
 
 type Row = {
@@ -314,4 +329,30 @@ describe("observeDestroyContainerIdentity", () => {
       });
     },
   );
+});
+
+describe("readSandboxGatewaySandboxNamespace", () => {
+  it("reads the namespace of the gateway whose registry owns the sandbox (#13895)", () => {
+    namespaceMocks.findSandbox.mockReturnValueOnce({
+      entry: { name: "alpha", gatewayPort: 19841 },
+      registryGatewayPort: 19821,
+    });
+
+    expect(readSandboxGatewaySandboxNamespace("alpha")).toMatch(/^ns:.*19821/u);
+    expect(namespaceMocks.findSandbox).toHaveBeenLastCalledWith("alpha");
+  });
+
+  it.each([
+    { scenario: "no registry owns it", find: () => null },
+    {
+      scenario: "several registries own it",
+      find: () => {
+        throw new Error("sandbox appears in multiple gateway registries");
+      },
+    },
+  ])("does not scope when $scenario (#13895)", ({ find }) => {
+    namespaceMocks.findSandbox.mockImplementationOnce(find);
+
+    expect(readSandboxGatewaySandboxNamespace("alpha")).toBeNull();
+  });
 });

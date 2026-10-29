@@ -5,7 +5,8 @@ import os from "node:os";
 
 import { dockerRun } from "../../adapters/docker/run";
 import { readStateScopedSandboxNamespace } from "../../onboard/docker-driver-gateway-config";
-import { GATEWAY_PORT, resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
+import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
+import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 import {
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
@@ -85,14 +86,21 @@ export type DestroyNamespaceScopeDeps = {
 };
 
 /**
- * Read the proven scoped sandbox namespace of the selected Docker gateway.
- * Returns null for legacy or unproven gateways, so callers keep name-only
- * lookups and their fail-closed checks for them.
+ * Read the proven scoped sandbox namespace of the gateway whose registry owns
+ * this sandbox. Returns null when no single registry owns it, or for legacy or
+ * unproven gateways, so callers keep name-only lookups and fail closed.
  */
-export function readSelectedGatewaySandboxNamespace(): string | null {
-  return readStateScopedSandboxNamespace(
-    resolveGatewayStateDirForPort({ home: os.homedir(), port: GATEWAY_PORT }),
-  );
+export function readSandboxGatewaySandboxNamespace(sandboxName: string): string | null {
+  let hit: ReturnType<typeof findSandboxAcrossGatewayRoots>;
+  try {
+    hit = findSandboxAcrossGatewayRoots(sandboxName);
+  } catch {
+    return null;
+  }
+  const port = hit?.registryGatewayPort ?? hit?.entry.gatewayPort;
+  return typeof port === "number"
+    ? readStateScopedSandboxNamespace(resolveGatewayStateDirForPort({ home: os.homedir(), port }))
+    : null;
 }
 
 function readDockerContainerSandboxNamespace(containerId: string): string | null {
@@ -134,7 +142,7 @@ export function observeDestroyContainerIdentity(
   const observation = inspectDockerSandboxNameLabeledContainers(sandboxName, inspect);
   if (observation.status !== "observed" || observation.rows.length === 0) return observation;
   const gatewayNamespace = (
-    scopeDeps.readGatewayNamespace ?? readSelectedGatewaySandboxNamespace
+    scopeDeps.readGatewayNamespace ?? (() => readSandboxGatewaySandboxNamespace(sandboxName))
   )();
   if (gatewayNamespace === null) return observation;
   const readContainerNamespace =
