@@ -16,11 +16,12 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 
 - **A NemoClaw bundle:** [build one](build.md#build-a-native-bundle) from this revision.
   The bundle includes the Helm provider that installs the gateway; no Helm CLI is needed.
-- **Cluster access:** a kubeconfig file and an exact context that can read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets and NetworkPolicies, and port-forward to its pods (`pods/portforward`).
+- **Cluster access:** a kubeconfig file and an exact context, or, when NemoClaw [runs in a pod](#run-nemoclaw-in-a-pod), the pod's service account.
+  Either must be able to read the deployment's namespace, or create it if it doesn't exist, and, inside it, create Secrets, ConfigMaps, ServiceAccounts, Roles, RoleBindings, Services, Deployments, StatefulSets and NetworkPolicies, and port-forward to its pods (`pods/portforward`).
   The SDK reads nothing else outside the namespace.
-  The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context must be able to create a ClusterRole and a ClusterRoleBinding.
+  The pinned OpenShell chart also creates [two cluster-wide objects](#cluster-wide-objects), so the context or service account must be able to create a ClusterRole and a ClusterRoleBinding.
   If the kubeconfig runs an exec plugin that needs your environment, such as `aws` for EKS, list those variables in `gateway.kubernetes.environment`, for example `[AWS_PROFILE, AWS_REGION]`.
-  OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list.
+  OpenTofu and its providers receive only platform variables such as `PATH` and `HOME`, plus the ones you list; with the pod's service account, they also receive `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`.
 - **Cluster setup, done by the platform operator:**
   - [Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox), with its controller running in `agent-sandbox-system`; CI tests version 1.0.3. Without its API, the chart's preflight stops the install.
   - A default StorageClass for the gateway's volume. Without one, the volume's claim stays pending and apply fails when Helm's wait times out.
@@ -30,7 +31,7 @@ No automated run covers OpenShift, and other clusters are untested; [current lim
 - **Inference:** an endpoint reachable from inside the sandboxes, such as a [model server you run in the cluster](#use-a-model-server-in-the-cluster).
   Managed model services under `spec.services` are not supported on Kubernetes ([#12641](https://github.com/NVIDIA/NemoClaw/issues/12641)).
 
-NemoClaw never selects a context for you.
+NemoClaw never selects a context for you: omitting `kubeconfig` and `context` selects the pod's service account, never `KUBECONFIG`, `~/.kube/config` or their current context.
 
 ### Cluster-Wide Objects
 
@@ -66,7 +67,7 @@ The `openshell` and `fabric` providers reach the gateway through port forwards t
 Start from [the Kubernetes example](../examples/kubernetes/managed-development.yaml) and set:
 
 - `metadata.uid` to a new UUID.
-- `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context.
+- `gateway.kubernetes.kubeconfig` to the environment variable holding the kubeconfig path, and `context` to the exact context; omit both when [NemoClaw runs in a pod](#run-nemoclaw-in-a-pod).
 - `gateway.kubernetes.namespace` to a namespace for this deployment alone. If it exists, NemoClaw records its UID and never labels, changes or deletes it; otherwise NemoClaw creates it. A namespace that another NemoClaw deployment created is refused.
 - `gateway.endpoint` to `https://127.0.0.1:` and an explicit port. Providers forward on free ports of their own, so this port is not bound.
 - Each sandbox's `image.ref` and `image.metadata`.
@@ -226,6 +227,35 @@ Use the deployment's context and namespace, and keep that credential file out of
 Check the pod events if a pull still fails; a configured reference does not establish registry access.
 Retire upstream registry credentials separately; destroy retains the namespace and caller-managed Secrets.
 Docker and Podman gateways pull private images with Docker logins instead; see [Pull from Private Registries](usage.md#pull-from-private-registries).
+
+### Run NemoClaw in a Pod
+
+When `nemoclaw` runs in a pod, such as a CI job, it can use the pod's service account instead of a kubeconfig.
+Omit `gateway.kubernetes.kubeconfig` and `context`:
+
+```yaml
+spec:
+  gateway:
+    kubernetes:
+      namespace: nemoclaw-development
+      authentication:
+        profile: development
+```
+
+- NemoClaw and the providers OpenTofu runs find the API server through `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT`, which Kubernetes sets in the pod, and read the service account's token and CA from `/var/run/secrets/kubernetes.io/serviceaccount/`.
+  They never read `KUBECONFIG` or `~/.kube/config`.
+- If either variable is unset, as outside a pod, plan stops before OpenTofu plans; name a kubeconfig and context there.
+- `gateway.kubernetes.environment` serves a kubeconfig's exec plugin, so it requires `kubeconfig`.
+- A deployment keeps the cluster access it was first applied with: switching between a kubeconfig and the pod's service account fails planning and leaves the resources unchanged.
+
+The pod needs:
+
+- **A service account** that can do what NemoClaw and the chart do: the [cluster access](#prerequisites) rights, including `pods/portforward` in the deployment's namespace for the providers' port forwards, and creating the chart's [cluster-wide objects](#cluster-wide-objects).
+  Kubernetes mounts its token unless the pod or service account sets `automountServiceAccountToken: false`.
+
+  TODO(#13826): list the Role and ClusterRole the service account needed in the kind run, with the kind version and revision.
+- **A persistent volume for `--state-dir`:** keep it across runs, because destroy needs the receipt and issuer keys the state directory holds.
+- **The bundle and inputs:** the NemoClaw bundle, `deployment.yaml`, each image's metadata bundle, and the variables its references name.
 
 ## Deploy to OpenShift
 
