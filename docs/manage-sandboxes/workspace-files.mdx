@@ -305,6 +305,7 @@ Deep Agents state lives in the sandbox's persistent state volume, not in the con
 Normal restarts preserve that state.
 Rebuilds and upgrades transfer the complete native home/workspace as one opaque archive.
 NemoClaw does not apply a Deep Agents path or config-key allowlist during that transfer, so unknown files, `config.toml`, hooks, skills, memories, histories, packages, and project state all move together.
+One exception applies: when onboarding recreates a managed Deep Agents sandbox for a verified provider or model change, the replacement keeps its newly generated `config.toml`. The archive keeps the previous file, as described in [Editing State](#editing-state).
 OpenShell-managed credential material remains under OpenShell ownership rather than entering the archive.
 
 Managed MCP state is rebuilt from the agent-native file and current OpenShell policy, provider, and attachment state. NemoClaw keeps no host-side MCP desired state.
