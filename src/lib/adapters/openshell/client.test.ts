@@ -481,7 +481,7 @@ describe("openshell helpers", () => {
       vi.useFakeTimers();
       const child = new EventEmitter() as EventEmitter & ChildProcess;
       const signals = new EventEmitter();
-      const kill = vi.fn((_signal: NodeJS.Signals) => true);
+      const kill = vi.fn((_signal: NodeJS.Signals) => true as const);
       const groupKill = vi
         .spyOn(process, "kill")
         .mockImplementation((_pid, forwarded) => kill(forwarded as NodeJS.Signals));
@@ -527,7 +527,7 @@ describe("openshell helpers", () => {
       vi.useFakeTimers();
       const child = new EventEmitter() as EventEmitter & ChildProcess;
       const signals = new EventEmitter();
-      const kill = vi.fn((_signal: NodeJS.Signals) => true);
+      const kill = vi.fn((_signal: NodeJS.Signals) => true as const);
       const groupKill = vi
         .spyOn(process, "kill")
         .mockImplementation((_pid, forwarded) => kill(forwarded as NodeJS.Signals));
