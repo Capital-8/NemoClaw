@@ -34,6 +34,13 @@ const MENUS = {
     banner: "MESSAGING_MENU_OPEN",
     cancellation: "Installation cancelled",
   },
+  // The messaging menu as the onboarding step actually opens it: through
+  // `setupMessagingChannels`, the entry the machine handler calls, not the
+  // raw selector directly (#13910).
+  "messaging-setup": {
+    banner: "MESSAGING_MENU_OPEN",
+    cancellation: "Installation cancelled",
+  },
   hermes: {
     banner: "Hermes managed Nous tools",
     cancellation: "Installation cancelled",
@@ -79,6 +86,17 @@ const menus = {
       new Set(),
       () => undefined,
     );
+  },
+  "messaging-setup": () => {
+    const { createSetupMessagingChannels } = require(${JSON.stringify(dist("onboard/messaging-channel-setup.js"))});
+    const { prompt } = require(${JSON.stringify(dist("credentials/store.js"))});
+    process.stderr.write("MESSAGING_MENU_OPEN\\n");
+    return createSetupMessagingChannels({
+      step: () => undefined,
+      note: () => undefined,
+      isNonInteractive: () => false,
+      prompt,
+    })(null, null, "contract-sandbox");
   },
   hermes: () => {
     const { setupHermesToolGateways } = require(${JSON.stringify(dist("onboard/hermes-managed-tools.js"))});
