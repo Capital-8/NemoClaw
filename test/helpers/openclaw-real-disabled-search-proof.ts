@@ -396,6 +396,29 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
           "real admission gate accepts owned turn",
         );
       }
+      for (const prompt of [
+        searchPrompt,
+        "Read README.md, then search the web for installation documentation.",
+        "Fetch https://example.com/docs and find alternative installation guides.",
+      ]) {
+        const context = { runId: "external-first-tool" };
+        await admit(context, prompt);
+        // Deliberately bypass prompt filtering to exercise the execution guard.
+        blocked(await call("read", context, "first-read", { file_path: "README.md" }));
+        blocked(await call("memory_search", context, "first-memory", { query: "installation" }));
+        blocked(await call("exec", context, "first-exec", { command: "cat README.md" }));
+        blocked(
+          await call("web_fetch", context, "first-fetch", { url: "https://example.org/install" }),
+        );
+        blocked(
+          await call("tool_call", context, "first-wrapped-read", {
+            id: "openclaw:core:read",
+            args: { file_path: "README.md" },
+          }),
+        );
+        assert.equal(sideEffects, 0, "admission blocks substitute execution before any search");
+        await runner().runAgentEnd({ success: false, messages: [] }, context);
+      }
       await admit({ runId: "denied-run" });
       blocked(await call("web_search", { runId: "denied-run" }, "search-1"));
       blocked(await call("read", { runId: "denied-run" }, "read-1"));

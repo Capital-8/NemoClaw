@@ -476,6 +476,79 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     return { api, handler: admittedHandler!, rawHandler: handler!, admission: admission! };
   }
 
+  it.each(
+    [
+      { toolName: "read", params: { file_path: "README.md" } },
+      { toolName: "memory_search", params: { query: "installation documentation" } },
+      { toolName: "exec", params: { command: "cat README.md" } },
+      { toolName: "web_fetch", params: { url: "https://example.org/install" } },
+      { toolName: "tool_search", params: { query: "read file" } },
+      { toolName: "tool_call", params: { id: "openclaw:core:read", args: { path: "README.md" } } },
+      {
+        toolName: "tool_call",
+        params: { id: "openclaw:core:memory_search", args: { query: "installation" } },
+      },
+      {
+        toolName: "tool_call",
+        params: { id: "openclaw:core:exec", args: { command: "cat README.md" } },
+      },
+      {
+        toolName: "tool_call",
+        params: { id: "openclaw:core:web_fetch", args: { url: "https://example.org/install" } },
+      },
+    ].flatMap((event) =>
+      [
+        "Find the official NemoClaw installation documentation.",
+        "Read README.md, then search the web for installation documentation.",
+        "Fetch https://example.com/docs and find alternative installation guides.",
+      ].map((prompt) => ({ event, prompt })),
+    ),
+  )(
+    "rejects substitute tools before any search attempt: $event.toolName ($prompt)",
+    async ({ event, prompt }) => {
+      const { admission, rawHandler } = searchHook(false);
+      const context = { runId: "external-first-tool" };
+      expect(await admission({ prompt }, context)).toBeUndefined();
+
+      expect(await rawHandler(event, context)).toMatchObject({ block: true });
+    },
+  );
+
+  it.each(["sessionKey", "sessionId"])(
+    "carries an admission denial to a tool using only %s",
+    async (identity) => {
+      const { api, admission, rawHandler } = searchHook(false);
+      const context = { runId: "external-admission", [identity]: "shared-session" };
+      const read = { toolName: "read", params: { file_path: "README.md" } };
+      expect(
+        await admission({ prompt: "Search the web for installation documentation." }, context),
+      ).toBeUndefined();
+      expect(await rawHandler(read, { [identity]: "shared-session" })).toMatchObject({
+        block: true,
+      });
+
+      const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
+      await end({ success: false }, context);
+      expect(await admission({ prompt: "Read README.md." }, context)).toBeUndefined();
+      expect(await rawHandler(read, context)).toBeUndefined();
+    },
+  );
+
+  it.each(["Refactor this function.", "What time is it?", "Find unused imports."])(
+    "preserves ordinary tools at admission: %s",
+    async (prompt) => {
+      const { admission, rawHandler } = searchHook(false);
+      const context = { runId: "local-first-tool" };
+      expect(await admission({ prompt }, context)).toBeUndefined();
+      expect(
+        await rawHandler(
+          { toolName: "exec", params: { command: "rg handleRequest src/" } },
+          context,
+        ),
+      ).toBeUndefined();
+    },
+  );
+
   it.each([
     ["Search the project for TODO comments.", "read", { file_path: "/sandbox/project/README.md" }],
     ["Investigate why the unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
@@ -521,6 +594,7 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
         .mock.calls.find(([name]) => name === "before_prompt_build")?.[1];
       expect(promptHook).toBeDefined();
       expect(await promptHook!({ prompt }, context)).not.toHaveProperty("toolsAllow");
+      expect(handler({ toolName, params }, context)).toBeUndefined();
       expect(handler({ toolName: "web_search", params: {} }, context)).toMatchObject({
         block: true,
         blockReason: expect.stringContaining(

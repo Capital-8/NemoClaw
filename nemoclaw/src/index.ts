@@ -16,7 +16,7 @@ import { DeniedSearchState } from "./denied-search-state.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import { readNativeRoute } from "./onboard/native-route.js";
 import { getPluginConfig } from "./plugin-config.js";
-import { registerRuntimeContext, suppliedSearchSources } from "./runtime-context.js";
+import { registerRuntimeContext, researchScope, suppliedSearchSources } from "./runtime-context.js";
 import { configuredSearchEnabled } from "./search-config.js";
 import { safeResolvePath } from "./security/safe-resolve-path.js";
 import { isMemoryPath, scanForSecrets } from "./security/secret-scanner.js";
@@ -377,13 +377,17 @@ export default function register(api: OpenClawPluginApi): void {
           };
         }
         const prompt = readStringProperty(args[0], "prompt");
+        const externalResearch = prompt !== undefined && researchScope(prompt) === "external";
         if (
           deniedSearchRuns.admit(
             identity,
             identities,
-            prompt !== undefined ? suppliedSearchSources(prompt) : undefined,
+            !externalResearch && prompt !== undefined ? suppliedSearchSources(prompt) : undefined,
           )
         ) {
+          // Alternate runtime paths may skip the prompt allowlist. Close their
+          // execution guard before any tool can supply substitute evidence.
+          if (externalResearch) deniedSearchRuns.deny(identity, identities);
           return undefined;
         }
         return {
