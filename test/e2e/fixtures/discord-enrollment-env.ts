@@ -6,11 +6,15 @@ export function isSyntheticDiscordToken(token: string | undefined): boolean {
 }
 
 /** Install the synthetic enrollment transport in installer and CLI children only. */
-export function withDiscordEnrollmentFixture(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (!isSyntheticDiscordToken(env.DISCORD_BOT_TOKEN)) return env;
+export function withDiscordEnrollmentFixture(
+  env: NodeJS.ProcessEnv,
+  token = env.DISCORD_BOT_TOKEN,
+): NodeJS.ProcessEnv {
+  if (!isSyntheticDiscordToken(token)) return env;
   const preload = new URL("./discord-enrollment-preload.mts", import.meta.url).href;
   return {
     ...env,
+    NEMOCLAW_E2E_DISCORD_TOKEN: token,
     NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --import=${preload}`.trim(),
   };
 }

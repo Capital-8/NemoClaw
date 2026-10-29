@@ -5,7 +5,8 @@
 
 Direct E2E coverage runs through Vitest.
 
-Messaging lifecycle, pairing, Hermes Discord, and token-rotation targets use a
+Messaging providers, lifecycle, pairing, Hermes Discord, native Hermes inference
+switching, and token-rotation targets use a
 test-only Node preload for their synthetic Discord enrollment tokens. The
 fixture runs in installer and CLI children and returns a bot identity only for
 the matching synthetic token at Discord's identity endpoint. Other requests
@@ -14,6 +15,8 @@ enrollment state for those targets; it does not prove live Discord authenticatio
 or message delivery. `support/discord-enrollment-child.test.ts` owns the child
 transport and production compiler contract. Existing live assertions still own
 provider attachment, persisted state, native configuration, stop/start, and cleanup.
+The native Hermes rebuild receives the synthetic transport separately from the
+stored bot token. The rebuild still reads that token from its credential store.
 
 OpenClaw inference switching explicitly approves the sandbox CLI's matching admin request before switching providers, because applying the new configuration restarts the gateway.
 Ordinary agent-turn targets run without that approval; they must succeed with the native method's write scope.
@@ -225,8 +228,12 @@ The boundary validator derives artifact consumers from jobs that use the pinned 
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
-The `managed-image-multiarch-startup` no-build job keeps that setting and compiles only the candidate shared policy boundary on the host.
-It rejects preexisting output, verifies the required shared modules, and then starts the direct managed-image contracts.
+The `managed-image-multiarch-startup` job builds the candidate CLI and its shared policy boundary before native Hermes qualification.
+It rejects preexisting output, verifies the required artifacts, and then starts the direct managed-image contracts.
+When an older trusted workflow exports startup evidence without a Hermes Discord result,
+the candidate consumer builds its CLI and runs the native contract against the same immutable Hermes image.
+Identity validation precedes that execution. A failed native contract rejects qualification,
+and the original evidence artifact remains unchanged.
 Its amd64 shard also exports digest-addressed npm and agent system inputs for the protected offline rebuild.
 The trusted controller accepts both v1 multiarch activation and v2 Deep Agents
 base activation. PR image-publication runs build all three managed-agent bases

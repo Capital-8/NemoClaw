@@ -3,7 +3,7 @@
 
 import { isSyntheticDiscordToken } from "./discord-enrollment-env.ts";
 
-const token = process.env.DISCORD_BOT_TOKEN;
+const token = process.env.DISCORD_BOT_TOKEN ?? process.env.NEMOCLAW_E2E_DISCORD_TOKEN;
 if (isSyntheticDiscordToken(token)) {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input, init) => {

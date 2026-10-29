@@ -12,6 +12,8 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/shell-probe.ts";
 import { installSandbox, phase6Env } from "../live/phase6-messaging-helpers.ts";
+import { messagingEnv } from "../live/messaging-providers-helpers.ts";
+import { runHermesNvidiaDiscordRebuild } from "../live/hermes-inference-switch-helpers.ts";
 
 const COMPILER_PROBE = String.raw`
 import { createRequire } from "node:module";
@@ -70,6 +72,96 @@ function runChild(env: NodeJS.ProcessEnv, source = COMPILER_PROBE) {
 }
 
 describe("Discord enrollment in live-test children", () => {
+  it("enrolls the messaging-provider fixture in its actual child environment (#13809)", () => {
+    vi.stubEnv("DISCORD_BOT_TOKEN_REAL", "");
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+    try {
+      const { env } = messagingEnv();
+      expect(
+        runChild({
+          ...env,
+          NEMOCLAW_AGENT: "openclaw",
+          NODE_OPTIONS: `${transportOptions} ${env.NODE_OPTIONS ?? ""}`.trim(),
+        }),
+      ).toEqual({ active: true, disabled: false, fallbackUrls: [] });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("authenticates native Hermes enrollment and its stored-credential rebuild (#13809)", async () => {
+    const success = {
+      command: [],
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "",
+      artifacts: { stdout: "", stderr: "", result: "" },
+    };
+    const proveEnrollment = (options: NodeJS.ProcessEnv | undefined, source: string) => {
+      expect(
+        runChild(
+          {
+            ...options,
+            NEMOCLAW_SANDBOX_NAME: "e2e-hm-inf-switch",
+            NEMOCLAW_AGENT: "hermes",
+            NODE_OPTIONS: `${transportOptions} ${options?.NODE_OPTIONS ?? ""}`.trim(),
+          },
+          source,
+        ),
+      ).toEqual({ active: true, disabled: false, fallbackUrls: [] });
+      return success;
+    };
+    const command = vi
+      .fn<HostCliClient["command"]>()
+      .mockImplementationOnce(async (_binary, _args, options) =>
+        proveEnrollment(options?.env, COMPILER_PROBE),
+      )
+      .mockImplementationOnce(async (_binary, _args, options) =>
+        proveEnrollment(
+          options?.env,
+          COMPILER_PROBE.replace(
+            "common: { log() {} }",
+            'common: { log() {}, getCredential: (key) => key === "DISCORD_BOT_TOKEN" ? "test-fake-discord-token-hermes-e2e" : null }',
+          ),
+        ),
+      )
+      .mockResolvedValue({
+        ...success,
+        stdout: JSON.stringify({
+          provider: "nvidia-prod",
+          inferenceHealth: { ok: true, probed: true },
+        }),
+      });
+    await runHermesNvidiaDiscordRebuild({
+      host: { command },
+      sandbox: {
+        exec: vi.fn(async (_name, args) => ({
+          command: [],
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stdout: args.includes("-z")
+            ? "PROBE_OK"
+            : JSON.stringify({
+                enabled: true,
+                requireMention: true,
+                guildIds: "1491590992753590594",
+                allowedUsers: "1005536447329222676",
+              }),
+          stderr: "",
+          artifacts: { stdout: "", stderr: "", result: "" },
+        })),
+      },
+      progress: { phase() {} },
+      publicApiKey: "synthetic-public-key",
+      redactionValues: [],
+    });
+    expect(command.mock.calls[1]![2]!.env).not.toHaveProperty("DISCORD_BOT_TOKEN");
+    expect(command.mock.calls[1]![2]!.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+  });
+
   it.each<[string, NodeJS.ProcessEnv]>([
     ["Slack", { SLACK_BOT_TOKEN: "xoxb-synthetic", SLACK_APP_TOKEN: "xapp-synthetic" }],
     ["Telegram", { TELEGRAM_BOT_TOKEN: "synthetic-telegram-token" }],
