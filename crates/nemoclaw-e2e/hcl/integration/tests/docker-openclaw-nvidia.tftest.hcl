@@ -176,11 +176,9 @@ run "restart_agent" {
   }
 }
 
-# This plan reads what the restart left: no changed gateway objects, and the
+# This apply reads what the restart left: no changed gateway objects, and the
 # agent started again in its original sandbox.
 run "restarted" {
-  command = plan
-
   module {
     source = "./cases/docker-openclaw-nvidia"
   }
@@ -196,6 +194,27 @@ run "restarted" {
       && module.observed.openshell.fabric_starts[module.observed.agents.assistant.id] == 2
     )
     error_message = "The restart changed gateway objects, or the agent did not start again in its sandbox."
+  }
+}
+
+# Nothing was left to do: the apply after the restart started nothing.
+run "settled" {
+  command = plan
+
+  module {
+    source = "./cases/docker-openclaw-nvidia"
+  }
+
+  variables {
+    effects = run.restarted.effects
+  }
+
+  assert {
+    condition = (
+      module.observed.openshell.effects == var.effects
+      && module.observed.openshell.fabric_starts[module.observed.agents.assistant.id] == 2
+    )
+    error_message = "The apply after the restart changed gateway objects or started the agent again."
   }
 }
 

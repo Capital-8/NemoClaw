@@ -17,7 +17,7 @@ variable "compute_driver" {
 }
 
 variable "fault" {
-  description = "A fault the fixtures apply when a targeted plan reads `setup`: `stop_agent_runtimes`."
+  description = "A fault the fixtures apply when a targeted plan reads `setup`: `stop_agent_runtimes` or `delete_provider_registrations`."
   type        = string
   default     = null
 }

@@ -41,8 +41,11 @@ output "http" {
 }
 
 output "registrations" {
-  description = "Each created provider registration, by name."
-  value       = { for provider in local.observed.openshell.created_providers : provider.name => provider }
+  description = "Each created provider registration, by name; the last one created when it was created again."
+  value = {
+    for name, created in { for provider in local.observed.openshell.created_providers : provider.name => provider... } :
+    name => created[length(created) - 1]
+  }
 }
 
 output "agents" {
