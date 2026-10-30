@@ -548,7 +548,7 @@ esac
           .readFileSync(bootstrap, "utf8")
           .replace(
             "BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30",
-            `BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=${ownedProcesses ? 1 : 30}`,
+            `BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=${failure === "fetch deadline" ? 1 : 30}`,
           ),
       );
       let acceptedConnections = 0;
