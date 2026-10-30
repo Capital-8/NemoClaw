@@ -12,6 +12,14 @@ const nestedLocalTarget = "contents of ".repeat(129) + "README.md";
 it.each([
   ...[
     {
+      name: "bounds repeated quoted research topics",
+      prompt: `Search for ${'"official docs on docs.nvidia.com" '.repeat(64)}`,
+    },
+    {
+      name: "bounds a long quoted research topic",
+      prompt: `Search for "${"guide ".repeat(640)}docs.nvidia.com"`,
+    },
+    {
       name: "bounds the reported whitespace-heavy input",
       prompt: "Search bug" + " ".repeat(32000) + "outside",
     },

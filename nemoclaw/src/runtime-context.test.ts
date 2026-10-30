@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import {
+  localFilenamePrompts,
+  quotedExternalResearchPrompts,
+} from "../test/runtime-context-path-prompts.js";
 import type { NemoClawState } from "./blueprint/state.js";
 import register, {
   type NemoClawConfig,
@@ -85,20 +89,6 @@ const localSourceAndOutputPrompts = [
   "Find callers of first recursively and return their file paths please.",
   "Find callers of please and return file paths.",
   "Search auth.test.ts for failing assertions and list their line numbers.",
-];
-
-const localFilenamePrompts = [
-  "Search main.rs for TODO comments",
-  "Search main.go for TODO comments",
-  "Search data.csv for missing values",
-  "Search kernel.c for TODO comments.",
-  "Search service.test.cpp for failing assertions.",
-  "Search migration.sql for missing constraints.",
-  "Search config.xml for duplicate keys.",
-  "Search notebook.ipynb for failing assertions.",
-  "Search archive.custom-format for missing values.",
-  "Search args.url for TODO comments.",
-  "Search for TODO comments in main.rs.",
 ];
 
 const localLookupPrompts = [
@@ -336,6 +326,7 @@ const admissionCases: {
     "Find the function named parseConfig and get the latest release notes.",
   ].map((prompt) => ({ prompt, tools: false })),
   ...localFilenamePrompts.map((prompt) => ({ prompt, tools: true, local: true, urls: [] })),
+  ...quotedExternalResearchPrompts.map((prompt) => ({ prompt, tools: false })),
   ...[
     "Search the web for main.rs TODO comments.",
     "Search main.go for TODO comments using Tavily.",

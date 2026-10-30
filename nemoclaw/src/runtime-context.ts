@@ -138,6 +138,44 @@ const LOCAL_TOOL =
   /^(?:web_fetch|read|edit|write|apply_patch|exec|process|memory_get|memory_search|(?:(?:available|local|filesystem|shell|memory)\s+)+tools?)(?:\s+tool)?$/iu;
 const LOCAL_STATE =
   /^(?:git(?:\s+(?:branch(?:es)?(?:\s+names?)?|commits?(?:\s+(?:hash(?:es)?|ids?))?|status|log|diff))?|branch(?:es)?(?:\s+names?)?|commits?(?:\s+(?:hash(?:es)?|ids?))?|(?:(?:node(?:\.js)?|python3?|npm|pnpm|yarn|bun|git|openclaw|nemoclaw|hermes)\s+)?(?:versions?|errors?|status)|(?:installed|local|running)\s+[\w.+-]+\s+versions?|code\s+changes|diffs?|(?:build|test|lint|type|syntax|compilation|compiler)\s+(?:errors?|warnings?|failures?|output|results?|status)|environment|config(?:uration)?|hostname|user(?:name)?|time|date|clock|uptime|shell|shell\s+history|(?:high|low|excessive)?\s*(?:disk|storage|memory|cpu)\s+(?:usage|space|pressure)|(?:file\s*system|file|directory)\s+permissions)$/iu;
+const LOCAL_SOURCE_LOCATION = /\b(?:in|inside|from|within|under|through)\s+(.+?)(?=\s+for\s+|$)/giu;
+const QUOTED_TARGET = /(?<!\w)([`"'])((?:(?!\1)[^\n])+)\1/gu;
+
+function normalizeQuotedTargets(raw: string, budget: LocalTargetBudget): string {
+  return raw.replace(QUOTED_TARGET, (quoted, _quote: string, value: string, offset: number) => {
+    const spacedPath =
+      /^(?=.*\s)(?:\.{0,2}\/[\w./ -]+|(?:[\w.-]+(?: [\w.-]+)*\/)+[\w.-]*(?: [\w.-]+)*|[\w.-]+(?: [\w.-]+)*\.[\w-]+)$/u.test(
+        value,
+      );
+    // A spaced filename needs a source relationship, content query or rooted path.
+    let sourceContext = false;
+    if (spacedPath) {
+      const reference = raw.slice(0, offset) + "__local_path__" + raw.slice(offset + quoted.length);
+      const prefix = raw.slice(0, offset).replace(TARGET_PREFIX, "").trim();
+      sourceContext =
+        (offset === 0 && /^\s+(?:for|to)\s+/iu.test(raw.slice(quoted.length))) ||
+        Array.from(reference.matchAll(LOCAL_SOURCE_LOCATION)).some(
+          (match) => match[1] === "__local_path__",
+        ) ||
+        (prefix.length > 0 && localTarget(reference, budget) === "source");
+    }
+    const rooted = /^(?:\.{0,2}\/)/u.test(value);
+    if (/[*?[\]{}]/u.test(value)) {
+      return /^(?=.*[*?[\]{}])[\w./\\:*?[\]{},!@()+#| -]+$/u.test(value) &&
+        (!/\s/u.test(value) || /^[*?[\]{}]/u.test(value) || rooted || sourceContext)
+        ? "__local_glob__"
+        : "<quoted topic>";
+    }
+    if (LOCAL_PATH.test(value) || (spacedPath && (rooted || sourceContext)))
+      return "__local_path__";
+    const target = localTarget(value, budget);
+    if (target === "source") return "__local_path__";
+    const unquoted = raw.slice(0, offset) + value + raw.slice(offset + quoted.length);
+    return IDENTIFIER.test(value) || target === "work" || localTarget(unquoted, budget)
+      ? quoted
+      : "<quoted topic>";
+  });
+}
 
 function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | undefined {
   // Every recursive branch and request shares this budget, bounding stack depth
@@ -145,14 +183,9 @@ function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | unde
   if (budget.remaining === 0) throw LOCAL_TARGET_BUDGET_EXHAUSTED;
   budget.remaining--;
 
-  const normalized = raw
+  const normalized = normalizeQuotedTargets(raw, budget)
     .trim()
     .replace(/[.!?]+$/u, "")
-    .replace(/([`"'])([^`"'\n]+)\1/gu, (quoted, _quote: string, value: string) => {
-      if (/[*?[\]{}]/u.test(value)) return "__local_glob__";
-      if (/^(?:\.{0,2}\/|.*\/)|[\w-]+\.[\w-]+$/u.test(value)) return "__local_path__";
-      return quoted;
-    })
     .replace(/(?<=[\w$`"'])\([^()\n]*\)/gu, "")
     .replace(/[`"]/gu, "")
     .replace(/(?<!\w)'|'(?!\w)/gu, "");
@@ -357,7 +390,9 @@ function classifySearchRequests(prompt: string, budget: LocalTargetBudget): Rese
     const localSource =
       target === "source" ||
       Array.from(
-        subject.matchAll(/\b(?:in|inside|from|within|under|through)\s+(.+?)(?=\s+for\s+|$)/giu),
+        normalizeQuotedTargets(subject, budget)
+          .replace(QUOTED_TARGET, " ")
+          .matchAll(LOCAL_SOURCE_LOCATION),
       ).some((match) => localTarget(match[1]!, budget) === "source");
     const localWork = target !== undefined;
     const suppliedUrl =
