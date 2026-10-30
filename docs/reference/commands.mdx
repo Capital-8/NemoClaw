@@ -4889,7 +4889,7 @@ The following environment variables tune onboard-time and recovery wall-clock li
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`            | `180`                                                 | Timeout in seconds for the inference-server validation probe and each native-local or provider-neutral in-sandbox inference request during onboarding and rebuild. The in-sandbox check uses a 60-second minimum. Raise it for a slow model or network.                                                                                                                                                                                                                                                                                                                                         |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT`              | `180`                                                 | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Onboarding preserves a partially created sandbox when the deadline expires. Follow [Inspect retained sandbox recovery](#inspect-retained-sandbox-recovery); do not delete the sandbox by mutable name.                                                                                   |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE`       | `30`                                                  | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
-| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS`      | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, gateway startup after an intentional OpenClaw stop, and gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase.                                                                                                                                                                                                                                                                             |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS`      | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, OpenClaw gateway startup after runtime start, and gateway health and OpenShell readiness during managed or provider recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase.                                                                                                                                                                                                                                                                             |
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -4902,9 +4902,14 @@ Post-recovery OpenShell readiness uses 120 seconds when the recovery path does n
 
 <AgentOnly variant="openclaw">
 
-After an intentional stop, `$$nemoclaw <sandbox-name> start` uses the 30-second OpenClaw gateway-health budget, including probe execution and delays.
-`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides this startup budget and preserves finite, nonnegative fractional seconds.
-If the budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+After OpenShell reports the sandbox ready, `$$nemoclaw <sandbox-name> start` waits up to 120 seconds for the OpenClaw gateway process.
+This startup wait applies after both an intentional stop and an external Docker restart, regardless of the recorded stop intent.
+The budget includes probe execution and delays; it is separate from the preceding 300-second OpenShell readiness wait.
+`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` overrides the startup budget and preserves finite, nonnegative fractional seconds.
+If the startup budget expires, `start` exits nonzero before gateway-health verification and host-forward restoration.
+With a value of `0`, a sandbox not recorded as intentionally stopped skips process observation but still runs normal gateway and inference verification.
+An intentionally stopped sandbox with a zero budget exits nonzero before those checks.
+These startup settings do not change the 30-second default for OpenClaw gateway-health recovery or onboarding process observation.
 
 </AgentOnly>
 

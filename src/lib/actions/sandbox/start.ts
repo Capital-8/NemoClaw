@@ -35,6 +35,7 @@ import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   isSandboxGatewayRunningForStatus,
+  resolveGatewayRecoveryWaitSeconds,
   waitForStartedNativeGatewayProcess,
 } from "./status/process-recovery";
 import {
@@ -99,6 +100,7 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
 }
 
 const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
+const START_OPENCLAW_GATEWAY_WAIT_SECONDS = 120;
 
 /** Observe native startup after the runtime starts; never relaunch the agent here. */
 async function waitForStartedSandboxGatewayProcess(
@@ -110,13 +112,20 @@ async function waitForStartedSandboxGatewayProcess(
   const nativeAgent = sandbox.agent ?? "openclaw";
   if (nativeAgent !== "hermes" && nativeAgent !== "openclaw") return undefined;
   if (nativeAgent === "hermes" && sandbox.stopped !== true) return undefined;
+  // Preserve verification-only starts when an unstopped OpenClaw has no settlement budget.
+  if (
+    nativeAgent === "openclaw" &&
+    sandbox.stopped !== true &&
+    resolveGatewayRecoveryWaitSeconds(START_OPENCLAW_GATEWAY_WAIT_SECONDS, deps.environment) === 0
+  )
+    return undefined;
   return await waitForStartedNativeGatewayProcess(
     sandboxName,
     nativeAgent,
     getPersistedSandboxTargetGatewayName(sandbox),
     {
       // Allow cold OpenClaw startup after Docker recovery without changing onboarding's default.
-      defaultTimeoutSeconds: 120,
+      defaultTimeoutSeconds: START_OPENCLAW_GATEWAY_WAIT_SECONDS,
       environment: deps.environment,
       probe: deps.probeGatewayProcess,
       delay: deps.delayGatewayProcessProbe ?? sleep,
