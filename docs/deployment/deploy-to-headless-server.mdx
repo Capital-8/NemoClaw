@@ -212,12 +212,16 @@ Shared providers use `https://inference.local/v1/models`, then send an inference
 NVIDIA Endpoints, supported fixed hosted providers, new hosted compatible endpoints outside the Personal tier, and qualified new local selections verify the recorded sandbox-attached OpenShell provider with an inference request.
 A fresh Personal-tier hosted compatible selection verifies the shared route and has no native attachment.
 Status repeats inference requests up to three total attempts when they return a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost.
-The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after other final failures.
+The line reports `healthy` when the route served the request and `unauthorized` when it rejected the request with HTTP `401` or `403`.
+Other final HTTP failures or invalid 2xx responses report `unhealthy`.
+A failed request without an HTTP status reports `unreachable`.
 A verified native NVIDIA route instead reports `degraded` and exits `0` after a final HTTP `429`, `500`, `502`, `503`, or `504` response or a confirmed request timeout.
 The model response remains unverified.
 
 During an ordinary lifecycle operation, status can return a read-only snapshot only when receipt and registry checks confirm that no conflicting lifecycle authority exists before and after the read.
-The snapshot shows `Inference: not probed (another lifecycle operation is in progress)`; JSON output sets `inferenceProbeSuppressed: true`.
+With verified gateway and sandbox state, the snapshot shows `Inference: not probed (another lifecycle operation is in progress)`.
+If either state cannot be verified, it shows `Inference: not verified (gateway/sandbox state not verified)`.
+JSON output sets `inferenceProbeSuppressed: true` for either unlocked snapshot.
 The exit status still reflects the observed sandbox and gateway state and may be nonzero.
 If a conflicting lifecycle authority exists, cannot be checked, or appears during the read, status rejects the snapshot and reports lifecycle contention.
 A snapshot is not inference or readiness evidence.
