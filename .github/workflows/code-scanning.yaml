@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript, python]
+        language: [python]
 
     steps:
       - name: Checkout
@@ -44,6 +44,165 @@ jobs:
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+
+  # The complete security-and-quality suite is partitioned by one predicate and
+  # its complement. Both jobs still extract the complete source tree; neither
+  # query coverage nor the existing 15-minute job deadline is reduced.
+  codeql-javascript:
+    name: CodeQL JS partition (${{ matrix.partition }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - partition: a-m
+            config: >-
+              {"query-filters":[{"include":{"id":"/^js\\/[a-m]/"}}]}
+          - partition: other
+            config: >-
+              {"query-filters":[{"exclude":{"id":"/^js\\/[a-m]/"}}]}
+    env:
+      QUERY_SUITE: security-and-quality
+      QUERY_LANGUAGE: javascript-typescript
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        id: init
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          languages: ${{ env.QUERY_LANGUAGE }}
+          queries: ${{ env.QUERY_SUITE }}
+          config: ${{ matrix.config }}
+      - name: Record query partition identity
+        env:
+          PARTITION: ${{ matrix.partition }}
+          QUERY_CONFIGURATION: ${{ matrix.config }}
+          CODEQL_VERSION: ${{ steps.init.outputs.codeql-version }}
+          SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+          CHECKOUT_REVISION: ${{ github.sha }}
+        run: |
+          python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          directory = Path(os.environ['RUNNER_TEMP']) / 'codeql-js-partition'
+          directory.mkdir()
+          partition = os.environ['PARTITION']
+          if partition not in {'a-m', 'other'}:
+              raise SystemExit('CodeQL query partition is invalid')
+          config = json.loads(os.environ['QUERY_CONFIGURATION'])
+          if not isinstance(config, dict) or set(config) != {'query-filters'}:
+              raise SystemExit('CodeQL query configuration cannot change the source or suite')
+          filters = config['query-filters']
+          if not isinstance(filters, list) or len(filters) != 1 or not isinstance(filters[0], dict) or len(filters[0]) != 1:
+              raise SystemExit('CodeQL query configuration requires one partition filter')
+          operation, selector = next(iter(filters[0].items()))
+          if operation not in {'include', 'exclude'} or not isinstance(selector, dict) or set(selector) != {'id'} or not isinstance(selector['id'], str):
+              raise SystemExit('CodeQL query partition filter is invalid')
+          receipt = {
+              'schemaVersion': 1,
+              'runId': os.environ['GITHUB_RUN_ID'],
+              'runAttempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'partition': partition,
+              'filter': operation,
+              'pattern': selector['id'],
+              'suite': os.environ['QUERY_SUITE'],
+              'language': os.environ['QUERY_LANGUAGE'],
+              'codeqlVersion': os.environ['CODEQL_VERSION'],
+              'sourceRevision': os.environ['SOURCE_REVISION'],
+              'checkoutRevision': os.environ['CHECKOUT_REVISION'],
+          }
+          (directory / (receipt['partition'] + '.json')).write_text(json.dumps(receipt) + '\n')
+          PYCODE
+      - name: Upload query partition identity
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-js-partition-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.partition }}
+          path: ${{ runner.temp }}/codeql-js-partition/*.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          # A partition cannot overwrite or clear another partition's SARIF.
+          category: /language:javascript-typescript/partition:${{ matrix.partition }}
+
+  codeql-javascript-complete:
+    # Keep the existing check name. A partial suite can never satisfy it.
+    name: CodeQL (javascript-typescript)
+    needs: [codeql-javascript]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions:
+      actions: read
+    steps:
+      - name: Require every query partition to succeed
+        env:
+          PARTITION_RESULT: ${{ needs.codeql-javascript.result }}
+        run: test "$PARTITION_RESULT" = success
+      - name: Download query partition identities
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: codeql-js-partition-${{ github.run_id }}-*
+          merge-multiple: false
+          path: ${{ runner.temp }}/codeql-js-partition-identities
+      - name: Verify complete query partition identities
+        env:
+          PARTITION_DIRECTORY: ${{ runner.temp }}/codeql-js-partition-identities
+          EXPECTED_SOURCE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_CHECKOUT_REVISION: ${{ github.sha }}
+          EXPECTED_PATTERN: '/^js\/[a-m]/'
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python3 - <<'PYCODE'
+          import json, os, re
+          from pathlib import Path
+          directory = Path(os.environ['PARTITION_DIRECTORY'])
+          expected = {'a-m': 'include', 'other': 'exclude'}
+          run_id = os.environ['EXPECTED_RUN_ID']
+          current_attempt = int(os.environ['EXPECTED_RUN_ATTEMPT'])
+          latest = {}
+          for artifact in directory.iterdir():
+              match = re.fullmatch(r'codeql-js-partition-' + re.escape(run_id) + r'-(\d+)-(a-m|other)', artifact.name)
+              if artifact.is_symlink() or not artifact.is_dir() or not match:
+                  raise SystemExit('CodeQL query partition artifact is invalid')
+              attempt, name = int(match[1]), match[2]
+              if not 1 <= attempt <= current_attempt:
+                  raise SystemExit('CodeQL query partition attempt is invalid')
+              path = artifact / (name + '.json')
+              if set(artifact.iterdir()) != {path} or path.is_symlink() or not path.is_file():
+                  raise SystemExit('CodeQL query partition identity is missing or ambiguous')
+              receipt = json.loads(path.read_text())
+              required = {
+                  'schemaVersion': 1, 'runId': run_id, 'runAttempt': attempt,
+                  'partition': name, 'filter': expected[name],
+                  'pattern': os.environ['EXPECTED_PATTERN'],
+                  'suite': 'security-and-quality', 'language': 'javascript-typescript',
+                  'sourceRevision': os.environ['EXPECTED_SOURCE_REVISION'],
+                  'checkoutRevision': os.environ['EXPECTED_CHECKOUT_REVISION'],
+              }
+              if set(receipt) != set(required) | {'codeqlVersion'} or any(
+                  receipt.get(key) != value for key, value in required.items()
+              ):
+                  raise SystemExit('CodeQL query partition identity changed')
+              version = receipt['codeqlVersion']
+              if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?', version):
+                  raise SystemExit('CodeQL query partition CLI version is invalid')
+              if name not in latest or attempt > latest[name][0]:
+                  latest[name] = (attempt, version)
+          if set(latest) != set(expected):
+              raise SystemExit('CodeQL query partition identities are missing')
+          # Failed-job and aggregate-only reruns may retain successful partition
+          # evidence from an earlier attempt of this exact immutable run.
+          if len({version for _, version in latest.values()}) != 1:
+              raise SystemExit('CodeQL query partitions used different CLI versions')
+          print('Complete security-and-quality query suite passed both complementary partitions')
+          PYCODE
 
   shellcheck:
     name: ShellCheck SARIF

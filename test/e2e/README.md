@@ -1077,7 +1077,7 @@ It uses the manifest endpoint, `http://localhost:18789/`, independently of the h
 The read-only poll accepts HTTP 200 or 401 and retries only curl connection-refused or empty-response results (7 or 52 with HTTP 000).
 Transport failures, other curl results, and unexpected HTTP responses fail immediately; each attempt has its own artifact.
 The target then runs one `nemoclaw <sandbox> recover` in the survivor's gateway context.
-The readiness poll and recovery share the existing 120-second recovery deadline; the poll also retains the configured probe-attempt bound.
+The readiness poll and recovery share the existing 60-second recovery deadline; the poll also retains the configured probe-attempt bound.
 Recovery runs after both listener snapshots and observer cleanup, so it cannot hide the original forward's exit.
 Both gateway-cleanup policies require recovery to succeed and the dashboard to answer within the existing probe budget.
 The pre-restart dashboard checks still prove that destroying the alternate sandbox preserves the survivor.
