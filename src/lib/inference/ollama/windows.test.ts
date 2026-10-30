@@ -478,7 +478,6 @@ describe("Windows Ollama helper", () => {
     });
     const wrapper = createMockChildProcess();
     const taskkill = createMockChildProcess();
-    let nativeTreeRunning = true;
     let announceOwnedKill = () => {};
     const ownedKillStarted = new Promise<void>((resolve) => {
       announceOwnedKill = resolve;
@@ -533,18 +532,14 @@ describe("Windows Ollama helper", () => {
         ownedKillStarted.then(() => "owned-kill-pending"),
         outcome.then(() => "install-settled"),
       ]);
-      expect(first, JSON.stringify({ events: boundary.state.events, nativeTreeRunning })).toBe(
-        "owned-kill-pending",
-      );
+      expect(first, JSON.stringify({ events: boundary.state.events })).toBe("owned-kill-pending");
       expect(wrapper.kill).not.toHaveBeenCalled();
       expect(boundary.operations.rollbackSnapshot).not.toHaveBeenCalled();
       expect(boundary.operations.preserveInterrupt).not.toHaveBeenCalled();
-      expect(nativeTreeRunning).toBe(true);
       expect(spawnProcess).toHaveBeenLastCalledWith("taskkill.exe", ["/PID", "4321", "/T", "/F"], {
         cwd: "/",
         stdio: "ignore",
       });
-      nativeTreeRunning = false;
       boundary.state.events.push("owned-tree-stopped");
       taskkill.emit("close", 0);
       wrapper.emit("close", null);
@@ -564,7 +559,6 @@ describe("Windows Ollama helper", () => {
       expect(boundary.operations.resolveInstalledPath).not.toHaveBeenCalled();
       expect(boundary.operations.awaitReady).not.toHaveBeenCalled();
     } finally {
-      nativeTreeRunning = false;
       taskkill.emit("close", 0);
       wrapper.emit("close", null);
       await outcome;
