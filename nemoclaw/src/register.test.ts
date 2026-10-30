@@ -454,6 +454,42 @@ describe("getPluginConfig", () => {
 });
 
 describe("disabled web search before_tool_call hook (#13594)", () => {
+  const substituteTools = [
+    { toolName: "read", params: { file_path: "README.md" } },
+    { toolName: "memory_search", params: { query: "installation documentation" } },
+    { toolName: "exec", params: { command: "cat README.md" } },
+    { toolName: "web_fetch", params: { url: "https://example.org/install" } },
+    { toolName: "tool_search", params: { query: "read file" } },
+    { toolName: "tool_call", params: { id: "openclaw:core:read", args: { path: "README.md" } } },
+    {
+      toolName: "tool_call",
+      params: { id: "openclaw:core:memory_search", args: { query: "installation" } },
+    },
+    {
+      toolName: "tool_call",
+      params: { id: "openclaw:core:exec", args: { command: "cat README.md" } },
+    },
+    {
+      toolName: "tool_call",
+      params: { id: "openclaw:core:web_fetch", args: { url: "https://example.org/install" } },
+    },
+  ];
+
+  const invalidPromptEvents = [
+    undefined,
+    null,
+    [],
+    {},
+    { prompt: undefined },
+    { prompt: null },
+    { prompt: 42 },
+    { prompt: true },
+    { prompt: [] },
+    { prompt: {} },
+    { prompt: "" },
+    { prompt: " \n\t" },
+  ];
+
   function searchHook(enabled: boolean | undefined) {
     const api = createMockApi();
     api.config.tools = { web: { search: { enabled } } };
@@ -470,33 +506,62 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     expect(admission).toBeDefined();
     // Tool-hook cases enter through the same admission gate as a host turn.
     const admittedHandler: typeof handler = (...args) => {
-      void admission!(...args);
+      void admission!({ ...(args[0] as object), prompt: "What time is it?" }, ...args.slice(1));
       return handler!(...args);
     };
     return { api, handler: admittedHandler!, rawHandler: handler!, admission: admission! };
   }
 
+  it.each(invalidPromptEvents.flatMap((event) => substituteTools.map((tool) => ({ event, tool }))))(
+    "refuses admission without prompt evidence: $event ($tool.toolName)",
+    async ({ event, tool }) => {
+      const { admission, rawHandler } = searchHook(false);
+      const context = { runId: "missing-prompt", sessionKey: "missing-prompt-session" };
+      expect(await admission(event, context)).toMatchObject({
+        outcome: "block",
+        reason: "disabled-search prompt evidence missing",
+      });
+      expect(await rawHandler(tool, context)).toMatchObject({ block: true });
+      expect(await rawHandler(tool, { sessionKey: context.sessionKey })).toMatchObject({
+        block: true,
+      });
+    },
+  );
+
   it.each(
-    [
-      { toolName: "read", params: { file_path: "README.md" } },
-      { toolName: "memory_search", params: { query: "installation documentation" } },
-      { toolName: "exec", params: { command: "cat README.md" } },
-      { toolName: "web_fetch", params: { url: "https://example.org/install" } },
-      { toolName: "tool_search", params: { query: "read file" } },
-      { toolName: "tool_call", params: { id: "openclaw:core:read", args: { path: "README.md" } } },
-      {
-        toolName: "tool_call",
-        params: { id: "openclaw:core:memory_search", args: { query: "installation" } },
-      },
-      {
-        toolName: "tool_call",
-        params: { id: "openclaw:core:exec", args: { command: "cat README.md" } },
-      },
-      {
-        toolName: "tool_call",
-        params: { id: "openclaw:core:web_fetch", args: { url: "https://example.org/install" } },
-      },
-    ].flatMap((event) =>
+    invalidPromptEvents.flatMap((event) =>
+      [true, undefined].map((enabled) => ({ event, enabled })),
+    ),
+  )(
+    "ignores prompt evidence when search is not disabled: $event ($enabled)",
+    async ({ event, enabled }) => {
+      const { admission, rawHandler } = searchHook(enabled);
+      const context = { runId: "search-available" };
+      expect(await admission(event, context)).toBeUndefined();
+      expect(await rawHandler(substituteTools[0], context)).toBeUndefined();
+    },
+  );
+
+  it("keeps turn capacity after admission rejects missing prompt evidence", async () => {
+    const { admission, rawHandler } = searchHook(false);
+    expect(await admission({}, { runId: "invalid-first" })).toMatchObject({ outcome: "block" });
+    expect(await admission({ prompt: null }, { runId: "invalid-second" })).toMatchObject({
+      outcome: "block",
+    });
+    expect(
+      await admission({ prompt: "Read README.md." }, { runId: "valid-first" }),
+    ).toBeUndefined();
+    expect(
+      await admission({ prompt: "Read README.md." }, { runId: "valid-second" }),
+    ).toBeUndefined();
+    expect(await rawHandler(substituteTools[0], { runId: "valid-first" })).toBeUndefined();
+    expect(await rawHandler(substituteTools[0], { runId: "invalid-first" })).toMatchObject({
+      block: true,
+    });
+  });
+
+  it.each(
+    substituteTools.flatMap((event) =>
       [
         "Find all *.ts files online.",
         "Find all TypeScript files using Tavily.",
@@ -1249,17 +1314,17 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     const tool = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")![1];
     const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
     const read = { toolName: "read", params: { file_path: "/sandbox/project/README.md" } };
-    expect(admission({}, { runId: "ordinary-first" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "ordinary-first" })).toBeUndefined();
     expect(tool(read, { runId: "ordinary-first" })).toBeUndefined();
     await end({ success: true }, { runId: "ordinary-first" });
-    expect(admission({}, { runId: "ordinary-second" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "ordinary-second" })).toBeUndefined();
     expect(tool(read, { runId: "ordinary-second" })).toBeUndefined();
     await end({ success: false }, { runId: "ordinary-second" });
-    expect(admission({}, { runId: "ordinary-third" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "ordinary-third" })).toBeUndefined();
     expect(tool(read, { runId: "ordinary-third" })).toBeUndefined();
     await end({ success: true }, { runId: "ordinary-third" });
     const denied = { runId: "denied-search" };
-    expect(admission({}, denied)).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, denied)).toBeUndefined();
     expect(tool({ toolName: "web_search", params: {} }, denied)).toMatchObject({ block: true });
     expect(tool(read, denied)).toMatchObject({ block: true });
     expect(tool(read, {})).toMatchObject({ block: true });
@@ -1271,12 +1336,14 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     const tool = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")![1];
     const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
     const read = { toolName: "read", params: {} };
-    expect(admission({}, { runId: "ordinary-active" })).toBeUndefined();
-    expect(admission({}, { runId: "denied-active" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "ordinary-active" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "denied-active" })).toBeUndefined();
     expect(tool({ toolName: "web_search", params: {} }, { runId: "denied-active" })).toMatchObject({
       block: true,
     });
-    expect(admission({}, { runId: "overflow" })).toMatchObject({ outcome: "block" });
+    expect(admission({ prompt: "What time is it?" }, { runId: "overflow" })).toMatchObject({
+      outcome: "block",
+    });
     expect(tool({ toolName: "web_search", params: {} }, { runId: "overflow" })).toMatchObject({
       block: true,
     });
@@ -1284,17 +1351,17 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     expect(tool(read, { runId: "ordinary-active" })).toBeUndefined();
     expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
     // Retrying admission for the same active turn must not erase its denial.
-    expect(admission({}, { runId: "denied-active" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "denied-active" })).toBeUndefined();
     expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
     await end({ success: true }, { runId: "ordinary-active" });
-    expect(admission({}, { runId: "next-turn" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "next-turn" })).toBeUndefined();
     expect(tool(read, { runId: "next-turn" })).toBeUndefined();
     expect(tool(read, { runId: "overflow" })).toMatchObject({ block: true });
     expect(tool(read, { runId: "denied-active" })).toMatchObject({ block: true });
     await end({ success: true }, { runId: "denied-active" });
     await end({ success: false }, { runId: "next-turn" });
     await end({ success: false }, { runId: "overflow" });
-    expect(admission({}, { runId: "unrelated-run" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "unrelated-run" })).toBeUndefined();
     expect(tool(read, { runId: "unrelated-run" })).toBeUndefined();
     expect(api.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("active-turn capacity reached"),
@@ -1307,8 +1374,10 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       const { api, admission } = searchHook(false);
       const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
       const tool = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")![1];
-      expect(admission({}, { runId: "first", [field]: "associated" })).toBeUndefined();
-      expect(admission({}, { runId: "second" })).toBeUndefined();
+      expect(
+        admission({ prompt: "What time is it?" }, { runId: "first", [field]: "associated" }),
+      ).toBeUndefined();
+      expect(admission({ prompt: "What time is it?" }, { runId: "second" })).toBeUndefined();
       expect(tool({ toolName: "web_search", params: {} }, { runId: "second" })).toMatchObject({
         block: true,
       });
@@ -1317,12 +1386,14 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       ).toMatchObject({
         block: true,
       });
-      expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
+      expect(admission({ prompt: "What time is it?" }, { runId: "excess" })).toMatchObject({
+        outcome: "block",
+      });
       expect(tool({ toolName: "read", params: {} }, { [field]: "associated" })).toMatchObject({
         block: true,
       });
       await end({ success: true }, { [field]: "associated" });
-      expect(admission({}, { runId: "new-turn" })).toBeUndefined();
+      expect(admission({ prompt: "What time is it?" }, { runId: "new-turn" })).toBeUndefined();
       expect(tool({ toolName: "read", params: {} }, { runId: "new-turn" })).toBeUndefined();
     },
   );
@@ -1331,8 +1402,12 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
     const { api, admission } = searchHook(false);
     const end = vi.mocked(api.on).mock.calls.find(([name]) => name === "agent_end")![1];
     const tool = vi.mocked(api.on).mock.calls.find(([name]) => name === "before_tool_call")![1];
-    expect(admission({}, { runId: "first", sessionKey: "shared" })).toBeUndefined();
-    expect(admission({}, { runId: "second", sessionKey: "shared" })).toBeUndefined();
+    expect(
+      admission({ prompt: "What time is it?" }, { runId: "first", sessionKey: "shared" }),
+    ).toBeUndefined();
+    expect(
+      admission({ prompt: "What time is it?" }, { runId: "second", sessionKey: "shared" }),
+    ).toBeUndefined();
     expect(
       tool({ toolName: "web_search", params: {} }, { runId: "first", sessionKey: "shared" }),
     ).toMatchObject({ block: true });
@@ -1342,23 +1417,29 @@ describe("disabled web search before_tool_call hook (#13594)", () => {
       block: true,
     });
     await end({ success: true }, { sessionKey: "shared" });
-    expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
+    expect(admission({ prompt: "What time is it?" }, { runId: "excess" })).toMatchObject({
+      outcome: "block",
+    });
     await end({ success: true }, { runId: "unrelated", sessionKey: "shared" });
-    expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
+    expect(admission({ prompt: "What time is it?" }, { runId: "excess" })).toMatchObject({
+      outcome: "block",
+    });
     await end({ success: true }, { runId: "first", sessionKey: "shared" });
-    expect(admission({}, { runId: "new-turn" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "new-turn" })).toBeUndefined();
     await end({ success: true }, { runId: "unrelated", sessionKey: "shared" });
-    expect(admission({}, { runId: "excess" })).toMatchObject({ outcome: "block" });
+    expect(admission({ prompt: "What time is it?" }, { runId: "excess" })).toMatchObject({
+      outcome: "block",
+    });
     expect(tool({ toolName: "read", params: {} }, { runId: "second" })).toMatchObject({
       block: true,
     });
     await end({ success: true }, { runId: "new-turn" });
-    expect(admission({}, { runId: "excess" })).toBeUndefined();
+    expect(admission({ prompt: "What time is it?" }, { runId: "excess" })).toBeUndefined();
   });
 
   it("rejects a disabled-search turn without correlatable identity", () => {
     const { admission } = searchHook(false);
-    expect(admission({}, {})).toMatchObject({ outcome: "block" });
+    expect(admission({ prompt: "What time is it?" }, {})).toMatchObject({ outcome: "block" });
   });
 
   it("recovers from identity capacity when search is reenabled", () => {

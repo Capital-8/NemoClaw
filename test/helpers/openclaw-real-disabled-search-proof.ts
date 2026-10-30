@@ -72,11 +72,11 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
     ) => void;
     const runner = (await load("hook-runner-global-", "getGlobalHookRunner")) as () => {
       runBeforeAgentRun(
-        event: { prompt: string; messages: unknown[] },
+        event: { prompt?: unknown; messages: unknown[] },
         ctx: ToolContext,
       ): Promise<{ decision?: { outcome: string } } | undefined>;
       runBeforePromptBuild(
-        event: { prompt: string; messages: unknown[] },
+        event: { prompt?: unknown; messages: unknown[] },
         ctx: ToolContext,
       ): Promise<{ toolsAllow?: string[] }>;
       runGatewayStop(event: object, ctx: object): Promise<void>;
@@ -484,6 +484,27 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
           "block",
           "real admission gate accepts owned turn",
         );
+      }
+      const missingPromptEvents = [
+        { messages: [] },
+        ...[undefined, null, 42, true, [], {}, "", " \n\t"].map((prompt) => ({
+          prompt,
+          messages: [],
+        })),
+      ];
+      for (const event of missingPromptEvents) {
+        const context = { runId: "missing-prompt-evidence" };
+        const result = await runner().runBeforeAgentRun(event, context);
+        assert.equal(
+          result?.decision?.outcome,
+          "block",
+          "missing prompt evidence blocks admission",
+        );
+        const policy = await runner().runBeforePromptBuild(event, context);
+        assert.deepEqual(policy.toolsAllow, [], "missing prompt evidence removes tools");
+        blocked(await call("read", context, "missing-prompt-read"));
+        assert.equal(sideEffects, 0, "a rejected turn cannot execute a local read");
+        await runner().runAgentEnd({ success: false, messages: [] }, context);
       }
       for (const prompt of [
         searchPrompt,

@@ -242,6 +242,9 @@ A press release or announcement must not be presented as installation documentat
 When web search is disabled, the plugin classifies each request before inference.
 Requests for external research, including official documentation without a supplied source, receive an empty per-turn tool allowlist.
 This restriction applies when any part of the request asks for external research, even if another part supplies a local source or URL.
+Admission requires a nonempty text prompt while web search is disabled.
+If OpenClaw omits that prompt, admission blocks the turn before reserving state, and prompt construction withholds tools.
+Check the gateway logs before retrying a turn rejected for missing prompt evidence.
 Admission reserves turn state and records supplied retrieval URLs and local-source scope independently.
 Prompt construction only selects tools and adds context.
 Ordinary local work and retrieval from user-supplied sources retain their tools when the request does not also ask for external research.

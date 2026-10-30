@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { NemoClawState } from "./blueprint/state.js";
-import type { NemoClawConfig, OpenClawConfig, OpenClawPluginApi } from "./index.js";
+import register, {
+  type NemoClawConfig,
+  type OpenClawConfig,
+  type OpenClawPluginApi,
+} from "./index.js";
 
 vi.mock("./blueprint/state.js", () => ({
   loadState: vi.fn(),
 }));
 
 import { loadState } from "./blueprint/state.js";
-import {
-  getRuntimeSummary,
-  registerRuntimeContext,
-  suppliedSearchSources,
-} from "./runtime-context.js";
+import { registerRuntimeContext, suppliedSearchSources } from "./runtime-context.js";
 
 const publicFetchPrompts = [
   "Use the web_fetch tool to fetch exactly this URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf web_fetch is not a directly callable tool, invoke it through tool_call with id openclaw:core:web_fetch and the URL in args.url.\nYou may use tool_search and tool_describe only to discover web_fetch. Do not call an unexposed tool directly.\nAfter web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
@@ -168,119 +168,145 @@ const localFileContentPrompts = [
   "Find folders containing foo.",
 ];
 
-const mockedLoadState = vi.mocked(loadState);
+const codingRequests = [
+  "Fix the search button.",
+  "Implement a binary search algorithm.",
+  "Repair the search form.",
+  "Debug the search handler.",
+  "Refactor the search component.",
+  "Test the search endpoint.",
+  "Rename the search variable.",
+  "Remove the search widget.",
+  "Add a search button.",
+  "Write code to search a binary tree.",
+  "Implement a function to find duplicate values.",
+  "Add a helper to look up cache entries.",
+  "Optimize the query builder.",
+  "Document the research module.",
+  "Please fix the search button.",
+  "Could you implement a binary search algorithm?",
+  "Please help me debug the search handler.",
+  "I want you to add a search button.",
+  "I need to implement binary search.",
+  "I'd like you to implement binary search.",
+  "Can we implement binary search?",
+  "Help me to fix the search button.",
+  "Run a binary search on the values.",
+  "Fix the search button and implement a binary search algorithm.",
+];
 
-const defaultConfig: NemoClawConfig = {
-  blueprintVersion: "latest",
-  blueprintRegistry: "ghcr.io/nvidia/nemoclaw-blueprint",
-  sandboxName: "openclaw",
-  inferenceProvider: "nvidia",
-};
+const externalRequests = [
+  "Search for binary search algorithms.",
+  "Please search for binary search algorithms.",
+  "Could you search for binary search algorithms?",
+  "Please help me search for binary search algorithms.",
+  "I want you to search for binary search algorithms.",
+  "I need to search for binary search algorithms.",
+  "Use web_fetch to search for binary search algorithms.",
+  "Use tool_search only to search for binary search algorithms.",
+  "Run a web_search for binary search algorithms.",
+  "Can we search for binary search algorithms?",
+  "I'd like you to search for binary search algorithms.",
+  "Help me to search for binary search algorithms.",
+  "Run a search for binary search algorithms.",
+  "Conduct research about binary search algorithms.",
+  "Research binary search algorithms.",
+  "Find binary search algorithms.",
+  "Search the web for binary search algorithms.",
+  "Implement a binary search algorithm using Tavily.",
+  "Fix the search button using Brave.",
+  ...codingRequests.map((request) => `${request} Then search for algorithm examples.`),
+  "Fix the search button and search the web for solutions.",
+  "Implement a binary search algorithm, then research alternative algorithms.",
+];
 
-function blankState(patch: Partial<NemoClawState> = {}): NemoClawState {
-  return {
-    lastRunId: null,
-    lastAction: null,
-    blueprintVersion: null,
-    sandboxName: null,
-    migrationSnapshot: null,
-    hostBackupPath: null,
-    createdAt: null,
-    updatedAt: "2026-03-01T00:00:00.000Z",
-    lastRebuildAt: null,
-    lastRebuildBackupPath: null,
-    ...patch,
-  };
-}
+const coordinatedLocalRequestPrompts = [
+  "Search README.md and package.json for TODOs",
+  "Search README.md or package.json for TODOs",
+  "Search README.md, package.json for TODOs",
+  "Search README.md, package.json, and Dockerfile for TODOs",
+  "Search README.md, package.json, or Dockerfile for TODOs",
+  "Search `README.md` and `package.json` for TODOs",
+  "Search README.md and also package.json for TODOs",
+  "Search README.md and package.json recursively for TODOs",
+  "Search README.md for TODOs and package.json for FIXME comments",
+  "Search the file README.md and the file package.json for TODOs",
+  "Search src/index.ts and test/index.test.ts for TODOs",
+  "Search README.md and the repository for TODOs",
+  "Search logs and memory for errors",
+  "Find references to handleRequest and imports",
+  "Read the current contents of README.md and package.json",
+  "Explain the latest changes to README.md and package.json",
+  "Search and also inspect README.md",
+  "Find and additionally fix the bug",
+  "Find and then also remove unused imports",
+];
 
-type MockOpenClawPluginApi = OpenClawPluginApi & {
-  _trigger: (name: string, ...args: readonly unknown[]) => Promise<unknown>;
-};
+const requestCoordinators = [
+  "and",
+  "and also",
+  "and also,",
+  "and then, also",
+  "and then also",
+  "and additionally",
+  "and separately",
+  "but also",
+  "then also",
+  "instead also",
+  "or",
+  "or alternatively",
+  ", also",
+  ". Also",
+  ". Also,",
+  "; additionally",
+  "\nSeparately",
+];
 
-function createMockApi(): MockOpenClawPluginApi {
-  const hooks = new Map<string, (...args: readonly unknown[]) => unknown>();
-  return {
-    id: "nemoclaw",
-    name: "NemoClaw",
-    version: "0.1.0",
-    config: {},
-    pluginConfig: {},
-    logger: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
+const admissionCases: {
+  prompt: unknown;
+  tools: boolean;
+  admitted?: boolean;
+  local?: boolean;
+  urls?: string[];
+}[] = [
+  ...coordinatedLocalRequestPrompts.map((prompt) => ({
+    prompt,
+    tools: true,
+    local: true,
+    urls: [],
+  })),
+  ...requestCoordinators.flatMap((coordinator) => [
+    ...[
+      "Search README.md for TODOs",
+      "Search README.md and package.json for TODOs",
+      "Read https://example.org/guide",
+    ].flatMap((request) => [
+      {
+        prompt: `${request} ${coordinator} find official installation documentation`,
+        tools: false,
+      },
+      { prompt: `${request} ${coordinator} provide today's weather`, tools: false },
+    ]),
+    {
+      prompt: `Find official installation documentation ${coordinator} search README.md for TODOs`,
+      tools: false,
     },
-    registerCommand: vi.fn(),
-    registerProvider: vi.fn(),
-    registerService: vi.fn(),
-    resolvePath: vi.fn((p: string) => p),
-    on: vi.fn((name, handler) => {
-      hooks.set(name, handler as (...args: readonly unknown[]) => unknown);
-    }),
-    _trigger: async (name: string, ...args: readonly unknown[]) => hooks.get(name)?.(...args),
-  } as MockOpenClawPluginApi;
-}
-
-describe("getRuntimeSummary", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockedLoadState.mockReturnValue(blankState());
-  });
-
-  it("returns static deny-by-default context for the configured sandbox", () => {
-    const summary = getRuntimeSummary(defaultConfig);
-
-    expect(summary.sandboxName).toBe("openclaw");
-    expect(summary.sandboxPhase).toBeNull();
-    expect(summary.networkLines.join(" ")).toContain("deny-by-default");
-    expect(summary.networkLines.join(" ")).toContain(
-      "Try the request before declaring a host unreachable",
-    );
-    expect(summary.filesystemLines).toContain(
-      "filesystem and process access are scoped to the sandbox, not the host; do not assume access to host paths outside it",
-    );
-  });
-
-  it("prefers the persisted sandbox name when available", () => {
-    mockedLoadState.mockReturnValue(blankState({ sandboxName: "my-assistant" }));
-
-    const summary = getRuntimeSummary(defaultConfig);
-
-    expect(summary.sandboxName).toBe("my-assistant");
-  });
-
-  it("falls back to plugin config when state cannot be read", () => {
-    mockedLoadState.mockImplementation(() => {
-      throw new Error("state unavailable");
-    });
-
-    const summary = getRuntimeSummary(defaultConfig);
-
-    expect(summary.sandboxName).toBe("openclaw");
-  });
-});
-
-describe("registerRuntimeContext", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockedLoadState.mockReturnValue(blankState());
-  });
-
-  it.each(localLookupPrompts)(
-    "preserves tools for named or called lookups with disabled search: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
+    {
+      prompt: `Search README.md for TODOs ${coordinator} read package.json`,
+      tools: true,
+      local: true,
+      urls: [],
     },
-  );
-
-  it.each([
+  ]),
+  ...[
+    "Search README.md and official installation documentation for TODOs",
+    "Search README.md or official installation documentation for TODOs",
+    "Search README.md, package.json, and official installation documentation for TODOs",
+    "Search README.md and package.json for TODOs using Tavily",
+    "Search README.md and package.json for TODOs online",
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...localLookupPrompts.map((prompt) => ({ prompt, tools: true })),
+  ...[
     "Find a file called config.json online.",
     "Find the function named parseConfig using Tavily.",
     "Find a directory called src on the web.",
@@ -289,54 +315,9 @@ describe("registerRuntimeContext", () => {
     "Find the function named the current Apple stock price.",
     "Find a file called config.json, then search the web for solutions.",
     "Find the function named parseConfig and get the latest release notes.",
-  ])(
-    "withholds tools for named or called lookups requiring external research: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-        "toolsAllow",
-        [],
-      );
-      expect(suppliedSearchSources(prompt)).toBeUndefined();
-    },
-  );
-
-  it.each(["args.url", "params.url"])(
-    "does not grant local sources for supplied-URL argument instructions: %s",
-    async (field) => {
-      const prompt = `Fetch https://example.org/data.csv with the URL in ${field}.`;
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
-      expect(suppliedSearchSources(prompt)).toEqual({
-        local: false,
-        urls: ["https://example.org/data.csv"],
-      });
-    },
-  );
-
-  it.each(localFilenamePrompts)(
-    "preserves tools and local sources for filename targets with disabled search: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
-      expect(suppliedSearchSources(prompt)).toEqual({ local: true, urls: [] });
-    },
-  );
-
-  it.each([
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...localFilenamePrompts.map((prompt) => ({ prompt, tools: true, local: true, urls: [] })),
+  ...[
     "Search the web for main.rs TODO comments.",
     "Search main.go for TODO comments using Tavily.",
     "Search data.csv for missing values online.",
@@ -344,81 +325,18 @@ describe("registerRuntimeContext", () => {
     "Search service.test.cpp for failing assertions from the internet.",
     "Search config.xml for duplicate keys. Then find official installation documentation.",
     "Search notebook.ipynb for failing assertions and search the web for solutions.",
-  ])("withholds tools when filename targets require external research: %s", async (prompt) => {
-    const api = createMockApi();
-    api.config = { tools: { web: { search: { enabled: false } } } };
-    registerRuntimeContext(api, defaultConfig);
-
-    expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-      "toolsAllow",
-      [],
-    );
-    expect(suppliedSearchSources(prompt)).toBeUndefined();
-  });
-
-  it.each(localFileContentPrompts)(
-    "preserves tools for file-content searches with disabled search: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
-    },
-  );
-
-  it.each(localCallNavigationPrompts)(
-    "preserves tools and local sources for function-call navigation: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
-      expect(suppliedSearchSources(prompt)).toEqual({ local: true, urls: [] });
-    },
-  );
-
-  it.each(
-    localCallNavigationPrompts.flatMap((prompt) => [
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...localFileContentPrompts.map((prompt) => ({ prompt, tools: true })),
+  ...localCallNavigationPrompts.map((prompt) => ({ prompt, tools: true, local: true, urls: [] })),
+  ...localCallNavigationPrompts
+    .flatMap((prompt) => [
       `${prompt.replace(/[.!?]$/u, "")} using Tavily.`,
       `${prompt} Then search the web for solutions.`,
       `${prompt} Then find official installation documentation.`,
-    ]),
-  )(
-    "withholds tools for function-call navigation mixed with external research: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-        "toolsAllow",
-        [],
-      );
-      expect(suppliedSearchSources(prompt)).toBeUndefined();
-    },
-  );
-
-  it.each(localSourceAndOutputPrompts)(
-    "preserves tools and local sources for filenames and result instructions: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
-      expect(suppliedSearchSources(prompt)).toEqual({ local: true, urls: [] });
-    },
-  );
-
-  it.each([
+    ])
+    .map((prompt) => ({ prompt, tools: false })),
+  ...localSourceAndOutputPrompts.map((prompt) => ({ prompt, tools: true, local: true, urls: [] })),
+  ...[
     ...localSourceAndOutputPrompts.flatMap((prompt) => [
       `${prompt.replace(/[.!?]$/u, "")} using Tavily.`,
       `${prompt} Then search the web for solutions.`,
@@ -428,91 +346,24 @@ describe("registerRuntimeContext", () => {
     "Search for TODO comments and list the latest weather forecast.",
     "Find all callers of handleRequest and return their file paths and current stock prices.",
     "Search for TODO comments and list the matching files from the web.",
-  ])(
-    "withholds tools when filenames or result instructions include external research: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-        "toolsAllow",
-        [],
-      );
-      expect(suppliedSearchSources(prompt)).toBeUndefined();
-    },
-  );
-
-  it.each(modifiedLocalRequestPrompts)(
-    "preserves tools for local requests with modifiers or polite suffixes: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
-    },
-  );
-
-  it.each(
-    modifiedLocalRequestPrompts.flatMap((prompt) => [
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...modifiedLocalRequestPrompts.map((prompt) => ({ prompt, tools: true })),
+  ...modifiedLocalRequestPrompts
+    .flatMap((prompt) => [
       `${prompt.replace(/[.!?]$/u, "")} using Tavily, please.`,
       `${prompt} Then search the web for solutions, please.`,
       `${prompt} Then find official installation documentation please.`,
-    ]),
-  )(
-    "withholds tools for modified local requests mixed with external research: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-        "toolsAllow",
-        [],
-      );
-      expect(suppliedSearchSources(prompt)).toBeUndefined();
-    },
-  );
-
-  it.each(localCodeInspectionPrompts)(
-    "preserves tools for local code inspection without a path: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
-      expect(suppliedSearchSources(prompt)).toEqual({ local: true, urls: [] });
-    },
-  );
-
-  it.each(
-    localCodeInspectionPrompts.flatMap((prompt) => [
+    ])
+    .map((prompt) => ({ prompt, tools: false })),
+  ...localCodeInspectionPrompts.map((prompt) => ({ prompt, tools: true, local: true, urls: [] })),
+  ...localCodeInspectionPrompts
+    .flatMap((prompt) => [
       `${prompt.replace(/[.!?]$/u, "")} using Tavily.`,
       `${prompt} Then search the web for solutions.`,
       `${prompt} Then find official installation documentation.`,
-    ]),
-  )(
-    "withholds tools for local code inspection mixed with external research: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-        "toolsAllow",
-        [],
-      );
-      expect(suppliedSearchSources(prompt)).toBeUndefined();
-    },
-  );
-
-  it.each([
+    ])
+    .map((prompt) => ({ prompt, tools: false })),
+  ...[
     "Read the current contents of README.md",
     "Explain the latest changes to src/index.ts",
     "Show the current text of config.json.",
@@ -525,17 +376,8 @@ describe("registerRuntimeContext", () => {
     "Show the recent history of src/index.ts.",
     "Read the current contents of data.csv.",
     "Explain the latest changes to Dockerfile.base and return the results.",
-  ])("retains tools for explicit local file details: %s", async (prompt) => {
-    const api = createMockApi();
-    api.config = { tools: { web: { search: { enabled: false } } } };
-    registerRuntimeContext(api, defaultConfig);
-    expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-      "toolsAllow",
-    );
-    expect(suppliedSearchSources(prompt)).toMatchObject({ local: true, urls: [] });
-  });
-
-  it.each([
+  ].map((prompt) => ({ prompt, tools: true, local: true, urls: [] })),
+  ...[
     "Provide today's weather in Paris.",
     "Read the current contents of README.md, then provide today's weather in Paris.",
     "Explain the latest changes to src/index.ts using Tavily.",
@@ -544,18 +386,8 @@ describe("registerRuntimeContext", () => {
     "Explain the latest changes to the weather forecast.",
     "Read the current contents of the latest industry reports.",
     "Research the latest news about changes to src/index.ts.",
-  ])("rejects external research around local file details: %s", async (prompt) => {
-    const api = createMockApi();
-    api.config = { tools: { web: { search: { enabled: false } } } };
-    registerRuntimeContext(api, defaultConfig);
-    expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-      "toolsAllow",
-      [],
-    );
-    expect(suppliedSearchSources(prompt)).toBeUndefined();
-  });
-
-  it.each([
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...[
     "Provide today's weather in Paris.",
     "Give me today's weather in Paris.",
     "Show today's weather in Paris.",
@@ -577,18 +409,8 @@ describe("registerRuntimeContext", () => {
     "Read README.md, then provide today's weather in Paris.",
     "Read README.md, tell me today's weather in Paris.",
     "Find unused imports and list today's stock prices.",
-  ])("withholds tools for imperative current information: %s", async (prompt) => {
-    const api = createMockApi();
-    api.config = { tools: { web: { search: { enabled: false } } } };
-    registerRuntimeContext(api, defaultConfig);
-    expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-      "toolsAllow",
-      [],
-    );
-    expect(suppliedSearchSources(prompt)).toBeUndefined();
-  });
-
-  it.each([
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...[
     "Show me today's date.",
     "Give me the current git commit hash.",
     "Tell me the current branch name.",
@@ -612,16 +434,8 @@ describe("registerRuntimeContext", () => {
     "Show today's logs.",
     "Summarize today's code changes.",
     "Do not provide today's weather. Read README.md.",
-  ])("preserves local and supplied-source imperative work: %s", async (prompt) => {
-    const api = createMockApi();
-    api.config = { tools: { web: { search: { enabled: false } } } };
-    registerRuntimeContext(api, defaultConfig);
-    expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-      "toolsAllow",
-    );
-  });
-
-  it.each([
+  ].map((prompt) => ({ prompt, tools: true })),
+  ...[
     "What is the current weather in Paris?",
     "What are today's stock prices?",
     "Who is the current president of France?",
@@ -838,20 +652,8 @@ describe("registerRuntimeContext", () => {
     "Search for the official NemoClaw installation documentation on the internet.",
     "Use Tavily to look for the official NemoClaw installation documentation.",
     "Look for the official NemoClaw installation documentation using Brave.",
-  ])(
-    "withholds tools for an explicit search request when search is disabled: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).toMatchObject({
-        toolsAllow: [],
-      });
-    },
-  );
-
-  it.each([
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...[
     "I want the official installation documentation from README.md.",
     "The latest release notes in docs/README.md, please.",
     "Search Dockerfile for the base image",
@@ -1181,36 +983,17 @@ describe("registerRuntimeContext", () => {
     "Do not find documentation online. Read README.md instead.",
     "Run exactly this shell command: curl https://wttr.in/:help.\nDo not use web_fetch, web_search, or any other weather provider.",
     "Use web_fetch to fetch https://www.wikidata.org/wiki/Q30. Do not use web_search, Brave, or Tavily.",
-  ])("preserves tools for ordinary work when search is disabled: %s", async (prompt) => {
-    const api = createMockApi();
-    api.config = { tools: { web: { search: { enabled: false } } } };
-    registerRuntimeContext(api, defaultConfig);
-
-    expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-      "toolsAllow",
-    );
-  });
-
-  it.each(publicFetchPrompts)(
-    "preserves supplied URL retrieval with discovery instructions: %s",
-    async (prompt) => {
-      const api = createMockApi();
-      api.config = { tools: { web: { search: { enabled: false } } } };
-      registerRuntimeContext(api, defaultConfig);
-      expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-        "toolsAllow",
-      );
-      expect(suppliedSearchSources(prompt)).toEqual({
-        local: false,
-        urls: [
-          "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json",
-        ],
-      });
-    },
-  );
-
-  it.each(
-    publicFetchPrompts.flatMap((prompt) =>
+  ].map((prompt) => ({ prompt, tools: true })),
+  ...publicFetchPrompts.map((prompt) => ({
+    prompt,
+    tools: true,
+    local: false,
+    urls: [
+      "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json",
+    ],
+  })),
+  ...publicFetchPrompts
+    .flatMap((prompt) =>
       [
         "Then search the web for alternatives.",
         "Then discover the latest installation documentation.",
@@ -1218,19 +1001,9 @@ describe("registerRuntimeContext", () => {
         "Then discover web_search.",
         "Then discover web_fetch using Tavily.",
       ].map((research) => `${prompt} ${research}`),
-    ),
-  )("withholds tools for supplied retrieval mixed with external research: %s", async (prompt) => {
-    const api = createMockApi();
-    api.config = { tools: { web: { search: { enabled: false } } } };
-    registerRuntimeContext(api, defaultConfig);
-    expect(await api._trigger("before_prompt_build", { prompt }, {})).toHaveProperty(
-      "toolsAllow",
-      [],
-    );
-    expect(suppliedSearchSources(prompt)).toBeUndefined();
-  });
-
-  it.each([
+    )
+    .map((prompt) => ({ prompt, tools: false })),
+  ...[
     "Discover web_fetch.",
     "Find the web_fetch tool.",
     "Search for the web_fetch tool.",
@@ -1240,14 +1013,262 @@ describe("registerRuntimeContext", () => {
     "Find memory_search.",
     "Discover local filesystem tools.",
     "Discover available tools.",
-  ])("preserves local tool discovery when search is disabled: %s", async (prompt) => {
-    const api = createMockApi();
-    api.config = { tools: { web: { search: { enabled: false } } } };
-    registerRuntimeContext(api, defaultConfig);
-    expect(await api._trigger("before_prompt_build", { prompt }, {})).not.toHaveProperty(
-      "toolsAllow",
-    );
+  ].map((prompt) => ({ prompt, tools: true })),
+  ...[
+    "Find all Visual Basic files.",
+    "Find all Objective C source files.",
+    "Find all Structured Query Language files.",
+    "Find all TypeScript and JavaScript files.",
+    'Find all "* copy.ts" files.',
+    'Find "* copy.ts".',
+    "Find all *.ts files.",
+    "Find all TypeScript files.",
+    "Find *.ts.",
+    "Find **/*.ts.",
+    "Find all src/**/*.ts files.",
+    "Search for *.test.ts files.",
+    "Find all `*.ts` files.",
+    'Find all "*.ts" files.',
+    "Find all * files.",
+    "Find *",
+    "Find **/*",
+    "Find all **/*.{ts,tsx} files.",
+    "Find all [ab]*.ts files.",
+    "Find all .ts files.",
+    "Find all JavaScript files.",
+    "Find all Python files.",
+    "Find all Rust files.",
+    "Find all Go files.",
+    "Find all C++ files.",
+    "Find all C# files.",
+    "Find all CSV files.",
+    "Find all JSON files.",
+    "Find all Markdown files.",
+    "Find all TypeScript source files.",
+    "Find all Jupyter notebook files.",
+    "Find all custom-format files.",
+    "Find TypeScript files.",
+    "Locate any TypeScript files recursively, please.",
+    "Look for all *.tsx files and return their file paths.",
+    "Find files ending in .ts.",
+    "Find files of type TypeScript.",
+    "Find files with extension .ts.",
+  ].map((prompt) => ({ prompt, tools: true })),
+  ...[
+    "Find all *.ts files online.",
+    "Find all TypeScript files using Tavily.",
+    "Search the web for TypeScript files.",
+    "Find all TypeScript files from GitHub.",
+    "Find all *.ts files on GitHub.",
+    "Find all *.ts files, then provide today's weather in Paris.",
+    "Find all TypeScript files and search the web for solutions.",
+    "Find documentation about *.ts files.",
+    "Find best practices for TypeScript files.",
+    "Find the latest news about TypeScript files.",
+    "Find official documentation for TypeScript files.",
+    "Research the current weather in Paris.",
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...codingRequests.map((prompt) => ({ prompt, tools: true })),
+  ...externalRequests.map((prompt) => ({ prompt, tools: false })),
+  ...[undefined, null, 0, false, [], {}, "", " \n\t"].map((prompt) => ({
+    prompt,
+    tools: false,
+    admitted: false,
+  })),
+  // Unseen neighbors vary notation, formats, scope words and mixed instructions.
+  ...[
+    "Find all callers of $handleRequest().",
+    "Find all callers of Handler::handleRequest(value).",
+    'Search "My report.custom-format" for missing values.',
+    'Read the current contents of "my folder/custom.data-format".',
+    "Find the current installed CustomRuntime version.",
+    "Find a function named custom_parser.",
+    "Find all Apache Parquet files.",
+    "Find all Zig source files.",
+    "Find all Lua and R source files.",
+    "Search trace.custom-container-format for missing values.",
+    "Show the latest changes to unknown.schema-format.",
+    "Read the current contents of /sandbox/custom.data-format.",
+    "Find a file named BuildInstructions.",
+    "Find a directory called custom_sources.",
+    "Find the largest files containing the word weather.",
+    "Find the current git branch for the research app.",
+    "Fix the research module and test the search button.",
+    "Fix the latest documentation test.",
+    "Update the official documentation renderer.",
+    "Implement the latest news widget.",
+    "Write a helper to find and replace duplicate values.",
+    "Find unused imports and fix the search handler.",
+    "Fetch https://example.org/search/latest/news?q=online.",
+    "Find the latest release notes in /sandbox/NOTES.",
+  ].map((prompt) => ({ prompt, tools: true })),
+  ...[
+    "Fetch https://example.org/data using Tavily.",
+    "Summarize the latest court ruling mentioning https://example.org/.",
+    "Read the latest industry reports about https://example.org/.",
+    "What is the latest release version?",
+    "What are the latest market errors?",
+    "Find all Apache Parquet files online.",
+    "Find all Zig source files from GitHub.",
+    "Search the web for trace.custom-container-format.",
+    "Show the latest changes to the current tax regulations.",
+    "Find a function named custom_parser using Brave.",
+    "Find a directory called custom_sources and provide today's road closures.",
+    "Research file discovery techniques.",
+    "Research the latest news about file formats.",
+    "Find the current git branch and discover the latest news.",
+    "Fetch https://example.org/search/latest/news and research alternatives.",
+    "Search for files about the latest official documentation online.",
+    "Find a variable named current stock prices.",
+    "Find references to the latest official installation guide.",
+  ].map((prompt) => ({ prompt, tools: false })),
+  ...["args.url", "params.url"].map((field) => ({
+    prompt: `Fetch https://example.org/data.csv with the URL in ${field}.`,
+    tools: true,
+    local: false,
+    urls: ["https://example.org/data.csv"],
+  })),
+];
+
+const mockedLoadState = vi.mocked(loadState);
+
+const defaultConfig: NemoClawConfig = {
+  blueprintVersion: "latest",
+  blueprintRegistry: "ghcr.io/nvidia/nemoclaw-blueprint",
+  sandboxName: "openclaw",
+  inferenceProvider: "nvidia",
+};
+
+function blankState(patch: Partial<NemoClawState> = {}): NemoClawState {
+  return {
+    lastRunId: null,
+    lastAction: null,
+    blueprintVersion: null,
+    sandboxName: null,
+    migrationSnapshot: null,
+    hostBackupPath: null,
+    createdAt: null,
+    updatedAt: "2026-03-01T00:00:00.000Z",
+    lastRebuildAt: null,
+    lastRebuildBackupPath: null,
+    ...patch,
+  };
+}
+
+type MockOpenClawPluginApi = OpenClawPluginApi & {
+  _trigger: (name: string, ...args: readonly unknown[]) => Promise<unknown>;
+};
+
+function createMockApi(): MockOpenClawPluginApi {
+  const hooks = new Map<string, (...args: readonly unknown[]) => unknown>();
+  return {
+    id: "nemoclaw",
+    name: "NemoClaw",
+    version: "0.1.0",
+    config: {},
+    pluginConfig: {},
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    },
+    registerCommand: vi.fn(),
+    registerProvider: vi.fn(),
+    registerService: vi.fn(),
+    resolvePath: vi.fn((p: string) => p),
+    on: vi.fn((name, handler) => {
+      hooks.set(name, handler as (...args: readonly unknown[]) => unknown);
+    }),
+    _trigger: async (name: string, ...args: readonly unknown[]) => {
+      expect(hooks.has(name)).toBe(true);
+      return hooks.get(name)!(...args);
+    },
+  } as MockOpenClawPluginApi;
+}
+
+describe("registerRuntimeContext", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedLoadState.mockReturnValue(blankState());
   });
+
+  it.each(admissionCases)(
+    "applies the admission rule to $prompt (#13594)",
+    async ({ prompt, tools, admitted = true, local, urls }) => {
+      const api = createMockApi();
+      api.config = { tools: { web: { search: { enabled: false } } } };
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      onTestFinished(async () => {
+        await api._trigger("gateway_stop", {}, {});
+        stderr.mockRestore();
+      });
+      register(api);
+      const context = { runId: "admission-turn", sessionKey: "admission-session" };
+      const selection = (await api._trigger("before_prompt_build", { prompt }, context)) as {
+        toolsAllow?: string[];
+      };
+      const admission = await api._trigger("before_agent_run", { prompt }, context);
+      expect
+        .soft({
+          toolsAllow: selection.toolsAllow,
+          admission,
+          read: await api._trigger(
+            "before_tool_call",
+            { toolName: "read", params: { file_path: "/sandbox/README.md" } },
+            context,
+          ),
+          exec: await api._trigger(
+            "before_tool_call",
+            { toolName: "exec", params: { command: "pwd" } },
+            context,
+          ),
+          memory: await api._trigger(
+            "before_tool_call",
+            { toolName: "memory_search", params: { query: "previous conversation" } },
+            context,
+          ),
+          discovery: await api._trigger(
+            "before_tool_call",
+            { toolName: "tool_search", params: { query: "read" } },
+            context,
+          ),
+          sources: typeof prompt === "string" ? suppliedSearchSources(prompt) : undefined,
+          searchDenial: await api._trigger(
+            "before_tool_call",
+            { toolName: "web_search", params: {} },
+            context,
+          ),
+          retainedRead: await api._trigger(
+            "before_tool_call",
+            { toolName: "read", params: { file_path: "/sandbox/package.json" } },
+            context,
+          ),
+          retainedExec: await api._trigger(
+            "before_tool_call",
+            { toolName: "exec", params: { command: "pwd" } },
+            context,
+          ),
+        })
+        .toMatchObject({
+          toolsAllow: tools ? undefined : [],
+          admission: admitted
+            ? undefined
+            : { outcome: "block", reason: "disabled-search prompt evidence missing" },
+          read: tools ? undefined : { block: true },
+          exec: tools ? undefined : { block: true },
+          memory: tools ? undefined : { block: true },
+          discovery: tools ? undefined : { block: true },
+          ...(local === undefined ? {} : { sources: { local, urls } }),
+          ...(!tools ? { sources: undefined } : {}),
+          searchDenial: { block: true },
+          ...(!tools || local !== undefined
+            ? { retainedRead: tools && local ? undefined : { block: true } }
+            : {}),
+          retainedExec: { block: true },
+        });
+    },
+  );
 
   it.each([
     {},

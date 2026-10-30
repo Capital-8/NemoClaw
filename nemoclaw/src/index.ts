@@ -16,7 +16,7 @@ import { DeniedSearchState } from "./denied-search-state.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import { readNativeRoute } from "./onboard/native-route.js";
 import { getPluginConfig } from "./plugin-config.js";
-import { registerRuntimeContext, researchScope, suppliedSearchSources } from "./runtime-context.js";
+import { registerRuntimeContext, classifySearchTurn } from "./runtime-context.js";
 import { configuredSearchEnabled } from "./search-config.js";
 import { safeResolvePath } from "./security/safe-resolve-path.js";
 import { isMemoryPath, scanForSecrets } from "./security/secret-scanner.js";
@@ -377,12 +377,21 @@ export default function register(api: OpenClawPluginApi): void {
           };
         }
         const prompt = readStringProperty(args[0], "prompt");
-        const externalResearch = prompt !== undefined && researchScope(prompt) === "external";
+        const turn = classifySearchTurn(prompt);
+        if (turn.scope === "missing") {
+          return {
+            outcome: "block",
+            reason: "disabled-search prompt evidence missing",
+            message:
+              "This turn cannot start safely because OpenClaw did not provide a nonempty text prompt. Check the gateway logs before retrying.",
+          };
+        }
+        const externalResearch = turn.scope === "external";
         if (
           deniedSearchRuns.admit(
             identity,
             identities,
-            !externalResearch && prompt !== undefined ? suppliedSearchSources(prompt) : undefined,
+            turn.scope === "supplied" ? { local: turn.local, urls: turn.urls } : undefined,
           )
         ) {
           // Alternate runtime paths may skip the prompt allowlist. Close their
