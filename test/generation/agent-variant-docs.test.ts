@@ -110,10 +110,11 @@ describe("agent variant docs", () => {
     const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
     const render = (variant: "openclaw" | "hermes" | "deepagents") =>
       renderAgentVariantPage(pageSource, variant, { sourcePath });
-    const gatewayStartRepair =
-      "The `start` command repairs the agent runtime and host-side port forwards.";
+    const gatewayStartVerification =
+      "The `start` command verifies the agent runtime and checks or restores host-side port forwards.";
+    const gatewayStartNoRelaunch = "It does not relaunch a stopped native gateway.";
     const gatewayStartSuccess =
-      "It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.";
+      "It returns success only after OpenShell reports the sandbox ready, the agent runtime passes verification, and host-side port forwards pass their checks.";
     const gatewayStartFailure =
       "If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.";
     const terminalRuntimeScope =
@@ -121,9 +122,12 @@ describe("agent variant docs", () => {
     const forwardPrerequisites =
       "The OpenShell ownership and local endpoint reachability prerequisites for an active port forward do not apply.";
 
-    expect(render("openclaw")).toContain(gatewayStartRepair);
-    expect(render("hermes")).toContain(gatewayStartRepair);
-    expect(render("deepagents")).not.toContain(gatewayStartRepair);
+    expect(render("openclaw")).toContain(gatewayStartVerification);
+    expect(render("hermes")).toContain(gatewayStartVerification);
+    expect(render("deepagents")).not.toContain(gatewayStartVerification);
+    expect(render("openclaw")).toContain(gatewayStartNoRelaunch);
+    expect(render("hermes")).toContain(gatewayStartNoRelaunch);
+    expect(render("deepagents")).not.toContain(gatewayStartNoRelaunch);
     expect(render("openclaw")).toContain(gatewayStartSuccess);
     expect(render("hermes")).toContain(gatewayStartSuccess);
     expect(render("deepagents")).not.toContain(gatewayStartSuccess);
