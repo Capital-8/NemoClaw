@@ -66,6 +66,37 @@ async fn scenarios_in_shard_4() {
     run_shard(3).await;
 }
 
+/// Every live E2E and integration test file names a document in `hcl/cases`,
+/// so a renamed or removed case fails with the unit tests, before a bundle
+/// is built.
+#[test]
+fn every_scenario_test_names_a_case() {
+    let missing: Vec<String> = ["tests", "integration/tests"]
+        .into_iter()
+        .flat_map(|directory| {
+            fs::read_dir(Path::new(HCL).join(directory))
+                .unwrap()
+                .map(move |entry| {
+                    (
+                        directory,
+                        entry.unwrap().file_name().to_string_lossy().into_owned(),
+                    )
+                })
+        })
+        .filter_map(|(directory, name)| {
+            let scenario = name.strip_suffix(".tftest.hcl")?;
+            let case = Path::new(HCL)
+                .join("cases")
+                .join(format!("{scenario}.yaml"));
+            (!case.is_file()).then(|| format!("{directory}/{name}"))
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "hcl test files without hcl/cases/<name>.yaml: {missing:?}"
+    );
+}
+
 async fn run_shard(shard: usize) {
     let bundle = Bundle::from_env();
     let root = Path::new(HCL).join("integration");
