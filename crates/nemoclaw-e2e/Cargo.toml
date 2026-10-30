@@ -45,7 +45,6 @@ http.workspace = true
 tokio-stream.workspace = true
 tar.workspace = true
 process-wrap.workspace = true
-getrandom.workspace = true
 clap.workspace = true
 
 [dev-dependencies]
@@ -57,6 +56,7 @@ kube.workspace = true
 time.workspace = true
 url.workspace = true
 serde-saphyr.workspace = true
+getrandom.workspace = true
 reqwest.workspace = true
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 

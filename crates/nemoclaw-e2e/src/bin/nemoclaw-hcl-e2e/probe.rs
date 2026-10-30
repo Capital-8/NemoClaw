@@ -2,19 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use fabric_provider::AgentBridge as _;
-use nemoclaw_sdk::{
-    EnvironmentSecrets,
-    backend::Row,
-    config::{Document, NamedSandbox},
-};
-use openshell_provider::{OpenShell, SandboxPhase, verify_identity};
+use nemoclaw_sdk::{EnvironmentSecrets, backend::Row, config::Document};
+use openshell_provider::OpenShell;
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{fs, path::PathBuf, sync::Arc};
 
 #[derive(clap::Args)]
 pub(super) struct Inputs {
@@ -26,22 +17,14 @@ pub(super) struct Inputs {
     pub agent: String,
     /// HCL scenario key retained with this target's evidence.
     #[arg(long)]
-    pub target: Option<String>,
+    pub target: String,
     #[arg(long)]
     pub request: PathBuf,
-    #[arg(long, value_enum)]
-    pub response_contract: super::response::Contract,
+    /// JSON pointer to the reply text in the harness output, such as /output/response.
+    #[arg(long)]
+    pub response_pointer: String,
     #[arg(long)]
     pub report: PathBuf,
-}
-
-fn target_agent<'a>(document: &'a Document, agent: &str) -> Result<NamedSandbox<'a>, String> {
-    let mut matches = document.sandboxes().filter(|s| s.agent.name == agent);
-    let sandbox = matches.next().ok_or("target agent is not configured")?;
-    if matches.next().is_some() {
-        return Err("target agent is ambiguous".into());
-    }
-    Ok(sandbox)
 }
 
 fn resource(state: &Value, kind: &str, name: &str) -> Result<Value, String> {
@@ -55,20 +38,6 @@ fn resource(state: &Value, kind: &str, name: &str) -> Result<Value, String> {
         return Err("missing unique managed binding".into());
     }
     Ok(found[0]["instances"][0]["attributes"].clone())
-}
-
-fn save(path: &Path, report: &Value) -> Result<(), String> {
-    nemoclaw_runtime::files::save_json(path, report)
-        .map_err(|_| "cannot save probe evidence".into())
-}
-
-fn initial_report() -> Value {
-    json!({
-        "expected": {"agent_name": null, "runtime_id": null},
-        "health": {"gateway_ready": false, "sandbox_ready": false, "identity_matches": false, "agent_name": null, "policy_loaded": false},
-        "response": {"attempted": false, "succeeded": false, "agent_name": null, "runtime_id": null, "output_valid": false},
-        "failure": {"observed_at": "probe", "attributed_to": "unknown", "code": "incomplete"}
-    })
 }
 
 fn invocation_failure(error: &nemoclaw_backend::Error) -> Value {
@@ -95,109 +64,65 @@ fn invocation_failure(error: &nemoclaw_backend::Error) -> Value {
 }
 
 pub(super) async fn execute(inputs: &Inputs) -> Result<(), String> {
-    let report_path = &inputs.report;
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(report_path)
+        .open(&inputs.report)
         .map_err(|_| "probe requires a new report file")?;
-    let mut report = initial_report();
-    report["target"] = json!(inputs.target.as_deref().unwrap_or(&inputs.agent));
-    save(report_path, &report)?;
-    let result = observe(inputs, &mut report).await;
-    if result.is_err() {
-        // Backend text and response payloads can contain credentials or private prompts.
-        report["failure"]["code"] = json!("observation_failed");
+    let mut report = json!({
+        "target": inputs.target,
+        "expected": {"agent_name": inputs.agent, "runtime_id": null},
+        "response": {"attempted": false, "succeeded": false, "agent_name": null, "runtime_id": null, "output_valid": false},
+        // Backend text and responses can hold credentials or private prompts; keep only codes.
+        "failure": {"code": "observation_failed"},
+    });
+    if invoke(inputs, &mut report).await.is_ok() {
+        report["failure"]["code"] = json!("none");
     }
-    save(report_path, &report)
+    nemoclaw_runtime::files::save_json(&inputs.report, &report)
+        .map_err(|_| "cannot save probe evidence".into())
 }
 
-async fn observe(inputs: &Inputs, report: &mut Value) -> Result<(), String> {
-    let Inputs {
-        config,
-        state_dir: state_path,
-        request,
-        report: report_path,
-        ..
-    } = inputs;
+async fn invoke(inputs: &Inputs, report: &mut Value) -> Result<(), String> {
     let document =
-        Document::parse(fs::File::open(config).map_err(|_| "cannot read configuration")?)
+        Document::parse(fs::File::open(&inputs.config).map_err(|_| "cannot read configuration")?)
             .map_err(|_| "invalid configuration")?;
     let state: Value = serde_json::from_slice(
-        &fs::read(state_path.join("terraform.tfstate"))
+        &fs::read(inputs.state_dir.join("terraform.tfstate"))
             .map_err(|_| "cannot read deployment state")?,
     )
     .map_err(|_| "invalid deployment state")?;
-    let sandbox = target_agent(&document, &inputs.agent)?;
+    let mut sandboxes = document
+        .sandboxes()
+        .filter(|s| s.agent.name == inputs.agent);
+    let (Some(sandbox), None) = (sandboxes.next(), sandboxes.next()) else {
+        return Err("target agent must name exactly one sandbox".into());
+    };
+    // Apply already checked gateway, sandbox, and agent readiness; use its bindings.
     let mut attributes = resource(&state, "openshell_sandbox", sandbox.name)?;
     nemoclaw_openshell::flatten("openshell_sandbox", &mut attributes);
-    let expected: Row = attributes
+    let row: Row = attributes
         .as_object()
         .ok_or("invalid sandbox binding")?
         .iter()
         .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
         .collect();
+    let binding = fabric_provider::fabric_binding(row).map_err(|_| "invalid Fabric binding")?;
     let agent = resource(&state, "fabric_agent", sandbox.name)?;
     let runtime = agent["runtime_id"]
         .as_str()
         .filter(|v| !v.is_empty())
         .ok_or("missing runtime")?;
-    report["expected"] = json!({"agent_name": sandbox.agent.name, "runtime_id": runtime});
+    report["expected"]["runtime_id"] = json!(runtime);
+    let input: Value =
+        serde_json::from_slice(&fs::read(&inputs.request).map_err(|_| "cannot read request")?)
+            .map_err(|_| "invalid request")?;
     let client = OpenShell::connect(
         &document.spec.gateway.connection(),
         Arc::new(EnvironmentSecrets),
     )
     .map_err(|_| "cannot connect")?;
-    report["failure"]["observed_at"] = json!("openshell.gateway");
-    let health = async {
-        client
-            .verify_gateway(document.spec.gateway.runtime().provider)
-            .await
-            .map_err(|_| "gateway unavailable")?;
-        report["health"]["gateway_ready"] = json!(true);
-        save(report_path, report)?;
-        report["failure"]["observed_at"] = json!("openshell.sandbox");
-        let observed = client
-            .observe("sandbox", &document.workspace(), sandbox.name, false)
-            .await
-            .map_err(|_| "sandbox observation failed")?
-            .ok_or("sandbox absent")?;
-        verify_identity(&expected, &observed).map_err(|_| "sandbox identity mismatch")?;
-        report["health"]["identity_matches"] = json!(true);
-        report["health"]["policy_loaded"] =
-            json!(observed.get("policy_hash").is_some_and(|v| !v.is_empty()));
-        report["failure"]["observed_at"] = json!("fabric.binding");
-        let binding =
-            fabric_provider::fabric_binding(observed).map_err(|_| "invalid Fabric binding")?;
-        report["health"]["agent_name"] = json!(binding.get("agent_name"));
-        report["failure"]["observed_at"] = json!("openshell.sandbox-readiness");
-        report["health"]["sandbox_ready"] = json!(
-            client
-                .sandbox_phase(&binding, true)
-                .await
-                .map_err(|_| "sandbox readiness failed")?
-                == SandboxPhase::Ready
-        );
-        Ok::<_, String>(binding)
-    };
-    let binding = tokio::time::timeout(Duration::from_secs(60), health)
-        .await
-        .map_err(|_| "health deadline exceeded")??;
-    save(report_path, report)?;
-    // These prerequisites prevent invoking an unready or incorrectly bound agent.
-    // HCL independently evaluates the recorded observations and expected binding.
-    if report["health"]["sandbox_ready"] != true
-        || report["health"]["policy_loaded"] != true
-        || report["health"]["agent_name"] != report["expected"]["agent_name"]
-    {
-        return Err("required health check failed".into());
-    }
-    report["failure"]["observed_at"] = json!("fabric.invoke");
     report["response"]["attempted"] = json!(true);
-    save(report_path, report)?;
-    let input: Value =
-        serde_json::from_slice(&fs::read(request).map_err(|_| "cannot read request")?)
-            .map_err(|_| "invalid request")?;
     // Reuse the production bridge, including its deadline and no-retry behavior.
     let response = client
         .invoke_agent(&binding, runtime, &input)
@@ -206,8 +131,16 @@ async fn observe(inputs: &Inputs, report: &mut Value) -> Result<(), String> {
             report["failure"]["provider"] = invocation_failure(&error);
             "invocation failed"
         })?;
-    report["response"] = super::response::observations(&response, inputs.response_contract);
-    report["failure"]["code"] = json!("none");
+    let text = response
+        .pointer(&inputs.response_pointer)
+        .and_then(Value::as_str);
+    report["response"] = json!({
+        "attempted": true,
+        "succeeded": nemoclaw_e2e::state::successful_invocation(&serde_json::to_vec(&response).unwrap()),
+        "agent_name": response["agent_name"].as_str(),
+        "runtime_id": response["runtime_id"].as_str(),
+        "output_valid": text.is_some_and(|text| !text.trim().is_empty()),
+    });
     Ok(())
 }
 
