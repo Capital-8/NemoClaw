@@ -18,12 +18,20 @@ pub fn property(schema: &mut Value, field: &str, extra: Value) {
         .expect("derived field exists")
         .extend(extra);
 }
+/// Accepted values of a defaulted integer: its range, and zero before defaults apply.
+pub fn bounds(min: i64, max: i64, normalized: bool) -> Value {
+    if normalized {
+        json!([{ "minimum": min, "maximum": max }])
+    } else {
+        json!([{ "const": 0 }, { "minimum": min, "maximum": max }])
+    }
+}
 pub fn integer(schema: &mut Value, field: &str, rule: &DefaultedInteger, normalized: bool) {
     property(
         schema,
         field,
         json!({
-            "anyOf": if normalized { json!([{ "minimum": rule.min, "maximum": rule.max }]) } else { json!([{ "const": 0 }, { "minimum": rule.min, "maximum": rule.max }]) },
+            "anyOf": bounds(rule.min, rule.max, normalized),
             "default": rule.default,
             "x-nemoclaw-default-rule": "Omitted or zero selects the default."
         }),
