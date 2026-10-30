@@ -10,7 +10,12 @@ export type InferenceProviderProfileProjection = Readonly<{
     authStyle: string;
     headerName: string;
   }>[];
-  endpoints: readonly Readonly<{ host: string; port: number }>[];
+  endpoints: readonly Readonly<{
+    host: string;
+    port: number;
+    ports: readonly number[];
+    enforcesCredentialedRest: boolean;
+  }>[];
 }>;
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
@@ -182,18 +187,33 @@ export function inspectInferenceProviderProfile(
       headerName: credential.header_name.toLowerCase(),
     });
   }
-  const endpoints: { host: string; port: number }[] = [];
+  const endpoints: InferenceProviderProfileProjection["endpoints"][number][] = [];
   for (const value of profile.endpoints) {
     const endpoint = recordValue(value);
+    const ports = endpoint?.ports === undefined ? [] : endpoint.ports;
     if (
       !endpoint ||
       typeof endpoint.host !== "string" ||
-      !Number.isInteger(endpoint.port) ||
-      Number(endpoint.port) < 1 ||
-      Number(endpoint.port) > 65535
+      !Array.isArray(ports) ||
+      ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535) ||
+      (!ports.length &&
+        (!Number.isInteger(endpoint.port) ||
+          Number(endpoint.port) < 1 ||
+          Number(endpoint.port) > 65535))
     )
       return undefined;
-    endpoints.push({ host: endpoint.host.toLowerCase(), port: Number(endpoint.port) });
+    endpoints.push({
+      host: endpoint.host.toLowerCase(),
+      port: Number(endpoint.port ?? 0),
+      ports: ports.length ? ports : [Number(endpoint.port)],
+      enforcesCredentialedRest:
+        typeof endpoint.protocol === "string" &&
+        endpoint.protocol.toLowerCase() === "rest" &&
+        endpoint.enforcement === "enforce" &&
+        (endpoint.tls === undefined || endpoint.tls === "") &&
+        (endpoint.allow_uninspected_credentials === undefined ||
+          endpoint.allow_uninspected_credentials === false),
+    });
   }
   return {
     digest: createHash("sha256").update(JSON.stringify(profile)).digest("hex"),

@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 import { readVerifiedRegisteredCredentialHandle } from "../../actions/inference-set/registered";
 import { inspectInferenceProviderProfile } from "../../adapters/openshell/provider-profile";
 import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
+import { registeredProviderHostMatches } from "./registered-host-pattern";
 import {
   attachRegisteredInferenceProvider,
   detachRegisteredInferenceProvider,
   recordedRegisteredInferenceProviderAttachment,
+  registeredInferenceProviderRevision,
   resolveRegisteredInferenceProvider,
   verifyRegisteredInferenceProviderAttachment,
 } from "./registered";
@@ -99,6 +101,212 @@ describe("operator inference provider attachments", () => {
 });
 
 describe("registered provider profile authentication", () => {
+  it.each([
+    ["**.example", "deep.api.example"],
+    ["api.*.example", "api.internal.example"],
+    ["*-api.example", "tenant-api.example"],
+    ["api?.example", "api1.example"],
+    ["api[0-9].example", "api1.example"],
+    ["api[!a-z].example", "api1.example"],
+  ])("rejects unsafe policy at matching host pattern %s", async (pattern, host) => {
+    const f = registeredInferenceFixture();
+    f.profile.endpoints[0]!.host = host;
+    f.profile.endpoints.push({ ...f.profile.endpoints[0]!, host: pattern, enforcement: "audit" });
+    await expect(
+      resolveRegisteredInferenceProvider({
+        ...f.binding,
+        endpointUrl: `https://${host}/v1`,
+        adapter: f.adapter,
+      }),
+    ).rejects.toThrow("enforced REST policy");
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["*.example", "deep.api.example", false],
+    ["*.example", "example", false],
+    ["*.example", "api.example", true],
+    ["**.example", "deep.api.example", true],
+    ["**.example", "example", false],
+    ["api.**.example", "api.x.y.example", true],
+    ["api.**.example", "api.example", false],
+    ["API.*.example", "api.internal.example", true],
+    ["api[^a].example", "api1.example", false],
+    ["api[!a].example", "api1.example", true],
+    ["api[-a].example", "api-.example", true],
+    ["api[a-].example", "api-.example", true],
+    ["api[]].example", "api].example", true],
+    ["api[!]].example", "api1.example", true],
+  ] as const)("matches OpenShell pattern %s against %s: %s", (pattern, host, expected) => {
+    expect(registeredProviderHostMatches(pattern, host)).toBe(expected);
+  });
+
+  it.each(["api[.example", "api**.example", "*.{prod,stage}.example", "api..example"])(
+    "rejects invalid host pattern %s",
+    (pattern) =>
+      expect(() => registeredProviderHostMatches(pattern, "api.example")).toThrow("host pattern"),
+  );
+
+  it("rejects unsafe policy whose port list includes the selected port", async () => {
+    const f = registeredInferenceFixture();
+    f.profile.endpoints.push({
+      ...f.profile.endpoints[0]!,
+      port: 8443,
+      enforcement: "audit",
+      ...{ ports: [443] },
+    });
+    await expect(
+      resolveRegisteredInferenceProvider({ ...f.binding, adapter: f.adapter }),
+    ).rejects.toThrow("enforced REST policy");
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+  });
+
+  it("ignores unsafe policy whose port list excludes the selected port", async () => {
+    const f = registeredInferenceFixture();
+    f.profile.endpoints.push({
+      ...f.profile.endpoints[0]!,
+      enforcement: "audit",
+      ...{ ports: [8443] },
+    });
+    await expect(
+      resolveRegisteredInferenceProvider({ ...f.binding, adapter: f.adapter }),
+    ).resolves.toMatchObject({ providerName: f.binding.providerName });
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+  });
+
+  it("accepts a declared port list without a singular port", async () => {
+    const f = registeredInferenceFixture();
+    Object.assign(f.profile.endpoints[0]!, { port: undefined, ports: [443] });
+    const binding = await resolveRegisteredInferenceProvider({ ...f.binding, adapter: f.adapter });
+    const selected = await attachRegisteredInferenceProvider({
+      adapter: f.adapter,
+      expected: binding,
+    });
+    await expect(
+      detachRegisteredInferenceProvider({ adapter: f.adapter, expected: selected.attachment }),
+    ).resolves.toBe(true);
+  });
+
+  it("retains owned cleanup for a legacy singular-port binding", async () => {
+    const f = registeredInferenceFixture(true);
+    Object.assign(f.profile.endpoints[0]!, { ports: [8443] });
+    const binding = {
+      ...f.binding,
+      attachedBySelection: true,
+      profileDigest: inspectInferenceProviderProfile(JSON.stringify(f.profile))!.digest,
+    };
+    await expect(
+      attachRegisteredInferenceProvider({ adapter: f.adapter, expected: binding }),
+    ).rejects.toThrow("enforced REST policy");
+    await expect(
+      detachRegisteredInferenceProvider({ adapter: f.adapter, expected: binding }),
+    ).resolves.toBe(true);
+  });
+
+  it.each([
+    ["audit policy", { enforcement: "audit" }],
+    ["omitted enforcement", { enforcement: undefined }],
+    ["empty enforcement", { enforcement: "" }],
+    ["skipped TLS inspection", { tls: "skip" }],
+    ["invalid TLS mode", { tls: null }],
+    ["uninspected credentials", { allow_uninspected_credentials: true }],
+    ["invalid credential inspection flag", { allow_uninspected_credentials: "false" }],
+    ["TCP transport", { protocol: "tcp" }],
+    ["omitted protocol", { protocol: undefined }],
+  ])("rejects %s before active use while permitting owned detach", async (_label, fields) => {
+    const f = registeredInferenceFixture(true);
+    Object.assign(f.profile.endpoints[0]!, fields);
+    const binding = {
+      ...f.binding,
+      profileDigest: inspectInferenceProviderProfile(JSON.stringify(f.profile))!.digest,
+      attachedBySelection: true,
+    };
+    const input = { adapter: f.adapter, expected: binding };
+    await expect(
+      resolveRegisteredInferenceProvider({ ...binding, adapter: f.adapter }),
+    ).rejects.toThrow("enforced REST policy");
+    await expect(attachRegisteredInferenceProvider(input)).rejects.toThrow("enforced REST policy");
+    await expect(verifyRegisteredInferenceProviderAttachment(input)).rejects.toThrow(
+      "enforced REST policy",
+    );
+    await expect(registeredInferenceProviderRevision(input)).rejects.toThrow(
+      "enforced REST policy",
+    );
+    const read = vi.fn(async () => f.handle);
+    await expect(
+      readVerifiedRegisteredCredentialHandle({
+        adapter: f.adapter,
+        attachment: binding,
+        read,
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow("enforced REST policy");
+    expect(read).not.toHaveBeenCalled();
+    expect(f.adapter.ensureProviderPolicyComposition).not.toHaveBeenCalled();
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+    expect(f.adapter.detachProvider).not.toHaveBeenCalled();
+    expect(f.state.attached).toBe(true);
+    await expect(detachRegisteredInferenceProvider(input)).resolves.toBe(true);
+    expect(f.state.attached).toBe(false);
+    expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+    expect(f.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 1])("rejects an unsafe matching wildcard endpoint at index %s", async (index) => {
+    const f = registeredInferenceFixture();
+    const wildcard = { ...f.profile.endpoints[0]!, host: "*.example", enforcement: "audit" };
+    f.profile.endpoints.splice(index, 0, wildcard);
+    await expect(
+      resolveRegisteredInferenceProvider({ ...f.binding, adapter: f.adapter }),
+    ).rejects.toThrow("enforced REST policy");
+    expect(f.adapter.attachProvider).not.toHaveBeenCalled();
+  });
+
+  it.each(["rest", "REST"])(
+    "preserves enforced operator rules and address restrictions with %s",
+    async (protocol) => {
+      const f = registeredInferenceFixture();
+      Object.assign(f.profile.endpoints[0]!, {
+        protocol,
+        access: "",
+        rules: [{ allow: { method: "POST", path: "/v1/chat/completions" } }],
+        allowed_ips: ["10.0.0.0/8"],
+        tls: "",
+        allow_uninspected_credentials: false,
+      });
+      f.profile.endpoints.push({
+        ...f.profile.endpoints[0]!,
+        host: "unrelated.example",
+        enforcement: "audit",
+      });
+      const before = JSON.stringify(f.profile);
+      const binding = await resolveRegisteredInferenceProvider({
+        ...f.binding,
+        adapter: f.adapter,
+      });
+      const selected = await attachRegisteredInferenceProvider({
+        adapter: f.adapter,
+        expected: binding,
+      });
+      const read = vi.fn(async () => f.handle);
+      await expect(
+        readVerifiedRegisteredCredentialHandle({
+          adapter: f.adapter,
+          attachment: selected.attachment,
+          read,
+          sleep: async () => {},
+        }),
+      ).resolves.toBe(f.handle);
+      expect(JSON.stringify(f.profile)).toBe(before);
+      expect(f.adapter.updateProvider).not.toHaveBeenCalled();
+      expect(f.adapter.importProviderProfile).not.toHaveBeenCalled();
+      await expect(
+        detachRegisteredInferenceProvider({ adapter: f.adapter, expected: selected.attachment }),
+      ).resolves.toBe(true);
+    },
+  );
+
   it.each([
     ["openai-completions", "bearer", "authorization"],
     ["openai-responses", "bearer", "authorization"],

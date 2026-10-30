@@ -7,6 +7,7 @@ import type {
 } from "../../adapters/openshell/provider-adapter";
 import type { InferenceProviderProfileProjection } from "../../adapters/openshell/provider-profile";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
+import { registeredProviderHostMatches } from "./registered-host-pattern";
 
 export type RegisteredInferenceApi =
   | "openai-completions"
@@ -108,18 +109,15 @@ function requireBinding(value: unknown): RegisteredInferenceProviderAttachment {
   return binding;
 }
 
-function matchesDeclaredEndpoint(
+function matchingDeclaredEndpoints(
   endpoint: URL,
   projection: InferenceProviderProfileProjection,
-): boolean {
+): InferenceProviderProfileProjection["endpoints"] {
   const port = Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80));
-  return projection.endpoints.some(
+  return projection.endpoints.filter(
     (declared) =>
-      declared.port === port &&
-      (declared.host === endpoint.hostname ||
-        (declared.host.startsWith("*.") &&
-          endpoint.hostname.endsWith(declared.host.slice(1)) &&
-          endpoint.hostname !== declared.host.slice(2))),
+      declared.ports.includes(port) &&
+      registeredProviderHostMatches(declared.host, endpoint.hostname),
   );
 }
 
@@ -127,11 +125,21 @@ function assertProjection(
   binding: RegisteredInferenceProviderAttachment,
   metadata: OpenShellProviderMetadata,
   projection: InferenceProviderProfileProjection | undefined,
-): void {
+): asserts projection is InferenceProviderProfileProjection {
   if (
     !projection ||
     projection.digest !== binding.profileDigest ||
-    !matchesDeclaredEndpoint(recordedInferenceEndpoint(binding.endpointUrl), projection)
+    !projection.endpoints.some((declared) => {
+      const endpoint = recordedInferenceEndpoint(binding.endpointUrl);
+      const port = Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80));
+      // Keep retained bindings detachable under the previous host and singular-port projection.
+      return (
+        (declared.port === port || declared.ports.includes(port)) &&
+        (declared.host === endpoint.hostname ||
+          (declared.host.startsWith("*.") && endpoint.hostname.endsWith(declared.host.slice(1))) ||
+          registeredProviderHostMatches(declared.host, endpoint.hostname))
+      );
+    })
   )
     throw new Error("Registered provider profile does not match the selected inference endpoint");
   const matches = projection.credentials.filter((credential) =>
@@ -149,10 +157,27 @@ function assertProjection(
     throw new Error("Registered provider credential does not match the selected inference API");
 }
 
+function requireEnforcedCredentialTransport(
+  binding: RegisteredInferenceProviderAttachment,
+  projection: InferenceProviderProfileProjection,
+): void {
+  const endpoints = matchingDeclaredEndpoints(
+    registeredInferenceEndpoint(binding.endpointUrl),
+    projection,
+  );
+  if (!endpoints.length || endpoints.some((endpoint) => endpoint.enforcesCredentialedRest !== true))
+    throw new Error(
+      "Registered inference requires enforced REST policy with TLS inspection and inspected credentials",
+    );
+}
+
 async function inspectBinding(
   adapter: OpenShellProviderAdapter,
   expected: RegisteredInferenceProviderAttachment,
-): Promise<OpenShellProviderMetadata> {
+): Promise<{
+  metadata: OpenShellProviderMetadata;
+  projection: InferenceProviderProfileProjection;
+}> {
   const target = { kind: "named", gatewayName: expected.gatewayName } as const;
   const provider = await adapter.getProvider({ target, providerName: expected.providerName });
   if (
@@ -170,8 +195,18 @@ async function inspectBinding(
     includeInferenceProjection: true,
   });
   if (!profile.ok) throw new Error("Registered inference provider profile could not be verified");
-  assertProjection(expected, provider.value, profile.value.inference);
-  return provider.value;
+  const projection = profile.value.inference;
+  assertProjection(expected, provider.value, projection);
+  return { metadata: provider.value, projection };
+}
+
+async function inspectActiveBinding(
+  adapter: OpenShellProviderAdapter,
+  expected: RegisteredInferenceProviderAttachment,
+): Promise<OpenShellProviderMetadata> {
+  const { metadata, projection } = await inspectBinding(adapter, expected);
+  requireEnforcedCredentialTransport(expected, projection);
+  return metadata;
 }
 
 export async function resolveRegisteredInferenceProvider(input: {
@@ -223,6 +258,7 @@ export async function resolveRegisteredInferenceProvider(input: {
   )
     throw new Error("Recorded registered inference provider identity or profile changed");
   assertProjection(binding, observed.value, profile.value.inference);
+  requireEnforcedCredentialTransport(binding, profile.value.inference);
   return binding;
 }
 
@@ -232,7 +268,7 @@ export async function verifyRegisteredInferenceProviderAttachment(input: {
 }): Promise<void> {
   const expected = requireBinding(input.expected);
   registeredInferenceEndpoint(expected.endpointUrl);
-  await inspectBinding(input.adapter, expected);
+  await inspectActiveBinding(input.adapter, expected);
   const attachments = await input.adapter.listProviderAttachments({
     target: { kind: "named", gatewayName: expected.gatewayName },
     sandboxName: expected.sandboxName,
@@ -248,7 +284,7 @@ export async function attachRegisteredInferenceProvider(input: {
 }): Promise<{ attachment: RegisteredInferenceProviderAttachment; changed: boolean }> {
   const expected = requireBinding(input.expected);
   registeredInferenceEndpoint(expected.endpointUrl);
-  const before = await inspectBinding(input.adapter, expected);
+  const before = await inspectActiveBinding(input.adapter, expected);
   const request = {
     target: { kind: "named", gatewayName: expected.gatewayName } as const,
     sandboxName: expected.sandboxName,
@@ -271,7 +307,7 @@ export async function attachRegisteredInferenceProvider(input: {
     );
   const attachment = { ...expected, attachedBySelection: true };
   try {
-    const after = await inspectBinding(input.adapter, expected);
+    const after = await inspectActiveBinding(input.adapter, expected);
     if (before.revision?.resourceVersion !== after.revision?.resourceVersion)
       throw new Error("Registered provider changed during attachment");
     await verifyRegisteredInferenceProviderAttachment({ ...input, expected: attachment });
@@ -343,7 +379,7 @@ export async function registeredInferenceProviderRevision(input: {
 }): Promise<number> {
   const expected = requireBinding(input.expected);
   registeredInferenceEndpoint(expected.endpointUrl);
-  const metadata = await inspectBinding(input.adapter, expected);
+  const metadata = await inspectActiveBinding(input.adapter, expected);
   const revision = metadata.revision?.resourceVersion;
   if (!Number.isSafeInteger(revision) || !revision || revision < 1)
     throw new Error("Registered provider revision is unavailable");

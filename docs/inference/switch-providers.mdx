@@ -52,6 +52,12 @@ Use `--endpoint-url`, `--inference-api`, and `--credential-env` only for metadat
 The endpoint must use HTTPS, including operator-managed private endpoints.
 NemoClaw rejects HTTP before attaching the provider or reading its credential handle.
 Retained HTTP records remain readable for inspection and removal of NemoClaw-created attachments, but NemoClaw refuses to resume credential use through those endpoints.
+Every profile endpoint matching the selected host and port must use `protocol: rest` and explicit `enforcement: enforce`.
+Each matching endpoint's `tls` field must be omitted or an empty string to retain automatic TLS inspection.
+Its `allow_uninspected_credentials` field must be omitted or `false`.
+NemoClaw refuses selection and credential use when these checks fail.
+Identity inspection and removal of NemoClaw-created attachments remain available, subject to identity and ownership checks.
+The profile's existing rules, access mode, and IP restrictions remain operator-controlled.
 NemoClaw verifies the provider identity and its declared profile against the selected endpoint and authentication method before attaching it to the sandbox.
 Missing or conflicting metadata stops the switch.
 
