@@ -9,6 +9,9 @@ mod agent_compatibility;
 mod cache_provider;
 #[path = "deployment.rs"]
 mod deployment;
+#[cfg(unix)]
+#[path = "../../test-support/docker_engine.rs"]
+mod docker_engine;
 #[path = "docker_fixture.rs"]
 mod docker_fixture;
 #[path = "docker_provider_proxy.rs"]
@@ -32,6 +35,11 @@ mod hcl_live;
 #[cfg(unix)]
 #[path = "helm_recovery.rs"]
 mod helm_recovery;
+// Managed gateway storage takes only a local engine socket, which only Unix
+// clients reach.
+#[cfg(unix)]
+#[path = "hcl_integration/mod.rs"]
+mod hcl_integration;
 #[path = "hosted_parity.rs"]
 mod hosted_parity;
 #[cfg(unix)]
