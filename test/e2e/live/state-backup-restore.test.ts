@@ -90,9 +90,10 @@ async function rebuildFixture(
     redactionValues: redactions,
     timeoutMs: bounded(120_000),
   });
-  cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
-    sandbox.cleanupSandbox(sandboxName, {
+  cleanup.trackDisposable(`destroy NemoClaw sandbox ${sandboxName}`, () =>
+    host.cleanupSandbox(sandboxName, {
       artifactName: "state-backup-restore-cleanup",
+      preserveGatewayRegistration: true,
       env,
       redactionValues: redactions,
       timeoutMs: 120_000,
