@@ -121,6 +121,8 @@ function buildWindowsOllamaInstallerCommand(): string {
 function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
   const child = spawn("powershell.exe", ["-Command", buildWindowsOllamaInstallerCommand()], {
     cwd: windowsInteropWorkingDirectory("powershell.exe"),
+    // Keep terminal Ctrl+C from closing WSL interop before owned tree cleanup.
+    detached: isWsl(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let windowsPid: number | null = null;
