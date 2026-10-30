@@ -103,7 +103,7 @@ export interface SandboxStartDeps extends StandardSandboxLifecycleDeps {
 const GATEWAY_PROCESS_SETTLEMENT_DELAY_MS = 2_000;
 const START_INFERENCE_SETTLEMENT_DELAYS_MS = [2_000, 2_000] as const;
 
-/** Observe native startup only after an intentional stop; never relaunch the agent here. */
+/** Observe native startup after the runtime starts; never relaunch the agent here. */
 async function waitForStartedNativeGatewayProcess(
   sandboxName: string,
   sandbox: SandboxEntry,
@@ -111,9 +111,8 @@ async function waitForStartedNativeGatewayProcess(
   log: (message: string) => void,
 ): Promise<boolean | null | undefined> {
   const nativeAgent = sandbox.agent ?? "openclaw";
-  if ((nativeAgent !== "hermes" && nativeAgent !== "openclaw") || sandbox.stopped !== true) {
-    return undefined;
-  }
+  if (nativeAgent !== "hermes" && nativeAgent !== "openclaw") return undefined;
+  if (nativeAgent === "hermes" && sandbox.stopped !== true) return undefined;
   const gatewayName = getPersistedSandboxTargetGatewayName(sandbox);
   const probe = deps.probeGatewayProcess ?? isSandboxGatewayRunningForStatus;
   const delay = async (delayMs: number) => {
@@ -129,8 +128,10 @@ async function waitForStartedNativeGatewayProcess(
   }
 
   const now = deps.now ?? (() => performance.now());
+  // Docker can restart a sandbox without changing its recorded stop intent.
+  // Give cold OpenClaw startup the same 120-second budget as gateway recovery.
   const deadline =
-    now() + resolveGatewayRecoveryWaitSeconds(undefined, deps.environment ?? process.env) * 1_000;
+    now() + resolveGatewayRecoveryWaitSeconds(120, deps.environment ?? process.env) * 1_000;
   while (now() < deadline) {
     const remaining = Math.floor(deadline - now());
     if (remaining < 1) break;
