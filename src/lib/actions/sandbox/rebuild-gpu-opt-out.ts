@@ -175,7 +175,15 @@ export function buildRebuildRecreateOnboardOpts(args: {
   }
   const gpuOverrides = getRebuildSandboxGpuOverrides(args.sb);
   const hostMounts = normalizePersistedSandboxHostMounts(args.sb?.hostMounts);
-  const dashboardOrigins = readRecordedDashboardOrigins(args.sb?.dashboardOrigins);
+  // A present but invalid record must not silently drop the origins (#13177).
+  const recordedOrigins = args.sb?.dashboardOrigins;
+  const dashboardOrigins =
+    recordedOrigins === undefined ? null : readRecordedDashboardOrigins(recordedOrigins);
+  if (recordedOrigins !== undefined && dashboardOrigins === null) {
+    throw new Error(
+      "Recorded dashboard origins are invalid. Run onboard again with valid --dashboard-origin values, or without them to remove the origins, then rebuild.",
+    );
+  }
   const targetGatewayName = resolveSandboxGatewayName(args.sb);
   const targetGatewayPort = resolveGatewayPortFromName(targetGatewayName);
   if (targetGatewayPort === null) {

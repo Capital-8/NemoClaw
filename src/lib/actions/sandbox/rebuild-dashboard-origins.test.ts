@@ -126,11 +126,17 @@ describe("rebuild recreate options (#13177)", () => {
     expect(opts.dashboardOrigins).toEqual(ORIGINS);
   });
 
-  it("drops a malformed recorded value", () => {
-    const opts = buildRebuildRecreateOnboardOpts({
-      ...baseArgs,
-      sb: { dashboardPort: 18789, dashboardOrigins: ["http://launchpad.example.test"] },
-    });
+  it("refuses a malformed recorded value instead of dropping the origins", () => {
+    expect(() =>
+      buildRebuildRecreateOnboardOpts({
+        ...baseArgs,
+        sb: { dashboardPort: 18789, dashboardOrigins: ["http://launchpad.example.test"] },
+      }),
+    ).toThrow(/recorded dashboard origins are invalid/i);
+  });
+
+  it("treats an absent record as no origins", () => {
+    const opts = buildRebuildRecreateOnboardOpts({ ...baseArgs, sb: { dashboardPort: 18789 } });
 
     expect(opts).not.toHaveProperty("dashboardOrigins");
   });
