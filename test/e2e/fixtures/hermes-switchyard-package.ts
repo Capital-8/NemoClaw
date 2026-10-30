@@ -207,14 +207,17 @@ with TemporaryDirectory() as directory, LocalUpstream('efficient') as efficient,
         async def reject_passthrough(_request):
             raise AssertionError('Switchyard route passed through to the original provider')
 
-        result = asyncio.run(nemo_relay.llm.execute(
-            'openai.chat_completions',
-            nemo_relay.LLMRequest({}, {
-                'model': 'switchyard',
-                'messages': [{'role': 'user', 'content': 'Use the efficient fixture model.'}],
-            }),
-            reject_passthrough,
-        ))
+        async def execute_switchyard_route():
+            return await nemo_relay.llm.execute(
+                'openai.chat_completions',
+                nemo_relay.LLMRequest({}, {
+                    'model': 'switchyard',
+                    'messages': [{'role': 'user', 'content': 'Use the efficient fixture model.'}],
+                }),
+                reject_passthrough,
+            )
+
+        result = asyncio.run(execute_switchyard_route())
         assert result['choices'][0]['message']['content'] == 'routed-efficient'
         assert len(capable.calls) == 1
         assert capable.calls[0]['model'] == 'fixture-capable'
