@@ -48,6 +48,8 @@ export interface OpenClawToolRecord {
 }
 
 export interface OpenClawWebFetchResultEvidence {
+  httpStatus?: number;
+  toolError?: boolean;
   expectedContentMatches: boolean;
   expectedUrlMatches: boolean;
   httpSuccess: boolean;
@@ -121,6 +123,7 @@ export interface PersonalPublicFetchToolEvidenceArtifact {
     total: number;
   };
   webFetchResultsWithinMaxChars: number;
+  webFetchDiagnostics: { httpStatus: number | null; toolError: boolean; paired: boolean }[];
 }
 
 export interface OpenClawToolEvidenceReductionFailureArtifact {
@@ -196,6 +199,7 @@ export type OpenClawToolEvidenceArtifact =
   | ReturnType<typeof projectUnavailableSearchToolEvidenceArtifact>;
 
 export interface OpenClawAgentAttemptEvidenceOptions {
+  collectToolEvidence?: boolean;
   classification: AgentAssertionAttempt;
   label: string;
   recordToolEvidenceReductionFailure: (
@@ -664,6 +668,16 @@ export function reduceOpenClawToolEvidence(
     const boundedPayloadText =
       typeof payload?.text === "string" ? payload.text.slice(0, 20_000) : "";
     const status = payload?.status;
+    // OpenClaw's tool adapter serializes non-2xx fetch errors in this fixed prefix.
+    // Read only the status, never the response detail following the colon.
+    const errorStatus =
+      payload?.status === "error" &&
+      payload.tool === "web_fetch" &&
+      typeof payload.error === "string"
+        ? /^Web fetch failed \(([1-5][0-9]{2})\):/u.exec(payload.error.slice(0, 32))?.[1]
+        : undefined;
+    const diagnosticStatus =
+      typeof status === "number" ? status : errorStatus ? Number(errorStatus) : undefined;
     const paired = call?.name === "web_fetch" && resultName === "web_fetch";
     if (paired && callId && projectedTargetCallIds.has(callId)) {
       pairedProjectedTargetCallIds.add(callId);
@@ -675,6 +689,13 @@ export function reduceOpenClawToolEvidence(
       continue;
     }
     webFetchResults.push({
+      ...(typeof diagnosticStatus === "number" &&
+      Number.isInteger(diagnosticStatus) &&
+      diagnosticStatus >= 100 &&
+      diagnosticStatus <= 599
+        ? { httpStatus: diagnosticStatus }
+        : {}),
+      toolError: message.isError === true || payload?.status === "error",
       expectedContentMatches:
         expectedContent !== null && boundedPayloadText.includes(expectedContent),
       expectedUrlMatches:
@@ -942,17 +963,32 @@ export function projectPersonalPublicFetchToolEvidenceArtifact(
     webFetchExecutions: assessment.webFetchExecutions,
     webFetchResultCounts,
     webFetchResultsWithinMaxChars: webFetchResultCounts.maxCharsWithinLimit,
+    webFetchDiagnostics: evidence.webFetchResults.slice(0, 64).map((result) => ({
+      httpStatus:
+        typeof result.httpStatus === "number" &&
+        Number.isInteger(result.httpStatus) &&
+        result.httpStatus >= 100 &&
+        result.httpStatus <= 599
+          ? result.httpStatus
+          : null,
+      toolError: result.toolError === true,
+      paired: result.paired === true,
+    })),
   };
 }
 
 export async function validateOpenClawAgentAttemptEvidence(
   options: OpenClawAgentAttemptEvidenceOptions,
 ): Promise<OpenClawAgentAttemptEvidenceResult> {
-  if (!options.classification.passed) return { attempt: options.classification };
+  if (!options.classification.passed && !options.collectToolEvidence) {
+    return { attempt: options.classification };
+  }
 
   let toolEvidence: OpenClawToolEvidence | undefined;
-  if (options.toolEvidenceValidator) {
-    const reduced = await options.reduceToolEvidence();
+  if (options.toolEvidenceValidator || options.collectToolEvidence) {
+    const reduced = await options
+      .reduceToolEvidence()
+      .catch(() => ({ exitCode: null, stdout: "", signal: null, timedOut: false }));
     if (reduced.exitCode !== 0) {
       await options.recordToolEvidenceReductionFailure({
         schemaVersion: 1,
@@ -961,6 +997,7 @@ export async function validateOpenClawAgentAttemptEvidence(
         signal: reduced.signal ?? null,
         timedOut: reduced.timedOut ?? false,
       });
+      if (!options.classification.passed) return { attempt: options.classification };
       return {
         attempt: { passed: false, failureClass: "deterministic" },
         failure: `reduced tool evidence exited with ${String(reduced.exitCode)}`,
@@ -976,13 +1013,15 @@ export async function validateOpenClawAgentAttemptEvidence(
         signal: reduced.signal ?? null,
         timedOut: reduced.timedOut ?? false,
       });
+      if (!options.classification.passed) return { attempt: options.classification };
       return {
         attempt: { passed: false, failureClass: "deterministic" },
         failure: error instanceof Error ? error.message : String(error),
       };
     }
     await options.recordToolEvidence(toolEvidence);
-    if (!options.toolEvidenceValidator(toolEvidence)) {
+    if (!options.classification.passed) return { attempt: options.classification };
+    if (options.toolEvidenceValidator && !options.toolEvidenceValidator(toolEvidence)) {
       const diagnostic = options.toolEvidenceProjector
         ? ` (${JSON.stringify(
             options.toolEvidenceProjector(toolEvidence),

@@ -837,6 +837,9 @@ Format the answer as JSON with searchStatus (available, unavailable, or unknown)
       await runOpenClawAgentAssertion(host, sandbox, artifacts, {
         apiKey,
         expected: "REFERENCE_AGENT_OK",
+        publicFetchExpectation: PERSONAL_PUBLIC_FETCH_EXPECTATION,
+        persistCommandArtifacts: false,
+        redactOutputInFailure: true,
         label: "c2-agent-reference",
         sandboxName: OPENCLAW_OPEN_SANDBOX,
         prompt: `Use the web_fetch tool to fetch exactly this URL:
