@@ -79,6 +79,8 @@ output "declare" {
       [for name, service in local.services : {
         reference = service.service.image
         id        = local.image_id
+        # A service built for another architecture, such as amd64 vLLM, says so.
+        architecture = try(service.service.hardware.architecture, null)
         labels = merge(
           { "org.nemoclaw.backend" = service.service.kind },
           service.authenticated ? {

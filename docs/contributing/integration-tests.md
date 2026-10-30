@@ -174,7 +174,7 @@ The harness declares the fixtures through the `fixture` provider's one data sour
 
 | Module | Purpose |
 |---|---|
-| `integration/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, the gateway container, and each service's ready container with its generated key. The harness variable `compute_driver` overrides the driver. Outputs the owner, the engine object prefix, and each service's container. |
+| `integration/modules/fixtures` | From the document, the gateway's compute driver and, with a managed Docker gateway, what a mocked Docker provider would leave on the engine: images, each service image with the architecture its document requires, the gateway container, and each service's ready container with its generated key. The harness variable `compute_driver` overrides the driver. Outputs the owner, the engine object prefix, and each service's container. |
 | `integration/modules/observed` | Outputs registrations by name and `agents` by sandbox, each with its last Fabric `start` command and decoded configuration, plus OpenShell, engine, and upstream records. The OpenShell record includes the names of the sandboxes the gateway holds and `effects`, how many objects the gateway has created, updated, or deleted. Credential values appear only by source: `env:NAME` or `file:CONTAINER:PATH`. |
 
 A test file runs these steps:
