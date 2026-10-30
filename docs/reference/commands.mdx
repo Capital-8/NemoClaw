@@ -947,15 +947,11 @@ OpenClaw onboarding supports Brave Search and Tavily Search. NemoClaw registers 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents onboarding supports the maintained Tavily Search path. NemoClaw registers the Tavily credential with the OpenShell gateway, applies the `tavily` policy preset when you opt in, and rebuilds the sandbox so the provider attaches to the managed Python runtime. Do not place `TAVILY_API_KEY` in `/sandbox/.deepagents/.env`, `.state/auth.json`, or other Deep Agents Code state.
-
-For non-interactive onboarding, export the Tavily key only in the host shell that runs onboarding:
-
-```bash
-export TAVILY_API_KEY=tvly-...
-NEMOCLAW_AGENT=langchain-deepagents-code NEMOCLAW_WEB_SEARCH_PROVIDER=tavily $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
-unset TAVILY_API_KEY
-```
+Deep Agents Code requires explicit Tavily provider attachment.
+Follow [Enable Tavily egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress) to register the credential on the host, apply the policy preset, and attach the provider.
+The attachment changes live sandbox state only.
+Repeat it after a rebuild if the sandbox still needs Tavily.
+Do not place `TAVILY_API_KEY` in `/sandbox/.deepagents/.env`, `.state/auth.json`, or other Deep Agents Code state.
 
 </AgentOnly>
 For non-interactive onboarding, you must explicitly accept the third-party software notice:
@@ -3516,7 +3512,11 @@ After the rebuild succeeds, retrieve the replacement token with `nemohermes my-a
 
 After restore, the command starts Deep Agents with the complete source native home, including `config.toml`, hooks, skills, memories, histories, packages, and unrelated native entries. Before changing the sandbox, rebuild verifies that the recorded provider path is still reachable and that the target provider, model, reasoning settings, web search selection, base image, current agent MCP source, and current live OpenShell policy can be captured. NVIDIA Endpoints and supported fixed hosted providers use native endpoints through sandbox-attached OpenShell providers.
 Deep Agents also uses attached providers for qualifying custom hosted endpoints and qualified local endpoints.
-Other agents' retained shared local selections and remaining custom shared selections retain the `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check, after enabling Tavily Search, or as the apply step for legacy MCP migration.
+Other agents' retained shared local selections and remaining custom shared selections retain the `inference.local` route. If those checks fail after backup, NemoClaw keeps the existing sandbox intact. Use rebuild after a failed Deep Agents version check or as the apply step for legacy MCP migration.
+To enable Tavily egress, apply the `tavily` preset, register the credential on the host, and explicitly attach the provider.
+Follow [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress).
+Repeat the attachment after rebuilding if Tavily access is still needed; rebuild omits the provider unless a saved enabled selection exists.
+Deep Agents Code has no NemoClaw-managed web-search selection that makes this attachment durable.
 Legacy Deep Agents Code local sandboxes without an attachment stop before rebuild. Local NVIDIA NIM also requires its recorded native attachment before rebuild.
 Back up the sandbox data before running `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox`.
 
@@ -4082,12 +4082,14 @@ After a successful provider creation or attachment, NemoClaw compares a previous
 Provider registration is gateway-wide.
 Native NVIDIA Endpoints and fixed hosted providers attach when a sandbox selects or restores that inference provider.
 After registering one of these providers, follow the command's `inference set` guidance.
-Ordinary extra providers, such as Tavily, attach during subsequent sandbox builds and rebuilds after reconciliation.
-Rebuild each existing sandbox that should use an ordinary extra provider.
+Ordinary extra providers other than Tavily attach during subsequent sandbox builds and rebuilds after reconciliation.
+Rebuild each existing sandbox that should use one of those ordinary extra providers.
+Tavily providers attach during builds or rebuilds only when the sandbox has an enabled Tavily selection.
+Removing the Tavily preset preserves that exclusion through rebuilds and keeps the gateway credential available to other sandboxes.
 Registration alone does not change a sandbox's inference selection.
 Credential reset refuses removal while a sandbox records that provider as its registered inference selection.
 For providers eligible for reset, the command can detach current sandbox attachments before deleting the provider.
-After registering a replacement, rebuild each sandbox reported as detached.
+After registering a replacement, rebuild each sandbox reported as detached, or explicitly reattach Tavily when no enabled Tavily selection is saved.
 For reset prerequisites and inference key rotation, refer to [Rotate or Remove a Stored Credential](../security/credential-storage#rotate-or-remove-a-stored-credential).
 
 Tavily requires a provider profile that permits the intended agent runtime.
@@ -4131,7 +4133,11 @@ $$nemoclaw credentials add tavily-search --type tavily --agent dcode --credentia
 
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
-Remove a provider credential from the OpenShell gateway by provider name. After removal, re-running `$$nemoclaw onboard` re-prompts for that provider's credential. Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
+Remove a provider credential from the OpenShell gateway by provider name.
+For providers managed by onboarding, rerun `$$nemoclaw onboard` to supply a replacement credential.
+For a manually registered Tavily provider, register the replacement on the host and explicitly attach it to each affected sandbox.
+Follow [Optional Tavily Egress](/user-guide/deepagents/get-started/quickstart#optional-tavily-egress) for the Deep Agents registration and attachment procedure.
+Run `$$nemoclaw credentials list` first if you are not sure of the provider name.
 
 If a sandbox records the provider as its registered inference selection, reset stops without changing the provider or its attachments.
 Switch each affected sandbox to another provider before resetting it.

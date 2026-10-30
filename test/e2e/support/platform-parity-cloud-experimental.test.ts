@@ -42,7 +42,6 @@ const dcodeTuiSessionGuard = path.join(
   process.cwd(),
   "test/e2e/e2e-cloud-experimental/dcode-tui-session-guard.sh",
 );
-const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
 const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
 const dcodeApprovalMainEntrypoint = `if [[ "\${BASH_SOURCE[0]}" == "$0" ]]; then
   main "$@"
@@ -52,14 +51,6 @@ const dcodeFreshReonboardCheck = path.join(cloudChecksDir, "04-deepagents-code-f
 const dcodeLandlockCheck = path.join(cloudChecksDir, "05-deepagents-code-landlock-readonly.sh");
 const dcodeObservabilityCheck = path.join(cloudChecksDir, "11-deepagents-code-observability.sh");
 const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
-const tavilyBlocked = "BLOCKED:policy denied";
-const observabilityEnabled = "enabled";
-const denialRestored = /returns to the default Tavily denial/;
-const denialNotRestored = /did not restore the default Tavily denial/;
-const policyRemoveFailed = /policy-remove tavily failed/;
-const observabilityPreserved = /preserve enabled observability after policy-remove/;
-const observabilityDriftedAfter = /observability state drifted after policy-remove/;
-const observabilityDriftedBefore = /observability state drifted before Tavily policy mutation/;
 
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
   return {
@@ -590,56 +581,6 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("ATOMIC_COMMAND");
   });
-
-  it("passes the Deep Agents Tavily probe as native multiline argv", () => {
-    const result = spawnSync("bash", [dcodeTavilyCheck], {
-      encoding: "utf8",
-      env: {
-        NEMOCLAW_E2E_TAVILY_SELF_TEST: "probe-command-shape",
-        PATH: DEFAULT_TEST_PATH,
-      },
-    });
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("NATIVE_MULTILINE_ARGV");
-  });
-
-  it.each([
-    [tavilyBlocked, "ok", observabilityEnabled, 0, denialRestored, observabilityPreserved],
-    ["REACHED:403", "ok", observabilityEnabled, 1, denialNotRestored, observabilityPreserved],
-    [tavilyBlocked, "fail", observabilityEnabled, 1, policyRemoveFailed, observabilityPreserved],
-    [
-      tavilyBlocked,
-      "clear-marker",
-      observabilityEnabled,
-      1,
-      denialRestored,
-      observabilityDriftedAfter,
-    ],
-    [tavilyBlocked, "ok", "disabled", 1, observabilityDriftedBefore, /registry=disabled, marker=1/],
-  ])(
-    "restores the default Tavily denial without observability drift (%s/%s/%s)",
-    (fixture, removeFixture, registryFixture, status, expected, observabilityExpected) => {
-      const result = spawnSync("bash", [dcodeTavilyCheck], {
-        encoding: "utf8",
-        env: {
-          NEMOCLAW_E2E_OBSERVABILITY_REGISTRY_FIXTURE: registryFixture,
-          NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
-          NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
-          NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
-          PATH: DEFAULT_TEST_PATH,
-          SANDBOX_NAME: "deepagents-sandbox",
-        },
-      });
-
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
-      expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
-      expect(`${result.stdout}\n${result.stderr}`).toMatch(observabilityExpected);
-      expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain(
-        "trap restore_tavily_denial EXIT",
-      );
-    },
-  );
 
   it("skips the DCode auto-approval check before optional host prerequisites", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-approval-skip-"));
