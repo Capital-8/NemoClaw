@@ -5,8 +5,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { parse as parseToml, stringify as stringifyToml, type TomlTable } from "smol-toml";
-
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import { finalizationHandlerDeps } from "../../../src/lib/onboard/machine/finalization-deps.ts";
 import type { FinalizationStateOptions } from "../../../src/lib/onboard/machine/handlers/finalization.ts";
@@ -18,42 +16,6 @@ import { CLI_ENTRYPOINT } from "./paths.ts";
 const agent = loadAgent("hermes");
 type VerifyChain = { boundary: string };
 type VerificationResult = { healthy: boolean };
-
-/** Keep the trusted job's compatible crun when Portable replaces containers.conf. */
-export function preservePortableCrunConfiguration(
-  portableConfiguration: string,
-  previousConfiguration: string,
-): string {
-  const previousEngine = parseToml(previousConfiguration).engine as TomlTable | undefined;
-  const crun = (previousEngine?.runtimes as TomlTable | undefined)?.crun;
-  if (
-    !Array.isArray(crun) ||
-    crun.length === 0 ||
-    !crun.every((value) => typeof value === "string")
-  ) {
-    return portableConfiguration;
-  }
-  const configuration = parseToml(portableConfiguration);
-  const engine = (configuration.engine ??= {}) as TomlTable;
-  engine.runtimes = { crun };
-  return stringifyToml(configuration);
-}
-
-export function capturePortableCrunConfiguration(environment: NodeJS.ProcessEnv): () => void {
-  const previous = environment.CONTAINERS_CONF
-    ? fs.readFileSync(environment.CONTAINERS_CONF, "utf8")
-    : "";
-  return () => {
-    if (previous && environment.CONTAINERS_CONF) {
-      const containersConf = environment.CONTAINERS_CONF;
-      fs.writeFileSync(
-        containersConf,
-        preservePortableCrunConfiguration(fs.readFileSync(containersConf, "utf8"), previous),
-        { mode: 0o600 },
-      );
-    }
-  };
-}
 
 export type PortableHermesFinalizationOptions = FinalizationStateOptions<
   typeof agent,
