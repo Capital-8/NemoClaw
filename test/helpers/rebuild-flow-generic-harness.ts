@@ -120,7 +120,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const nativeSource = createHarnessTempDir("nemoclaw-rebuild-native-");
   fs.mkdirSync(path.join(nativeSource, ".hermes"));
   const nativeArchive = path.join(backupPath, "native-home.tar");
-  execFileSync("tar", ["-C", nativeSource, "-cf", nativeArchive, "--", "."]);
+  execFileSync("tar", ["-C", nativeSource, "-cf", nativeArchive, "--", "."], {
+    // Linux sandbox archives have no macOS AppleDouble metadata entries.
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
   const nativeArchiveSha256 = createHash("sha256")
     .update(fs.readFileSync(nativeArchive))
     .digest("hex");
