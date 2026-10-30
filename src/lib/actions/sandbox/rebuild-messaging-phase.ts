@@ -68,9 +68,7 @@ export async function stageRebuildMessagingPlanOrBail(
     // staging becomes total over all persisted registry states.
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
-    console.error(
-      `  ${_RD}Rebuild preflight failed:${R} messaging manifest plan could not be staged.`,
-    );
+    console.error(`  ${_RD}Rebuild preflight failed:${R} messaging plan validation failed.`);
     console.error(`  ${message}`);
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");

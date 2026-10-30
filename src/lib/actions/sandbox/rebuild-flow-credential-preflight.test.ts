@@ -796,6 +796,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("Rebuild would disable active messaging channels: discord");
+    expect(diagnostics(harness)).toContain("messaging plan validation failed.");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
