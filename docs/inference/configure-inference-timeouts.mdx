@@ -31,7 +31,9 @@ The readiness timeout does not govern inference requests or provider validation.
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` and `NEMOCLAW_SANDBOX_READY_TIMEOUT` accept finite, nonnegative seconds, round fractional values, and use their defaults for invalid or negative values.
 For a compatible endpoint, local Ollama, or local vLLM route, and for the Bedrock Runtime and OpenRouter Runtime adapters, NemoClaw also passes `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` to OpenShell as the inference route request timeout.
 For those routes, the rounded value must be from `1` to `3600` seconds.
-Onboarding stops with an error that names the variable before it changes the provider or route when the value is outside that range, and `connect` stops the same way for a compatible endpoint, local Ollama, or local vLLM sandbox.
+Onboarding stops with an error that names the variable before it changes the provider or route when the value is outside that range.
+For configured shared inference routes, `connect` applies the same check to compatible endpoints, local Ollama, and local vLLM.
+Native provider attachments do not use this shared-route timeout check during `connect`.
 `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds and preserves fractional values.
 A valid value overrides the internal budget for the current recovery phase.
 An unset, blank, invalid, or negative value uses 30 seconds for OpenClaw gateway health, 90 seconds for Hermes gateway health, and 120 seconds for post-recovery OpenShell readiness when the recovery path does not supply another budget.
