@@ -245,7 +245,7 @@ run_bounded_bootstrap_lookup() (
     status=2
   else
     cat "$output_file"
-    ((status < 128)) || status=2
+    ((status < 128 && status != 124)) || status=2
   fi
   return "$status"
 )

@@ -449,6 +449,7 @@ case " $* " in
         printf '%s\\n' "$GIT_ERROR_FIXTURE" >&2
         exit 128
         ;;
+      completed-124) exit 124 ;;
       *) exit 97 ;;
     esac
     ;;
@@ -514,6 +515,7 @@ esac
     { caller: "bootstrap", failure: "SIGTERM" },
     { caller: "bootstrap", failure: "oversized output" },
     { caller: "bootstrap", failure: "at-limit output" },
+    { caller: "bootstrap", failure: "completed child status 124" },
   ] as const)(
     "reports $failure through the $caller fetch boundary (#11515)",
     async ({ caller, failure }) => {
@@ -533,6 +535,7 @@ esac
         SIGTERM: "cancel-TERM",
         "oversized output": "output",
         "at-limit output": "output",
+        "completed child status 124": "completed-124",
       };
       const fetchMode = fetchModes[failure] ?? "";
       const stubbedFetch = Boolean(fetchMode);
@@ -618,6 +621,8 @@ esac
           "fetch deadline": "Check network access to github.com and try again.",
           "oversized output": "Check repository access and the Git diagnostic, then try again.",
           "at-limit output": "0".repeat(65536),
+          "completed child status 124":
+            "Check repository access and the Git diagnostic, then try again.",
         };
         const checkDiagnostic = {
           cancelled: () => {
