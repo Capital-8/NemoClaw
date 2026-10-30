@@ -1000,6 +1000,11 @@ The observed forward cannot recover the original dashboard or satisfy its assert
 Diagnostic cleanup terminates only the separately owned forward; the target retains its existing sandbox and gateway cleanup.
 Listener inspection and diagnostic write failures do not replace the restart outcome.
 Unconfirmed observer cleanup fails an otherwise successful restart.
+After raw stop/start succeeds and the sandbox is Ready, the target runs `nemoclaw <sandbox> recover` in the survivor's gateway context.
+Recovery runs after both listener snapshots and observer cleanup, so it cannot hide the original forward's exit.
+Both gateway-cleanup policies require recovery to succeed and the dashboard to answer within the existing probe budget.
+The pre-restart dashboard checks still prove that destroying the alternate sandbox preserves the survivor.
+Raw OpenShell start does not restore a forward that exits when its readiness poll observes the stopped sandbox.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.

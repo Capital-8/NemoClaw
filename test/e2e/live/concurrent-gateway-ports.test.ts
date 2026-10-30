@@ -9,7 +9,8 @@
  * socket probes, selected-instance uninstall/health cleanup, and whole-host
  * uninstall when only a non-default gateway remains. This case also verifies
  * cross-gateway destroy survival under both cleanup policies: gateway A stays
- * selected and its sandbox restarts through unscoped OpenShell commands.
+ * selected and its sandbox restarts through unscoped OpenShell commands,
+ * then NemoClaw recovers its managed dashboard forward.
  */
 
 import fs from "node:fs";
@@ -373,7 +374,7 @@ async function selectAndVerifyActiveGateway(
   };
 }
 
-async function stopStartSurvivor(
+async function restartAndRecoverSurvivor(
   host: HostCliClient,
   artifacts: ArtifactSink,
   progress: TestProgress,
@@ -385,6 +386,7 @@ async function stopStartSurvivor(
   readonly stop: ShellProbeResult;
   readonly start: ShellProbeResult;
   readonly phase: string;
+  readonly recover: ShellProbeResult | null;
 }> {
   const listener = async (stage: string) => {
     try {
@@ -402,7 +404,7 @@ async function stopStartSurvivor(
     }
   };
   await listener("before-restart");
-  return observeForwardRestart({
+  const restart = await observeForwardRestart({
     progress,
     executable: host.openshellCommandPath,
     args: [
@@ -444,6 +446,19 @@ async function stopStartSurvivor(
       return { stop, start, phase };
     },
   });
+  const restarted =
+    restart.stop.exitCode === 0 &&
+    restart.start.exitCode === 0 &&
+    ["Ready", "Running"].includes(restart.phase);
+  // Raw OpenShell start does not restore a forward that exited while the sandbox was stopped.
+  const recover = restarted
+    ? await command(host, [sandboxName, "recover"], {
+        artifactName: `${artifactPrefix}-recover`,
+        env: { ...openshellEnvForGateway(gatewayName), NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A },
+        timeoutMs: 120_000,
+      })
+    : null;
+  return { ...restart, recover };
 }
 
 async function prerequisiteOrSkip(
@@ -914,7 +929,7 @@ test(
         gatewayAHealthyBeforeCleanupRestart,
       `selected A=${resultText(gatewayASelectionBeforeCleanupDestroy.select)}; active list=${resultText(gatewayASelectionBeforeCleanupDestroy.list)}; destroy=${resultText(destroyBWithGatewayCleanup)}; gateway B=${resultText(gatewayBStoppedAfterCleanupDestroy)}; gateway registry=${resultText(gatewayRegistryAfterCleanupDestroy)}; gateway A before=${gatewayAProcessBeforeCleanupDestroy}; gateway A after=${gatewayAProcessAfterCleanupDestroy}; survivor port=${resultText(liveSurvivorAfterCleanupDestroy.gatewayPort)}; list=${resultText(liveSurvivorAfterCleanupDestroy.scopedList)}; dashboard=${liveSurvivorAfterCleanupDestroy.dashboard.map(resultText).join("\\n")}`,
     ).toBe(true);
-    const survivorRestartAfterCleanupDestroy = await stopStartSurvivor(
+    const survivorRestartAfterCleanupDestroy = await restartAndRecoverSurvivor(
       host,
       artifacts,
       progress,
@@ -937,6 +952,7 @@ test(
       survivorRestartAfterCleanupDestroy.start.exitCode === 0 &&
       ["Ready", "Running"].includes(survivorRestartAfterCleanupDestroy.phase);
     const gatewayADashboardAvailableAfterCleanupRestart =
+      survivorRestartAfterCleanupDestroy.recover?.exitCode === 0 &&
       survivorDashboardAfterCleanupDestroy.gatewayPort.exitCode === 0 &&
       survivorDashboardAfterCleanupDestroy.scopedList.exitCode === 0 &&
       openshellListIncludesSandbox(
@@ -946,7 +962,7 @@ test(
       finalDashboardProbeHealthy(survivorDashboardAfterCleanupDestroy.dashboard);
     expect(
       sandboxARestartedWithCleanup && gatewayADashboardAvailableAfterCleanupRestart,
-      `stop=${resultText(survivorRestartAfterCleanupDestroy.stop)}; start=${resultText(survivorRestartAfterCleanupDestroy.start)}; phase=${survivorRestartAfterCleanupDestroy.phase}; port=${resultText(survivorDashboardAfterCleanupDestroy.gatewayPort)}; list=${resultText(survivorDashboardAfterCleanupDestroy.scopedList)}; dashboard=${survivorDashboardAfterCleanupDestroy.dashboard.map(resultText).join("\\n")}`,
+      `stop=${resultText(survivorRestartAfterCleanupDestroy.stop)}; start=${resultText(survivorRestartAfterCleanupDestroy.start)}; phase=${survivorRestartAfterCleanupDestroy.phase}; recover=${survivorRestartAfterCleanupDestroy.recover ? resultText(survivorRestartAfterCleanupDestroy.recover) : "not attempted"}; port=${resultText(survivorDashboardAfterCleanupDestroy.gatewayPort)}; list=${resultText(survivorDashboardAfterCleanupDestroy.scopedList)}; dashboard=${survivorDashboardAfterCleanupDestroy.dashboard.map(resultText).join("\\n")}`,
     ).toBe(true);
 
     await runOnboard(
@@ -1055,7 +1071,7 @@ test(
         gatewayAHealthyBeforeRetainedRestart,
       `selected A=${resultText(gatewayASelectionBeforeRetainedDestroy.select)}; active list=${resultText(gatewayASelectionBeforeRetainedDestroy.list)}; destroy=${resultText(destroyBWithoutGatewayCleanup)}; gateway B=${resultText(gatewayBRetainedAfterDestroy)}; gateway registry=${resultText(gatewayRegistryAfterRetainedDestroy)}; sandbox B=${resultText(sandboxBAfterRetainedDestroy)}; gateway A=${gatewayAProcessAfterRetainedDestroy}; survivor port=${resultText(liveSurvivorAfterRetainedDestroy.gatewayPort)}; list=${resultText(liveSurvivorAfterRetainedDestroy.scopedList)}; dashboard=${liveSurvivorAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
     ).toBe(true);
-    const survivorRestartAfterRetainedDestroy = await stopStartSurvivor(
+    const survivorRestartAfterRetainedDestroy = await restartAndRecoverSurvivor(
       host,
       artifacts,
       progress,
@@ -1078,6 +1094,7 @@ test(
       survivorRestartAfterRetainedDestroy.start.exitCode === 0 &&
       ["Ready", "Running"].includes(survivorRestartAfterRetainedDestroy.phase);
     const gatewayADashboardAvailableAfterRetainedRestart =
+      survivorRestartAfterRetainedDestroy.recover?.exitCode === 0 &&
       survivorDashboardAfterRetainedDestroy.gatewayPort.exitCode === 0 &&
       survivorDashboardAfterRetainedDestroy.scopedList.exitCode === 0 &&
       openshellListIncludesSandbox(
@@ -1087,7 +1104,7 @@ test(
       finalDashboardProbeHealthy(survivorDashboardAfterRetainedDestroy.dashboard);
     expect(
       sandboxARestartedWithoutCleanup && gatewayADashboardAvailableAfterRetainedRestart,
-      `stop=${resultText(survivorRestartAfterRetainedDestroy.stop)}; start=${resultText(survivorRestartAfterRetainedDestroy.start)}; phase=${survivorRestartAfterRetainedDestroy.phase}; port=${resultText(survivorDashboardAfterRetainedDestroy.gatewayPort)}; list=${resultText(survivorDashboardAfterRetainedDestroy.scopedList)}; dashboard=${survivorDashboardAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
+      `stop=${resultText(survivorRestartAfterRetainedDestroy.stop)}; start=${resultText(survivorRestartAfterRetainedDestroy.start)}; phase=${survivorRestartAfterRetainedDestroy.phase}; recover=${survivorRestartAfterRetainedDestroy.recover ? resultText(survivorRestartAfterRetainedDestroy.recover) : "not attempted"}; port=${resultText(survivorDashboardAfterRetainedDestroy.gatewayPort)}; list=${resultText(survivorDashboardAfterRetainedDestroy.scopedList)}; dashboard=${survivorDashboardAfterRetainedDestroy.dashboard.map(resultText).join("\\n")}`,
     ).toBe(true);
 
     progress.phase("restore the alternate sandbox before uninstall");
