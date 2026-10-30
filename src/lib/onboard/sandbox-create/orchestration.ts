@@ -1828,6 +1828,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     allowRemovedImmutabilityStateRecord = false,
     fromImage: string | null = null,
     requestedExternalToolDisclosure: ToolDisclosure | null = null,
+    switchyardRoutingConfigured = false,
   ) {
     const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
@@ -2172,6 +2173,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         : managedWorkloadOnboard.prepareSandboxWorkloadForPortableLifecycle(
             runtime,
             sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+            switchyardRoutingConfigured,
           );
     };
     const prepareManagedStateVolumeLifecycle = (
