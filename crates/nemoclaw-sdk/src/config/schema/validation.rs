@@ -76,6 +76,13 @@ pub(super) fn constrain(root: &mut Value, normalized: bool) {
         "services",
         json!({"propertyNames": {"pattern": c::SLUG}}),
     );
+    // OpenShell validates exposure names at creation; NemoClaw only bounds
+    // the count it would reject (32 per sandbox).
+    property(
+        &mut defs["Sandbox"],
+        "serviceExposures",
+        json!({"maxProperties": 32}),
+    );
     property(
         &mut defs["Agent"],
         "inferenceRef",

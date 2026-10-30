@@ -495,17 +495,14 @@ async fn api_integration_applies_exports_and_reapplies_unchanged() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn network_grants_apply_export_and_reapply_unchanged() {
-    // Grants added to the isolated preset reach the sandbox's managed policy
-    // and survive export and re-apply.
+async fn network_grants_and_service_exposures_apply_export_and_reapply_unchanged() {
+    // Grants added to the isolated preset reach the sandbox's managed policy,
+    // and service exposures reach its creation request; both survive export
+    // and re-apply.
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .network = serde_json::from_value(serde_json::json!({
+    let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
+    sandbox.network = serde_json::from_value(serde_json::json!({
         "tier": "isolated",
         "grants": {"docs": {"endpoints": [{
             "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
@@ -513,8 +510,50 @@ async fn network_grants_apply_export_and_reapply_unchanged() {
         }]}}
     }))
     .unwrap();
+    sandbox.service_exposures = serde_json::from_value(serde_json::json!({
+        "dashboard": {"targetPort": 18800},
+        "api": {"targetPort": 8642, "authorizationMode": "BEARER_PASSTHROUGH"}
+    }))
+    .unwrap();
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
+    let sent = lifecycle
+        .fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandbox_exposures
+        .clone();
+    let [exposures] = sent.as_slice() else {
+        panic!("one sandbox creation must carry the exposures: {sent:?}")
+    };
+    let mut seen: Vec<_> = exposures
+        .iter()
+        .map(|exposure| {
+            (
+                exposure.service.as_str(),
+                exposure.target_port,
+                exposure.authorization_mode,
+            )
+        })
+        .collect();
+    seen.sort();
+    // An omitted mode stays omitted, so OpenShell applies its own default.
+    assert_eq!(
+        seen,
+        [
+            (
+                "api",
+                8642,
+                openshell_core::proto::ServiceAuthorizationMode::BearerPassthrough as i32
+            ),
+            (
+                "dashboard",
+                18800,
+                openshell_core::proto::ServiceAuthorizationMode::Unspecified as i32
+            ),
+        ]
+    );
     lifecycle.export_and_reapply_unchanged(effects).await;
     lifecycle.destroy();
 }
