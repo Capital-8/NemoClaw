@@ -120,8 +120,8 @@ $$nemoclaw <sandbox-name> recover
 ```
 
 The command verifies the native gateway and re-establishes the dashboard port forward.
-If the gateway is stopped, `recover` reports it and does not relaunch it.
-Run `gateway restart` to request a native restart.
+If the existing Hermes supervisor is waiting for authenticated gated recovery after a clean exit or exit status `79`, `recover` requests a supervised gateway relaunch before verification.
+Otherwise, `recover` reports a stopped gateway without relaunching it; use `gateway restart` to request a native restart.
 If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.
 If a listener that NemoClaw cannot attribute to the sandbox's OpenShell forward holds the port, `recover` reports it and leaves it running.
 It then exits nonzero and does not restore the forward.
