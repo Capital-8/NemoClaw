@@ -41,6 +41,12 @@ const WINDOWS_INSTALLER_PID_SENTINEL = "__NEMOCLAW_WINDOWS_INSTALLER_PID__:";
 // A Windows DWORD PID has at most 10 digits; allow CRLF after it.
 const WINDOWS_INSTALLER_PID_LINE_MAX_BYTES = Buffer.byteLength(WINDOWS_INSTALLER_PID_SENTINEL) + 12;
 const WINDOWS_INSTALLER_CANCELLATION_TIMEOUT_MS = 5_000;
+const WINDOWS_OLLAMA_STATE_RESTORE_TIMEOUT_MS = 5_000;
+let pendingWindowsOllamaInterruptCleanup: Promise<void> | undefined;
+
+function waitForWindowsOllamaInterruptCleanup(): Promise<void> | undefined {
+  return pendingWindowsOllamaInterruptCleanup;
+}
 
 function reportUnconfirmedWindowsInstallerCancellation(): void {
   console.error("  Could not confirm that the Windows Ollama installer stopped.");
@@ -279,6 +285,8 @@ function runWindowsOllamaStateScript(script: string, env?: NodeJS.ProcessEnv): b
     env,
     ignoreError: true,
     suppressOutput: true,
+    timeout: WINDOWS_OLLAMA_STATE_RESTORE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
   return !result.error && result.status === 0;
 }
@@ -510,7 +518,13 @@ function registerWindowsOllamaInterruptHandler(
   };
   const runHandler = (signal: WindowsOllamaInterruptSignal) => {
     try {
-      Promise.resolve(handler(signal)).catch(reportFailure);
+      const cleanup = Promise.resolve(handler(signal));
+      pendingWindowsOllamaInterruptCleanup = cleanup;
+      void cleanup.catch(reportFailure).finally(() => {
+        if (pendingWindowsOllamaInterruptCleanup === cleanup) {
+          pendingWindowsOllamaInterruptCleanup = undefined;
+        }
+      });
     } catch (error) {
       reportFailure(error);
     }
@@ -760,6 +774,7 @@ function printWindowsOllamaSnapshotDiagnostics(): void {
 }
 
 export {
+  waitForWindowsOllamaInterruptCleanup,
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   buildWindowsOllamaInstallerCommand,
