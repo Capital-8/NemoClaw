@@ -96,6 +96,24 @@ run "verify" {
   }
 }
 
+# The step's document has no researcher. This run's plan still reads what
+# verify left.
+run "remove_researcher" {
+  module {
+    source = "./cases/docker-vllm-shared-two-agents"
+  }
+
+  variables {
+    step    = "remove-researcher"
+    effects = run.verify.effects
+  }
+
+  assert {
+    condition     = module.observed.openshell.effects == var.effects
+    error_message = "The second apply changed gateway objects."
+  }
+}
+
 # OpenTofu removes what the last applying run applied, with its variables:
 # this run permits deletion, as the SDK's teardown graph does.
 run "teardown" {
@@ -104,6 +122,19 @@ run "teardown" {
   }
 
   variables {
+    step           = "remove-researcher"
     permit_destroy = true
+  }
+
+  # Only the researcher's runtime stopped and its sandbox went; the assistant's
+  # sandbox was neither replaced nor restarted.
+  assert {
+    condition = (
+      module.observed.openshell.sandboxes == ["assistant"]
+      && length(module.observed.openshell.created_sandboxes) == 2
+      && module.observed.openshell.fabric_starts[module.observed.agents.assistant.id] == 1
+      && [for exec in module.observed.openshell.execs : exec.sandbox if contains(exec.command, "stop")] == ["researcher"]
+    )
+    error_message = "Removing the researcher changed the assistant, or left the researcher's sandbox or runtime."
   }
 }

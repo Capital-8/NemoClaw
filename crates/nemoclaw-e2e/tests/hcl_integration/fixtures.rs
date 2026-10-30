@@ -167,6 +167,12 @@ impl Shared {
             *self.containers.lock().unwrap() = list("containers");
             self.gateway.lock().unwrap().driver =
                 declared["compute_driver"].as_str().map(str::to_owned);
+            match declared["fault"].as_str() {
+                None => {}
+                // Agent runtimes exit inside sandboxes that keep running.
+                Some("stop_agent_runtimes") => self.gateway.lock().unwrap().fabric_runtimes.clear(),
+                Some(_) => return (400, b"unknown fault".to_vec()),
+            }
         }
         (
             200,
@@ -223,10 +229,17 @@ impl Shared {
             .iter()
             .map(|rpc| rpc.trim_start_matches("/openshell.v1.OpenShell/"))
             .collect();
+        let mut current: Vec<&str> = state
+            .sandboxes
+            .values()
+            .filter_map(|sandbox| Some(sandbox.metadata.as_ref()?.name.as_str()))
+            .collect();
+        current.sort_unstable();
         json!({
             "openshell": {
                 "endpoint": self.gateway_endpoint, "rpcs": rpcs,
                 "created_providers": providers, "created_sandboxes": sandboxes, "execs": execs,
+                "sandboxes": current, "effects": state.effects,
                 "fabric_starts": state.fabric_starts,
                 "workspaces": state.workspaces.keys().collect::<Vec<_>>(),
             },

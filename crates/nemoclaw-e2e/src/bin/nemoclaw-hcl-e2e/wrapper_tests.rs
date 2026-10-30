@@ -48,7 +48,13 @@ while [ "$#" -gt 0 ]; do
 done
 case "$operation" in
   plan) printf '%s' product-state > "$state/sentinel" ;;
-  apply) printf '%s' '{"resources":[]}' > "$state/terraform.tfstate" ;;
+  apply)
+    changes='[]'
+    if [ -f "$state/terraform.tfstate" ] && [ "$FAIL_PHASE" = reapply ]; then
+      changes='[{"resource":"openshell_sandbox.assistant","actions":["update"]}]'
+    fi
+    printf '{"outcome":"succeeded","changes":%s}' "$changes"
+    printf '%s' '{"resources":[]}' > "$state/terraform.tfstate" ;;
   destroy)
     if [ "$FAIL_CLEANUP" = 1 ]; then exit 1; fi
     printf '%s' '{"outcome":"destroyed","changes":[],"retained":["openshell_gateway_storage.runtime"]}' ;;
@@ -134,7 +140,7 @@ async fn shared_hcl_assertions_load_scenarios_from_disk_and_only_fail_on_outcome
     );
     assert_eq!(
         fs::read_to_string(root.path().join("trace")).unwrap(),
-        "plan\napply\ndestroy\n"
+        "plan\napply\napply\ndestroy\n"
     );
 
     // Add a selectable scenario on disk without recompiling the helper.
@@ -217,7 +223,7 @@ async fn shared_hcl_assertions_load_scenarios_from_disk_and_only_fail_on_outcome
     );
     assert_eq!(
         fs::read_to_string(root.path().join("trace")).unwrap(),
-        "plan\napply\ndestroy\nplan\napply\ndestroy\nplan\napply\ndestroy\n"
+        "plan\napply\napply\ndestroy\nplan\napply\napply\ndestroy\nplan\napply\ndestroy\n"
     );
     for run in [&healthy, &unhealthy, &invalid] {
         assert_eq!(
@@ -237,7 +243,7 @@ async fn shared_hcl_assertions_load_scenarios_from_disk_and_only_fail_on_outcome
 
 #[tokio::test]
 async fn deployment_or_verification_failure_still_cleans_up_and_preserves_the_original_failure() {
-    for phase in ["apply", "tofu-test"] {
+    for phase in ["apply", "tofu-test", "reapply"] {
         let root = tempfile::tempdir().unwrap();
         let suite = suite(root.path());
         let mut tools = tools(root.path());
@@ -268,7 +274,10 @@ async fn deployment_or_verification_failure_still_cleans_up_and_preserves_the_or
         );
         let trace = fs::read_to_string(root.path().join("trace")).unwrap();
         assert!(trace.ends_with("destroy\n"));
-        assert_eq!(trace.lines().filter(|line| *line == "apply").count(), 1);
+        assert_eq!(
+            trace.lines().filter(|line| *line == "apply").count(),
+            if phase == "reapply" { 2 } else { 1 }
+        );
         let result: Value =
             serde_json::from_slice(&fs::read(run.join("result.json")).unwrap()).unwrap();
         assert_eq!(result["failed_phase"], phase);

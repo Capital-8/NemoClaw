@@ -276,7 +276,33 @@ pub(super) async fn execute_with_tools(
             &verifier_environment,
             cancel,
         )
-        .await
+        .await?;
+        // Applying the same document to the running deployment changes nothing.
+        phase = "reapply";
+        process::execute(
+            &tools.cli,
+            &arguments("apply"),
+            &directory,
+            phase,
+            &environment,
+            cancel,
+        )
+        .await?;
+        let reapplied: OperationResult = serde_json::from_slice(
+            &fs::read(directory.join("reapply.stdout")).map_err(|_| "reapply: missing result")?,
+        )
+        .map_err(|_| "reapply: invalid result")?;
+        match reapplied.changes.as_slice() {
+            [] => Ok(()),
+            changes => Err(format!(
+                "reapply: changed {}",
+                changes
+                    .iter()
+                    .map(|change| change.resource.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
     }
     .await;
     let failed_phase = primary.as_ref().err().map(|_| phase);

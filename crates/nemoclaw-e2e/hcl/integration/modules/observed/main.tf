@@ -16,15 +16,17 @@ data "fixture_state" "now" {}
 
 locals {
   observed = jsondecode(data.fixture_state.now.observations)
+  # Each sandbox's Fabric starts, in order; a restarted agent has several.
   starts = {
     for exec in local.observed.openshell.execs :
-    exec.sandbox => merge(exec, { configuration = jsondecode(exec.stdin) })
+    exec.sandbox => merge(exec, { configuration = jsondecode(exec.stdin) })...
     if contains(exec.command, "start")
   }
+  last_starts = { for sandbox, starts in local.starts : sandbox => starts[length(starts) - 1] }
 }
 
 output "openshell" {
-  description = "RPCs, created registrations and sandboxes, execs, Fabric starts, and workspaces."
+  description = "RPCs, created registrations and sandboxes, current sandbox names, execs, Fabric starts, workspaces, and `effects`: how many objects the gateway created, updated, or deleted."
   value       = local.observed.openshell
 }
 
@@ -44,9 +46,9 @@ output "registrations" {
 }
 
 output "agents" {
-  description = "Each created sandbox, by name, with its Fabric start: command and decoded configuration, or null."
+  description = "Each created sandbox, by name, with its last Fabric start: command and decoded configuration, or null."
   value = {
     for sandbox in local.observed.openshell.created_sandboxes :
-    sandbox.name => merge(sandbox, { start = lookup(local.starts, sandbox.name, null) })
+    sandbox.name => merge(sandbox, { start = lookup(local.last_starts, sandbox.name, null) })
   }
 }
