@@ -148,8 +148,9 @@ export GITHUB_MCP_TOKEN='replacement-value'
 $$nemoclaw my-sandbox mcp remove github
 ```
 
-If removal reports a cleanup warning or a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before re-adding the server.
-If it reports neither, skip provider deletion.
+If removal reports an `MCP cleanup warning`, resolve it before you continue.
+If removal reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before re-adding the server.
+If it reports no preserved provider, skip provider deletion.
 For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`, or export `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` again when the original command used it.
 Pass `--deny-tool` again for each recorded selector, or omit it when the original registration had none.
 Add the server again so NemoClaw creates a new provider with the replacement credential and reconnects the native registration:
@@ -226,8 +227,9 @@ export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
 $$nemoclaw my-sandbox mcp remove local-tools
 ```
 
-If removal reports a cleanup warning or a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before re-adding the server.
-If it reports neither, skip provider deletion.
+If removal reports an `MCP cleanup warning`, resolve it before you continue.
+If removal reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before re-adding the server.
+If it reports no preserved provider, skip provider deletion.
 If the original command used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again.
 Pass `--deny-tool` again for each recorded selector, or omit it when the original registration had none.
 Use the recorded `--trusted-private-host` value when the original registration used that option.
