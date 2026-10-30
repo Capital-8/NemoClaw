@@ -25,7 +25,7 @@ The profile's endpoint must match `spec.gateway.endpoint` in the deployment YAML
 Its stored authentication must grant access to the deployment workspace.
 The endpoint override takes precedence over the profile, which is why this example clears it.
 NemoClaw's YAML credential and TLS environment references do not configure the OpenShell CLI's stored profile or credentials.
-To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/docs/how-it-works/gateways/authentication.mdx).
+To create a profile for an authenticated gateway, including its issuer or mTLS client certificates, follow [OpenShell's authentication guide](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/gateways/authentication.mdx).
 
 For an existing plaintext loopback gateway instead, select its actual endpoint directly:
 
@@ -53,7 +53,7 @@ export OPENSHELL_WORKSPACE=REPLACE_WITH_REPORTED_WORKSPACE
 
 JSON results expose the same values as `connection.gatewayEndpoint` and `connection.workspace`.
 These selectors describe the configured target, including when a plan is incomplete; they do not establish access or create an authenticated OpenShell CLI profile.
-The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/bdb956f2cd65a635f1294fccf1d138d263bf650f/crates/openshell-cli/src/main.rs).
+The gateway selectors follow the [pinned OpenShell CLI parser and resolver](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/crates/openshell-cli/src/main.rs).
 The forward or sandbox command below verifies access to the selected workspace; setting an environment variable alone does not.
 On an authentication or missing-sandbox error, check the endpoint, workspace, sandbox name, and operator-provided credentials before changing deployment state.
 
@@ -77,6 +77,32 @@ Stopping a client forward does not stop the sandbox or its Fabric runtime.
 
 No bundled adapter's Fabric configuration currently enables a browser interface.
 OpenClaw's dashboard ([#13360](https://github.com/NVIDIA/NemoClaw/issues/13360)) and Hermes's API, dashboard, and browser TUI ([#13321](https://github.com/NVIDIA/NemoClaw/issues/13321)) return when Fabric's adapters support configuring them.
+
+## Expose a Service Through the Gateway
+
+To make a sandbox's loopback listener reachable at a URL that OpenShell's gateway serves, declare it under the sandbox's `serviceExposures`, keyed by service name:
+
+```yaml
+sandboxes:
+  assistant:
+    serviceExposures:
+      dashboard:
+        targetPort: 18800
+        authorizationMode: BEARER_PASSTHROUGH
+```
+
+Each entry maps to an OpenShell service exposure: its key is the service name, and it takes `targetPort` and an optional `authorizationMode` (`STRIP` or `BEARER_PASSTHROUGH`).
+OpenShell applies `STRIP` when the mode is omitted, and the empty key `""` is the unnamed endpoint.
+OpenShell checks the names when it creates the sandbox; see its [service exposure rules](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/docs/how-it-works/sandboxes/overview.mdx#expose-long-running-services).
+A sandbox takes at most 32 exposures.
+Exposures belong to the sandbox's creation, so adding, changing, or removing one replaces the sandbox, deleting its files and conversations.
+In HCL, use `openshell_sandbox`'s [`service` blocks](provider.md#openshell-resources-and-data-sources).
+
+Requests to the URL skip OpenShell's gateway authentication: they use no OIDC or CLI login, and only the gateway listener's TLS, including any required client certificate, applies.
+The service must listen on loopback and authenticate its own clients.
+`BEARER_PASSTHROUGH` delivers the caller's bearer token to the service, so use it only for a service trusted with that credential.
+To list the URL the gateway reports, [select the gateway and workspace](#select-the-gateway-and-workspace) and run `openshell service list REPLACE_WITH_SANDBOX`.
+Apply output doesn't report it.
 
 ## Diagnose Failures
 

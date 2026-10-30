@@ -154,8 +154,8 @@ The profile's memory architecture determines capacity accounting:
 
 | Memory architecture | Serving budget and observations |
 |---|---|
-| Unified (`dgx-spark`, `rtx-spark`) | CPU and GPU share system RAM; use host total/available memory and preserve the host reserve. Dedicated framebuffer counters may report `N/A`. |
-| Dedicated (the other current profiles) | Use GPU total/free counters for serving and measure host RAM separately, including on ARM64 Grace systems. Unsupported GPU counters reject the configuration; host RAM is never substituted. |
+| Unified (`dgx-spark`, `rtx-spark`) | CPU and GPU share system RAM; use host total/available memory and preserve the host reserve, `memory.hostReserveGiB`, of at least 28 GiB. Dedicated framebuffer counters may report `N/A`. |
+| Dedicated (the other current profiles) | Use GPU total/free counters for serving and measure host RAM separately, including on ARM64 Grace systems. Unsupported GPU counters reject the configuration; host RAM is never substituted. The host reserve is at least 6 GiB, and startup needs the reserve plus 20 GiB available: 26 GiB at the minimum, 52 GiB at the default of 32. |
 
 The collectors preserve an explicit unsupported-counter result; they do not infer unified memory from `N/A` or from a GPU name.
 Failed queries and malformed or partial counter responses stop the operation for either memory architecture.
@@ -255,7 +255,7 @@ Build a compatible OpenClaw sandbox image using the [agent image procedure](buil
 `memory.gpuMemoryUtilization: 0.75` allocates a fraction of the observed GPU memory and leaves KV-cache sizing to vLLM.
 Omit `gpuMemoryGiB` and `kvCacheGiB` in this mode; nonzero fixed budgets are rejected.
 The hosted runtime checks snapshot weight size against the fraction of the declared minimum GPU memory and checks startup allocation against observed total and free GPU memory.
-Host RAM is measured separately: the default 32 GiB reserve plus 20 GiB startup headroom must be available, and the resident host-memory watchdog remains active.
+Host RAM is measured separately: the host reserve (32 GiB by default, at least 6 GiB) plus 20 GiB startup headroom must be available, and the resident host-memory watchdog remains active.
 A running service's allocation does not count as missing startup headroom during refresh.
 
 The example selects `container.ipc: host`, sharing the execution host's IPC namespace.

@@ -8,16 +8,20 @@ ARG RUST_IMAGE=rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0
 # The Fabric source every harness installs; the reference dummy's descriptor
 # follows the adapter contract at the same revision.
-ARG FABRIC_REVISION=67acf1cff0d598fc3e6a32370cd63fc088e86958
-ARG FABRIC_SHA256=ca88f31e3bfbc3d3e408410d538a8d4a79e4f65adc6fe987aca929216e6b6d32
+ARG FABRIC_REVISION=7aedb66be0d0b7fc5a0d466539d87f835f16b1c1
+ARG FABRIC_SHA256=30740262e6ec422bc16dcebdabaf76d67cc16726d42ddc547841de9ec19f9726
 # OpenClaw release 2026.9.4, the version the pinned Fabric's OpenClaw adapter
 # documents; move it with the Fabric revision, not on its own.
 ARG OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101
+# Hermes Agent's release image for HERMES_REVISION; only its built dashboard
+# and TUI bundle are copied. Move it with HERMES_REVISION, not on its own.
+ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.22.4@sha256:7a69201726bc64db2072a1371557137c23312d29705cda2b8ea2a0214a50a4cf
 # The harness stage the catalog and labeled stages build on.
 ARG STAGE=generic
 FROM ${RUST_IMAGE} AS rust
 FROM ${UV_IMAGE} AS uv
 FROM ${OPENCLAW_IMAGE} AS openclaw-upstream
+FROM ${HERMES_IMAGE} AS hermes-upstream
 FROM ${BUN_IMAGE} AS bun
 FROM ${NODE_IMAGE} AS node
 # Only harnesses that run JavaScript copy this tree; the shared base has no Node.js.
@@ -119,6 +123,16 @@ ADD --checksum=sha256:${HERMES_SHA256} https://codeload.github.com/NousResearch/
 COPY image/fabric/HERMES-NOTICE.md /sources/HERMES-NOTICE.md
 RUN mkdir -p /opt/hermes && tar -xzf /sources/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && cp /sources/HERMES-NOTICE.md /opt/hermes/NEMOCLAW-NOTICE.md
+# Hermes's dashboard and browser chat need its built web assets and TUI bundle,
+# which Hermes's release image builds from the same release. The build stops if
+# any file that image shares with the pinned source differs, apart from the
+# README.md its build empties. Hermes looks for both at these paths at runtime.
+RUN --mount=type=bind,from=hermes-upstream,source=/opt/hermes,target=/upstream \
+    status=0; diff -rq --no-dereference /opt/hermes /upstream > /tmp/upstream.diff || status=$?; \
+    [ "$status" -le 1 ] \
+    && ! grep -v -e '^Only in ' -e '^Files /opt/hermes/README.md and /upstream/README.md differ$' /tmp/upstream.diff \
+    && cp -R /upstream/hermes_cli/web_dist /upstream/hermes_cli/tui_dist /opt/hermes/hermes_cli/ \
+    && rm /tmp/upstream.diff
 
 FROM base AS switchyard-assets
 ARG TARGETARCH
@@ -138,13 +152,21 @@ COPY --from=hermes-assets --chmod=0644 /sources/hermes.tar.gz /opt/nemoclaw/sour
 COPY --from=switchyard-assets /opt/nemo-relay /opt/nemo-relay
 # Hermes owns its dependencies: its own lock, with the mcp extra, settles the
 # packages it shares with Fabric, as Fabric installs into Hermes's environment.
+# From the messaging extra, only aiohttp, which Hermes's API server needs, is
+# installed; the messaging platform clients are pruned.
 # Hermes resolves bundled assets relative to its source checkout.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv --mount=type=cache,target=/root/.cache/uv \
-    uv export --project /opt/hermes --frozen --no-dev --extra mcp --no-emit-project --format requirements-txt --output-file /opt/nemoclaw/source/hermes-requirements.txt \
+    uv export --project /opt/hermes --frozen --no-dev --extra mcp --extra messaging \
+        --prune discord-py --prune python-telegram-bot --prune slack-bolt --prune slack-sdk --prune qrcode --prune brotlicffi \
+        --no-emit-project --format requirements-txt --output-file /opt/nemoclaw/source/hermes-requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --require-hashes -r /opt/nemoclaw/source/hermes-requirements.txt \
     && uv pip install --python /opt/fabric/bin/python --no-deps -e /opt/hermes --config-settings editable_mode=compat \
     && uv pip check --python /opt/fabric/bin/python
 ENV HERMES_DISABLE_LAZY_INSTALLS=1
+# Hermes's dashboard and browser chat use these prebuilt assets and this Node.js
+# instead of building or installing their own, which the read-only, offline
+# sandbox would refuse.
+ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist HERMES_NODE=/usr/local/bin/node
 RUN printf '%s\n' '{"nvidia.fabric.hermes": {"files": ["/opt/hermes", "/opt/nemo-relay/plugins/switchyard"], "binaries": []}}' > /opt/nemoclaw/adapters.json
 USER node
 

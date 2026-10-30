@@ -31,9 +31,9 @@ cargo ci --full
 ```
 
 The command needs the pinned Rust toolchain and a C linker.
-It downloads Protocol Buffers compiler 36.1 and cargo-nextest 0.9.144 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
+It downloads Protocol Buffers compiler 36.2 and cargo-nextest 0.9.150 into the Git-ignored `.tools` directory, verifying each against its `versions.json` checksum; it installs no host packages.
 It then runs formatting, Clippy, the unit tests and doctests, the schema check, a bundle build, and the contract and system tests, stopping at the first failure.
-To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.1/bin/protoc` after `cargo ci tools`, or to another protoc 36.1.
+To build the SDK outside `cargo ci`, set `PROTOC` to `.tools/protoc-36.2/bin/protoc` after `cargo ci tools`, or to another protoc 36.2.
 
 ## Select Expensive Local Checks
 
@@ -432,7 +432,8 @@ In each image, offline and as the image's own user, it checks:
 - the runtime command is `fabric-agent-ctl`, and it is executable;
 - the retained sources match the image's provenance;
 - the image runs as 10001:10001, and `/sandbox` and `TMPDIR` are laid out as OpenShell needs on Kubernetes and OpenShift;
-- the image carries no package installer and no build toolchain.
+- the image carries no package installer and no build toolchain;
+- a Hermes image carries `aiohttp`, Hermes's built dashboard, and its built TUI bundle, which Hermes's API server, dashboard, and browser chat need.
 
 The build itself refuses a catalog label that differs from what the image installs, and installs only what Fabric's lock pins.
 NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.

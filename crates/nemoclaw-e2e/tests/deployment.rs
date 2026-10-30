@@ -495,17 +495,14 @@ async fn api_integration_applies_exports_and_reapplies_unchanged() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a verified NEMOCLAW_TEST_BUNDLE"]
-async fn network_grants_apply_export_and_reapply_unchanged() {
-    // Grants added to the isolated preset reach the sandbox's managed policy
-    // and survive export and re-apply.
+async fn network_grants_and_service_exposures_apply_export_and_reapply_unchanged() {
+    // Grants added to the isolated preset reach the sandbox's managed policy,
+    // and service exposures reach its creation request; both survive export
+    // and re-apply.
     let mut document =
         Document::parse(include_str!("../../../examples/fabric-openclaw.yaml").as_bytes()).unwrap();
-    document
-        .spec
-        .sandboxes
-        .get_mut("assistant")
-        .unwrap()
-        .network = serde_json::from_value(serde_json::json!({
+    let sandbox = document.spec.sandboxes.get_mut("assistant").unwrap();
+    sandbox.network = serde_json::from_value(serde_json::json!({
         "tier": "isolated",
         "grants": {"docs": {"endpoints": [{
             "host": "docs.example.com", "port": 443, "protocol": "rest", "enforcement": "enforce",
@@ -513,8 +510,50 @@ async fn network_grants_apply_export_and_reapply_unchanged() {
         }]}}
     }))
     .unwrap();
+    sandbox.service_exposures = serde_json::from_value(serde_json::json!({
+        "dashboard": {"targetPort": 18800},
+        "api": {"targetPort": 8642, "authorizationMode": "BEARER_PASSTHROUGH"}
+    }))
+    .unwrap();
     let lifecycle = Lifecycle::start(&document.yaml().unwrap()).await;
     let effects = lifecycle.apply().await;
+    let sent = lifecycle
+        .fixture
+        .state
+        .lock()
+        .unwrap()
+        .sandbox_exposures
+        .clone();
+    let [exposures] = sent.as_slice() else {
+        panic!("one sandbox creation must carry the exposures: {sent:?}")
+    };
+    let mut seen: Vec<_> = exposures
+        .iter()
+        .map(|exposure| {
+            (
+                exposure.service.as_str(),
+                exposure.target_port,
+                exposure.authorization_mode,
+            )
+        })
+        .collect();
+    seen.sort();
+    // An omitted mode stays omitted, so OpenShell applies its own default.
+    assert_eq!(
+        seen,
+        [
+            (
+                "api",
+                8642,
+                openshell_core::proto::ServiceAuthorizationMode::BearerPassthrough as i32
+            ),
+            (
+                "dashboard",
+                18800,
+                openshell_core::proto::ServiceAuthorizationMode::Unspecified as i32
+            ),
+        ]
+    );
     lifecycle.export_and_reapply_unchanged(effects).await;
     lifecycle.destroy();
 }
@@ -850,17 +889,17 @@ impl Lifecycle {
         assert_eq!(actions("terraform_data."), ["update"]);
         assert_eq!(actions("openshell_sandbox."), ["delete", "create"]);
         assert_eq!(actions("fabric_agent."), ["delete", "create"]);
-        // Reading an agent runs nothing in its sandbox, so a failing exec
-        // fails neither a plan nor an export, and changes nothing.
+        // Reading an agent checks its runtime in its sandbox, so a failing
+        // exec fails a plan and an export as an observation, and changes
+        // nothing.
         self.fixture.state.lock().unwrap().exec_exit = 2;
-        self.deployment
-            .plan(&self.document, &self.cancel)
-            .await
-            .unwrap();
-        assert_eq!(
-            self.deployment.export(&self.cancel).await.unwrap(),
-            self.document
+        assert!(
+            self.deployment
+                .plan(&self.document, &self.cancel)
+                .await
+                .is_err()
         );
+        assert!(self.deployment.export(&self.cancel).await.is_err());
         assert_eq!(self.fixture.state.lock().unwrap().effects, effects);
         assert_eq!(
             fs::read(self.directory.path().join("terraform.tfstate")).unwrap(),
@@ -1023,10 +1062,13 @@ async fn startup_and_observation_failures_retain_bindings_and_recover() {
     assert_eq!(fs::read(&state_path).unwrap(), recovered);
     assert_eq!(fixture.state.lock().unwrap().effects, effects);
     fixture.state.lock().unwrap().fail_read = None;
-    // Exporting reads agents without running anything in their sandboxes.
+    // Exporting checks each agent's runtime; a check whose reply is cut off
+    // leaves it unobserved, so export fails and changes nothing.
     fixture.state.lock().unwrap().exec_truncated = true;
-    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
+    assert!(deployment.export(&cancel).await.is_err());
+    assert_eq!(fs::read(&state_path).unwrap(), recovered);
     fixture.state.lock().unwrap().exec_truncated = false;
+    assert_eq!(deployment.export(&cancel).await.unwrap(), document);
     fixture.state.lock().unwrap().lose_delete = true;
     assert!(deployment.destroy(&cancel).await.is_err());
     assert!(deployment.apply(&document, &cancel).await.is_err());

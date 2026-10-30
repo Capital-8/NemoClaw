@@ -27,6 +27,9 @@ mod host_image;
 mod provider_protocol;
 mod readiness_refs;
 mod references;
+// Unix only for the same reason as vllm_runtime, whose workspace it uses.
+#[cfg(unix)]
+mod replacement_cleanup;
 mod service_capacity;
 mod service_readiness;
 mod service_storage;
