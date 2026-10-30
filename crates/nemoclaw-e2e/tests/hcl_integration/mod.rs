@@ -178,7 +178,8 @@ async fn run_shard(shard: usize) {
         tofu(&bundle, &work, &base, ["init", "-input=false", "-no-color"]).await;
     assert!(initialized, "tofu init failed:\n{output}");
 
-    // CI names a directory to upload; otherwise evidence stays in the work directory.
+    // CI names a directory to summarize and upload; otherwise evidence stays in
+    // the work directory.
     let evidence_root = std::env::var_os("NEMOCLAW_INTEGRATION_EVIDENCE")
         .map(PathBuf::from)
         .unwrap_or_else(|| directory.path().join("evidence"));
@@ -201,6 +202,22 @@ async fn run_shard(shard: usize) {
                 "failed"
             }
         );
+        // CI summarizes every shard's results from the evidence directory.
+        if let Some(root) = std::env::var_os("NEMOCLAW_INTEGRATION_EVIDENCE") {
+            use std::io::Write as _;
+            fs::create_dir_all(&root).unwrap();
+            let result = if problem.is_none() {
+                "passed"
+            } else {
+                "failed"
+            };
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(Path::new(&root).join("results.tsv"))
+                .and_then(|mut file| writeln!(file, "{}\t{result}", scenario.name))
+                .unwrap();
+        }
         if let Some(problem) = problem {
             let evidence = evidence_root.join(&scenario.name);
             fs::create_dir_all(&evidence).unwrap();

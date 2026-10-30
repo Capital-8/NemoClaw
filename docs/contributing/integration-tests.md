@@ -190,7 +190,7 @@ The runner deals the scenarios round-robin across four tests, `scenarios_in_shar
 Each shard runs `tofu init` once and then `tofu test -filter=tests/<scenario>.tftest.hcl` for each scenario, resetting the fixtures between scenarios.
 After each scenario it checks that at least one run passed and that teardown failed only on storage NemoClaw retains. It also checks that the gateway holds no objects or Fabric runtimes, that the engine deleted no storage and received no unrecognized request, and that no fixture credential appears in output or diagnostics.
 When a scenario fails, the runner keeps its work directory and writes redacted OpenTofu output and observations to `evidence/<scenario>`, or under `NEMOCLAW_INTEGRATION_EVIDENCE` when it is set.
-The [Integration / HCL](../../.github/workflows/hcl-integration.yml) workflow runs the scenarios on Linux, summarizes each one, and uploads that evidence when a scenario fails.
+In CI / Bundle, each `Lifecycle` job sets `NEMOCLAW_INTEGRATION_EVIDENCE`. The runner records each scenario's result there, and the job summary lists the results. A failed job uploads that directory as `hcl-integration-evidence-PLATFORM-SHARD-ATTEMPT`, kept for 7 days.
 An upstream operation the fixtures cannot simulate needs fixture support once, in `tests/hcl_integration/fixtures.rs`.
 
 Each scenario runs the real OpenShell, Fabric, and host providers, plus the vLLM or Ollama provider where it applies:

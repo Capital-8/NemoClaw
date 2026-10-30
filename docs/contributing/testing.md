@@ -286,7 +286,6 @@ Documentation previews publish only for PRs targeting `v1`.
 | CI / Dependencies | `Policy` |
 | CD / Documentation | `Validate`, then PR preview, staging, or release publication |
 | Live / Brev | Bundle build, image build, and VM preparation in parallel, then lifecycle qualification and verified VM deletion |
-| Integration / HCL | `Scenarios`: the `tofu test` integration scenarios on Linux, for changes to them, their documents, or their runner and fixtures; not required, because the `Lifecycle` partitions also run them |
 
 The `v1` ruleset requires the first eight checks.
 Keep the ruleset's check names aligned when renaming jobs; workflow display names do not identify required checks.
