@@ -24,6 +24,7 @@ const publicFetchPrompts = [
 const localCodeInspectionPrompts = [
   "Find unused imports",
   "Search for TODO comments",
+  "Search inside this repository for TODO comments.",
   "Find and fix the bug",
   "Locate unused variables.",
   "Search for FIXME comments.",
@@ -133,6 +134,8 @@ const localLookupPrompts = [
 ];
 
 const localCallNavigationPrompts = [
+  "Find all callers of handleRequest inside this repository.",
+  "Find all callers of handleRequest in this repository.",
   "Find all callers of handleRequest().",
   "Find all callers of `handleRequest()`.",
   "Find all callers of `handleRequest`().",
@@ -394,7 +397,9 @@ const admissionCases: {
     "Explain the latest changes to Dockerfile.base and return the results.",
   ].map((prompt) => ({ prompt, tools: true, local: true, urls: [] })),
   ...[
-    "Provide today's weather in Paris.",
+    "Find all callers of handleRequest outside this repository.",
+    "Find all callers of handleRequest inside the official installation documentation.",
+    "Find all callers of handleRequest inside this repository and official installation documentation.",
     "Read the current contents of README.md, then provide today's weather in Paris.",
     "Explain the latest changes to src/index.ts using Tavily.",
     "Read the current contents of README.md online.",
@@ -402,8 +407,6 @@ const admissionCases: {
     "Explain the latest changes to the weather forecast.",
     "Read the current contents of the latest industry reports.",
     "Research the latest news about changes to src/index.ts.",
-  ].map((prompt) => ({ prompt, tools: false })),
-  ...[
     "Provide today's weather in Paris.",
     "Give me today's weather in Paris.",
     "Show today's weather in Paris.",
@@ -428,6 +431,7 @@ const admissionCases: {
   ].map((prompt) => ({ prompt, tools: false })),
   ...[
     "Show me today's date.",
+    "Find the current git branch inside this machine.",
     "Give me the current git commit hash.",
     "Tell me the current branch name.",
     "List today's files.",
@@ -1030,8 +1034,6 @@ const admissionCases: {
     "Find memory_search.",
     "Discover local filesystem tools.",
     "Discover available tools.",
-  ].map((prompt) => ({ prompt, tools: true })),
-  ...[
     "Find all Visual Basic files.",
     "Find all Objective C source files.",
     "Find all Structured Query Language files.",

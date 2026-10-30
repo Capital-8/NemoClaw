@@ -240,7 +240,7 @@ function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | unde
       )
     )
       return "work";
-    const location = /^(.*?)\s+(?:in|on|under|within)\s+(.+)$/iu.exec(target);
+    const location = /^(.*?)\s+(?:in|inside|on|under|within)\s+(.+)$/iu.exec(target);
     if (
       location &&
       /^(?:(?:the|this|our|my|your|local|current|working)\s+)*(?:disk|file\s*system|directory|folder|machine|sandbox|workspace|repo|repository|computer|host)$/iu.test(
@@ -357,7 +357,7 @@ function classifySearchRequests(prompt: string, budget: LocalTargetBudget): Rese
     const localSource =
       target === "source" ||
       Array.from(
-        subject.matchAll(/\b(?:in|from|within|under|through)\s+(.+?)(?=\s+for\s+|$)/giu),
+        subject.matchAll(/\b(?:in|inside|from|within|under|through)\s+(.+?)(?=\s+for\s+|$)/giu),
       ).some((match) => localTarget(match[1]!, budget) === "source");
     const localWork = target !== undefined;
     const suppliedUrl =
