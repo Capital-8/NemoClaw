@@ -148,14 +148,8 @@ export GITHUB_MCP_TOKEN='replacement-value'
 $$nemoclaw my-sandbox mcp remove github
 ```
 
-`mcp remove` deletes the agent-native registration and removes its generated policy key.
-It detaches the provider only when the recorded provider ID, type, and credential key match.
-If that check or detachment fails, the provider can stay attached, and `mcp remove` reports an `MCP cleanup warning`.
-If `mcp remove` reports an `MCP cleanup warning`, resolve that warning before you continue.
-If `mcp remove` reports a preserved provider and no cleanup warning, it prints the delete command.
-The gateway name is `nemoclaw` for the default port, or `nemoclaw-<port>` for another port.
-If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before you add the server again.
-If `mcp remove` reports no preserved provider, skip provider deletion and add the server again.
+If removal reports a cleanup warning or a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before re-adding the server.
+If it reports neither, skip provider deletion.
 For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`, or export `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` again when the original command used it.
 Pass `--deny-tool` again for each recorded selector, or omit it when the original registration had none.
 Add the server again so NemoClaw creates a new provider with the replacement credential and reconnects the native registration:
@@ -232,14 +226,11 @@ export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
 $$nemoclaw my-sandbox mcp remove local-tools
 ```
 
-`mcp remove` deletes the agent-native registration and removes its generated policy key.
-It detaches the provider only when the recorded provider ID, type, and credential key match.
-If that check or detachment fails, the provider can stay attached, and `mcp remove` reports an `MCP cleanup warning`.
-If `mcp remove` reports an `MCP cleanup warning`, resolve that warning before you continue.
-If `mcp remove` reports a preserved provider and no cleanup warning, it prints the delete command.
-The gateway name is `nemoclaw` for the default port, or `nemoclaw-<port>` for another port.
-If `mcp remove` reports a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before you add the server again.
-If `mcp remove` reports no preserved provider, skip provider deletion and add the server again.
+If removal reports a cleanup warning or a preserved provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) before re-adding the server.
+If it reports neither, skip provider deletion.
+If the original command used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again.
+Pass `--deny-tool` again for each recorded selector, or omit it when the original registration had none.
+Use the recorded `--trusted-private-host` value when the original registration used that option.
 Add the server again to perform a new DNS preflight and record the reviewed address set:
 
 ```bash
@@ -249,9 +240,6 @@ $$nemoclaw my-sandbox mcp add local-tools \
   --trusted-private-host mcp-host.corp.example
 unset LOCAL_MCP_TOKEN
 ```
-
-If the original command used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again.
-Pass `--deny-tool` again for each recorded selector, or omit it when the original registration had none.
 
 ## Remove a Server
 
@@ -319,7 +307,10 @@ Destroy deletes the generated policies, and NemoClaw does not retain the environ
 
 Destroy reads the current agent and OpenShell sources before deletion but does not scrub a separate MCP registry or write destroy markers. OpenShell deletes the sandbox-scoped policy and attachments with the sandbox. NemoClaw preserves workspace-level MCP providers and prints their exact names for later inspection.
 A preserved provider blocks `mcp add` for the same server name on a recreated sandbox with the same name.
-Run `mcp add` for that server on the recreated sandbox.
+Export the credential under its original environment-variable name.
+If the recorded declaration used `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`, export it again before the first add.
+Run `mcp add` for that server with each recorded `--deny-tool` selector and the recorded trusted-private declaration.
+Omit either setting only when the original registration did not use it.
 If it reports an existing provider, follow [Add Reports an Existing Provider](../../reference/troubleshoot-mcp-servers#add-reports-an-existing-provider) with the gateway name and delete command that the error prints before you add the server again.
 An interrupted destroy is retried from current sandbox presence; no local MCP marker authorizes cleanup.
 
