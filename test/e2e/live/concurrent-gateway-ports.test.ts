@@ -374,6 +374,55 @@ async function selectAndVerifyActiveGateway(
   };
 }
 
+async function recoverSurvivor(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  gatewayName: string,
+  artifactPrefix: string,
+): Promise<ShellProbeResult> {
+  const deadline = performance.now() + 120_000;
+  const remaining = () => Math.floor(deadline - performance.now());
+  // OpenShell Ready precedes OpenClaw's HTTP listener. Probe inside the sandbox,
+  // since the host forward may require the single recovery call below.
+  await pollUntil({
+    artifactPrefix: `${artifactPrefix}-agent-ready`,
+    attempts: PROBE_ATTEMPTS,
+    deadlineMs: 120_000,
+    now: () => performance.now(),
+    delayMs: () => Math.max(0, Math.min(PROBE_DELAY_MS, remaining())),
+    probe: async (_attempt, artifactName) => {
+      return await sandbox.exec(
+        sandboxName,
+        [
+          "sh",
+          "-c",
+          'code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$1"); status=$?; printf "%s:%s" "$status" "$code"',
+          "gateway-health",
+          "http://localhost:18789/",
+        ],
+        {
+          artifactName,
+          env: openshellEnvForGateway(gatewayName),
+          timeoutMs: Math.max(1, Math.min(30_000, remaining())),
+        },
+      );
+    },
+    accept: (probe) =>
+      remaining() > 0 && probe.exitCode === 0 && ["0:200", "0:401"].includes(probe.stdout.trim()),
+    terminal: (probe) =>
+      probe.exitCode !== 0 || !["0:200", "0:401", "7:000", "52:000"].includes(probe.stdout.trim())
+        ? `Survivor health inspection failed: ${resultText(probe)}`
+        : undefined,
+  });
+  // Raw OpenShell start does not restore a forward that exited while stopped.
+  return await command(host, [sandboxName, "recover"], {
+    artifactName: `${artifactPrefix}-recover`,
+    env: { ...openshellEnvForGateway(gatewayName), NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A },
+    timeoutMs: Math.max(1, remaining()),
+  });
+}
+
 async function restartAndRecoverSurvivor(
   host: HostCliClient,
   artifacts: ArtifactSink,
@@ -450,13 +499,8 @@ async function restartAndRecoverSurvivor(
     restart.stop.exitCode === 0 &&
     restart.start.exitCode === 0 &&
     ["Ready", "Running"].includes(restart.phase);
-  // Raw OpenShell start does not restore a forward that exited while the sandbox was stopped.
   const recover = restarted
-    ? await command(host, [sandboxName, "recover"], {
-        artifactName: `${artifactPrefix}-recover`,
-        env: { ...openshellEnvForGateway(gatewayName), NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A },
-        timeoutMs: 120_000,
-      })
+    ? await recoverSurvivor(host, sandbox, sandboxName, gatewayName, artifactPrefix)
     : null;
   return { ...restart, recover };
 }
