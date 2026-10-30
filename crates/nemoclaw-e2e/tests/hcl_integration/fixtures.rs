@@ -256,7 +256,8 @@ fn image_inspect(image: &Value) -> Value {
         );
     }
     let digest = reference.contains('@');
-    json!({"Id": image["id"], "Architecture": "arm64", "Os": "linux",
+    let architecture = image["architecture"].as_str().unwrap_or("arm64");
+    json!({"Id": image["id"], "Architecture": architecture, "Os": "linux",
         "RepoDigests": if digest { vec![reference] } else { vec![] },
         "RepoTags": if digest { vec![] } else { vec![reference] },
         "Config": {"Labels": labels}})
