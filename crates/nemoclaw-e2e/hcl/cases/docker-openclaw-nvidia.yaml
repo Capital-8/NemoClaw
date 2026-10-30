@@ -37,18 +37,3 @@ spec:
               providerRef: nvidia
               overrides:
                 model: nvidia/nemotron-3.5-super-vl-120b-a12b
-    researcher:
-      image:
-        ref: nc-fabric@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      harness:
-        kind: nvidia.fabric.openclaw
-      network:
-        tier: isolated
-      agent:
-        name: researcher
-        inference:
-          routes:
-            - name: primary
-              providerRef: nvidia
-              overrides:
-                model: nvidia/nemotron-3.5-super-vl-120b-a12b

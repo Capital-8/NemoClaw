@@ -130,7 +130,7 @@ async fn shared_hcl_assertions_load_scenarios_from_disk_and_only_fail_on_outcome
     let first = reports(&healthy);
     assert_eq!(
         first.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["assistant", "researcher"]
+        ["assistant"]
     );
     assert_eq!(
         fs::read_to_string(root.path().join("trace")).unwrap(),
@@ -145,6 +145,17 @@ async fn shared_hcl_assertions_load_scenarios_from_disk_and_only_fail_on_outcome
         // No model service is needed for these fixture observations.
         .replace("  variables {", "  variables {\n    vllm_services = []")
         .replacen("assistant", "followup", 1)
+        // Multi-target coverage belongs to this fixture, independently of live cases.
+        .replacen(
+            "    targets = {",
+            r#"    targets = {
+      researcher = {
+        agent             = "researcher"
+        request           = "a second fixture question"
+        response_contract = "openclaw"
+      }"#,
+            1,
+        )
         .replace(
             "Reply with one short sentence confirming that you can respond.",
             "a new question from disk",
