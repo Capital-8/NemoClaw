@@ -15,6 +15,7 @@ pub(super) async fn execute(
     label: &str,
     environment: &BTreeMap<OsString, OsString>,
     cancel: &CancellationToken,
+    deadline: tokio::time::Instant,
 ) -> Result<(), String> {
     if cancel.is_cancelled() {
         return Err(format!("{label}: cancelled"));
@@ -58,7 +59,7 @@ pub(super) async fn execute(
         status = child.wait() => status.map_err(|_| format!("{label}: cannot wait for executable"))
             .and_then(|s| if s.success() { Ok(()) } else { Err(format!("{label}: command failed; inspect private evidence")) }),
         () = cancel.cancelled() => Err(format!("{label}: cancelled")),
-        () = tokio::time::sleep(Duration::from_secs(600)) => Err(format!("{label}: deadline exceeded")),
+        () = tokio::time::sleep_until(deadline) => Err(format!("{label}: deadline exceeded")),
     };
     if result.is_err() {
         #[cfg(unix)]

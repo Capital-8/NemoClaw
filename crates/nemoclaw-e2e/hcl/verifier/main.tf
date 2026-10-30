@@ -35,20 +35,20 @@ resource "terraform_data" "probe" {
         --target "$NEMOCLAW_HCL_TARGET" \
         --agent "$NEMOCLAW_HCL_AGENT" \
         --request "$NEMOCLAW_HCL_REQUEST" \
-        --response-contract "$NEMOCLAW_HCL_RESPONSE_CONTRACT" \
+        --response-pointer "$NEMOCLAW_HCL_RESPONSE_POINTER" \
         --report "$NEMOCLAW_HCL_REPORT"
     EOT
     interpreter = ["/bin/sh", "-c"]
     environment = {
-      NEMOCLAW_HCL_E2E               = var.context.probe_executable
-      NEMOCLAW_HCL_CONFIG            = var.context.config
-      NEMOCLAW_HCL_STATE             = var.context.state_dir
-      NEMOCLAW_HCL_TARGET            = each.key
-      NEMOCLAW_HCL_AGENT             = each.value.agent
-      NEMOCLAW_HCL_RESPONSE_CONTRACT = each.value.response_contract
-      NEMOCLAW_HCL_REQUEST_JSON      = jsonencode(each.value.request)
-      NEMOCLAW_HCL_REQUEST           = "${var.context.evidence_dir}/${self.id}.request.json"
-      NEMOCLAW_HCL_REPORT            = "${var.context.evidence_dir}/${self.id}.json"
+      NEMOCLAW_HCL_E2E              = var.context.probe_executable
+      NEMOCLAW_HCL_CONFIG           = var.context.config
+      NEMOCLAW_HCL_STATE            = var.context.state_dir
+      NEMOCLAW_HCL_TARGET           = each.key
+      NEMOCLAW_HCL_AGENT            = each.value.agent
+      NEMOCLAW_HCL_RESPONSE_POINTER = each.value.response_pointer
+      NEMOCLAW_HCL_REQUEST_JSON     = jsonencode(each.value.request)
+      NEMOCLAW_HCL_REQUEST          = "${var.context.evidence_dir}/${self.id}.request.json"
+      NEMOCLAW_HCL_REPORT           = "${var.context.evidence_dir}/${self.id}.json"
     }
   }
 }
@@ -64,12 +64,6 @@ output "targets" {
   value = {
     for name, report in local.reports : name => {
       expected = report.expected
-      health = merge(report.health, {
-        binding_matches = (
-          report.health.agent_name != null &&
-          report.health.agent_name == report.expected.agent_name
-        )
-      })
       response = merge(report.response, {
         valid = (
           report.response.succeeded &&

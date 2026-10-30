@@ -5,16 +5,15 @@ run "openclaw_vllm" {
   command = apply
 
   module {
-    source = "./components/vllm"
+    source = "./verifier"
   }
 
   variables {
-    vllm_services = ["qwen"]
     targets = {
       assistant = {
-        agent             = "assistant"
-        request           = "What is 2 plus 2? Answer in one short sentence."
-        response_contract = "openclaw"
+        agent            = "assistant"
+        request          = "What is 2 plus 2? Answer in one short sentence."
+        response_pointer = "/output/response"
       }
     }
   }
