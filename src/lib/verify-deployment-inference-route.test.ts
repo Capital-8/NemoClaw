@@ -110,7 +110,7 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(vllm.route.nativeLocalExpected).toBe(true);
   });
 
-  it("selects the shared route for Portable Hermes Ollama only when the receipt service and model match", () => {
+  it("selects the shared route for Portable Hermes Ollama only when the receipt service and model match", async () => {
     const flow = {
       provider: "ollama-local",
       model: "qwen3-vl:4b",
@@ -164,6 +164,16 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     );
     expect(portable.route.nativeLocalExpected).toBe(false);
     expect(portable.invocation.nativeLocalExpected).toBe(false);
+    const probe = vi.fn(async () => ({ ok: true }) as const);
+    expect(await probeOnboardInferenceInvocation(portable.invocation, probe)).toEqual({ ok: true });
+    expect(probe).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "my-sandbox",
+      gatewayName: "my-gateway",
+      agentName: "hermes",
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      preferredInferenceApi: "openai-completions",
+    });
     expect(mismatchedService.route.nativeLocalExpected).toBe(true);
     expect(mismatchedService.invocation.nativeLocalExpected).toBe(true);
     expect(mismatchedModel.route.nativeLocalExpected).toBe(true);
