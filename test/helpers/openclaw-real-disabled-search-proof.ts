@@ -139,108 +139,16 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "memory_search",
         "web_fetch",
       ].map((name) => ({ name }));
-      const publicFetchPrompts = [
-        "Use the web_fetch tool to fetch exactly this URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf web_fetch is not a directly callable tool, invoke it through tool_call with id openclaw:core:web_fetch and the URL in args.url.\nYou may use tool_search and tool_describe only to discover web_fetch. Do not call an unexposed tool directly.\nAfter web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
-        "Use web_fetch to fetch exactly this public HTTPS URL:\nhttps://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json\nIf progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.\nDo not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.\nSet web_fetch maxChars to no more than 8000.\nAfter web_fetch returns, reply exactly PERSONAL_PUBLIC_FETCH_OK if the fetched response says entity Q30 has the English label United States. Do not fetch any other URL.",
-      ];
+      // Prompt vocabulary belongs to runtime-context.test.ts. Keep each real-hook outcome here.
       const searchPrompt =
         "Use Tavily to search for the official NVIDIA NemoClaw installation documentation. Return the page title and URL.";
-      for (const prompt of [
+      const localPrompt = "Search the project for TODO comments.";
+      const fetchPrompt = "Fetch https://docs.nvidia.com/nemoclaw/ with web_fetch.";
+      const externalPrompts = [
         searchPrompt,
-        "Search file formats for best practices.",
-        "Search Dockerfile.base best practices.",
-        "Search README.md templates for ideas.",
-        "Search for NemoClaw documentation.",
-        "Find all *.ts files online.",
-        "Find all TypeScript files using Tavily.",
-        "Search the web for TypeScript files.",
-        "Find all TypeScript files from GitHub.",
-        "Find all *.ts files on GitHub.",
-        "Find all *.ts files, then provide today's weather in Paris.",
-        "Find all TypeScript files and search the web for solutions.",
-        "Find documentation about *.ts files.",
-        "Read the current contents of README.md, then provide today's weather in Paris.",
-        "Explain the latest changes to src/index.ts using Tavily.",
-        "Read the current contents of README.md online.",
-        "Explain the latest changes to src/index.ts and search the web for alternatives.",
-        "Provide today's weather in Paris.",
-        "Give me today's weather in Paris.",
-        "Show today's weather in Paris.",
-        "Tell me today's weather in Paris.",
-        "Please report current flight delays.",
-        "List today's stock prices.",
-        "Return the current exchange rate.",
-        "Output today's election results.",
-        "Summarize today's public health guidance.",
-        "Get current travel restrictions for Japan.",
-        "Retrieve the latest court ruling.",
-        "Read today's market headlines.",
-        "I need today's weather in Paris.",
-        "I want the current exchange rate.",
-        "Describe today's election results.",
-        "Explain the latest tax rules.",
-        "Present the current travel restrictions.",
-        "Identify the current president of France.",
         "Read README.md, then provide today's weather in Paris.",
-        "Read README.md, tell me today's weather in Paris.",
-        "Find unused imports and list today's stock prices.",
-        "What is the current weather in Paris?",
-        "What are today's stock prices?",
-        "Who is the current president of France?",
-        "Where are the latest flight delays?",
-        "Which airlines have availability today?",
-        "How much does gold cost now?",
-        "When is the next live broadcast today?",
-        "Who won the election today?",
-        "What are the current travel restrictions for Japan?",
-        "What is the latest court ruling?",
-        "What is the latest Node.js release version?",
-        "What are the current travel restrictions for Japan during a build failure?",
-        "What is the current git branch and who won the election today?",
-        "Research the current Apple stock price.",
-        "Look up today’s weather.",
-        "Find the current population of Canada.",
-        "Find the current process ID using Tavily.",
-        "Find the current process ID and research the web for alternatives.",
-        "Investigate why npm install fails using Brave.",
-        "Research documentation about npm install failures.",
-        "Investigate why npm install fails, then search the web for solutions.",
-        "Search the latest Linux documentation for the current directory.",
-        "Search for official documentation about local files.",
-        "Search for best practices in code review.",
-        "Find where this function is called on the web.",
-        "Find the unit test that covers handleRequest using Tavily.",
-        "Find all callers of handleRequest and search the web for alternatives.",
-        "Find where handleRequest is called and then research online for a solution.",
-        "Find all callers of handleRequest, then use Tavily for alternative implementations.",
-        "Find all callers of handleRequest and update them using Brave.",
-        "Find all callers of handleRequest and update them from the web.",
-        "Find all callers of handleRequest and update them from online documentation.",
-        "Find and refactor official installation documentation.",
-        "Find unused imports using Tavily.",
-        "Search for TODO comments. Then search the web for solutions.",
-        "Find and fix the bug. Then find official installation documentation.",
-        "Find unused imports recursively using Tavily, please.",
-        "Search for TODO comments please. Then search the web for solutions, please.",
-        "Find all callers of handleRequest recursively. Then find official installation documentation please.",
-        "Find callers of first recursively using Tavily, please.",
-        "Search for the latest news in project management.",
-        "Google the official NemoClaw installation documentation.",
-        "Look up the official NemoClaw installation documentation.",
-        "Find the official NemoClaw installation documentation.",
-        "Find all files containing foo, then search the web for solutions.",
-        "Where is the official NemoClaw installation documentation?",
-        "I want the official NemoClaw installation documentation.",
-        "Official NemoClaw installation documentation, please.",
-        "Get the latest NemoClaw release notes.",
-        "Read /sandbox/README.md, then Google the official installation documentation.",
-        "Fetch https://docs.nvidia.com/nemoclaw/ and find alternative installation guides.",
-        "Find the official NemoClaw installation documentation online.",
-        "Research online for the official NemoClaw installation documentation",
-        "Browse the internet for the official NemoClaw installation documentation.",
-        "Could you browse online for the NemoClaw installation documentation?",
-        "Look for the official NemoClaw installation documentation on the web.",
-      ]) {
+      ];
+      for (const prompt of externalPrompts) {
         const searchTurn = await runner().runBeforePromptBuild(
           { prompt, messages: [] },
           { runId: "search-prompt" },
@@ -259,160 +167,7 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
           "real runtime submits no discovery or substitute tools",
         );
       }
-      for (const prompt of [
-        ...publicFetchPrompts,
-        "Read /sandbox/README.md.",
-        "Search Dockerfile for the base image",
-        "Search Containerfile for the base image.",
-        "Find the target in Makefile.",
-        "Search .gitignore for ignored paths.",
-        "Search scripts/start for the startup command.",
-        "Search src/ for TODO comments.",
-        "Search the file LICENSE for distribution terms.",
-        "Search `NOTICE` for attribution.",
-        "Find all Visual Basic files.",
-        "Find all Objective C source files.",
-        "Find all Structured Query Language files.",
-        "Find all TypeScript and JavaScript files.",
-        'Find all "* copy.ts" files.',
-        'Find "* copy.ts".',
-        "Find all *.ts files.",
-        "Find all TypeScript files.",
-        "Find *.ts.",
-        "Find **/*.ts.",
-        "Find all src/**/*.ts files.",
-        "Search for *.test.ts files.",
-        "Find all `*.ts` files.",
-        'Find all "*.ts" files.',
-        "Find all JavaScript files.",
-        "Find all Python files.",
-        "Find all Rust files.",
-        "Find all Go files.",
-        "Find all C++ files.",
-        "Read the current contents of README.md",
-        "Explain the latest changes to src/index.ts",
-        "Show me today's date.",
-        "Give me the current git commit hash.",
-        "Tell me the current branch name.",
-        "List today's files.",
-        "Show the latest TODO comments.",
-        "Report the current uptime.",
-        "Show me the current git branch.",
-        "Tell me the current working directory.",
-        "Provide the current Node version.",
-        "List the current files.",
-        "Report current CPU usage.",
-        "Return the current process ID.",
-        "Output the current git status.",
-        "Summarize the latest test results.",
-        "Explain the current configuration.",
-        "Describe the current environment.",
-        "I need the current git branch.",
-        "I want the current process ID.",
-        "Give me today's weather from README.md.",
-        "Provide today's weather from https://example.org/weather.",
-        "Show today's logs.",
-        "Summarize today's code changes.",
-        "Do not provide today's weather. Read README.md.",
-        "What is the current working directory?",
-        "What is the latest error in the logs?",
-        "What is the current weather in README.md?",
-        "What is the current price in https://example.com/prices?",
-        "Who won the election today in README.md?",
-        "What are the current travel restrictions for Japan in https://example.com/advisory?",
-        "What's the current working directory?",
-        "Search Dockerfile.base for the base image.",
-        "What files are in the current directory?",
-        "Research the cause of this build error.",
-        "Explore the project layout.",
-        "Search the current directory for the config file.",
-        "Search the project for TODO comments.",
-        "Find unused imports",
-        "Search for TODO comments",
-        "Find and fix the bug",
-        "Search auth.test.ts for failing assertions.",
-        "Search main.rs for TODO comments",
-        "Find a file called config.json",
-        "Find the function named parseConfig",
-        "Search main.go for TODO comments",
-        "Search data.csv for missing values",
-        "Find all callers of handleRequest and return their file paths.",
-        "Search for TODO comments and list the matching files.",
-        "Find unused imports recursively.",
-        "Search for TODO comments please.",
-        "Find all callers of handleRequest recursively.",
-        "Discover web_fetch please.",
-        "Find callers of please.",
-        "Find callers of first recursively.",
-        "Search for TODO and FIXME comments.",
-        "Find and fix lint warnings.",
-        "Find and fix the bug in src/index.ts.",
-        "Find and fix the bug in this function.",
-        "Find where this function is called.",
-        "Find the unit test that covers handleRequest.",
-        "Find where handleRequest is defined.",
-        "Locate where this method is invoked.",
-        "Find all callers of handleRequest().",
-        "Find all callers of `handleRequest()`.",
-        "Find all callers of `Handler.handleRequest`().",
-        "Find all callers of handleRequest.",
-        "Find where handleRequest is called and fix the bug.",
-        "Find all callers of handleRequest and update them.",
-        "Find the unit test that covers handleRequest and repair it.",
-        "Find where handleRequest is defined, then refactor it.",
-        "Find all callers of handleRequest, and then update them.",
-        "Find all callers of handleRequest, update them.",
-        "Find and then refactor all callers of handleRequest.",
-        "Browse the web, fetch https://www.wikidata.org/wiki/Q30.",
-        "Browse the web, and fetch https://www.wikidata.org/wiki/Q30.",
-        "Run exactly this shell command: curl https://wttr.in/:help.\nDo not use web_fetch, web_search, or any other weather provider.",
-        "Find call sites for this function.",
-        "Search for references to handleRequest.",
-        "Look up the definition of handleRequest.",
-        "Find usages of this variable.",
-        "Find the implementation of function handleRequest.",
-        "Locate integration tests exercising handleRequest.",
-        "Find the existing unit test that exercises handleRequest.",
-        "Find which function calls handleRequest.",
-        "Find the function that calls handleRequest.",
-        "Find which unit test covers handleRequest.",
-        "Find unit tests for handleRequest.",
-        "Find test coverage for handleRequest.",
-        "Find this function's callers.",
-        "Find the class that implements Handler.",
-        "Find all files containing foo.",
-        'Search for files containing "foo".',
-        "Find files containing foo and return their file paths.",
-        "Find the largest files on disk",
-        "Investigate the disk usage",
-        "Find the process using port 8080.",
-        "Find which process is using port 8080",
-        "Find all files larger than 100 MB",
-        "Find the current process ID.",
-        "Locate the PID of this shell.",
-        "Investigate why npm install fails.",
-        "Research the root cause of npm install failures.",
-        "What is the current git branch?",
-        "What is the latest commit?",
-        "What is the current Node version?",
-        "How do I fix the latest build failure?",
-        "Which branch is current?",
-        "What is the current git status?",
-        "What is the current installed Node version?",
-        "What is the latest error in our build server?",
-        "Find the current git branch.",
-        "Investigate why the unit tests are failing",
-        "Investigate why unit tests are failing",
-        "Find and fix the failing unit tests.",
-        "Investigate why the integration tests fail.",
-        "Search and read README.md.",
-        "Search for logs and traces in this project.",
-        "Search through the project files for TODO comments.",
-        "Search the repository recursively for TODO comments.",
-        "Search the project code for TODO comments.",
-        "Read the latest documentation in docs/README.md.",
-        "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
-      ]) {
+      for (const prompt of [localPrompt, "What time is it?", fetchPrompt]) {
         const localTurn = await runner().runBeforePromptBuild(
           { prompt, messages: [] },
           { runId: "local-prompt" },
@@ -420,23 +175,14 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         assert.deepEqual(
           promptToolPolicy({ tools: availableTools }).apply(localTurn).tools,
           availableTools,
-          "local requests keep tools in the real prompt policy",
+          "ordinary and supplied requests keep tools in the real prompt policy",
         );
         assert.deepEqual(
           applyToolAllowlist(availableTools, localTurn.toolsAllow),
           availableTools,
-          "the next local turn keeps its tools",
+          "ordinary and supplied turns keep their tools",
         );
       }
-      const fetchTurn = await runner().runBeforePromptBuild(
-        { prompt: "Fetch https://docs.nvidia.com/nemoclaw/ with web_fetch.", messages: [] },
-        { runId: "fetch-prompt" },
-      );
-      assert.deepEqual(
-        promptToolPolicy({ tools: availableTools }).apply(fetchTurn).tools,
-        availableTools,
-        "explicit URL retrieval keeps its tools in the real prompt policy",
-      );
       config.tools.web.search.enabled = true;
       const enabledTurn = await runner().runBeforePromptBuild(
         { prompt: searchPrompt, messages: [] },
@@ -485,38 +231,26 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
           "real admission gate accepts owned turn",
         );
       }
-      const missingPromptEvents = [
-        { messages: [] },
-        ...[undefined, null, 42, true, [], {}, "", " \n\t"].map((prompt) => ({
-          prompt,
-          messages: [],
-        })),
-      ];
-      for (const event of missingPromptEvents) {
-        const context = { runId: "missing-prompt-evidence" };
-        const result = await runner().runBeforeAgentRun(event, context);
-        assert.equal(
-          result?.decision?.outcome,
-          "block",
-          "missing prompt evidence blocks admission",
-        );
-        const policy = await runner().runBeforePromptBuild(event, context);
-        assert.deepEqual(policy.toolsAllow, [], "missing prompt evidence removes tools");
-        blocked(await call("read", context, "missing-prompt-read"));
-        assert.equal(sideEffects, 0, "a rejected turn cannot execute a local read");
-        await runner().runAgentEnd({ success: false, messages: [] }, context);
-      }
-      for (const prompt of [
-        searchPrompt,
-        "Find a file called config.json online.",
-        "Find the function named parseConfig using Tavily.",
-        "Search main.rs for TODO comments, then search the web for solutions.",
-        "Search data.csv for missing values using Tavily.",
-        "Search data.csv for missing values online.",
-        "Read README.md, then search the web for installation documentation.",
-        "Find all files containing foo, then search the web for solutions.",
-        "Fetch https://example.com/docs and find alternative installation guides.",
-      ]) {
+      const missingPromptContext = { runId: "missing-prompt-evidence" };
+      const missingPromptEvent = { messages: [] };
+      const missingPromptResult = await runner().runBeforeAgentRun(
+        missingPromptEvent,
+        missingPromptContext,
+      );
+      assert.equal(
+        missingPromptResult?.decision?.outcome,
+        "block",
+        "missing prompt evidence blocks admission",
+      );
+      const missingPromptPolicy = await runner().runBeforePromptBuild(
+        missingPromptEvent,
+        missingPromptContext,
+      );
+      assert.deepEqual(missingPromptPolicy.toolsAllow, [], "missing prompt evidence removes tools");
+      blocked(await call("read", missingPromptContext, "missing-prompt-read"));
+      assert.equal(sideEffects, 0, "a rejected turn cannot execute a local read");
+      await runner().runAgentEnd({ success: false, messages: [] }, missingPromptContext);
+      for (const prompt of externalPrompts) {
         const context = { runId: "external-first-tool" };
         await admit(context, prompt);
         // Deliberately bypass prompt filtering to exercise the execution guard.
@@ -608,88 +342,8 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "completion restores capacity without waiting for retention expiry",
       );
       for (const [prompt, tool, params] of [
-        ...publicFetchPrompts.map(
-          (prompt) =>
-            [
-              prompt,
-              "web_fetch",
-              {
-                url: "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json",
-              },
-            ] as const,
-        ),
-        ["Search the project for TODO comments.", "read", { file_path: "/sandbox/README.md" }],
-        ["Find unused imports", "read", { file_path: "src/index.ts" }],
-        ["Search for TODO comments", "read", { file_path: "src/index.ts" }],
-        ["Find and fix the bug", "read", { file_path: "src/index.ts" }],
-        ["Search auth.test.ts for failing assertions.", "read", { file_path: "auth.test.ts" }],
-        ["Search main.rs for TODO comments", "read", { file_path: "main.rs" }],
-        ["Find a file called config.json", "read", { file_path: "config.json" }],
-        ["Find the function named parseConfig", "read", { file_path: "src/config.ts" }],
-        ["Search main.go for TODO comments", "read", { file_path: "main.go" }],
-        ["Search data.csv for missing values", "read", { file_path: "data.csv" }],
-        [
-          "Find all callers of handleRequest and return their file paths.",
-          "read",
-          { file_path: "src/handler.ts" },
-        ],
-        [
-          "Search for TODO comments and list the matching files.",
-          "read",
-          { file_path: "src/index.ts" },
-        ],
-        ["Find unused imports recursively.", "read", { file_path: "src/index.ts" }],
-        ["Search for TODO comments please.", "read", { file_path: "src/index.ts" }],
-        ["Find callers of first recursively.", "read", { file_path: "src/first.ts" }],
-        ["Find all callers of handleRequest recursively.", "read", { file_path: "src/handler.ts" }],
-        ["Find all callers of handleRequest().", "read", { file_path: "src/handler.ts" }],
-        ["Find all callers of `handleRequest()`.", "read", { file_path: "src/handler.ts" }],
-        ["Find all callers of `Handler.handleRequest`().", "read", { file_path: "src/handler.ts" }],
-        ["Find where this function is called.", "read", { file_path: "src/handler.ts" }],
-        [
-          "Find where handleRequest is called and fix the bug.",
-          "read",
-          { file_path: "src/handler.ts" },
-        ],
-        [
-          "Find all callers of handleRequest and update them.",
-          "read",
-          { file_path: "src/handler.ts" },
-        ],
-        [
-          "Find the unit test that covers handleRequest and repair it.",
-          "read",
-          { file_path: "test/handler.test.ts" },
-        ],
-        [
-          "Find the unit test that covers handleRequest.",
-          "read",
-          { file_path: "test/handler.test.ts" },
-        ],
-        ["Investigate why the unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
-        ["Investigate why unit tests are failing", "read", { file_path: "test/unit.test.ts" }],
-        ["Find and fix the failing unit tests.", "read", { file_path: "test/unit.test.ts" }],
-        [
-          "Investigate why the integration tests fail.",
-          "read",
-          { file_path: "test/integration.test.ts" },
-        ],
-        [
-          "Search the repository recursively for TODO comments.",
-          "read",
-          { file_path: "README.md" },
-        ],
-        ["Search the project code for TODO comments.", "read", { file_path: "src/index.ts" }],
-        [
-          "Read the latest documentation in docs/README.md.",
-          "read",
-          { file_path: "docs/README.md" },
-        ],
-        [
-          "Search https://docs.nvidia.com/nemoclaw/ for installation instructions.",
-          "web_fetch",
-          { url: "https://docs.nvidia.com/nemoclaw/" },
-        ],
+        [localPrompt, "read", { file_path: "README.md" }],
+        [fetchPrompt, "web_fetch", { url: "https://docs.nvidia.com/nemoclaw/" }],
       ] as const) {
         const context = { runId: "supplied-source" };
         await admit(context, prompt);
@@ -793,41 +447,13 @@ export async function runRealOpenClawDisabledSearchProof(options: { dist: string
         "an unrelated URL never reaches the real executor",
       );
       await runner().runAgentEnd({ success: true, messages: [] }, mixedContext);
-      for (const [prompt, wrapped] of [
-        ["Find and fix the bug in src/index.ts.", false],
-        ["Find and fix the bug in src/index.ts.", true],
-        ["Find all files containing foo.", false],
-        ["Find all files containing foo.", true],
-        ['Search for files containing "foo".', false],
-        ['Search for files containing "foo".', true],
-        ["Find the largest files on disk", false],
-        ["Find the largest files on disk", true],
-        ["Investigate the disk usage", false],
-        ["Investigate the disk usage", true],
-        ["Find the process using port 8080.", false],
-        ["Find the process using port 8080.", true],
-        ["Find which process is using port 8080", false],
-        ["Find which process is using port 8080", true],
-        ["Find all files larger than 100 MB", false],
-        ["Find all files larger than 100 MB", true],
-        ["What is the current git branch?", false],
-        ["What is the current git branch?", true],
-        ["What is the latest commit?", false],
-        ["What is the latest commit?", true],
-        ["What is the current Node version?", false],
-        ["What is the current Node version?", true],
-        ["How do I fix the latest build failure?", false],
-        ["How do I fix the latest build failure?", true],
-        ["Which branch is current?", false],
-        ["Which branch is current?", true],
-        ["Find the current process ID.", false],
-        ["Find the current process ID.", true],
-        ["Investigate why npm install fails.", false],
-        ["Investigate why npm install fails.", true],
-      ] as const) {
+      for (const wrapped of [false, true]) {
         const context = { runId: `local-discovery-${wrapped}` };
-        await admit(context, prompt);
-        const policy = await runner().runBeforePromptBuild({ prompt, messages: [] }, context);
+        await admit(context, localPrompt);
+        const policy = await runner().runBeforePromptBuild(
+          { prompt: localPrompt, messages: [] },
+          context,
+        );
         assert.deepEqual(
           promptToolPolicy({ tools: availableTools }).apply(policy).tools,
           availableTools,
