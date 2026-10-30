@@ -262,6 +262,8 @@ const requestCoordinators = [
   "\nSeparately",
 ];
 
+const nestedLocalTarget = "contents of ".repeat(129) + "README.md";
+
 const admissionCases: {
   prompt: unknown;
   tools: boolean;
@@ -269,6 +271,20 @@ const admissionCases: {
   local?: boolean;
   urls?: string[];
 }[] = [
+  ...[
+    "Search bug" + " ".repeat(32000) + "outside",
+    "Search README.md".padEnd(4097),
+    "Read https://example.org/guide. Search README.md".padEnd(4097),
+    "Explain " + "x".repeat(8192),
+    "\u2003".repeat(4097),
+    `Search ${nestedLocalTarget}`,
+    `Explain ${nestedLocalTarget}`,
+    `Read https://example.org/guide. Search ${nestedLocalTarget}`,
+    `Search for TODOs in ${nestedLocalTarget}`,
+    `Investigate ${"cause of ".repeat(129)}npm install errors`,
+    `Search ${"README.md and ".repeat(256)}package.json`,
+    "Read README.md. ".repeat(256),
+  ].map((prompt) => ({ prompt, tools: false })),
   ...coordinatedLocalRequestPrompts.map((prompt) => ({
     prompt,
     tools: true,
@@ -660,6 +676,7 @@ const admissionCases: {
     "Search Containerfile for the base image.",
     "Find the target in Makefile.",
     "Search .gitignore for ignored paths.",
+    "Search README.md".padEnd(4096),
     "Search scripts/start for the startup command.",
     "Search src/ for TODO comments.",
     "Find and fix the bug in src/index.ts.",

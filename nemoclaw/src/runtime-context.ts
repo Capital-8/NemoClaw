@@ -120,12 +120,18 @@ interface ResearchRequestScope extends SuppliedSearchSources {
 // Local resources use one noun-phrase grammar. Quoting, call notation, details,
 // locations and result instructions change syntax, not the resource's scope.
 type LocalTarget = "source" | "work";
+interface LocalTargetBudget {
+  remaining: number;
+}
+const LOCAL_TARGET_WORK_LIMIT = 128;
+const SEARCH_PROMPT_LENGTH_LIMIT = 4096;
+const LOCAL_TARGET_BUDGET_EXHAUSTED = new Error("Local target parsing budget exhausted");
 const TARGET_PREFIX =
   /^(?:(?:for|through|out|which|what|why|how|many|of|all|any|some|each|every|both|the|this|that|these|those|our|my|your|a|an|top|current|latest|recent|last|active|today['’]s|largest|biggest|smallest|oldest|newest|duplicate|empty|hidden|temporary|recently|modified|unused|dead|unreachable|missing|unresolved|undefined|deprecated|broken|failing|failed|existing|TODO|FIXME|HACK|XXX|and|or|\d+)\s+)+/iu;
 const IDENTIFIER =
   /^(?:(?:(?:this|that|the|our|my|your)\s+)?(?:function|method|class|symbol|variable|module)(?:\s+)?|)[\w$]*(?:(?:::|[.:])[\w$]+)*$/iu;
 const LOCAL_SOURCE =
-  /^(?:(?:local\s+)?(?:files?|logs?|memory|repository|repo|workspace|codebase|project|director(?:y|ies)|folders?|code|conversation|shell\s+history)|sandbox|(?:current\s+(?:working\s+)?|working\s+)directory|local\s+(?:docs|documentation)|(?:(?:unit|integration|regression)\s+)?tests?|imports?|exports?|variables?|parameters?|arguments?|functions?|methods?|class(?:es)?|modules?|dependencies|references?|comments?|markers?|bugs?|defects?|typos?|(?:lint|type|syntax|compilation|compiler|build|test)\s+(?:errors?|warnings?|failures?|output|results?))(?:\s+(?:files?|docs|directory|sources?|logs?|source|code|layout))*$/iu;
+  /^(?:(?:local\s+)?(?:files?|logs?|memory|repository|repo|workspace|codebase|project|director(?:y|ies)|folders?|code|conversation|shell\s+history)|sandbox|(?:current\s+(?:working\s+)?|working\s+)directory|local\s+(?:docs|documentation)|(?:(?:unit|integration|regression)\s+)?tests?|imports?|exports?|variables?|parameters?|arguments?|functions?|methods?|class(?:es)?|modules?|dependencies|references?|comments?|markers?|bugs?|defects?|typos?|(?:lint|type|syntax|compilation|compiler|build|test)\s+(?:errors?|warnings?|failures?|output|results?))(?:\s+(?:files?|docs|directory|sources?|logs?|code|layout))*$/iu;
 const LOCAL_PATH =
   /^(?:\.{0,2}\/\S+|(?:[\w.-]+\/)+[\w.-]*|(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*|\.[\w-]+|[\w.-]+\.[\w-]+)$/u;
 const LOCAL_TOOL =
@@ -133,7 +139,12 @@ const LOCAL_TOOL =
 const LOCAL_STATE =
   /^(?:git(?:\s+(?:branch(?:es)?(?:\s+names?)?|commits?(?:\s+(?:hash(?:es)?|ids?))?|status|log|diff))?|branch(?:es)?(?:\s+names?)?|commits?(?:\s+(?:hash(?:es)?|ids?))?|(?:(?:node(?:\.js)?|python3?|npm|pnpm|yarn|bun|git|openclaw|nemoclaw|hermes)\s+)?(?:versions?|errors?|status)|(?:installed|local|running)\s+[\w.+-]+\s+versions?|code\s+changes|diffs?|(?:build|test|lint|type|syntax|compilation|compiler)\s+(?:errors?|warnings?|failures?|output|results?|status)|environment|config(?:uration)?|hostname|user(?:name)?|time|date|clock|uptime|shell|shell\s+history|(?:high|low|excessive)?\s*(?:disk|storage|memory|cpu)\s+(?:usage|space|pressure)|(?:file\s*system|file|directory)\s+permissions)$/iu;
 
-function localTarget(raw: string): LocalTarget | undefined {
+function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | undefined {
+  // Every recursive branch and request shares this budget, bounding stack depth
+  // and total visits. Exhaustion invalidates grants for the complete turn.
+  if (budget.remaining === 0) throw LOCAL_TARGET_BUDGET_EXHAUSTED;
+  budget.remaining--;
+
   const normalized = raw
     .trim()
     .replace(/[.!?]+$/u, "")
@@ -171,11 +182,18 @@ function localTarget(raw: string): LocalTarget | undefined {
       return "source";
     if (target === "__local_glob__") return "work";
     if (LOCAL_TOOL.test(target) || LOCAL_STATE.test(target)) return "work";
+    // Parse recursive structure before diagnostic fallbacks so the work limit
+    // can terminate a nested request before those fallbacks repeat.
+    if (
+      /^(?:root\s+)?cause\s+of\s+/iu.test(target) &&
+      localTarget(target.replace(/^(?:root\s+)?cause\s+of\s+/iu, ""), budget)
+    )
+      return "work";
     // A resource list is local only when every operand is local. Reuse the
     // same grammar for each operand, including its query or relationship.
     const operands = target.split(/\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+/iu);
     if (operands.length > 1) {
-      const targets = operands.map(localTarget);
+      const targets = operands.map((operand) => localTarget(operand, budget));
       if (targets.every((value) => value !== undefined))
         return targets.every((value) => value === "source") ? "source" : "work";
     }
@@ -184,7 +202,7 @@ function localTarget(raw: string): LocalTarget | undefined {
       /^(?:contents?|text|changes?|edits?|updates?|diffs?|versions?|revisions?|history)\s+(?:(?:made|applied)\s+)?(?:of|to|in|for)\s+(.+)$/iu.exec(
         target,
       );
-    if (relation && localTarget(relation[1]!) === "source") return "source";
+    if (relation && localTarget(relation[1]!, budget) === "source") return "source";
     const codeTarget =
       /^(?:(?:callers?|call\s+sites?|references?|definitions?|declarations?|implementations?|imports?|exports?|usages?|test\s+coverage)\s+(?:of|to|for)\s+(.+)|(?:files?|director(?:y|ies)|folders?|functions?|methods?|class(?:es)?|modules?|symbols?|variables?|constants?|types?|interfaces?|structs?|enums?|traits?|propert(?:y|ies)|namespaces?|parameters?|arguments?|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?)\s+(?:(?:that|which)\s+)?(?:calls?|invokes?|uses?|references?|imports?|exports?|implements?|named|called|covers?|covering|exercises?|exercising|calling|testing|importing|for)\s+(.+)|where\s+(.+)\s+(?:is|are)\s+(?:called|invoked|defined|declared|implemented|imported|exported|used|referenced|tested)|(.+)['’]s\s+(?:callers?|call\s+sites?))$/iu.exec(
         target,
@@ -193,7 +211,8 @@ function localTarget(raw: string): LocalTarget | undefined {
     // A query uses the same source grammar; a code relationship must still name valid code.
     const query = /^(.*?)(?:\s+(?:for|to)\s+.+|\s+and\s+(?:fetch|retrieve)\s*)$/iu.exec(target);
     const queryTarget = query?.[1]?.replace(/\s+(?:recursively|carefully|thoroughly)$/iu, "");
-    if (queryTarget && !codeTarget?.[1] && localTarget(queryTarget) === "source") return "source";
+    if (queryTarget && !codeTarget?.[1] && localTarget(queryTarget, budget) === "source")
+      return "source";
     // File discovery has an open vocabulary of formats and glob operands.
     if (
       /^(?:(?!(?:for|about|in|on|from|of|to|using|with|via|by)\b)[\w.+#*-]+\s+)*(?:files?|director(?:y|ies)|folders?)(?:\s+(?:with|that|which|named|called|matching|containing|ending|ends|larger|smaller|older|newer|of type|of format|of extension)\b.*)?$/iu.test(
@@ -227,7 +246,7 @@ function localTarget(raw: string): LocalTarget | undefined {
       /^(?:(?:the|this|our|my|your|local|current|working)\s+)*(?:disk|file\s*system|directory|folder|machine|sandbox|workspace|repo|repository|computer|host)$/iu.test(
         location[2]!,
       ) &&
-      localTarget(location[1]!)
+      localTarget(location[1]!, budget)
     )
       return "work";
     if (LOCAL_PATH.test(target.replace(/^(?:the\s+)?file\s+/iu, ""))) return "source";
@@ -244,19 +263,11 @@ function localTarget(raw: string): LocalTarget | undefined {
       )
     )
       return "work";
-    if (
-      /^(?:root\s+)?cause\s+of\s+/iu.test(target) &&
-      localTarget(target.replace(/^(?:root\s+)?cause\s+of\s+/iu, ""))
-    )
-      return "work";
   }
   return undefined;
 }
 
-export function classifySearchTurn(prompt: unknown): ResearchRequestScope {
-  if (typeof prompt !== "string" || prompt.trim().length === 0) {
-    return { scope: "missing", local: false, urls: [] };
-  }
+function classifySearchRequests(prompt: string, budget: LocalTargetBudget): ResearchRequestScope {
   // Generic questions need local tools without naming a source. Require external
   // research intent, and keep separate requests from exempting one another.
   // Normalize URLs before splitting so their path words cannot become requests.
@@ -342,12 +353,12 @@ export function classifySearchTurn(prompt: unknown): ResearchRequestScope {
         "",
       )
       .replace(/\b(?:URL|URI)\s+in\s+(?:args|params)\.[\w.]+/giu, "");
-    const target = localTarget(subject);
+    const target = localTarget(subject, budget);
     const localSource =
       target === "source" ||
       Array.from(
         subject.matchAll(/\b(?:in|from|within|under|through)\s+(.+?)(?=\s+for\s+|$)/giu),
-      ).some((match) => localTarget(match[1]!) === "source");
+      ).some((match) => localTarget(match[1]!, budget) === "source");
     const localWork = target !== undefined;
     const suppliedUrl =
       /\b(?:search|research|investigate|look\s+(?:up|for)|find|locate|gather|seek|discover|explore|browse|consult|query)\s+(?:(?:in|within|at|on|through)\s+)?https?:\/\/\S+|\b(?:browse|summarize|fetch|retrieve|read|get)\s+(?:exactly\s+)?(?:this\s+)?(?:public\s+)?(?:HTTPS?\s+)?(?:URL:?\s*)?https?:\/\/\S+|\b(?:using|with|via)\s+(?:the\s+)?(?:web_fetch|browser)(?:\s+tool)?\s+(?:at|for)\s+https?:\/\/\S+|\b(?:in|within|at|from)\s+(?:this\s+URL:?\s*)?https?:\/\/\S+/iu.test(
@@ -394,6 +405,26 @@ export function classifySearchTurn(prompt: unknown): ResearchRequestScope {
     local: scopes.some(({ local }) => local),
     urls: scopes.flatMap(({ urls: targets }) => targets),
   };
+}
+
+export function classifySearchTurn(prompt: unknown): ResearchRequestScope {
+  if (typeof prompt !== "string") {
+    return { scope: "missing", local: false, urls: [] };
+  }
+  // Bound input before any regex or normalization; visits alone do not bound backtracking.
+  if (prompt.length > SEARCH_PROMPT_LENGTH_LIMIT) {
+    return { scope: "external", local: false, urls: [] };
+  }
+  if (prompt.trim().length === 0) {
+    return { scope: "missing", local: false, urls: [] };
+  }
+  try {
+    return classifySearchRequests(prompt, { remaining: LOCAL_TARGET_WORK_LIMIT });
+  } catch (error) {
+    // Stop every fallback immediately on exhaustion; retain diagnostics for other failures.
+    if (error !== LOCAL_TARGET_BUDGET_EXHAUSTED) throw error;
+    return { scope: "external", local: false, urls: [] };
+  }
 }
 
 export function researchScope(prompt: unknown): ResearchScope {
