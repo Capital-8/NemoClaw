@@ -23,6 +23,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { buildOpenClawGatewayWaitScript } from "../fixtures/gateway-runtime-start.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -351,14 +352,32 @@ async function recoverSurvivorDashboard(
   artifactPrefix: string,
 ): Promise<SurvivorDashboardProbe> {
   // OpenShell service forwards terminate when their sandbox leaves Ready.
-  // Recovery and HTTP verification share the existing dashboard deadline.
+  // OpenShell Ready precedes native HTTP readiness. Startup observation,
+  // forward recovery, and HTTP verification share the existing deadline.
   const deadline = Date.now() + 60_000;
+  const env = commandEnv({
+    NEMOCLAW_GATEWAY_PORT: gatewayPort,
+    OPENSHELL_GATEWAY: gatewayName,
+  });
+  const nativeReady = await host.command(
+    process.execPath,
+    [
+      "-e",
+      buildOpenClawGatewayWaitScript(),
+      sandboxName,
+      gatewayName,
+      String(Math.max(1, deadline - Date.now())),
+    ],
+    {
+      artifactName: `${artifactPrefix}-native-ready`,
+      env,
+      timeoutMs: Math.max(1, deadline - Date.now()),
+    },
+  );
+  expect(nativeReady.exitCode, resultText(nativeReady)).toBe(0);
   const recovery = await command(host, [sandboxName, "connect", "--probe-only"], {
     artifactName: `${artifactPrefix}-recover-forward`,
-    env: commandEnv({
-      NEMOCLAW_GATEWAY_PORT: gatewayPort,
-      OPENSHELL_GATEWAY: gatewayName,
-    }),
+    env,
     timeoutMs: Math.max(1, deadline - Date.now()),
   });
   expect(recovery.exitCode, resultText(recovery)).toBe(0);
@@ -656,13 +675,7 @@ test(
       "phase-1-onboard-sandbox-a",
     );
     expect(onboardA.exitCode, resultText(onboardA)).toBe(0);
-    const phaseA = await waitForSandboxReady(
-      sandbox,
-      SANDBOX_A,
-      gatewayA,
-      "phase-1-sandbox-a-ready",
-    );
-    expect(["Ready", "Running"]).toContain(phaseA);
+    await waitForSandboxReady(sandbox, SANDBOX_A, gatewayA, "phase-1-sandbox-a-ready");
 
     const listAfterA = await command(host, ["list"], {
       artifactName: "phase-1-nemoclaw-list-after-a",

@@ -161,3 +161,80 @@ it("rejects an ambiguous backup inventory rather than choosing the latest timest
   expect(result.status, result.stderr).toBe(1);
   expect(result.stderr).toContain("expected exactly the backup created by this rebuild");
 });
+
+it.each([
+  {
+    phase: "Stopped",
+    refusal: true,
+    status: 0,
+    diagnostic: "",
+    expectedStdout: JSON.stringify({
+      refused: true,
+      phase: "Stopped",
+      logs: [
+        "[migration] OpenClaw 2026.9.7 retired Telegram state inspection failed; retained state",
+      ],
+    }),
+  },
+  {
+    phase: "Running",
+    refusal: true,
+    status: 1,
+    diagnostic: "refused replacement is still active",
+    expectedStdout: "",
+  },
+  {
+    phase: "Stopped",
+    refusal: false,
+    status: 1,
+    diagnostic: "missing actual retired-state refusal evidence",
+    expectedStdout: "",
+  },
+])(
+  "checks the refusal fixture with phase $phase and refusal evidence $refusal",
+  ({ phase, refusal, status, diagnostic, expectedStdout }) => {
+    const openshell = path.join(home, "openshell");
+    const refusalLog =
+      "[migration] OpenClaw 2026.9.7 retired Telegram state inspection failed; retained state";
+    fs.writeFileSync(
+      openshell,
+      `#!${process.execPath}\n` +
+        `const assert = require('node:assert/strict');\n` +
+        `const args = process.argv.slice(2);\n` +
+        `if (args[0] === 'sandbox') {\n` +
+        `  assert.deepEqual(args, ['sandbox', 'get', '-g', 'nemoclaw', '${sandboxName}']);\n` +
+        `  console.log('Phase: ${phase}');\n` +
+        `} else {\n` +
+        `  assert.deepEqual(args, ['logs', '-g', 'nemoclaw', '${sandboxName}', '-n', '120', '--source', 'all']);\n` +
+        `  console.log(${JSON.stringify(refusal ? refusalLog : "unrelated log")});\n` +
+        `}\n`,
+      { mode: 0o700 },
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        OPENCLAW_RESTORE_HOST_PROGRAM,
+        JSON.stringify({ mode: "refusal", sandboxName, gatewayName: "nemoclaw" }),
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 30_000,
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          TMPDIR: process.env.TMPDIR,
+          NEMOCLAW_OPENSHELL_BIN: openshell,
+        },
+      },
+    );
+    expect(result.status, result.stderr).toBe(status);
+    expect(result.stdout.trim()).toBe(expectedStdout);
+    expect(result.stderr).toContain(diagnostic);
+    expect(fs.existsSync(archive)).toBe(true);
+  },
+);

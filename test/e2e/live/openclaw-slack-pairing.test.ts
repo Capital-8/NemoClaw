@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import { captureLifecycleInstallFailureDiagnostics } from "../fixtures/sandbox-failure-diagnostics.ts";
 import { approveOpenClawAdminScope } from "./openclaw-admin-scope.ts";
 import {
   approveAndAssertPairing,
@@ -142,6 +143,13 @@ test(
       skip,
       "NVIDIA endpoint validation was rate-limited before Slack pairing assertions ran",
     );
+    await captureLifecycleInstallFailureDiagnostics(host, runtimeProvider, install, {
+      sandboxName: SANDBOX_NAME,
+      gatewayName: "nemoclaw",
+      artifactPrefix: "slack-pairing-install-failure",
+      env,
+      redactionValues: redactions,
+    });
     expectExitZero(install, "install.sh --non-interactive with Slack");
     await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-slack-pairing");
 

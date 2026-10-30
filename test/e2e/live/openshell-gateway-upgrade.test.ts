@@ -615,6 +615,8 @@ async function installCurrentNemoclawUpgrade(
             captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
               sandboxName,
               artifactPrefix: `current-install-${sandboxName}`,
+              // Three complete Doctor passes can exceed the default 16 KiB log bound.
+              logLimitBytes: 131_072,
               env: currentEnv,
               redactionValues,
               runtime,

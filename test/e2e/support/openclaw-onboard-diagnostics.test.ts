@@ -180,6 +180,54 @@ describe("OpenClaw onboarding failure diagnostics", () => {
     }
   });
 
+  it("captures complete upgrade logs within the explicit bound before value redaction", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "onboard-diagnostics-upgrade-"));
+    try {
+      const paths = ["startup", "gateway", "pairing"].map((name) => join(directory, name));
+      const secret = 'synthetic-credential-"quoted"\\with\na-newline';
+      const content = "\u0001".repeat(131_072 - Buffer.byteLength(secret)) + secret;
+      paths.forEach((file) => writeFileSync(file, content));
+      const [command, ...args] = buildOpenClawOnboardDiagnosticsCommand(paths, 131_072);
+      const result = spawnSync(command, args, {
+        encoding: "utf8",
+        timeout: 5000,
+        killSignal: "SIGKILL",
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      expect(result.status).toBe(0);
+      const records = result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(records.slice(0, 3).map((record) => record.log)).toEqual(paths.map(() => content));
+      expect(records.slice(0, 3).every((record) => record.truncated === false)).toBe(true);
+      const sandbox = clients();
+      await captureOpenClawOnboardFailure({ exitCode: 1 }, sandbox, {
+        ...options,
+        logLimitBytes: 131_072,
+        redactionValues: [secret],
+      });
+      const probe = sandbox.exec.mock.calls[0][2];
+      expect(probe.captureLimitBytes).toBeGreaterThan(Buffer.byteLength(result.stdout));
+      expect(probe.timeoutMs).toBe(15000);
+      expect(redactString(result.stdout, probe.redactionValues)).not.toContain(
+        JSON.stringify(secret).slice(1, -1),
+      );
+      writeFileSync(paths[0], content + "x");
+      const oversized = spawnSync(command, args, {
+        encoding: "utf8",
+        timeout: 5000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      expect(oversized.status).toBe(0);
+      expect(JSON.parse(oversized.stdout.split("\n")[0])).toMatchObject({
+        logOmitted: "size-limit",
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("omits a log that grows during its bounded read", () => {
     const directory = mkdtempSync(join(tmpdir(), "onboard-diagnostics-growth-"));
     try {

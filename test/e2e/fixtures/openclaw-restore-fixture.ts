@@ -226,9 +226,10 @@ if (input.mode === 'quiesce') {
 } else {
   assert.equal(input.mode, 'refusal');
   const { createCliOpenShellSandboxLookup } = require('./src/lib/adapters/openshell/sandbox-observer-cli.ts');
+  const { captureOpenshell } = require('./src/lib/adapters/openshell/runtime.ts');
   const { collectRedactedOpenShellSandboxLogs } = require('./src/lib/actions/sandbox/gateway-wedge-diagnostics.ts');
   const target = { kind: 'named', gatewayName: input.gatewayName };
-  const observation = await createCliOpenShellSandboxLookup()({ sandboxName: input.sandboxName, target, timeoutMs: 15_000 });
+  const observation = await createCliOpenShellSandboxLookup({ capture: captureOpenshell })({ sandboxName: input.sandboxName, target, timeoutMs: 15_000 });
   assert.ok(observation.result.ok && observation.result.value.state === 'present');
   const state = observation.result.value.sandbox;
   assert.ok(state.phase === 'Stopped' || state.readiness === 'terminal', 'refused replacement is still active');

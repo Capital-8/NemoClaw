@@ -77,6 +77,7 @@ import {
   observeOpenClawPairingSettlement,
   OpenClawPairingObservationRetryableError,
   OpenClawPairingQualificationError,
+  type OpenClawPairingObservationFailureReason,
   OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
   OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
   OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
@@ -185,6 +186,7 @@ export type LaunchReadinessPublicationResult =
           | "missing-authority"
           | "pairing-observation-failed"
           | "runtime-observation-failed";
+        pairingFailureReason?: OpenClawPairingObservationFailureReason;
       };
     };
 
@@ -923,8 +925,10 @@ async function captureLaunchIdentity(
         openclawVersion,
         stateDirectory,
       );
-    } catch {
-      throw new OpenClawPairingQualificationError();
+    } catch (error) {
+      throw new OpenClawPairingQualificationError(
+        error instanceof OpenClawPairingQualificationError ? error.failureReason : undefined,
+      );
     }
   }
 
@@ -1523,6 +1527,9 @@ export async function publishLaunchReadiness(
                       : error instanceof LaunchReadinessEvidenceError
                         ? "runtime-observation-failed"
                         : classifyLaunchReadinessStoreFailure(error),
+                  ...(error instanceof OpenClawPairingQualificationError && error.failureReason
+                    ? { pairingFailureReason: error.failureReason }
+                    : {}),
                 },
               } as const);
         } finally {

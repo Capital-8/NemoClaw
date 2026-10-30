@@ -589,6 +589,7 @@
     {
       "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
       "fast": [
+        "test/e2e/support/gateway-runtime-start.test.ts",
         "src/lib/actions/maintenance.test.ts",
         "src/lib/actions/sandbox/destroy-gateway-scoping.test.ts",
         "test/cli/destroy-detach-order.test.ts",
@@ -597,7 +598,10 @@
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/openshell-sandbox-list.test.ts"
       ],
-      "liveSources": ["test/e2e/fixtures/openshell-sandbox-list.ts"]
+      "liveSources": [
+        "test/e2e/fixtures/openshell-sandbox-list.ts",
+        "test/e2e/fixtures/gateway-runtime-start.ts"
+      ]
     },
     {
       "live": "test/e2e/live/cron-preflight-inference-local.test.ts",
@@ -937,10 +941,12 @@
     {
       "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/sandbox-failure-diagnostics.ts",
         "test/e2e/live/openclaw-pairing-helpers.ts",
         "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
+        "test/e2e/support/mcp-bridge-hermes-http.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
@@ -952,10 +958,12 @@
     {
       "live": "test/e2e/live/openshell-gateway-upgrade.test.ts",
       "liveSources": [
+        "test/e2e/fixtures/openclaw-onboard-diagnostics.ts",
         "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
         "test/e2e/live/openshell-gateway-upgrade-old-installer.ts"
       ],
       "fast": [
+        "test/e2e/support/openclaw-onboard-diagnostics.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-recovery.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-target-image.test.ts",
