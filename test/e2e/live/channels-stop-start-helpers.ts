@@ -93,7 +93,7 @@ type InstalledGooglechatCredentialFixture = (() => void) & {
 
 export const GOOGLECHAT_E2E_ACCESS_TOKEN = "e2e-fake-googlechat-access-token";
 
-async function waitForNativeChannelGateway(
+export async function waitForNativeChannelGateway(
   host: HostCliClient,
   sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
   env: NodeJS.ProcessEnv,
