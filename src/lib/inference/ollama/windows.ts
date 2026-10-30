@@ -119,12 +119,17 @@ function buildWindowsOllamaInstallerCommand(): string {
 }
 
 function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
-  const child = spawn("powershell.exe", ["-Command", buildWindowsOllamaInstallerCommand()], {
-    cwd: windowsInteropWorkingDirectory("powershell.exe"),
-    // Keep terminal Ctrl+C from closing WSL interop before owned tree cleanup.
-    detached: isWsl(),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  // Keep profile output out of the owned PID handshake.
+  const child = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-Command", buildWindowsOllamaInstallerCommand()],
+    {
+      cwd: windowsInteropWorkingDirectory("powershell.exe"),
+      // Keep terminal Ctrl+C from closing WSL interop before owned tree cleanup.
+      detached: isWsl(),
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   let windowsPid: number | null = null;
   let stdoutPrefix = Buffer.alloc(0);
   let awaitingPidLine = true;
