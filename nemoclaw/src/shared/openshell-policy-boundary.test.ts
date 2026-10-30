@@ -8,6 +8,7 @@ import {
   assertOpenShellPolicyEndpointPins,
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
+  openShellHostMatches,
   parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
   parseSandboxPolicyMetadata,
@@ -378,9 +379,79 @@ describe("OpenShell endpoint pin admission", () => {
     ).toThrow(/existing_policy.*IP pins.*No provider was changed/);
   });
 
+  it.each([
+    ["DNS", "api.example.com", "https://api.example.com/v1"],
+    ["IPv6", "[2001:db8::1]", "https://[2001:db8::1]/v1"],
+    ["all hosts", "", "https://api.example.com/v1"],
+  ])("admits equal address sets for %s endpoints", (_label, host, endpointUrl) => {
+    const base = YAML.stringify({
+      version: 1,
+      network_policies: {
+        existing: {
+          endpoints: [{ host, port: 443, allowed_ips: ["2001:DB8::1", " 8.8.8.8 ", "8.8.8.8"] }],
+        },
+      },
+    });
+    expect(() =>
+      assertOpenShellPolicyEndpointPins(base, endpointUrl, ["8.8.8.8", "2001:db8::1"]),
+    ).not.toThrow();
+    expect(() => assertOpenShellPolicyEndpointPins(base, endpointUrl, ["8.8.4.4"])).toThrow(
+      /conflicting IP pins.*No provider was changed/,
+    );
+  });
+
+  it.each([
+    ["policy", { existing: false }],
+    ["endpoint list", { existing: { endpoints: {} } }],
+    ["endpoint", { existing: { endpoints: ["api.example.com"] } }],
+  ])("refuses malformed %s before provider mutation", (_label, policies) => {
+    expect(() =>
+      assertOpenShellPolicyEndpointPins(
+        YAML.stringify({ version: 1, network_policies: policies }),
+        "https://api.example.com/v1",
+        ["8.8.8.8"],
+      ),
+    ).toThrow(/malformed sandbox.*No provider was changed/);
+  });
+
   it("admits a host outside the canonical wildcard label boundary", () => {
     expect(() =>
       assertOpenShellPolicyEndpointPins(document, "https://deep.api.example.com/v1", ["8.8.8.8"]),
     ).not.toThrow();
   });
+});
+
+describe("OpenShell host patterns", () => {
+  it.each([
+    ["api?.example", "api1.example", true],
+    ["api?.example", "api12.example", false],
+    ["api[0-9].example", "api1.example", true],
+    ["api[0-9].example", "apia.example", false],
+    ["api[!a-z].example", "api1.example", true],
+    ["api[!a-z].example", "apia.example", false],
+    ["8.8.8.8", "8.8.8.8", true],
+    ["[2001:db8::1]", "[2001:db8::1]", true],
+    ["*.example", "api..example", false],
+    ["*.example", "deep.api.example", false],
+    ["*.example", "example", false],
+    ["*.example", "api.example", true],
+    ["**.example", "deep.api.example", true],
+    ["**.example", "example", false],
+    ["api.**.example", "api.x.y.example", true],
+    ["api.**.example", "api.example", false],
+    ["API.*.example", "api.internal.example", true],
+    ["api[^a].example", "api1.example", false],
+    ["api[!a].example", "api1.example", true],
+    ["api[-a].example", "api-.example", true],
+    ["api[a-].example", "api-.example", true],
+    ["api[]].example", "api].example", true],
+    ["api[!]].example", "api1.example", true],
+  ] as const)("matches OpenShell pattern %s against %s: %s", (pattern, host, expected) => {
+    expect(openShellHostMatches(pattern, host)).toBe(expected);
+  });
+
+  it.each(["api[.example", "api**.example", "*.{prod,stage}.example", "api..example"])(
+    "rejects invalid host pattern %s",
+    (pattern) => expect(() => openShellHostMatches(pattern, "api.example")).toThrow("host pattern"),
+  );
 });

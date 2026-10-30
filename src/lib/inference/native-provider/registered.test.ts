@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 import { readVerifiedRegisteredCredentialHandle } from "../../actions/inference-set/registered";
 import { inspectInferenceProviderProfile } from "../../adapters/openshell/provider-profile";
 import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
-import { openShellHostMatches } from "../../adapters/openshell/policy-boundary";
 import {
   attachRegisteredInferenceProvider,
   detachRegisteredInferenceProvider,
@@ -121,30 +120,6 @@ describe("registered provider profile authentication", () => {
     ).rejects.toThrow("enforced REST policy");
     expect(f.adapter.attachProvider).not.toHaveBeenCalled();
   });
-
-  it.each([
-    ["*.example", "deep.api.example", false],
-    ["*.example", "example", false],
-    ["*.example", "api.example", true],
-    ["**.example", "deep.api.example", true],
-    ["**.example", "example", false],
-    ["api.**.example", "api.x.y.example", true],
-    ["api.**.example", "api.example", false],
-    ["API.*.example", "api.internal.example", true],
-    ["api[^a].example", "api1.example", false],
-    ["api[!a].example", "api1.example", true],
-    ["api[-a].example", "api-.example", true],
-    ["api[a-].example", "api-.example", true],
-    ["api[]].example", "api].example", true],
-    ["api[!]].example", "api1.example", true],
-  ] as const)("matches OpenShell pattern %s against %s: %s", (pattern, host, expected) => {
-    expect(openShellHostMatches(pattern, host)).toBe(expected);
-  });
-
-  it.each(["api[.example", "api**.example", "*.{prod,stage}.example", "api..example"])(
-    "rejects invalid host pattern %s",
-    (pattern) => expect(() => openShellHostMatches(pattern, "api.example")).toThrow("host pattern"),
-  );
 
   it("rejects unsafe policy whose port list includes the selected port", async () => {
     const f = registeredInferenceFixture();
