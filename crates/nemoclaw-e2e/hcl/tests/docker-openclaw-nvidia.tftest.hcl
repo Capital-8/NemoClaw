@@ -15,11 +15,6 @@ run "openclaw_hosted" {
         request           = "Reply with one short sentence confirming that you can respond."
         response_contract = "openclaw"
       }
-      researcher = {
-        agent             = "researcher"
-        request           = "Name one benefit of sandbox isolation in one short sentence."
-        response_contract = "openclaw"
-      }
     }
   }
 

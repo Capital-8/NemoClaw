@@ -432,7 +432,8 @@ In each image, offline and as the image's own user, it checks:
 - the runtime command is `fabric-agent-ctl`, and it is executable;
 - the retained sources match the image's provenance;
 - the image runs as 10001:10001, and `/sandbox` and `TMPDIR` are laid out as OpenShell needs on Kubernetes and OpenShift;
-- the image carries no package installer and no build toolchain.
+- the image carries no package installer and no build toolchain;
+- a Hermes image carries `aiohttp`, Hermes's built dashboard, and its built TUI bundle, which Hermes's API server, dashboard, and browser chat need.
 
 The build itself refuses a catalog label that differs from what the image installs, and installs only what Fabric's lock pins.
 NemoClaw doesn't run Fabric's native adapters; their behavior is Fabric's to test.

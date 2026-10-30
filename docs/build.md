@@ -147,6 +147,13 @@ OpenClaw's npm package has no lockfile, so the agent image copies `/app` from Op
 When an agent starts, Fabric's OpenClaw adapter refuses versions outside `SUPPORTED_OPENCLAW_VERSIONS` in the pinned Fabric source.
 When you change the Fabric pin, check that set; if it changed, pin the digest of OpenClaw's published image for a supported version, then rebuild and qualify the OpenClaw image.
 
+### Update the Hermes Pin
+
+The agent image installs Hermes Agent from the release source pinned by `HERMES_REVISION` and `HERMES_SHA256` in [the Dockerfile](../image/fabric/Dockerfile).
+Hermes's dashboard and browser chat need its web assets and TUI bundle built, so the image copies them from Hermes's published image, pinned by digest in `HERMES_IMAGE`.
+The build stops if any file that image shares with the pinned release source differs, apart from the `README.md` its build empties.
+When you move `HERMES_REVISION`, pin the digest of Hermes's published image for the same release, then rebuild and qualify the Hermes image.
+
 ### Regenerate the Bundled Catalog
 
 The SDK build fails with `stale Fabric catalog` when `image/fabric/catalog.json` no longer matches the Fabric pin in the Dockerfile.

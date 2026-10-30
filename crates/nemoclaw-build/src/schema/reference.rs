@@ -245,6 +245,9 @@ fn guide(name: &str) -> &'static str {
         "Integration" | "WebSearch" | "SearchProvider" | "Agent" | "AgentExecution"
         | "AgentObservability" | "OtlpTracing" | "RelayTracing" | "AgentTools" | "AllowedTool"
         | "ToolDisclosure" => "[Agent runtimes](../agents.md)",
+        "ServiceExposure" | "AuthorizationMode" => {
+            "[Agent interfaces](../interfaces.md#expose-a-service-through-the-gateway)"
+        }
         "ImagePullPolicy" => {
             "[Container image downloads](../usage.md#control-container-image-downloads)"
         }
