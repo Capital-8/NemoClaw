@@ -13,7 +13,14 @@ use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
+use tokio::time::Instant;
+
+/// Plan, apply, and verification share one bound, so a slow model start can use
+/// time the other steps leave. Destroy has its own bound afterwards.
+const RUN_DEADLINE: Duration = Duration::from_secs(45 * 60);
+const DESTROY_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
 pub(super) struct Tools {
     pub candidate_revision: String,
@@ -38,29 +45,48 @@ fn deployment(path: &Path) -> Result<Document, String> {
     Document::parse(bytes.as_slice()).map_err(|_| "invalid deployment configuration".into())
 }
 
-pub(super) async fn execute(
-    deployment_path: &Path,
-    suite: &Path,
-    filter: &Path,
-    bundle: &Path,
-    candidate_revision: &str,
-    directory: &Path,
-    cancel: &CancellationToken,
-) -> Result<(), String> {
-    let bundle = Bundle::open(bundle).map_err(|_| "a verified candidate bundle is required")?;
+#[derive(clap::Args)]
+pub(super) struct Inputs {
+    #[arg(long)]
+    deployment: PathBuf,
+    #[arg(long)]
+    suite: PathBuf,
+    /// HCL test file relative to the suite, such as tests/docker-openclaw-nvidia.tftest.hcl.
+    #[arg(long)]
+    filter: PathBuf,
+    #[arg(long)]
+    bundle: PathBuf,
+    /// Candidate source commit under test, recorded with the results.
+    #[arg(long)]
+    candidate_revision: String,
+    /// New private directory; an existing directory is refused.
+    #[arg(long)]
+    run_dir: PathBuf,
+}
+
+pub(super) async fn execute(inputs: &Inputs, cancel: &CancellationToken) -> Result<(), String> {
+    let bundle =
+        Bundle::open(&inputs.bundle).map_err(|_| "a verified candidate bundle is required")?;
     let tools = Tools {
-        candidate_revision: candidate_revision.into(),
+        candidate_revision: inputs.candidate_revision.clone(),
         cli: bundle.directory.join("bin").join(executable("nemoclaw")),
         tofu: bundle.tofu(),
         probe: std::env::current_exe().map_err(|_| "cannot locate probe executable")?,
         environment: BTreeMap::new(),
     };
-    execute_with_tools(
-        deployment_path,
+    let Inputs {
+        deployment,
         suite,
         filter,
-        &bundle,
-        directory,
+        run_dir,
+        ..
+    } = inputs;
+    execute_with_tools(
+        deployment,
+        suite,
+        filter,
+        &bundle.directory,
+        run_dir,
         &tools,
         cancel,
     )
@@ -71,7 +97,7 @@ pub(super) async fn execute_with_tools(
     deployment_path: &Path,
     suite: &Path,
     filter: &Path,
-    bundle: &Bundle,
+    bundle: &Path,
     directory: &Path,
     tools: &Tools,
     cancel: &CancellationToken,
@@ -80,27 +106,19 @@ pub(super) async fn execute_with_tools(
     let suite = suite
         .canonicalize()
         .map_err(|_| "HCL suite directory is unavailable")?;
-    if !suite.is_dir() {
-        return Err("HCL suite must be a directory".into());
-    }
-    if filter.is_absolute()
-        || filter
-            .parent()
-            .is_none_or(|parent| !parent.as_os_str().is_empty() && parent != Path::new("tests"))
-        || !suite.join(filter).is_file()
+    if filter.parent() != Some(Path::new("tests"))
         || !filter
             .to_str()
-            .is_some_and(|name| name.ends_with(".tftest.hcl") || name.ends_with(".tftest.json"))
+            .is_some_and(|name| name.ends_with(".tftest.hcl"))
+        || !suite.join(filter).is_file()
     {
-        return Err(
-            "filter must select an existing test file in the suite or its tests directory".into(),
-        );
+        return Err("filter must name an existing tests/*.tftest.hcl file in the suite".into());
     }
-    if tools.candidate_revision.len() != 40
-        || !tools
-            .candidate_revision
+    let revision = &tools.candidate_revision;
+    if revision.len() != 40
+        || !revision
             .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
     {
         return Err("candidate revision must be a full lowercase 40-hex commit".into());
     }
@@ -118,41 +136,14 @@ pub(super) async fn execute_with_tools(
         .canonicalize()
         .map_err(|_| "cannot resolve run directory")?;
     let state = directory.join("deployment");
-    fs::create_dir(&state).map_err(|_| "cannot create deployment state directory")?;
     let verification = directory.join("verifier");
-    fs::create_dir(&verification).map_err(|_| "cannot create verifier directory")?;
     let reports = verification.join("reports");
-    fs::create_dir(&reports).map_err(|_| "cannot create probe evidence directory")?;
-    let mirror = bundle
-        .directory
-        .join("providers")
-        .to_string_lossy()
-        .replace('\\', "/");
-    let quoted = serde_json::to_string(&mirror).map_err(|_| "cannot encode provider mirror")?;
-    // Bundle providers use source-derived prerelease versions. Select their
-    // verified binaries directly; unconstrained registry resolution excludes them.
-    let overrides = bundle
-        .manifest
-        .files
-        .keys()
-        .filter_map(|name| {
-            let parts: Vec<_> = name.split('/').collect();
-            if parts.len() != 7 || parts[0] != "providers" {
-                return None;
-            }
-            let address = json!(parts[1..4].join("/"));
-            let path = bundle.directory.join(name);
-            let directory = json!(path.parent()?.to_string_lossy().replace('\\', "/"));
-            Some(format!(" {address} = {directory}\n"))
-        })
-        .collect::<String>();
-    fs::write(
-        verification.join("cli.tfrc"),
-        format!(
-            "disable_checkpoint = true\nprovider_installation {{\n dev_overrides {{\n{overrides} }}\n filesystem_mirror {{ path = {quoted} }}\n}}\n"
-        ),
-    )
-    .map_err(|_| "cannot write verifier CLI configuration")?;
+    for path in [&state, &reports] {
+        fs::create_dir_all(path).map_err(|_| "cannot create run subdirectories")?;
+    }
+    // Ignore user CLI configuration; the verifier needs only OpenTofu's built-in provider.
+    fs::write(verification.join("cli.tfrc"), "disable_checkpoint = true\n")
+        .map_err(|_| "cannot write verifier CLI configuration")?;
     let config = directory.join("deployment.yaml");
     fs::write(
         &config,
@@ -161,11 +152,6 @@ pub(super) async fn execute_with_tools(
             .map_err(|_| "cannot encode resolved deployment")?,
     )
     .map_err(|_| "cannot save resolved deployment")?;
-    nemoclaw_runtime::files::save_json(
-        &directory.join("run.json"),
-        &json!({"suite": suite, "filter": filter, "candidate_revision": tools.candidate_revision}),
-    )
-    .map_err(|_| "cannot save run identity")?;
     let mut environment = tools.environment.clone();
     // Only gateway access is needed by the probe; inference credentials stay with apply.
     let connection = document.spec.gateway.connection();
@@ -189,58 +175,39 @@ pub(super) async fn execute_with_tools(
         nemoclaw_backend::DIAGNOSTICS_ENV.into(),
         directory.join("diagnostics").into_os_string(),
     );
-    let arguments = |operation: &str| {
-        let mut args = strings(&[
-            operation,
-            "--output",
-            "json",
-            "--progress",
-            "off",
-            "--bundle",
-        ]);
-        args.extend([
-            bundle.directory.as_os_str().to_owned(),
-            "--state-dir".into(),
-            state.as_os_str().to_owned(),
-        ]);
-        if operation != "destroy" {
-            args.extend(["--non-interactive".into(), config.as_os_str().to_owned()]);
-        }
-        args
-    };
-    let mut apply_started = false;
-    let mut phase = "plan";
-    let primary = async {
-        process::execute(
-            &tools.cli,
-            &arguments("plan"),
-            &directory,
-            phase,
-            &environment,
-            cancel,
-        )
-        .await?;
-        phase = "apply";
-        apply_started = true;
-        process::execute(
-            &tools.cli,
-            &arguments("apply"),
-            &directory,
-            phase,
-            &environment,
-            cancel,
-        )
-        .await?;
-        let mut verifier_environment = environment.clone();
-        verifier_environment.insert(
+    let cli =
+        async |operation: &str, label: &str, cancel: &CancellationToken, deadline: Instant| {
+            let mut args: Vec<OsString> = [operation, "--output", "json", "--progress", "off"]
+                .map(Into::into)
+                .into();
+            args.extend([
+                "--bundle".into(),
+                bundle.into(),
+                "--state-dir".into(),
+                state.clone().into(),
+            ]);
+            if operation != "destroy" {
+                args.extend(["--non-interactive".into(), config.clone().into()]);
+            }
+            process::execute(
+                &tools.cli,
+                &args,
+                &directory,
+                label,
+                &environment,
+                cancel,
+                deadline,
+            )
+            .await
+        };
+    let mut verifier_environment = environment.clone();
+    verifier_environment.extend([
+        (
             "TF_CLI_CONFIG_FILE".into(),
-            verification.join("cli.tfrc").into_os_string(),
-        );
-        verifier_environment.insert(
-            "TF_DATA_DIR".into(),
-            verification.join("data").into_os_string(),
-        );
-        verifier_environment.insert(
+            verification.join("cli.tfrc").into(),
+        ),
+        ("TF_DATA_DIR".into(), verification.join("data").into()),
+        (
             "TF_VAR_context".into(),
             json!({
                 "config": config, "state_dir": state,
@@ -248,46 +215,40 @@ pub(super) async fn execute_with_tools(
             })
             .to_string()
             .into(),
-        );
-        let chdir: OsString = format!("-chdir={}", suite.display()).into();
-        // Only modules need initialization: providers come from the verified bundle.
+        ),
+    ]);
+    let deadline = Instant::now() + RUN_DEADLINE;
+    let tofu = async |phase: &str, command: &[&str]| {
+        let mut args = vec![OsString::from(format!("-chdir={}", suite.display()))];
+        args.extend(command.iter().map(OsString::from));
+        let (environment, directory) = (&verifier_environment, &verification);
+        process::execute(
+            &tools.tofu,
+            &args,
+            directory,
+            phase,
+            environment,
+            cancel,
+            deadline,
+        )
+        .await
+    };
+    let filter_argument = format!("-filter={}", filter.display());
+    let mut apply_started = false;
+    let mut phase = "plan";
+    let primary = async {
+        cli("plan", "plan", cancel, deadline).await?;
+        phase = "apply";
+        apply_started = true;
+        cli("apply", "apply", cancel, deadline).await?;
+        // Local modules need installation; the verifier uses only built-in resources.
         phase = "tofu-get";
-        process::execute(
-            &tools.tofu,
-            &[chdir.clone(), "get".into(), "-no-color".into()],
-            &verification,
-            phase,
-            &verifier_environment,
-            cancel,
-        )
-        .await?;
+        tofu(phase, &["get", "-no-color"]).await?;
         phase = "tofu-test";
-        process::execute(
-            &tools.tofu,
-            &[
-                chdir,
-                "test".into(),
-                format!("-filter={}", filter.display()).into(),
-                "-json".into(),
-                "-no-color".into(),
-            ],
-            &verification,
-            phase,
-            &verifier_environment,
-            cancel,
-        )
-        .await?;
+        tofu(phase, &["test", &filter_argument, "-json", "-no-color"]).await?;
         // Applying the same document to the running deployment changes nothing.
         phase = "reapply";
-        process::execute(
-            &tools.cli,
-            &arguments("apply"),
-            &directory,
-            phase,
-            &environment,
-            cancel,
-        )
-        .await?;
+        cli("apply", phase, cancel, deadline).await?;
         let reapplied: OperationResult = serde_json::from_slice(
             &fs::read(directory.join("reapply.stdout")).map_err(|_| "reapply: missing result")?,
         )
@@ -309,13 +270,11 @@ pub(super) async fn execute_with_tools(
     // Cleanup is independent of the cancelled operation and runs after partial apply.
     let cleanup = CancellationToken::new();
     let cleanup_result = if apply_started {
-        match process::execute(
-            &tools.cli,
-            &arguments("destroy"),
-            &directory,
+        match cli(
             "destroy",
-            &environment,
+            "destroy",
             &cleanup,
+            Instant::now() + DESTROY_DEADLINE,
         )
         .await
         {
@@ -330,7 +289,7 @@ pub(super) async fn execute_with_tools(
         "deployment": document.metadata.name, "suite": suite, "filter": filter, "succeeded": succeeded,
         "candidate_revision": tools.candidate_revision,
         "deployment_uid": document.metadata.uid,
-        "failed_phase": failed_phase, "attributed_to": if succeeded { "none" } else { "unknown" },
+        "failed_phase": failed_phase,
         "failure": primary.err(),
         "cleanup": {"required": apply_started, "succeeded": cleanup_result.is_ok(), "failure": cleanup_result.as_ref().err(), "retained": cleanup_result.as_ref().ok()},
     });
@@ -341,10 +300,6 @@ pub(super) async fn execute_with_tools(
     } else {
         Err("E2E failed; inspect result.json and private command/probe evidence in the run directory".into())
     }
-}
-
-fn strings(args: &[&str]) -> Vec<OsString> {
-    args.iter().map(Into::into).collect()
 }
 
 fn destroy_result(directory: &Path) -> Result<Vec<String>, String> {

@@ -11,9 +11,9 @@ run "openclaw_hosted" {
   variables {
     targets = {
       assistant = {
-        agent             = "assistant"
-        request           = "Reply with one short sentence confirming that you can respond."
-        response_contract = "openclaw"
+        agent            = "assistant"
+        request          = "Reply with one short sentence confirming that you can respond."
+        response_pointer = "/output/response"
       }
     }
   }
