@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 
+import { proveRealOpenClawAdminAdmission } from "./openclaw-real-device-admin-admission-proof.ts";
 import { proveRealPairingStateReadable } from "./openclaw-real-pairing-state-proof.ts";
 import {
   proveRealPostUpgradeChecks,
@@ -2024,6 +2025,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
           'await persistState(state, baseDir, "both")',
         ],
   );
+  if (workerPairingLayout) await proveRealOpenClawAdminAdmission(sources);
   requireRealStoredDeviceAuthLinkage(sources, cliSource);
   const deviceHandlerFile = requireRealDeviceTokenAuthLinkage(sources);
   if (sqlitePairingLayout) {

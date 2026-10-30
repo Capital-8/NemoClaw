@@ -114,6 +114,10 @@ export const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT_PREVIOUS = [
   "\t\t}",
 ].join("\n");
 
+// This admits a verified CLI token to the pairing request, not to an admin session.
+// The paired inline-approval patch defers silent admin upgrades; native authorization
+// still checks persisted grants before session/token issuance. See the real-dist
+// admin-admission proof, including its no-issuance assertions.
 export const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT =
   AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT_PREVIOUS.replace(
     'new Set(["operator.pairing", "operator.read", "operator.write"])',
