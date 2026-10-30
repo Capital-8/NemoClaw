@@ -40,6 +40,9 @@ export function compiler(): ManifestCompiler {
         prompt: async () => "",
         log: () => {},
       },
+      discord: {
+        authentication: { fetch: async () => Response.json({ id: "1", bot: true }), log: () => {} },
+      },
       slack: {
         validateCredentials: {
           log: () => {},
