@@ -20,6 +20,7 @@ import {
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 import { ensureManagedGatewayStateRoot } from "../../onboard/gateway/state-dir";
+import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "../../onboard/hermes-api-port";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import type { SandboxRuntimeSnapshot } from "../../state/registry/runtime-snapshot";
 import { registry } from "../../../../test/helpers/rebuild-flow-harness";
@@ -115,6 +116,68 @@ describe("rebuildSandbox flow: lifecycle", () => {
     } finally {
       restoreEnv();
       original.cleanup();
+    }
+  });
+
+  it.each([undefined, "8650"])(
+    "keeps a rebuilt Hermes API port from pinning the next sandbox (caller value: %s) (#13628)",
+    async (callerPort) => {
+      const restoreEnv = snapshotEnv([HERMES_API_PORT_ENV]);
+      try {
+        void (callerPort === undefined
+          ? delete process.env[HERMES_API_PORT_ENV]
+          : (process.env[HERMES_API_PORT_ENV] = callerPort));
+        const ports = { alpha: 8642, beta: 8643 } as Record<string, number>;
+        const getSandbox = (name: string) => ({ name, hermesApiPort: ports[name] });
+        let rebuiltPort: number | undefined;
+        const harness = createRebuildFlowHarness({
+          onboard: () => {
+            rebuiltPort = resolveOnboardHermesApiPort("alpha", {
+              getSandbox,
+              allowRegisteredOverride: true,
+            });
+          },
+        });
+        await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+
+        expect(rebuiltPort).toBe(callerPort ? Number(callerPort) : 8642);
+        expect(process.env[HERMES_API_PORT_ENV]).toBe(callerPort);
+        expect(
+          resolveOnboardHermesApiPort("beta", { getSandbox, allowRegisteredOverride: true }),
+        ).toBe(callerPort ? Number(callerPort) : 8643);
+      } finally {
+        restoreEnv();
+      }
+    },
+  );
+
+  it("restores the caller Hermes port when replacement onboarding fails after publication (#13628)", async () => {
+    const restoreEnv = snapshotEnv([HERMES_API_PORT_ENV]);
+    try {
+      delete process.env[HERMES_API_PORT_ENV];
+      const ports = { alpha: 8642, beta: 8643 } as Record<string, number>;
+      const getSandbox = (name: string) => ({ name, hermesApiPort: ports[name] });
+      let publishedPort: number | undefined;
+      const harness = createRebuildFlowHarness({
+        onboard: () => {
+          publishedPort = resolveOnboardHermesApiPort("alpha", {
+            getSandbox,
+            allowRegisteredOverride: true,
+          });
+          throw new Error("injected post-publication onboarding failure");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed (sandbox destroyed)");
+      expect(publishedPort).toBe(8642);
+      expect(process.env[HERMES_API_PORT_ENV]).toBeUndefined();
+      expect(
+        resolveOnboardHermesApiPort("beta", { getSandbox, allowRegisteredOverride: true }),
+      ).toBe(8643);
+    } finally {
+      restoreEnv();
     }
   });
 
