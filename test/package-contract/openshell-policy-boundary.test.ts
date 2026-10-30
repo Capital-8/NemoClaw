@@ -423,7 +423,7 @@ process.stdout.write("validated");
       "openshell-policy-boundary.cjs",
     );
     expect(auditOpenShellPolicyBoundaryDependencies(fs.readFileSync(boundaryPath, "utf8"))).toEqual(
-      ["node:util", "yaml"],
+      ["node:net", "node:util", "yaml"],
     );
 
     expect(() =>

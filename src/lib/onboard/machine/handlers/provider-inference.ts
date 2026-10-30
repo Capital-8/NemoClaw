@@ -96,6 +96,8 @@ function selectedNativeInference(
 }
 
 export interface ProviderInferenceSetupOptions {
+  /** Validated policy retained before an authoritative rebuild deletes the source sandbox. */
+  rebuildSandboxPolicyDocument?: string;
   agentName?: string;
   /** Resolve the policy tier before a custom provider can mutate gateway state. */
   resolvePolicyTier?: () => Promise<string>;
@@ -190,6 +192,7 @@ export interface ProviderSelectionResult {
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
+  rebuildSandboxPolicyDocument?: string;
   gatewayName: string;
   resume: boolean;
   fresh: boolean;
@@ -1491,6 +1494,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   authoritativeResumeConfig = false,
   providerRecoveryReceipt = null,
   providerRecoveryReceiptLedger,
+  rebuildSandboxPolicyDocument,
   initial,
   selectedMessagingChannels,
   env,
@@ -2139,6 +2143,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
             endpointSource,
+            rebuildSandboxPolicyDocument,
             ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
@@ -2497,6 +2502,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         endpointSource,
+        rebuildSandboxPolicyDocument,
         ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),

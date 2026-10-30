@@ -7,7 +7,7 @@ import type {
 } from "../../adapters/openshell/provider-adapter";
 import type { InferenceProviderProfileProjection } from "../../adapters/openshell/provider-profile";
 import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
-import { registeredProviderHostMatches } from "./registered-host-pattern";
+import { openShellHostMatches } from "../../adapters/openshell/policy-boundary";
 
 export type RegisteredInferenceApi =
   | "openai-completions"
@@ -116,8 +116,7 @@ function matchingDeclaredEndpoints(
   const port = Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80));
   return projection.endpoints.filter(
     (declared) =>
-      declared.ports.includes(port) &&
-      registeredProviderHostMatches(declared.host, endpoint.hostname),
+      declared.ports.includes(port) && openShellHostMatches(declared.host, endpoint.hostname),
   );
 }
 
@@ -137,7 +136,7 @@ function assertProjection(
         (declared.port === port || declared.ports.includes(port)) &&
         (declared.host === endpoint.hostname ||
           (declared.host.startsWith("*.") && endpoint.hostname.endsWith(declared.host.slice(1))) ||
-          registeredProviderHostMatches(declared.host, endpoint.hostname))
+          openShellHostMatches(declared.host, endpoint.hostname))
       );
     })
   )

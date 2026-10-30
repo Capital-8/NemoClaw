@@ -5,7 +5,10 @@ import { INFERENCE_CURL_DIAGNOSTIC_SCRIPT } from "./curl-policy-denial.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { isIPv4 } from "node:net";
+import {
+  assertEndpointResolvesPublic,
+  type EndpointDnsLookupFn,
+} from "../../../src/lib/security/trusted-private-endpoint.ts";
 import { inspectInferenceProviderProfile } from "../../../src/lib/adapters/openshell/provider-profile.ts";
 import { createExtraGatewayProvider } from "./gateway-providers.ts";
 import type { HostCliClient } from "./clients/host.ts";
@@ -115,20 +118,24 @@ export const OPERATOR_SWITCH_PROVIDER = "e2e-operator-inference";
 export const OPERATOR_SWITCH_CREDENTIAL_ENV = "NEMOCLAW_E2E_OPERATOR_TOKEN";
 
 /** The fixture owns only the provider IDs it creates in its private test gateway. */
-export function operatorInferenceSwitchFixture(
+export async function operatorInferenceSwitchFixture(
   host: HostCliClient,
   options: {
     home: string;
     env: NodeJS.ProcessEnv;
     endpointUrl: string;
+    lookup?: EndpointDnsLookupFn;
     credentialValue: string;
     sandboxName: string;
     model: string;
   },
 ) {
   const endpoint = new URL(options.endpointUrl);
-  if (!isIPv4(endpoint.hostname))
-    throw new Error("Operator fixture requires the observed IPv4 host");
+  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.hash)
+    throw new Error("Operator fixture requires a credential-free HTTPS endpoint");
+  const admitted = await assertEndpointResolvesPublic(options.endpointUrl, options.lookup);
+  if (!admitted.ok || !admitted.addresses?.length)
+    throw new Error("Operator fixture requires public endpoint IP pins");
   const profileId = `e2e-operator-${randomUUID()}`;
   const profilePath = path.join(options.home, `${profileId}.json`);
   const profile = {
@@ -149,10 +156,10 @@ export function operatorInferenceSwitchFixture(
     endpoints: [
       {
         host: endpoint.hostname,
-        port: Number(endpoint.port),
+        port: Number(endpoint.port || 443),
         protocol: "rest",
         enforcement: "enforce",
-        allowed_ips: [`${endpoint.hostname}/32`],
+        allowed_ips: admitted.addresses,
         rules: [
           { allow: { method: "GET", path: `${endpoint.pathname}/models` } },
           { allow: { method: "POST", path: `${endpoint.pathname}/chat/completions` } },

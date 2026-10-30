@@ -57,12 +57,11 @@ import {
   HOSTED_NATIVE_PROVIDERS,
   usesNativeHermesEndpoint,
   isCustomHostedProvider,
-  customNativeCredentialEnv,
 } from "../../inference/native-provider/hosted";
 import { recordedNativeProviderAttachment } from "../../inference/native-provider/recorded-selection";
 import type { SandboxEntry } from "../../state/registry";
-import { prepareCustomNativeProvider } from "../../inference/native-provider/custom-setup";
 import { isCustomNativeEndpoint } from "../../inference/native-provider/custom";
+import { prepareCustomNativeSelection } from "./native-custom";
 import { prepareHostedNativeProvider } from "../../inference/native-provider/setup";
 
 /** Preserve shared-route config unless a custom native endpoint is explicit. */
@@ -223,45 +222,7 @@ export async function prepareNativeSelection(input: {
   endpointUrl?: string;
 }> {
   if (!input.selectingNative) return { attachmentChanged: false };
-  if (isCustomHostedProvider(input.provider)) {
-    if (
-      !input.deps.getNativeHostedProviderAuthority ||
-      !input.deps.setNativeHostedProviderAuthority
-    )
-      throw new InferenceSetError("Native hosted provider ownership storage is unavailable");
-    const credentialEnv = input.credentialEnv || customNativeCredentialEnv(input.provider);
-    const receipt = await prepareCustomNativeProvider({
-      gatewayName: input.gatewayName,
-      provider: input.provider,
-      endpointUrl: input.endpointUrl || "",
-      api:
-        input.inferenceApi ||
-        (input.provider === "compatible-anthropic-endpoint"
-          ? "anthropic-messages"
-          : "openai-completions"),
-      credentialEnv,
-      credentialValue: input.deps.resolveCredentialValue(credentialEnv) || null,
-      adapter: input.deps.providerAdapter,
-      recordedAttachment: input.expectedAttachment,
-      recordedSandboxName: input.sandboxName,
-      readAuthority: input.deps.getNativeHostedProviderAuthority,
-      writeAuthority: input.deps.setNativeHostedProviderAuthority,
-    });
-    await input.beforeAttach?.(receipt);
-    const attached = await nativeProviderLifecycle(
-      fixedNativeProviderForAttachment(receipt),
-    ).ensureNativeProviderAttached({
-      adapter: input.deps.providerAdapter,
-      target: { kind: "named", gatewayName: input.gatewayName },
-      sandboxName: input.sandboxName,
-      expected: receipt,
-    });
-    return {
-      attachment: attached.receipt,
-      attachmentChanged: attached.changed,
-      endpointUrl: receipt.endpointUrl,
-    };
-  }
+  if (isCustomHostedProvider(input.provider)) return prepareCustomNativeSelection(input);
   if (
     input.provider === "hermes-provider" &&
     (input.endpointUrl || input.expectedAttachment?.endpointUrl)

@@ -990,21 +990,27 @@ The test file is always one owning path.
 List each additional source file or directory whose change requires the target.
 Changes to shared catalogue execution paths select every catalogue target.
 
-The `openclaw-inference-switch` target owns fresh custom-image route initialization.
-Its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff;
-the successful onboard and authenticated baseline request require a ready sandbox from that image.
+The `openclaw-inference-switch` target owns baseline route initialization, lifecycle, and provider switching.
+Its Docker variant also owns fresh custom-image route initialization.
+On Docker, its live `onboard --from` step exercises local Docker BuildKit and OpenShell image handoff.
+Podman uses stock managed-image onboarding because its driver does not support Dockerfile workloads.
+The host fixture checks its durable managed-image receipt against the selected cohort before post-onboarding probes.
+Both paths require a ready sandbox and an authenticated baseline request from the selected image.
 The deterministic build, inspect, create-reference, and failed-build stop checks live in
 `test/onboarding/onboard-custom-dockerfile.test.ts`.
-Its fixture contains only a different baked model and stale limits.
+The Dockerfile fixture contains only a different baked model and stale limits.
 Custom Dockerfile onboarding uses the existing startup and pairing settlement checks before
 restarting the native gateway for the initial inference route, as external-image onboarding does.
 The target requires onboarding to create the selected model without those limits, then preserves that native configuration through restart and rebuild.
 The OpenClaw native NVIDIA and mock Anthropic switch variants start with an authenticated local OpenAI-compatible fixture.
 The Anthropic variant starts on a native OpenAI-compatible route, then switches to a native Anthropic endpoint.
-Both endpoints use the runner's private address through the existing explicit private-host trust setting.
+Both Anthropic-variant endpoints use public HTTPS quick tunnels from the verified cloudflared package.
+Rootless Pasta copies the runner's primary IP into its namespace, so that IP cannot identify the host fixture there.
+The local HTTP hop stays on the runner; host and sandbox probes use the same public endpoint without private-host trust overrides.
 Its mock rejects a missing or incorrect credential, and the existing sandbox request and OpenClaw model run must both succeed.
 The config probe validates the scoped Anthropic credential reference inside the sandbox before redaction.
 The native NVIDIA destination uses the public endpoint and its public credential only after switching.
+The interactive policy-preset sequencing fixture uses the same public HTTPS transport and retains its Personal native-provider assertions.
 Route assertions use JSON fields so terminal column alignment does not affect the result.
 Hermes inference-switch installation uses an authenticated local fixture before its model-only switch.
 The baseline model expectation comes from the environment passed to installation.

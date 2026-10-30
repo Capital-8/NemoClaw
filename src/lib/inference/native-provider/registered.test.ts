@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readVerifiedRegisteredCredentialHandle } from "../../actions/inference-set/registered";
 import { inspectInferenceProviderProfile } from "../../adapters/openshell/provider-profile";
 import { registeredInferenceFixture } from "../../../../test/helpers/registered-inference";
-import { registeredProviderHostMatches } from "./registered-host-pattern";
+import { openShellHostMatches } from "../../adapters/openshell/policy-boundary";
 import {
   attachRegisteredInferenceProvider,
   detachRegisteredInferenceProvider,
@@ -138,13 +138,12 @@ describe("registered provider profile authentication", () => {
     ["api[]].example", "api].example", true],
     ["api[!]].example", "api1.example", true],
   ] as const)("matches OpenShell pattern %s against %s: %s", (pattern, host, expected) => {
-    expect(registeredProviderHostMatches(pattern, host)).toBe(expected);
+    expect(openShellHostMatches(pattern, host)).toBe(expected);
   });
 
   it.each(["api[.example", "api**.example", "*.{prod,stage}.example", "api..example"])(
     "rejects invalid host pattern %s",
-    (pattern) =>
-      expect(() => registeredProviderHostMatches(pattern, "api.example")).toThrow("host pattern"),
+    (pattern) => expect(() => openShellHostMatches(pattern, "api.example")).toThrow("host pattern"),
   );
 
   it("rejects unsafe policy whose port list includes the selected port", async () => {

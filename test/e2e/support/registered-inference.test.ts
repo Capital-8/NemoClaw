@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveRegisteredInferenceProvider } from "../../../src/lib/inference/native-provider/registered.ts";
+import { inspectInferenceProviderProfile } from "../../../src/lib/adapters/openshell/provider-profile.ts";
+import type { OpenShellProviderAdapter } from "../../../src/lib/adapters/openshell/provider-adapter.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -387,7 +390,10 @@ it("preserves the registered native curl caller used by DNS and runtime identity
   );
 });
 
-function operatorFixture() {
+async function operatorFixture(
+  endpointUrl = "https://operator.example.com/v1",
+  addresses = ["8.8.8.8"],
+) {
   let profile: any;
   let providerId: string | undefined;
   let created = 0;
@@ -432,12 +438,13 @@ function operatorFixture() {
         throw new Error("Unexpected fixture command");
     }
   });
-  const fixture = operatorInferenceSwitchFixture(
+  const fixture = await operatorInferenceSwitchFixture(
     { command, openshellCommandPath: "openshell" } as unknown as HostCliClient,
     {
       home: directory,
       env: { HOME: directory, OPENSHELL_GATEWAY: "nemoclaw" },
-      endpointUrl: "http://10.1.2.3:18000/v1",
+      endpointUrl,
+      lookup: async () => addresses.map((address) => ({ address, family: 4 })),
       credentialValue: "synthetic-key",
       sandboxName: "test-sandbox",
       model: "test-model",
@@ -459,7 +466,7 @@ function operatorFixture() {
 }
 
 it("creates an inference profile with exact endpoint and environment-only synthetic credentials", async () => {
-  const { fixture, command } = operatorFixture();
+  const { fixture, command } = await operatorFixture();
   const id = await fixture.create();
   expect(id).toBe("fixture-1");
   const imported = command.mock.calls.find((call) => call[1].includes("import"))!;
@@ -468,9 +475,45 @@ it("creates an inference profile with exact endpoint and environment-only synthe
   );
   expect(profile).toMatchObject({
     inference_capable: true,
-    endpoints: [{ host: "10.1.2.3", port: 18000, allowed_ips: ["10.1.2.3/32"] }],
+    endpoints: [
+      {
+        host: "operator.example.com",
+        port: 443,
+        allowed_ips: ["8.8.8.8"],
+        protocol: "rest",
+        enforcement: "enforce",
+      },
+    ],
     credentials: [{ env_vars: [OPERATOR_SWITCH_CREDENTIAL_ENV], auth_style: "bearer" }],
   });
+  await expect(
+    resolveRegisteredInferenceProvider({
+      adapter: {
+        getProvider: async () => ({
+          ok: true,
+          value: {
+            name: OPERATOR_SWITCH_PROVIDER,
+            type: profile.id,
+            credentialKeys: [OPERATOR_SWITCH_CREDENTIAL_ENV],
+            configKeys: [],
+            revision: { id, resourceVersion: 1 },
+          },
+        }),
+        inspectProviderProfile: async () => ({
+          ok: true,
+          value: {
+            inference: inspectInferenceProviderProfile(JSON.stringify(profile)),
+          },
+        }),
+      } as unknown as OpenShellProviderAdapter,
+      gatewayName: "nemoclaw",
+      sandboxName: "test-sandbox",
+      providerName: OPERATOR_SWITCH_PROVIDER,
+      endpointUrl: fixture.endpointUrl,
+      inferenceApi: "openai-completions",
+      credentialEnv: OPERATOR_SWITCH_CREDENTIAL_ENV,
+    }),
+  ).resolves.toMatchObject({ providerId: id, endpointUrl: "https://operator.example.com/v1" });
   expect(command.mock.calls.map((call) => call[1].join(" ")).join("\n")).not.toContain(
     "synthetic-key",
   );
@@ -478,7 +521,7 @@ it("creates an inference profile with exact endpoint and environment-only synthe
 });
 
 it("replaces only its attached immutable provider and cleans the new unattached identity", async () => {
-  const { fixture, command, attach } = operatorFixture();
+  const { fixture, command, attach } = await operatorFixture();
   await fixture.create();
   attach();
   expect(await fixture.replace()).toBe("fixture-2");
@@ -496,7 +539,7 @@ it("replaces only its attached immutable provider and cleans the new unattached 
 });
 
 it("refuses replacement and cleanup when another operator owns the current provider identity", async () => {
-  const { fixture, command, replaceOutsideFixture } = operatorFixture();
+  const { fixture, command, replaceOutsideFixture } = await operatorFixture();
   await fixture.create();
   replaceOutsideFixture();
   await expect(fixture.replace()).rejects.toThrow("unowned");
@@ -507,7 +550,7 @@ it("refuses replacement and cleanup when another operator owns the current provi
 });
 
 it("cleans its provider attachment before deletion after an interrupted selection", async () => {
-  const { fixture, command, attach } = operatorFixture();
+  const { fixture, command, attach } = await operatorFixture();
   await fixture.create();
   attach();
   await fixture.cleanup();
@@ -518,7 +561,7 @@ it("cleans its provider attachment before deletion after an interrupted selectio
 });
 
 it("binds the recorded selection to the original provider, exported profile and live attachment", async () => {
-  const { fixture, attach } = operatorFixture();
+  const { fixture, attach } = await operatorFixture();
   const id = await fixture.create();
   attach();
   fs.mkdirSync(path.join(directory, ".nemoclaw"));
@@ -530,7 +573,7 @@ it("binds the recorded selection to the original provider, exported profile and 
 });
 
 it("does not recompute expected profile identity from a later changed export", async () => {
-  const { fixture, attach, changeProfile } = operatorFixture();
+  const { fixture, attach, changeProfile } = await operatorFixture();
   const id = await fixture.create();
   attach();
   fs.mkdirSync(path.join(directory, ".nemoclaw"));
@@ -540,4 +583,16 @@ it("does not recompute expected profile identity from a later changed export", a
   );
   changeProfile();
   expect(await fixture.evidence()).not.toMatchObject(fixture.expected(id));
+});
+
+it("rejects an HTTP operator fixture before writing its profile", async () => {
+  const before = fs.readdirSync(directory);
+  await expect(operatorFixture("http://operator.example.com/v1")).rejects.toThrow("HTTPS");
+  expect(fs.readdirSync(directory)).toEqual(before);
+});
+
+it("rejects private operator endpoint resolution before writing its profile", async () => {
+  const before = fs.readdirSync(directory);
+  await expect(operatorFixture(undefined, ["10.1.2.3"])).rejects.toThrow("public endpoint IP pins");
+  expect(fs.readdirSync(directory)).toEqual(before);
 });
