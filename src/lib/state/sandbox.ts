@@ -2897,7 +2897,9 @@ function backupNativeSandboxState(
           'ancestors=" $self "',
           "cursor=$PPID",
           'while [ "$cursor" -gt 1 ] 2>/dev/null; do ancestors="$ancestors$cursor "; parent=""; { while IFS=":" read -r key value; do if [ "$key" = "PPid" ]; then set -- $value; parent=${1:-}; break; fi; done; } 2>/dev/null < "/proc/$cursor/status" || break; cursor=$parent; [ -n "$cursor" ] || break; done',
-          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; }',
+          // A foreign or vanished final PID is normal; do not let its failed UID
+          // comparison become the function status under set -e.
+          'collect_candidates() { candidates=""; for proc in /proc/[0-9]*; do pid=${proc##*/}; case "$ancestors" in *" $pid "*) continue ;; esac; owner=""; while IFS=":" read -r key value; do if [ "$key" = "Uid" ]; then set -- $value; owner=${1:-}; break; fi; done 2>/dev/null < "$proc/status" || :; [ "$owner" = "$uid" ] && candidates="$candidates $pid"; done; return 0; }',
           'stopped=""',
           'resume() { [ -z "$stopped" ] || kill -CONT $stopped 2>/dev/null || :; rm -rf -- "$db_stage"; }',
           "trap resume EXIT HUP INT TERM",
