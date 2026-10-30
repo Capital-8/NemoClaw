@@ -489,6 +489,7 @@
     {
       "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
       "fast": [
+        "test/e2e/support/onboard-policy-preset-sequencing-workflow-boundary.test.ts",
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts"
       ]
@@ -912,6 +913,7 @@
       "liveSources": [
         "test/e2e/fixtures/inference-routing-openclaw-native.ts",
         "test/e2e/live/openclaw-inference-switch-helpers.ts",
+        "test/e2e/live/openclaw-anthropic-provider.ts",
         "test/e2e/live/openclaw-admin-scope.ts",
         "test/e2e/live/public-nvidia-switch-provider.ts",
         "test/e2e/fixtures/admin-approval-connect.ts",
