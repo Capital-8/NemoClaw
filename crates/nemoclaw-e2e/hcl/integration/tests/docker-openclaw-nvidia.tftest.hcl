@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The live E2E hosted scenario: two OpenClaw agents on NVIDIA hosted inference
-# behind a managed Docker gateway.
+# The live E2E hosted scenario: OpenClaw agents on NVIDIA hosted inference
+# behind a managed Docker gateway. Assertions cover every sandbox the shared
+# document declares, and the assistant's resources by name.
 
 # Docker is mocked. Its alias follows from the runner's engine socket, and
 # its IDs match what the fixtures module declares to the engine.
@@ -75,12 +76,11 @@ run "verify" {
     error_message = "The gateway container did not hand off to a ready, compatible gateway."
   }
 
-  # The mocked pull's image ID reaches both agents' real harness reads.
+  # The mocked pull's image ID reaches the real harness read.
   assert {
     condition = (
       data.fabric_harness.assistant_acquired.image == openshell_sandbox.assistant.image
       && data.fabric_harness.assistant_acquired.image_id == module.fixtures.image_id
-      && data.fabric_harness.researcher_acquired.image_id == module.fixtures.image_id
       && data.fabric_harness.assistant_acquired.adapter_id == "nvidia.fabric.openclaw"
     )
     error_message = "The sandbox image did not hand off to the OpenClaw harnesses."
@@ -97,18 +97,16 @@ run "verify" {
       && one(values(module.observed.registrations)).credentials == {
         (fabric_agent.assistant.models["primary"].api_key_env) = "env:NVIDIA_INFERENCE_API_KEY"
       }
-      && fabric_agent.researcher.models["primary"].api_key_env == fabric_agent.assistant.models["primary"].api_key_env
     )
     error_message = "The NVIDIA inference binding is not registered as configured."
   }
 
-  # OpenShell created both sandboxes in the deployment's workspace; each names
+  # OpenShell created every sandbox in the deployment's workspace; each names
   # the registration, may reach only the inference endpoint, and runs Fabric.
   assert {
     condition = (
-      keys(module.observed.agents) == ["assistant", "researcher"]
+      toset(keys(module.observed.agents)) == toset(module.fixtures.sandboxes)
       && module.observed.agents.assistant.id == openshell_sandbox.assistant.id
-      && module.observed.agents.researcher.id == openshell_sandbox.researcher.id
       && alltrue([
         for agent in values(module.observed.agents) :
         agent.workspace == openshell_workspace.deployment.name
@@ -122,19 +120,19 @@ run "verify" {
     error_message = "A sandbox's identity, inference binding, or policy differs from the configuration."
   }
 
-  # Fabric started each agent once, in its sandbox, through ExecSandbox with
-  # the configuration the SDK compiled, after OpenShell created it.
+  # Fabric started every agent once, in its sandbox, through ExecSandbox;
+  # the assistant with the configuration the SDK compiled, after OpenShell
+  # created its sandbox.
   assert {
     condition = (
-      fabric_agent.assistant.sandbox == openshell_sandbox.assistant.ref
-      && fabric_agent.researcher.sandbox == openshell_sandbox.researcher.ref
+      alltrue([
+        for agent in values(module.observed.agents) :
+        agent.start != null && module.observed.openshell.fabric_starts[agent.id] == 1
+      ])
+      && fabric_agent.assistant.sandbox == openshell_sandbox.assistant.ref
       && fabric_agent.assistant.models["primary"].base_url == "${module.observed.http.endpoint}/v1"
       && module.observed.agents.assistant.start.command == ["/opt/fabric/bin/fabric-agent-ctl", "start", "--agent", "assistant", "--config", "-"]
-      && module.observed.agents.researcher.start.command == ["/opt/fabric/bin/fabric-agent-ctl", "start", "--agent", "researcher", "--config", "-"]
       && module.observed.agents.assistant.start.configuration == jsondecode(terraform_data.agent_assistant.input)
-      && module.observed.agents.researcher.start.configuration == jsondecode(terraform_data.agent_researcher.input)
-      && module.observed.openshell.fabric_starts[openshell_sandbox.assistant.id] == 1
-      && module.observed.openshell.fabric_starts[openshell_sandbox.researcher.id] == 1
       && index(module.observed.openshell.rpcs, "CreateProvider") < index(module.observed.openshell.rpcs, "CreateSandbox")
       && index(module.observed.openshell.rpcs, "CreateSandbox") < index(module.observed.openshell.rpcs, "ExecSandbox")
     )

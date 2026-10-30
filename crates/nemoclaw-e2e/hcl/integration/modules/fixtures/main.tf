@@ -51,6 +51,11 @@ output "image_id" {
   value       = local.image_id
 }
 
+output "sandboxes" {
+  description = "The document's sandbox names, sorted."
+  value       = sort(keys(local.spec.sandboxes))
+}
+
 output "owner" {
   value = local.owner
 }
