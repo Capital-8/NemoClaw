@@ -274,6 +274,24 @@ const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   sleep: sleepSeconds,
 };
 
+function openClawMaintenanceProgress(
+  sandboxName: string,
+  operation: string,
+  startedMs: number,
+  deadlineMs: number,
+): (currentMs: number) => void {
+  let nextReportMs = startedMs;
+  return (currentMs) => {
+    if (currentMs < nextReportMs) return;
+    nextReportMs = currentMs + 30_000;
+    console.log(
+      `  OpenClaw ${operation} for sandbox ${JSON.stringify(sandboxName)}: ` +
+        `${Math.max(0, Math.floor((currentMs - startedMs) / 1_000))}s elapsed, ` +
+        `${Math.max(0, Math.ceil((deadlineMs - currentMs) / 1_000))}s remaining; waiting for the exact maintenance receipt.`,
+    );
+  };
+}
+
 async function executeOpenClawDoctorGateCommand(
   deps: OpenClawPostRestoreDoctorDeps,
   sandboxName: string,
@@ -809,15 +827,23 @@ export async function beginOpenClawPostRestoreDoctor(
     lifecycleOptions,
   );
 
+  const reconciliationStartedMs = deps.now();
   const reconciliationDeadlineMs =
-    deps.now() +
+    reconciliationStartedMs +
     (maintenanceKind === "backup"
       ? OPENCLAW_BACKUP_QUIESCE_READY_TIMEOUT_MS
       : OPENCLAW_DOCTOR_READY_TIMEOUT_MS);
+  const reportProgress = openClawMaintenanceProgress(
+    sandboxName,
+    maintenanceKind === "backup" ? "backup quiesce" : "Doctor",
+    reconciliationStartedMs,
+    reconciliationDeadlineMs,
+  );
   const ready = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      reportProgress(reconciliationDeadlineMs - remainingMs);
       try {
         const result = await executeOpenClawDoctorGateCommand(
           deps,
@@ -962,12 +988,20 @@ async function promoteOpenClawBackupQuiesceToDoctor(
     };
   }
 
-  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
+  const reconciliationStartedMs = deps.now();
+  const reconciliationDeadlineMs = reconciliationStartedMs + OPENCLAW_DOCTOR_READY_TIMEOUT_MS;
+  const reportProgress = openClawMaintenanceProgress(
+    sandboxName,
+    "restored-state Doctor",
+    reconciliationStartedMs,
+    reconciliationDeadlineMs,
+  );
   let stopped = false;
   const settled = await waitUntilAsync(
     async () => {
       const remainingMs = reconciliationDeadlineMs - deps.now();
       if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      reportProgress(reconciliationDeadlineMs - remainingMs);
       const result = await executeOpenClawDoctorGateCommand(
         deps,
         sandboxName,

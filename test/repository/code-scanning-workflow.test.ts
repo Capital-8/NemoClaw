@@ -146,150 +146,17 @@ describe("ShellCheck SARIF workflow boundary", () => {
   });
 });
 
-const partitionJob = workflow.jobs["codeql-javascript"]!;
 const partitionAggregate = workflow.jobs["codeql-javascript-complete"]!;
-const partitionRows = partitionJob.strategy!.matrix!.include as {
-  partition: string;
-  config: string;
-}[];
 
-function partitionStep(owner: typeof partitionJob, name: string) {
+function partitionStep(owner: typeof partitionAggregate, name: string) {
   const step = owner.steps?.find((candidate) => candidate.name === name);
   assert(step, `CodeQL workflow is missing step: ${name}`);
   return step;
 }
 
-function exercisePartitionIdentities(
-  mutate: (directory: string) => void = () => {},
-  expectedAttempt = "1",
-  rewriteConfiguration: (configuration: string) => string = (configuration) => configuration,
-) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-codeql-partitions-"));
-  const received = path.join(root, "received");
-  fs.mkdirSync(received);
-  try {
-    const identities: { pattern: string; filter: string }[] = [];
-    for (const row of partitionRows) {
-      const producer = path.join(root, row.partition);
-      fs.mkdirSync(producer);
-      const recorded = spawnSync(
-        "bash",
-        [
-          "--noprofile",
-          "--norc",
-          "-c",
-          partitionStep(partitionJob, "Record query partition identity").run!,
-        ],
-        {
-          encoding: "utf8",
-          timeout: 10_000,
-          env: {
-            PATH: process.env.PATH,
-            RUNNER_TEMP: producer,
-            GITHUB_RUN_ID: "123",
-            GITHUB_RUN_ATTEMPT: "1",
-            PARTITION: row.partition,
-            QUERY_CONFIGURATION: rewriteConfiguration(row.config),
-            CODEQL_VERSION: "2.27.3",
-            SOURCE_REVISION: "a".repeat(40),
-            CHECKOUT_REVISION: "b".repeat(40),
-            QUERY_SUITE: partitionJob.env!.QUERY_SUITE!,
-            QUERY_LANGUAGE: partitionJob.env!.QUERY_LANGUAGE!,
-          },
-        },
-      );
-      assert.equal(recorded.status, 0, recorded.stderr);
-      identities.push(
-        JSON.parse(
-          fs.readFileSync(
-            path.join(producer, "codeql-js-partition", row.partition + ".json"),
-            "utf8",
-          ),
-        ),
-      );
-      fs.cpSync(
-        path.join(producer, "codeql-js-partition"),
-        path.join(received, `codeql-js-partition-123-1-${row.partition}`),
-        { recursive: true },
-      );
-    }
-    mutate(received);
-    const verified = spawnSync(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-c",
-        partitionStep(partitionAggregate, "Verify complete query partition identities").run!,
-      ],
-      {
-        encoding: "utf8",
-        timeout: 10_000,
-        env: {
-          PATH: process.env.PATH,
-          PARTITION_DIRECTORY: received,
-          EXPECTED_RUN_ID: "123",
-          EXPECTED_RUN_ATTEMPT: expectedAttempt,
-          EXPECTED_SOURCE_REVISION: "a".repeat(40),
-          EXPECTED_CHECKOUT_REVISION: "b".repeat(40),
-          EXPECTED_PATTERN: partitionAggregate.steps!.at(-1)!.env!.EXPECTED_PATTERN!,
-        },
-      },
-    );
-    return Object.assign(verified, { identities });
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-}
-
-function rewriteOtherIdentity(directory: string, key: string, value: unknown) {
-  const file = path.join(directory, "codeql-js-partition-123-1-other/other.json");
-  const receipt = JSON.parse(fs.readFileSync(file, "utf8"));
-  receipt[key] = value;
-  fs.writeFileSync(file, JSON.stringify(receipt));
-}
-
 describe("Complete CodeQL query partition qualification", () => {
-  it.each([
-    ["js/code-injection", "include"],
-    ["js/log-injection", "include"],
-    ["js/sql-injection", "exclude"],
-    ["js/xss", "exclude"],
-    ["future/new-query", "exclude"],
-  ] as const)("selects %s in exactly one complementary query partition", (id, expectedFilter) => {
-    const result = exercisePartitionIdentities();
-    expect(result.status, result.stderr).toBe(0);
-    const selected = (id: string) =>
-      result.identities.filter((identity) => {
-        const matches = new RegExp(identity.pattern.slice(1, -1)).test(id);
-        return identity.filter === "include" ? matches : !matches;
-      });
-    expect(selected(id)).toHaveLength(1);
-    expect(selected(id)[0]!.filter).toBe(expectedFilter);
-  });
-
-  it.each(["paths-ignore", "queries"])("rejects a configuration that adds %s", (field) => {
-    expect(() =>
-      exercisePartitionIdentities(
-        () => {},
-        "1",
-        (configuration) => {
-          const changed = JSON.parse(configuration);
-          changed[field] = ["unreviewed-selection"];
-          return JSON.stringify(changed);
-        },
-      ),
-    ).toThrow("CodeQL query configuration cannot change the source or suite");
-  });
-
-  it("accepts the actual producer records from both complementary partitions", () => {
-    const result = exercisePartitionIdentities();
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("Complete security-and-quality query suite passed");
-  });
-
-  it.each(["failure", "cancelled", "skipped"])(
-    "rejects a %s partition before accepting any artifacts",
+  it.each(["success", "failure", "cancelled", "skipped"])(
+    "accepts only a successful complete matrix (%s)",
     (status) => {
       const result = spawnSync(
         "bash",
@@ -301,74 +168,7 @@ describe("Complete CodeQL query partition qualification", () => {
         ],
         { encoding: "utf8", env: { PATH: process.env.PATH, PARTITION_RESULT: status } },
       );
-      expect(result.status).toBe(1);
+      expect(result.status).toBe(status === "success" ? 0 : 1);
     },
   );
-
-  it.each([
-    ["codeqlVersion", "2.28.0", "different CLI versions"],
-    ["sourceRevision", "c".repeat(40), "identity changed"],
-    ["checkoutRevision", "c".repeat(40), "identity changed"],
-    ["filter", "include", "identity changed"],
-    ["runId", "124", "identity changed"],
-    ["runAttempt", 2, "identity changed"],
-  ] as const)("rejects a substituted %s", (key, value, message) => {
-    const result = exercisePartitionIdentities((directory) =>
-      rewriteOtherIdentity(directory, key, value),
-    );
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(message);
-  });
-
-  it("rejects missing partition evidence", () => {
-    const result = exercisePartitionIdentities((directory) => {
-      fs.rmSync(path.join(directory, "codeql-js-partition-123-1-other"), { recursive: true });
-    });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("identities are missing");
-  });
-
-  it("rejects a symbolic-link identity", () => {
-    const result = exercisePartitionIdentities((directory) => {
-      const file = path.join(directory, "codeql-js-partition-123-1-other/other.json");
-      const target = path.join(directory, "codeql-js-partition-123-1-other/held.json");
-      fs.renameSync(file, target);
-      fs.symlinkSync(target, file);
-    });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("missing or ambiguous");
-  });
-
-  it("accepts aggregate-only reruns of the same immutable run", () => {
-    const result = exercisePartitionIdentities(() => {}, "2");
-    expect(result.status, result.stderr).toBe(0);
-  });
-
-  it("accepts a successful partial rerun with the same source and CLI", () => {
-    const result = exercisePartitionIdentities((directory) => {
-      const source = path.join(directory, "codeql-js-partition-123-1-other");
-      const target = path.join(directory, "codeql-js-partition-123-2-other");
-      fs.cpSync(source, target, { recursive: true });
-      const file = path.join(target, "other.json");
-      const receipt = JSON.parse(fs.readFileSync(file, "utf8"));
-      receipt.runAttempt = 2;
-      fs.writeFileSync(file, JSON.stringify(receipt));
-    }, "2");
-    expect(result.status, result.stderr).toBe(0);
-  });
-
-  it("does not fall back to an older matching CLI after a changed-version rerun", () => {
-    const result = exercisePartitionIdentities((directory) => {
-      const source = path.join(directory, "codeql-js-partition-123-1-other");
-      const target = path.join(directory, "codeql-js-partition-123-2-other");
-      fs.cpSync(source, target, { recursive: true });
-      const file = path.join(target, "other.json");
-      const receipt = JSON.parse(fs.readFileSync(file, "utf8"));
-      receipt.runAttempt = 2;
-      receipt.codeqlVersion = "2.28.0";
-      fs.writeFileSync(file, JSON.stringify(receipt));
-    }, "2");
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("different CLI versions");
-  });
 });

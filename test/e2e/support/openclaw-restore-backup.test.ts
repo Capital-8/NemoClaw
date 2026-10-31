@@ -201,13 +201,8 @@ it.each([
       `#!${process.execPath}\n` +
         `const assert = require('node:assert/strict');\n` +
         `const args = process.argv.slice(2);\n` +
-        `if (args[0] === 'sandbox') {\n` +
-        `  assert.deepEqual(args, ['sandbox', 'get', '-g', 'nemoclaw', '${sandboxName}']);\n` +
-        `  console.log('Phase: ${phase}');\n` +
-        `} else {\n` +
-        `  assert.deepEqual(args, ['logs', '-g', 'nemoclaw', '${sandboxName}', '-n', '120', '--source', 'all']);\n` +
-        `  console.log(${JSON.stringify(refusal ? refusalLog : "unrelated log")});\n` +
-        `}\n`,
+        `assert.deepEqual(args, ['sandbox', 'get', '-g', 'nemoclaw', '${sandboxName}']);\n` +
+        `console.log('Phase: ${phase}');\n`,
       { mode: 0o700 },
     );
     const result = spawnSync(
@@ -218,7 +213,12 @@ it.each([
         "--input-type=module",
         "-e",
         OPENCLAW_RESTORE_HOST_PROGRAM,
-        JSON.stringify({ mode: "refusal", sandboxName, gatewayName: "nemoclaw" }),
+        JSON.stringify({
+          mode: "refusal",
+          sandboxName,
+          gatewayName: "nemoclaw",
+          startupLog: refusal ? refusalLog : "unrelated log",
+        }),
       ],
       {
         cwd: process.cwd(),

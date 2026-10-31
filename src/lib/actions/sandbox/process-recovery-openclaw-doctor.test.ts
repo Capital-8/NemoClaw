@@ -843,6 +843,7 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
   });
 
   it("fails closed when startup never proves the doctor maintenance window", async () => {
+    const progress = vi.spyOn(console, "log").mockImplementation(() => undefined);
     let currentMs = 0;
     const execute = vi
       .fn()
@@ -868,6 +869,15 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
       detail: "startup did not prove doctor completion with the gateway held down",
     });
     expect(currentMs).toBe(33 * 60_000);
+    const messages = progress.mock.calls.map(([message]) => String(message));
+    progress.mockRestore();
+    expect(messages).toHaveLength(66);
+    expect(messages[0]).toBe(
+      '  OpenClaw Doctor for sandbox "alpha": 0s elapsed, 1980s remaining; waiting for the exact maintenance receipt.',
+    );
+    expect(messages.at(-1)).toBe(
+      '  OpenClaw Doctor for sandbox "alpha": 1950s elapsed, 30s remaining; waiting for the exact maintenance receipt.',
+    );
   });
 
   it("allows bounded intermediate migrations to finish before releasing the doctor gate", async () => {

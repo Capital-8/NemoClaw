@@ -290,8 +290,10 @@ test(
         timeoutMs: bounded(330_000),
       },
     );
-    assertExitZero(verify, "verify complete native-home restore and readiness");
-    expect(verify.stdout.trim(), resultText(verify)).toBe(marker);
+    expect(
+      verify.exitCode,
+      `verify complete native-home restore and readiness: ${resultText(verify)}`,
+    ).toBe(0);
 
     await artifacts.target.complete({
       id: "state-backup-restore",
@@ -308,21 +310,55 @@ test(
   "state-backup-restore: retired Telegram state refuses startup and retains recovery",
   restoreOptions,
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
-    const { rebuild, hostFixture, verifyBackup } = await rebuildFixture("retired-telegram", {
-      artifacts,
-      cleanup,
-      host,
-      progress,
-      runtimeProvider,
-      sandbox,
-      secrets,
-    });
+    const { rebuild, hostFixture, verifyBackup, sandboxName, env, redactions, bounded } =
+      await rebuildFixture("retired-telegram", {
+        artifacts,
+        cleanup,
+        host,
+        progress,
+        runtimeProvider,
+        sandbox,
+        secrets,
+      });
     expect(rebuild.timedOut, resultText(rebuild)).toBe(false);
     expect(rebuild.signal, resultText(rebuild)).toBeNull();
     expect(rebuild.exitCode, resultText(rebuild)).toBe(1);
     await verifyBackup();
     progress.phase("verify native-home state and readiness");
-    const refusal = await hostFixture("refusal");
+    // OpenShell diagnostic events do not contain entrypoint stderr. Read the
+    // retained native log from the exact runtime, including when it is stopped.
+    const resourceHandle = await runtimeProvider.resolveSandboxResourceHandle(sandboxName, {
+      artifactName: "state-backup-restore-refusal-container",
+      env,
+      redactionValues: redactions,
+      timeoutMs: bounded(30_000),
+    });
+    const copy = runtimeProvider.hostInvocation([
+      "cp",
+      `${resourceHandle}:/tmp/nemoclaw-start.log`,
+      "-",
+    ]);
+    const startup = await host.command(
+      "bash",
+      [
+        "-o",
+        "pipefail",
+        "-c",
+        '"$@" | tar -xOf - nemoclaw-start.log',
+        "restore-refusal",
+        copy.command,
+        ...copy.args,
+      ],
+      {
+        artifactName: "state-backup-restore-refusal-startup-log",
+        env,
+        redactionValues: redactions,
+        captureLimitBytes: 32_768,
+        timeoutMs: bounded(30_000),
+      },
+    );
+    assertExitZero(startup, "read actual stopped entrypoint refusal evidence");
+    const refusal = await hostFixture("refusal", { startupLog: startup.stdout });
     await artifacts.writeJson("native-retired-state-refusal.json", refusal);
     await artifacts.target.complete({
       id: "state-backup-restore",

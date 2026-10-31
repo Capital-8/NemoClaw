@@ -227,14 +227,13 @@ if (input.mode === 'quiesce') {
   assert.equal(input.mode, 'refusal');
   const { createCliOpenShellSandboxLookup } = require('./src/lib/adapters/openshell/sandbox-observer-cli.ts');
   const { captureOpenshell } = require('./src/lib/adapters/openshell/runtime.ts');
-  const { collectRedactedOpenShellSandboxLogs } = require('./src/lib/actions/sandbox/gateway-wedge-diagnostics.ts');
   const target = { kind: 'named', gatewayName: input.gatewayName };
   const observation = await createCliOpenShellSandboxLookup({ capture: captureOpenshell })({ sandboxName: input.sandboxName, target, timeoutMs: 15_000 });
   assert.ok(observation.result.ok && observation.result.value.state === 'present');
   const state = observation.result.value.sandbox;
   assert.ok(state.phase === 'Stopped' || state.readiness === 'terminal', 'refused replacement is still active');
-  const logs = await collectRedactedOpenShellSandboxLogs(input.sandboxName, target);
-  assert.ok(logs.some(line => line.includes('[migration] OpenClaw 2026.9.7 retired Telegram state inspection failed;')), 'missing actual retired-state refusal evidence');
-  console.log(JSON.stringify({ refused: true, phase: state.phase, logs }));
+  assert.equal(typeof input.startupLog, 'string', 'missing native entrypoint output');
+  assert.ok(input.startupLog.includes('[migration] OpenClaw 2026.9.7 retired Telegram state inspection failed;'), 'missing actual retired-state refusal evidence');
+  console.log(JSON.stringify({ refused: true, phase: state.phase, logs: input.startupLog.split('\n') }));
 }
 `;
