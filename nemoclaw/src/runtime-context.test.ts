@@ -3,8 +3,11 @@
 
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
+  localCodeRelationshipPrompts,
   localFilenamePrompts,
   quotedExternalResearchPrompts,
+  suppliedUrlListPrompts,
+  webTargetPrompts,
 } from "../test/runtime-context-path-prompts.js";
 import type { NemoClawState } from "./blueprint/state.js";
 import register, {
@@ -1138,6 +1141,9 @@ const admissionCases: {
     local: false,
     urls: ["https://example.org/data.csv"],
   })),
+  ...localCodeRelationshipPrompts.map((prompt) => ({ prompt, tools: true, local: true, urls: [] })),
+  ...webTargetPrompts.map((prompt) => ({ prompt, tools: false })),
+  ...suppliedUrlListPrompts.map((sources) => ({ ...sources, tools: true })),
 ];
 
 const mockedLoadState = vi.mocked(loadState);

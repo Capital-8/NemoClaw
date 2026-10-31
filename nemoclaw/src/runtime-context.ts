@@ -134,6 +134,12 @@ const LOCAL_SOURCE =
   /^(?:(?:local\s+)?(?:files?|logs?|memory|repository|repo|workspace|codebase|project|director(?:y|ies)|folders?|code|conversation|shell\s+history)|sandbox|(?:current\s+(?:working\s+)?|working\s+)directory|local\s+(?:docs|documentation)|(?:(?:unit|integration|regression)\s+)?tests?|imports?|exports?|variables?|parameters?|arguments?|functions?|methods?|class(?:es)?|modules?|dependencies|references?|comments?|markers?|bugs?|defects?|typos?|(?:lint|type|syntax|compilation|compiler|build|test)\s+(?:errors?|warnings?|failures?|output|results?))(?:\s+(?:files?|docs|directory|sources?|logs?|code|layout))*$/iu;
 const LOCAL_PATH =
   /^(?:\.{0,2}\/\S+|(?:[\w.-]+\/)+[\w.-]*|(?:Dockerfile|Containerfile|(?:GNU)?Makefile|LICENSE|NOTICE|README)(?:\.[\w-]+)*|\.[\w-]+|[\w.-]+\.[\w-]+)$/u;
+// A host names a web source, never a local file. Omit TLDs that are common file extensions.
+const HOSTNAME =
+  /^(?:[a-z\d-]+\.)+(?:com|org|net|edu|gov|mil|io|ai|co|dev|app|cloud|info|news|us|uk|eu|de|fr|jp|cn|ca|au|nl)(?::\d+)?(?:\/\S*)?$/iu;
+function localPath(value: string): boolean {
+  return LOCAL_PATH.test(value) && !HOSTNAME.test(value);
+}
 const LOCAL_TOOL =
   /^(?:web_fetch|read|edit|write|apply_patch|exec|process|memory_get|memory_search|(?:(?:available|local|filesystem|shell|memory)\s+)+tools?)(?:\s+tool)?$/iu;
 const LOCAL_STATE =
@@ -166,8 +172,7 @@ function normalizeQuotedTargets(raw: string, budget: LocalTargetBudget): string 
         ? "__local_glob__"
         : "<quoted topic>";
     }
-    if (LOCAL_PATH.test(value) || (spacedPath && (rooted || sourceContext)))
-      return "__local_path__";
+    if (localPath(value) || (spacedPath && (rooted || sourceContext))) return "__local_path__";
     const target = localTarget(value, budget);
     if (target === "source") return "__local_path__";
     const unquoted = raw.slice(0, offset) + value + raw.slice(offset + quoted.length);
@@ -211,7 +216,7 @@ function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | unde
   if (end < words.length) candidates.push(words.slice(0, end).join(" ").replace(/,$/u, ""));
   for (const candidate of candidates) {
     const target = candidate.replace(TARGET_PREFIX, "");
-    if (target === "__local_path__" || LOCAL_SOURCE.test(target) || LOCAL_PATH.test(target))
+    if (target === "__local_path__" || LOCAL_SOURCE.test(target) || localPath(target))
       return "source";
     if (target === "__local_glob__") return "work";
     if (LOCAL_TOOL.test(target) || LOCAL_STATE.test(target)) return "work";
@@ -236,11 +241,23 @@ function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | unde
         target,
       );
     if (relation && localTarget(relation[1]!, budget) === "source") return "source";
+    // A code relationship stays local when it also names a local place to look.
+    const codeQuery = target.replace(
+      /\s+(?:in|inside|within|under|across|throughout)\s+(?:the\s+)?(?!(?:web|internet)\b)([\w./-]+)(?:\s+(?:director(?:y|ies)|folders?|modules?|packages?))?$/iu,
+      (location, place: string) => (HOSTNAME.test(place) ? location : ""),
+    );
     const codeTarget =
       /^(?:(?:callers?|call\s+sites?|references?|definitions?|declarations?|implementations?|imports?|exports?|usages?|test\s+coverage)\s+(?:of|to|for)\s+(.+)|(?:files?|director(?:y|ies)|folders?|functions?|methods?|class(?:es)?|modules?|symbols?|variables?|constants?|types?|interfaces?|structs?|enums?|traits?|propert(?:y|ies)|namespaces?|parameters?|arguments?|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?)\s+(?:(?:that|which)\s+)?(?:calls?|invokes?|uses?|references?|imports?|exports?|implements?|named|called|covers?|covering|exercises?|exercising|calling|testing|importing|for)\s+(.+)|where\s+(.+)\s+(?:is|are)\s+(?:called|invoked|defined|declared|implemented|imported|exported|used|referenced|tested)|(.+)['’]s\s+(?:callers?|call\s+sites?))$/iu.exec(
-        target,
+        codeQuery,
       );
     if (codeTarget?.slice(1).some((value) => value && IDENTIFIER.test(value))) return "source";
+    // Code described by its behavior is local code, whatever the behavior is.
+    if (
+      /^(?:functions?|methods?|class(?:es)?|modules?|components?|handlers?|hooks?|helpers?|middleware|(?:(?:unit|integration|regression)\s+)?tests?(?:\s+cases?)?|code)\s+(?:that|which)\s+\w+\s+\S/iu.test(
+        target,
+      )
+    )
+      return "source";
     // A query uses the same source grammar; a code relationship must still name valid code.
     const query = /^(.*?)(?:\s+(?:for|to)\s+.+|\s+and\s+(?:fetch|retrieve)\s*)$/iu.exec(target);
     const queryTarget = query?.[1]?.replace(/\s+(?:recursively|carefully|thoroughly)$/iu, "");
@@ -282,7 +299,7 @@ function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | unde
       localTarget(location[1]!, budget)
     )
       return "work";
-    if (LOCAL_PATH.test(target.replace(/^(?:the\s+)?file\s+/iu, ""))) return "source";
+    if (localPath(target.replace(/^(?:the\s+)?file\s+/iu, ""))) return "source";
     const stateLocation =
       /^(.*?)\s+(?:in|for|of|from|on)\s+(?:(?:the|this|our|my|your|local|current|working)\s+)*(?:node(?:\.js)?|python3?|npm|pnpm|yarn|bun|git|openclaw|nemoclaw|hermes|(?:[\w.-]+\s+)*(?:app|server|project|repository|repo|workspace|sandbox|environment|shell|terminal|machine|directory|runtime))$/iu.exec(
         target,
@@ -298,6 +315,22 @@ function localTarget(raw: string, budget: LocalTargetBudget): LocalTarget | unde
       return "work";
   }
   return undefined;
+}
+
+const URL_OPERAND = String.raw`https:\/\/supplied-url\.invalid\/\d+\/[.,;!?)\]}]*`;
+const OPERAND_JOIN = String.raw`(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)`;
+const URL_THEN_OPERAND = new RegExp(`${URL_OPERAND}${OPERAND_JOIN}(?!https:)`, "iu");
+const OPERAND_THEN_URL = new RegExp(`${OPERAND_JOIN}${URL_OPERAND}`, "iu");
+
+/** Removes URL operands coordinated with another target; undefined when every target is a URL. */
+function withoutUrlOperands(request: string): string | undefined {
+  let residual = request;
+  for (let previous = ""; previous !== residual;) {
+    previous = residual;
+    residual = residual.replace(URL_THEN_OPERAND, "");
+    if (residual === previous) residual = residual.replace(OPERAND_THEN_URL, "");
+  }
+  return residual !== request && !residual.includes("supplied-url.invalid") ? residual : undefined;
 }
 
 function classifySearchRequests(prompt: string, budget: LocalTargetBudget): ResearchRequestScope {
@@ -330,7 +363,11 @@ function classifySearchRequests(prompt: string, budget: LocalTargetBudget): Rese
     .split(
       /(?<=[.!?])\s+|[\n;]+|(?:,(?!\s*[\w-]+\s*(?:,|$))\s*|(?:,\s*)?\b(?:and|or|then|but|instead)\b)(?!\s*(?:fetch|retrieve)\s+https?:\/\/)(?=\s*(?:(?:also|additionally|separately|alternatively|please|could|can|would|you|I|we|do|not|don't|never)\s+)*(?:use|run|ask|google|bing|duckduckgo|web[_ -]?search|search|research|investigate|look|find|locate|gather|browse|seek|consult|query|discover|explore|provide|show|point|give|tell|list|report|return|print|output|present|identify|describe|explain|summarize|fetch|retrieve|read|get|inspect|fix|repair|replace|edit|update|debug|test|modify|refactor|rename|remove|delete|format|lint|verify|check|add|need|want|where|which|what|who|when|how)\b)/iu,
     );
-  const scopes = requests.map((request): ResearchRequestScope => {
+  const classifyRequest = (request: string): ResearchRequestScope => {
+    // A supplied URL exempts only itself: judge a coordinated non-URL target on its own.
+    const residual = withoutUrlOperands(request);
+    if (residual !== undefined && classifyRequest(residual).scope === "external")
+      return { scope: "external", local: false, urls: [] };
     const requestUrls = Array.from(
       request.matchAll(/https:\/\/supplied-url\.invalid\/(\d+)\//gu),
       (match) => urls[Number(match[1])]!,
@@ -431,7 +468,8 @@ function classifySearchRequests(prompt: string, budget: LocalTargetBudget): Rese
       local: localSource,
       urls: suppliedUrl ? requestUrls : [],
     };
-  });
+  };
+  const scopes = requests.map(classifyRequest);
   if (scopes.some(({ scope }) => scope === "external")) {
     return { scope: "external", local: false, urls: [] };
   }
