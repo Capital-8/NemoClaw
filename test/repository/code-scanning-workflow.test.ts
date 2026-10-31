@@ -155,6 +155,40 @@ function partitionStep(owner: typeof partitionAggregate, name: string) {
 }
 
 describe("Complete CodeQL query partition qualification", () => {
+  // source-shape-contract: security -- Complementary query filters and separate SARIF categories preserve complete CodeQL coverage
+  it("preserves complete JavaScript coverage across disjoint query partitions", () => {
+    const partitions = workflow.jobs["codeql-javascript"]!;
+    expect(partitions.strategy?.matrix).toEqual({
+      include: [
+        {
+          partition: "a-m",
+          config: JSON.stringify({ "query-filters": [{ include: { id: "/^js\\/[a-m]/" } }] }),
+        },
+        {
+          partition: "other",
+          config: JSON.stringify({ "query-filters": [{ exclude: { id: "/^js\\/[a-m]/" } }] }),
+        },
+      ],
+    });
+    expect(partitions.env).toEqual({
+      QUERY_SUITE: "security-and-quality",
+      QUERY_LANGUAGE: "javascript-typescript",
+    });
+    expect(partitionStep(partitions, "Initialize CodeQL").with).toMatchObject({
+      languages: "${{ env.QUERY_LANGUAGE }}",
+      queries: "${{ env.QUERY_SUITE }}",
+      config: "${{ matrix.config }}",
+    });
+    expect(partitionStep(partitions, "Perform CodeQL analysis").with?.category).toBe(
+      "/language:javascript-typescript/partition:${{ matrix.partition }}",
+    );
+    expect(partitionAggregate.needs).toEqual(["codeql-javascript"]);
+    expect(partitionAggregate.if).toBe("${{ always() }}");
+    expect(
+      partitionStep(partitionAggregate, "Require every query partition to succeed").env,
+    ).toEqual({ PARTITION_RESULT: "${{ needs.codeql-javascript.result }}" });
+  });
+
   it.each(["success", "failure", "cancelled", "skipped"])(
     "accepts only a successful complete matrix (%s)",
     (status) => {
