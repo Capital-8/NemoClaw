@@ -10,7 +10,7 @@ The adapter runs OpenClaw's gateway inside the sandbox; Fabric invocations reach
 
 | Target | Inference source | Features | Revision | Date |
 |---|---|---|---|---|
-| dgx-spark | existing endpoint | all, including [openclaw-dashboard](../features/openclaw-dashboard.md) with the patched image | `691bf43c51` | 2026-10-30 |
+| dgx-spark | existing endpoint | all, including [openclaw-dashboard](../features/openclaw-dashboard.md) with the patched image and the URL from apply output | `783b7ae247` | 2026-10-30 |
 
 ## YAML Edits
 
@@ -46,4 +46,3 @@ The first request after apply can take about 30 seconds.
 
 - **Control UI off.** The pinned adapter writes `"controlUi": {"enabled": False}` with no setting ([NVIDIA/NeMo-Fabric#541](https://github.com/NVIDIA/NeMo-Fabric/issues/541), [#13360](https://github.com/NVIDIA/NemoClaw/issues/13360)); the dashboard feature patches one line.
 - **Sign-in token.** The token lives only in the OpenClaw gateway process's environment, which `openshell sandbox exec` can't read ([#13973](https://github.com/NVIDIA/NemoClaw/issues/13973)); the dashboard feature reads it from the host's `/proc` with sudo.
-- **Service URL.** Apply doesn't print it ([#13996](https://github.com/NVIDIA/NemoClaw/issues/13996)); read it with `openshell service list`.

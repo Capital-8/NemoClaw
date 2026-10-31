@@ -130,6 +130,12 @@ pub struct OperationResult {
     pub retained: Vec<String>,
     #[serde(default, skip_serializing_if = "DiscoveryReport::is_empty")]
     pub discovery: DiscoveryReport,
+    /// URLs the gateway reported for each sandbox's service exposures, by
+    /// sandbox and service name; the unnamed endpoint's service name is empty.
+    /// Only a successful apply reads them from state. If that read fails, the
+    /// map is empty and apply emits a `Progress::Warning`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub service_urls: BTreeMap<String, BTreeMap<String, String>>,
     /// After apply, how to reach each enabled agent interface; never a token.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub interfaces: Vec<InterfaceAccess>,
@@ -145,6 +151,7 @@ impl OperationResult {
             unverified: Vec::new(),
             retained: Vec::new(),
             discovery: DiscoveryReport::default(),
+            service_urls: BTreeMap::new(),
             interfaces: Vec::new(),
         }
     }
@@ -376,6 +383,22 @@ impl Deployment {
         record.finish_apply();
         record.mark_succeeded();
         store.save(&record)?;
+        // The apply is saved; a failed or cancelled read of the URLs leaves
+        // them out of its result rather than reporting the apply as failed.
+        // Without exposures there are none to read.
+        let exposed = document
+            .spec
+            .sandboxes
+            .values()
+            .any(|sandbox| !sandbox.service_exposures.is_empty());
+        if exposed {
+            match store.bindings(&bundle.tofu(), cancel).await {
+                Ok(bindings) => result.service_urls = reporting::service_urls(&bindings),
+                Err(_) => (self.progress)(Progress::Warning {
+                    message: reporting::SERVICE_URLS_UNREAD.into(),
+                }),
+            }
+        }
         result.outcome = Outcome::Succeeded;
         result.interfaces = interface_access(&document, &store, &bundle, cancel).await?;
         Ok(result)
