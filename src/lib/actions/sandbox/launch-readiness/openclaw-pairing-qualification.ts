@@ -78,8 +78,25 @@ interface OpenClawPairingQualificationDeps {
   spawnSync: typeof spawnSync;
 }
 
+export const OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES = [
+  "input-unavailable",
+  "deadline-exceeded",
+  "output-limit-exceeded",
+  "child-error",
+  "child-signal",
+  "child-exit-failed",
+  "state-changing",
+  "incompatible-state",
+  "invalid-output",
+  "unclassified",
+] as const;
+export type OpenClawPairingObservationFailureCategory =
+  (typeof OPENCLAW_PAIRING_OBSERVATION_FAILURE_CATEGORIES)[number];
+
 export class OpenClawPairingQualificationError extends Error {
-  constructor() {
+  constructor(
+    readonly failureCategory: OpenClawPairingObservationFailureCategory = "unclassified",
+  ) {
     super("OpenClaw pairing qualification is unavailable.");
     this.name = "OpenClawPairingQualificationError";
   }
@@ -87,14 +104,14 @@ export class OpenClawPairingQualificationError extends Error {
 
 export class OpenClawPairingIncompatibleError extends OpenClawPairingQualificationError {
   constructor() {
-    super();
+    super("incompatible-state");
     this.name = "OpenClawPairingIncompatibleError";
   }
 }
 
 export class OpenClawPairingObservationRetryableError extends OpenClawPairingQualificationError {
   constructor() {
-    super();
+    super("state-changing");
     this.name = "OpenClawPairingObservationRetryableError";
   }
 }
@@ -213,16 +230,16 @@ export function buildOpenClawPairingObservationScript(
 ): string {
   const pairingStateModule = readOpenClawPairingStateModule();
   if (!path.posix.isAbsolute(stateDirectory)) {
-    throw new OpenClawPairingQualificationError();
+    throw new OpenClawPairingQualificationError("input-unavailable");
   }
   if (
     !approvalPolicyModuleB64 ||
     Buffer.from(approvalPolicyModuleB64, "base64").toString("base64") !== approvalPolicyModuleB64
   ) {
-    throw new OpenClawPairingQualificationError();
+    throw new OpenClawPairingQualificationError("input-unavailable");
   }
   if (!pairingStateModule) {
-    throw new OpenClawPairingQualificationError();
+    throw new OpenClawPairingQualificationError("input-unavailable");
   }
   const stateDirectoryB64 = Buffer.from(stateDirectory, "utf8").toString("base64");
   const marker = mode === "qualification" ? QUALIFICATION_MARKER : SETTLEMENT_MARKER;
@@ -924,7 +941,7 @@ function runOpenClawPairingObservation(
     normalizedVersion.length > 128 ||
     (mode === "qualification" && !normalizedVersion)
   ) {
-    throw new OpenClawPairingQualificationError();
+    throw new OpenClawPairingQualificationError("input-unavailable");
   }
   const approvalPolicyModuleB64 = Buffer.from(approvalPolicy, "utf8").toString("base64");
   const script = buildOpenClawPairingObservationScript(
@@ -964,9 +981,18 @@ function runOpenClawPairingObservation(
     );
     throw new OpenClawPairingIncompatibleError();
   }
-  if (result.error || result.signal || result.status !== 0) {
-    throw new OpenClawPairingQualificationError();
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
+    throw new OpenClawPairingQualificationError(
+      code === "ETIMEDOUT"
+        ? "deadline-exceeded"
+        : code === "ENOBUFS"
+          ? "output-limit-exceeded"
+          : "child-error",
+    );
   }
+  if (result.signal) throw new OpenClawPairingQualificationError("child-signal");
+  if (result.status !== 0) throw new OpenClawPairingQualificationError("child-exit-failed");
   return { output: String(result.stdout ?? ""), policy: approvalPolicy };
 }
 
@@ -987,7 +1013,7 @@ export function observeOpenClawPairingSettlement(
       execDeps,
     );
     const observation = parseOpenClawPairingSettlementObservation(executed.output);
-    if (!observation) throw new OpenClawPairingQualificationError();
+    if (!observation) throw new OpenClawPairingQualificationError("invalid-output");
     return observation;
   } catch (error) {
     if (error instanceof OpenClawPairingQualificationError) throw error;
@@ -1012,7 +1038,7 @@ export function observeOpenClawPairingRepairSettlement(
       execDeps,
     );
     const observation = parseOpenClawPairingRepairObservation(executed.output);
-    if (!observation) throw new OpenClawPairingQualificationError();
+    if (!observation) throw new OpenClawPairingQualificationError("invalid-output");
     return observation;
   } catch (error) {
     if (error instanceof OpenClawPairingQualificationError) throw error;
@@ -1037,7 +1063,7 @@ export function observeOrdinaryOpenClawPairingSettlement(
       execDeps,
     );
     const observation = parseOpenClawPairingSettlementObservation(executed.output);
-    if (!observation) throw new OpenClawPairingQualificationError();
+    if (!observation) throw new OpenClawPairingQualificationError("invalid-output");
     return observation;
   } catch (error) {
     if (error instanceof OpenClawPairingQualificationError) throw error;
@@ -1064,7 +1090,7 @@ export function observeOpenClawPairingQualification(
       execDeps,
     );
     const projection = parseOpenClawPairingObservation(executed.output);
-    if (!projection) throw new OpenClawPairingQualificationError();
+    if (!projection) throw new OpenClawPairingQualificationError("invalid-output");
     return {
       schemaVersion: 1,
       kind: "openclaw-pairing",
