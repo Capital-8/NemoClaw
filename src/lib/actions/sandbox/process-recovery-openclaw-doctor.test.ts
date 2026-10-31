@@ -843,7 +843,8 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
   });
 
   it("fails closed when startup never proves the doctor maintenance window", async () => {
-    const progress = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const progress = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stdout = vi.spyOn(console, "log").mockImplementation(() => undefined);
     let currentMs = 0;
     const execute = vi
       .fn()
@@ -870,6 +871,8 @@ describe("OpenClaw post-upgrade recovery doctor", () => {
     });
     expect(currentMs).toBe(33 * 60_000);
     const messages = progress.mock.calls.map(([message]) => String(message));
+    expect(stdout).not.toHaveBeenCalled();
+    stdout.mockRestore();
     progress.mockRestore();
     expect(messages).toHaveLength(66);
     expect(messages[0]).toBe(

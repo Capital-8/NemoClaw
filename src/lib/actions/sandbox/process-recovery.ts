@@ -284,7 +284,7 @@ function openClawMaintenanceProgress(
   return (currentMs) => {
     if (currentMs < nextReportMs) return;
     nextReportMs = currentMs + 30_000;
-    console.log(
+    console.error(
       `  OpenClaw ${operation} for sandbox ${JSON.stringify(sandboxName)}: ` +
         `${Math.max(0, Math.floor((currentMs - startedMs) / 1_000))}s elapsed, ` +
         `${Math.max(0, Math.ceil((deadlineMs - currentMs) / 1_000))}s remaining; waiting for the exact maintenance receipt.`,
